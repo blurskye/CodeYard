@@ -1,0 +1,44 @@
+# Build artifacts
+/target
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Runtime
+/data
+/repos
+/act
+.opencode-image-build/
+*.log
+host_key
+Cargo.toml.backup
+
+# Local credentials and deployment settings
+.env
+.env.*
+!.env.example
+.secrets
+.vars
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+session-ses_*.md
+pi-session-*.html
+
+# Docker/Compose
+container_data/
+
+# Test artifacts
+/test-output
+.tools/
+
+# Web UI build output
+webui/dist/
+/dist

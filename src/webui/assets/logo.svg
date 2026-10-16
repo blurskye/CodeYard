@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-labelledby="logo-title">
+<title id="logo-title">Codeyard</title>
+<rect width="256" height="256" rx="58" fill="#2a1b5c"/>
+<g fill="none" stroke="#f3f0ff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"><path d="M108 60L128 40L148 60"/><path d="M196 108L216 128L196 148"/><path d="M108 196L128 216L148 196"/><path d="M60 108L40 128L60 148"/><path d="M62 62L84 84"/><path d="M194 62L172 84"/><path d="M62 194L84 172"/><path d="M194 194L172 172"/></g>
+<circle cx="128" cy="128" r="30" fill="#5eead4"/>
+</svg>

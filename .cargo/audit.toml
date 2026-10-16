@@ -1,0 +1,18 @@
+# `cargo audit` ignores. Each one is a finding we looked at and cannot or need not fix.
+[advisories]
+ignore = [
+    # rsa (via ssh-key and russh): the Marvin attack is about RSA decryption. The server
+    # only parses RSA public keys and verifies signatures, and has no patched release to move to.
+    "RUSTSEC-2023-0071",
+    # git2 0.19 unsound APIs we do not call: Buf dereference, Remote::list, blame hunks.
+    "RUSTSEC-2026-0008",
+    "RUSTSEC-2026-0183",
+    "RUSTSEC-2026-0184",
+    # lru 0.12 inside aws-sdk-s3's identity cache; upstream still depends on it.
+    "RUSTSEC-2026-0002",
+    "RUSTSEC-2026-0253",
+    # Unmaintained, no vulnerability: bincode and yaml-rust (syntect), paste (iroh's netlink).
+    "RUSTSEC-2025-0141",
+    "RUSTSEC-2024-0320",
+    "RUSTSEC-2024-0436",
+]

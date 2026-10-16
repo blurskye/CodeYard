@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+<title>Codeyard: Git hosting, written in Rust.</title>
+<desc>The Codeyard mark, a mint commit dot ringed by eight light rays on a deep violet tile, beside the wordmark.</desc>
+<rect width="1280" height="640" fill="#f3f0ff"/>
+<g transform="translate(180 160) scale(1.25)">
+<rect width="256" height="256" rx="58" fill="#2a1b5c"/>
+<g fill="none" stroke="#f3f0ff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"><path d="M108 60L128 40L148 60"/><path d="M196 108L216 128L196 148"/><path d="M108 196L128 216L148 196"/><path d="M60 108L40 128L60 148"/><path d="M62 62L84 84"/><path d="M194 62L172 84"/><path d="M62 194L84 172"/><path d="M194 194L172 172"/></g>
+<circle cx="128" cy="128" r="30" fill="#5eead4"/>
+</g>
+<text x="540" y="330" fill="#2a1b5c" font-family="Helvetica, Arial, sans-serif" font-size="108" font-weight="700" letter-spacing="-3">Codeyard</text>
+<text x="544" y="400" fill="#5d5780" font-family="Helvetica, Arial, sans-serif" font-size="38">Git hosting, written in Rust.</text>
+</svg>

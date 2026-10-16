@@ -1,0 +1,64 @@
+use super::{
+    fields::{choice, controls_as, field_value, input, select},
+    Organization, Page,
+};
+use dioxus::prelude::*;
+
+pub(super) fn suspension(org: &Organization) -> Element {
+    rsx! { if org.suspended {
+        div { role: "status", class: "org-alert",
+            strong { "Organization changes are paused" }
+            p { "This organization needs an active owner before members, teams, or profile settings can be changed." }
+        }
+    } }
+}
+
+/// The owner's delete card. It names the repositories deleting the organization also deletes.
+pub(super) fn deletion(page: &Page, target: &str) -> Element {
+    let count = page.owned_repositories;
+    let noun = if count == 1 {
+        "repository"
+    } else {
+        "repositories"
+    };
+    rsx! {
+        section { class: "org-danger", aria_labelledby: "organization-delete-title",
+            div { class: "org-danger-header",
+                h3 { id: "organization-delete-title", "Delete this organization" }
+                p { "Deleting the organization removes its teams and memberships." }
+                if count > 0 {
+                    p { strong { "It also permanently deletes its {count} {noun} and everything in them." } }
+                }
+            }
+            form { method: "post", action: target.to_owned(), class: "org-form org-danger-form",
+                {input(page, "delete-organization", "confirm", "Type the organization name to confirm")}
+                {controls_as(page, "delete-organization", "Delete organization", "btn btn-destructive")}
+            }
+        }
+    }
+}
+
+/// Site administrators' recovery, a visible danger card. It appears only when an organization has no owner.
+pub(super) fn recovery(page: &Page) -> Element {
+    let options = std::iter::once(choice("", "Choose an organization"))
+        .chain(
+            page.ownerless_organizations
+                .iter()
+                .map(|org| choice(&org.id.to_string(), &org.name)),
+        )
+        .collect();
+    rsx! { if page.can_recover && !page.ownerless_organizations.is_empty() {
+        section { class: "org-danger", aria_labelledby: "organization-recovery-title",
+            div { class: "org-danger-header",
+                h3 { id: "organization-recovery-title", "Recover an organization without an owner" }
+                p { "Site administrators can appoint an existing member when an organization has no active owner." }
+            }
+            form { method: "post", action: "/admin/organizations/recovery", class: "org-form org-danger-form",
+                {select("Organization", "org_id", field_value(page, "recover-owner", "org_id"), options)}
+                {input(page, "recover-owner", "username", "Username of the new owner")}
+                {input(page, "recover-owner", "confirm", "Type the organization name to confirm")}
+                {controls_as(page, "recover-owner", "Restore owner", "btn btn-destructive")}
+            }
+        }
+    } }
+}

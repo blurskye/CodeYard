@@ -1,0 +1,148 @@
+version: "3.9"
+name: codeyard
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-gitserv}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gitserv}
+      POSTGRES_DB: ${POSTGRES_DB:-gitserv}
+      # Explicit legacy mount layout; never relocate a populated volume implicitly.
+      PGDATA: /var/lib/postgresql/data
+    volumes:
+      - ${GIT_SERV_DATA_ROOT:-./data}/postgres:/var/lib/postgresql/data:Z
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER:-gitserv}", "-d", "${POSTGRES_DB:-gitserv}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - backend
+
+  rustfs-service:
+    # S3-compatible store for uploads. Browsers upload to the API port directly, so
+    # S3_PUBLIC_ENDPOINT must reach it on a host outside the session cookie scope;
+    # a different port on the forge host is not isolated. The console stays private.
+    image: docker.io/rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
+    container_name: rustfs-service
+    restart: unless-stopped
+    # The image runs as uid 10001, which cannot write a data directory the engine
+    # creates for it. Root in the container is the host user under rootless Podman.
+    user: "0:0"
+    environment:
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY}
+    volumes:
+      - ${GIT_SERV_DATA_ROOT:-./data}/rustfs:/data:Z
+    ports:
+      - "${RUSTFS_API_BIND:-0.0.0.0}:${RUSTFS_API_PORT:-11002}:9000"
+      - "${RUSTFS_CONSOLE_BIND:-127.0.0.1}:${RUSTFS_CONSOLE_PORT:-11003}:9001"
+    networks:
+      - backend
+
+  git-server:
+    # scripts/release.sh builds this image; `compose build` builds it from dist/release.
+    image: localhost/codeyard-backend:latest
+    build:
+      context: .
+      dockerfile: Containerfile
+    restart: unless-stopped
+    # A clean stop takes at most 90 seconds; Compose's default is 10.
+    stop_grace_period: 100s
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-gitserv}:${POSTGRES_PASSWORD:-gitserv}@postgres:5432/${POSTGRES_DB:-gitserv}
+      S3_ENDPOINT: http://rustfs-service:9000
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://objects.localhost:11002}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-gitserv-files}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      # Server state (SQLite database and local uploads) lives on the /data volume.
+      # An installation whose gitserv.db sits directly in /data sets GITSERV_STATE_DIR=/data.
+      GITSERV_STATE_DIR: ${GITSERV_STATE_DIR:-/data/state}
+      REPOS_PATH: /data/repos
+      GITSERV_NODE_ROLES: ${GITSERV_NODE_ROLES:-web,storage,ssh,actions-worker}
+      HOST_KEY_PATH: /data/host_key
+      HTTP_ADDR: ${HTTP_ADDR:-0.0.0.0:3000}
+      # Container namespaces cannot autodetect the host's sshd. Explicit standalone default.
+      SSH_MODE: ${SSH_MODE:-builtin}
+      SSH_ADDR: ${SSH_ADDR:-0.0.0.0:2222}
+      SSH_TRUSTED_PROXY_IPS: ${SSH_TRUSTED_PROXY_IPS:-}
+      SSH_SOCKET_PATH: ${SSH_SOCKET_PATH:-/run/codeyard/ssh.sock}
+      SSH_GIT_USER: ${SSH_GIT_USER:-git}
+      SSH_INSTALL_MANIFEST: ${SSH_INSTALL_MANIFEST:-/etc/codeyard/openssh.json}
+      PUBLIC_URL: ${PUBLIC_URL:?Set the exact public HTTPS origin (loopback HTTP only for development)}
+      PUBLIC_HTTP_CLONE_BASE: ${PUBLIC_HTTP_CLONE_BASE:-}
+      PUBLIC_SSH_CLONE_BASE: ${PUBLIC_SSH_CLONE_BASE:-}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SESSION_DURATION_DAYS: ${SESSION_DURATION_DAYS:-30}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      # Browser bundle baked into the image.
+      WEBUI_DIST: ${WEBUI_DIST:-/app/webui/dist}
+      ADMIN_SECRET: ${ADMIN_SECRET:-}
+      # Never inject an empty key or generate a new key over encrypted records.
+      SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY:?Set the existing durable 64-hex master key (generate once only for a new installation)}
+      CI_EXECUTION_MODE: ${CI_EXECUTION_MODE:-podman}
+      CI_TRUSTED_ACTOR_IDS: ${CI_TRUSTED_ACTOR_IDS:-}
+      CI_MAX_ACTIVE_RUNS: ${CI_MAX_ACTIVE_RUNS:-4}
+      CI_RUN_TIMEOUT_SECONDS: ${CI_RUN_TIMEOUT_SECONDS:-3600}
+      CI_PODMAN_SOCKET: ${CI_PODMAN_SOCKET:-/run/user/1000/podman/podman.sock}
+      CI_ACT_BINARY: ${CI_ACT_BINARY:-/usr/local/bin/act}
+      CI_ACT_RUNNER_IMAGE: ${CI_ACT_RUNNER_IMAGE:-ghcr.io/catthehacker/ubuntu:act-latest}
+      CI_ACT_PLATFORM_MAP: ${CI_ACT_PLATFORM_MAP:-}
+      CI_WORKFLOW_CI: ${CI_WORKFLOW_CI:-.github/workflows/ci.yml}
+      CI_WORKFLOW_CD: ${CI_WORKFLOW_CD:-.github/workflows/deploy-image.yml}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITLAB_CLIENT_ID: ${GITLAB_CLIENT_ID:-}
+      GITLAB_CLIENT_SECRET: ${GITLAB_CLIENT_SECRET:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      BITBUCKET_CLIENT_ID: ${BITBUCKET_CLIENT_ID:-}
+      BITBUCKET_CLIENT_SECRET: ${BITBUCKET_CLIENT_SECRET:-}
+      # Cluster mode (PostgreSQL only); empty = single node. See .env.example.
+      NODE_NAME: ${NODE_NAME:-}
+      NODE_KEY: ${NODE_KEY:-}
+      CLUSTER_NODES: ${CLUSTER_NODES:-}
+      CLUSTER_JOIN_TOKEN: ${CLUSTER_JOIN_TOKEN:-}
+      IROH_BIND: ${IROH_BIND:-}
+      IROH_ADVERTISE: ${IROH_ADVERTISE:-}
+      IROH_RELAY: ${IROH_RELAY:-}
+      CLUSTER_TCP_BIND: ${CLUSTER_TCP_BIND:-}
+      CLUSTER_TCP_ADVERTISE: ${CLUSTER_TCP_ADVERTISE:-}
+    volumes:
+      - ${GIT_SERV_DATA_ROOT:-./data}/server:/data:Z
+      # Keep the socket at the same path on host/server: act passes that path
+      # back to the host daemon when creating job containers.
+      - ${CI_PODMAN_SOCKET:-/run/user/1000/podman/podman.sock}:${CI_PODMAN_SOCKET:-/run/user/1000/podman/podman.sock}:ro
+    ports:
+      - "${API_HTTP_BIND:-0.0.0.0}:${API_HTTP_PORT:-11000}:3000"
+      - "${SSH_BIND:-0.0.0.0}:${SSH_PORT:-2222}:2222"
+      # Node-to-node traffic in cluster mode (nothing listens on a single node).
+      - "${IROH_PUBLISH_BIND:-0.0.0.0}:${IROH_PORT:-7444}:7444/udp"
+      # TCP node transport; nothing listens unless CLUSTER_TCP_BIND is set.
+      - "${CLUSTER_TCP_PUBLISH_BIND:-0.0.0.0}:${CLUSTER_TCP_PORT:-7445}:7445"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    security_opt:
+      - label=disable
+    depends_on:
+      - postgres
+      - rustfs-service
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge

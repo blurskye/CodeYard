@@ -1,0 +1,11 @@
+.git
+.github
+target
+container_data
+repos
+data
+*.log
+.env
+**/.env
+**/.env.*
+host_key

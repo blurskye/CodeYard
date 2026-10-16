@@ -1,0 +1,14 @@
+[application]
+name = "codeyard"
+default_platform = "web"
+
+[web.app]
+title = "Codeyard"
+
+[web.resource]
+style = []
+script = []
+
+[web.resource.dev]
+style = []
+script = []

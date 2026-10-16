@@ -1,0 +1,150 @@
+use crate::backend::db::models::{SignupRequest, User};
+use crate::backend::db::users::signup_requests::ReviewError;
+use anyhow::Result;
+use sqlx::SqlitePool;
+
+pub async fn create_signup_request(
+    pool: &SqlitePool,
+    username: &str,
+    email: Option<&str>,
+    password_hash: &str,
+) -> Result<SignupRequest> {
+    let request = sqlx::query_as::<_, SignupRequest>(
+        r#"
+        INSERT INTO signup_requests (username, email, password_hash, status)
+        VALUES (?1, ?2, ?3, 'pending')
+        RETURNING *
+        "#,
+    )
+    .bind(username)
+    .bind(email)
+    .bind(password_hash)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(request)
+}
+
+pub async fn list_signup_requests(pool: &SqlitePool, status: &str) -> Result<Vec<SignupRequest>> {
+    let requests = sqlx::query_as::<_, SignupRequest>(
+        "SELECT * FROM signup_requests WHERE status = ?1 ORDER BY created_at DESC",
+    )
+    .bind(status)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(requests)
+}
+
+pub async fn get_pending_signup_request_by_identity(
+    pool: &SqlitePool,
+    username: &str,
+    email: Option<&str>,
+) -> Result<Option<SignupRequest>> {
+    let request = sqlx::query_as::<_, SignupRequest>(
+        r#"
+        SELECT *
+        FROM signup_requests
+        WHERE status = 'pending'
+          AND (
+              LOWER(username) = LOWER(?1)
+              OR (?2 IS NOT NULL AND email IS NOT NULL AND LOWER(email) = LOWER(?2))
+          )
+        LIMIT 1
+        "#,
+    )
+    .bind(username)
+    .bind(email)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(request)
+}
+
+pub async fn approve_signup_request(
+    pool: &SqlitePool,
+    request_id: i64,
+    reviewer_user_id: i64,
+) -> Result<User> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_private_reviewer(&mut tx, reviewer_user_id).await?;
+
+    let signup_request =
+        sqlx::query_as::<_, SignupRequest>("SELECT * FROM signup_requests WHERE id = ?1")
+            .bind(request_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(ReviewError::Missing)?;
+
+    if signup_request.status != "pending" {
+        return Err(ReviewError::Processed.into());
+    }
+
+    // The shared review contract has no Conflict variant: deny this approval,
+    // leaving the request pending and actor/status/account changes atomic.
+    if super::transitions::organization_name_exists(&mut tx, &signup_request.username).await? {
+        return Err(ReviewError::Denied.into());
+    }
+
+    let user = sqlx::query_as::<_, User>(
+        r#"
+        INSERT INTO users (username, email, password_hash, is_admin, must_change_password)
+        VALUES (?1, ?2, ?3, FALSE, FALSE)
+        RETURNING *
+        "#,
+    )
+    .bind(&signup_request.username)
+    .bind(signup_request.email.as_deref())
+    .bind(&signup_request.password_hash)
+    .fetch_one(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE signup_requests SET status = 'approved', reviewed_by = ?1, reviewed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2",
+    )
+    .bind(reviewer_user_id)
+    .bind(request_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(user)
+}
+
+pub async fn reject_signup_request(
+    pool: &SqlitePool,
+    request_id: i64,
+    reviewer_user_id: i64,
+) -> Result<()> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_private_reviewer(&mut tx, reviewer_user_id).await?;
+    let result = sqlx::query(
+        "UPDATE signup_requests SET status = 'rejected', reviewed_by = ?1, reviewed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND status = 'pending'",
+    )
+    .bind(reviewer_user_id)
+    .bind(request_id)
+    .execute(&mut *tx)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ReviewError::Processed.into());
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn require_private_reviewer(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+) -> Result<()> {
+    let private = sqlx::query_scalar::<_, bool>(
+        "SELECT setup_completed AND node_mode='private' FROM node_configuration WHERE id=1",
+    )
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false);
+    if !private || !super::transitions::active_admin(tx, actor).await? {
+        return Err(ReviewError::Denied.into());
+    }
+    Ok(())
+}

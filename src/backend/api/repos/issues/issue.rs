@@ -1,0 +1,471 @@
+use crate::backend::api::context::PageContext;
+use crate::backend::api::error::ApiError;
+use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::labels::LabelResponse;
+use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::session::get_current_user;
+use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::issues::mutations::UpdateIssueRequest;
+use crate::webui::pages::collaboration::DetailDraft;
+use crate::webui::pages::collaboration::Kind;
+use axum::extract::Form;
+use axum::extract::Path;
+use axum::extract::State;
+use axum::http::HeaderMap;
+use axum::http::StatusCode;
+use axum::http::Uri;
+use axum::response::Response;
+use axum::Json;
+use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::Arc;
+pub async fn update_issue(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Json(req): Json<UpdateIssueRequest>,
+) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
+    let current_actor = get_current_user(&state.pool, &headers).await?;
+    let issue = crate::backend::issues::mutations::update_issue(
+        &state.pool,
+        &state.notification_broadcaster,
+        current_actor.id,
+        owner,
+        repo,
+        number,
+        req,
+    )
+    .await
+    .map_err(super::operation_error)?;
+    let author = db::users::accounts::get_user_by_id(&state.pool, issue.author_id)
+        .await
+        .map_err(crate::backend::api::error::discussion_write_error)?;
+    let response = load_issue_response(&state.pool, issue, author.map(UserResponse::from))
+        .await
+        .map_err(crate::backend::api::error::discussion_write_error)?;
+
+    Ok(Json(response))
+}
+
+#[derive(Serialize)]
+pub struct IssueResponse {
+    pub id: i64,
+    pub number: i32,
+    pub title: String,
+    pub body: String,
+    pub state: String,
+    pub author_id: i64,
+    pub author: Option<UserResponse>,
+    pub labels: Vec<LabelResponse>,
+    pub comments_count: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub closed_at: Option<String>,
+}
+
+impl IssueResponse {
+    pub fn from_issue(
+        issue: db::models::Issue,
+        author: Option<UserResponse>,
+        labels: Vec<db::models::Label>,
+        comments_count: i64,
+    ) -> Self {
+        Self {
+            id: issue.id,
+            number: issue.number,
+            title: issue.title,
+            body: issue.body,
+            state: issue.state,
+            author_id: issue.author_id,
+            author,
+            labels: labels.into_iter().map(LabelResponse::from).collect(),
+            comments_count,
+            created_at: issue.created_at.to_rfc3339(),
+            updated_at: issue.updated_at.to_rfc3339(),
+            closed_at: issue.closed_at.map(|dt| dt.to_rfc3339()),
+        }
+    }
+}
+
+/// The response for one issue, with its labels and comment count read from storage.
+/// Lists load the same data in batches instead.
+pub(crate) async fn load_issue_response(
+    pool: &db::DbPool,
+    issue: db::models::Issue,
+    author: Option<UserResponse>,
+) -> anyhow::Result<IssueResponse> {
+    let labels = db::labels::get_issue_labels(pool, issue.id).await?;
+    let comments_count = db::issues::count_issue_comments(pool, &[issue.id])
+        .await?
+        .first()
+        .map_or(0, |(_, count)| *count);
+    Ok(IssueResponse::from_issue(
+        issue,
+        author,
+        labels,
+        comments_count,
+    ))
+}
+
+pub async fn get_issue(
+    State(state): State<Arc<AppState>>,
+    Path((owner, repo, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
+    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::new(
+                    "database_error",
+                    "Collaboration storage is temporarily unavailable",
+                )),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiError::new("not_found", "Repository not found")),
+            )
+        })?;
+
+    check_repo_read_access(&state.pool, &repository, &headers).await?;
+
+    let issue = db::issues::get_issue(&state.pool, repository.id, number)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError::new(
+                    "database_error",
+                    "Collaboration storage is temporarily unavailable",
+                )),
+            )
+        })?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                Json(ApiError::new("not_found", "Issue not found")),
+            )
+        })?;
+
+    let author = db::users::accounts::get_user_by_id(&state.pool, issue.author_id)
+        .await
+        .map_err(crate::backend::api::error::discussion_write_error)?;
+    let response = load_issue_response(&state.pool, issue, author.map(UserResponse::from))
+        .await
+        .map_err(crate::backend::api::error::discussion_write_error)?;
+
+    Ok(Json(response))
+}
+
+pub(crate) async fn native_detail(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    let kind = kind(&uri);
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = match item(&ctx, &repo, kind, number).await {
+        Ok(value) => value,
+        // Issues and pull requests share one number sequence, and a pull request's page is under
+        // `/pulls`. Links to `/issues/N` reach it through this redirect, which keeps the fragment.
+        Err(response) if kind == Kind::Issue && response.status() == StatusCode::NOT_FOUND => {
+            let pull_request = db::pull_requests::records::get_pull_request(
+                &ctx.state.pool,
+                repo.record.id,
+                number,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?;
+            if pull_request.is_none() {
+                return Err(response);
+            }
+            return Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(Kind::Pull), number)));
+        }
+        Err(response) => return Err(response),
+    };
+    render_detail(
+        &ctx,
+        &repo,
+        kind,
+        &value,
+        &DetailDraft::default(),
+        None,
+        StatusCode::OK,
+    )
+    .await
+}
+
+pub(crate) async fn native_edit(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    authorize_post(&ctx, &form)?;
+    let kind = kind(&uri);
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = item(&ctx, &repo, kind, number).await?;
+    let draft = submitted_detail(&form, "edit");
+    let title = field(&form, "title");
+    let body = field(&form, "body");
+    if !repo.view.can_write {
+        return Err(ctx.error(
+            StatusCode::FORBIDDEN,
+            "Write access is required to edit this entry.",
+        ));
+    }
+    if let Err(message) = expected(&form, &value) {
+        return render_detail(
+            &ctx,
+            &repo,
+            kind,
+            &value,
+            &draft,
+            Some(message),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
+    if let Err(message) = crate::backend::issues::validate_title(&title)
+        .and_then(|_| crate::backend::issues::validate_body(&body, false))
+    {
+        return render_detail(
+            &ctx,
+            &repo,
+            kind,
+            &value,
+            &draft,
+            Some(message),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    }
+    if draft.preview {
+        return render_detail(&ctx, &repo, kind, &value, &draft, None, StatusCode::OK).await;
+    }
+    let result = match kind {
+        Kind::Issue => crate::backend::issues::mutations::update_issue(
+            &ctx.state.pool,
+            &ctx.state.notification_broadcaster,
+            ctx.require_user()?.id,
+            owner,
+            name,
+            number,
+            crate::backend::issues::mutations::UpdateIssueRequest {
+                expected_state: field(&form, "expected_state"),
+                expected_updated: field(&form, "expected_updated"),
+                title: Some(title),
+                body: Some(body),
+                state: None,
+            },
+        )
+        .await
+        .map_err(crate::backend::api::repos::issues::operation_error)
+        .map(|_| ()),
+        Kind::Pull => crate::backend::repositories::pull_requests::mutations::update_pull_request(
+            &ctx.state.pool,
+            &ctx.state.ci_runs,
+            &ctx.state.notification_broadcaster,
+            ctx.require_user()?.id,
+            (owner, name, number),
+            crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
+                expected_state: field(&form, "expected_state"),
+                expected_updated: field(&form, "expected_updated"),
+                title: Some(title),
+                body: Some(body),
+                state: None,
+                base: None,
+            },
+        )
+        .await
+        .map_err(crate::backend::api::repos::pulls::operation_error)
+        .map(|_| ()),
+    };
+    match result {
+        Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_detail(&ctx, &repo, kind, &value, &draft, Some(&message), status).await
+        }
+    }
+}
+
+pub(crate) async fn native_change_state(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    authorize_post(&ctx, &form)?;
+    let kind = kind(&uri);
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = item(&ctx, &repo, kind, number).await?;
+    let target = field(&form, "state");
+    let draft = DetailDraft::default();
+    if let Err(message) = expected(&form, &value) {
+        return render_detail(
+            &ctx,
+            &repo,
+            kind,
+            &value,
+            &draft,
+            Some(message),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
+    if !matches!(
+        (value.state.as_str(), target.as_str()),
+        ("open", "closed") | ("closed", "open")
+    ) {
+        return render_detail(
+            &ctx,
+            &repo,
+            kind,
+            &value,
+            &draft,
+            Some("Only open entries can be closed and closed entries reopened."),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
+    let result = match kind {
+        Kind::Issue => crate::backend::issues::mutations::update_issue(
+            &ctx.state.pool,
+            &ctx.state.notification_broadcaster,
+            ctx.require_user()?.id,
+            owner,
+            name,
+            number,
+            crate::backend::issues::mutations::UpdateIssueRequest {
+                expected_state: field(&form, "expected_state"),
+                expected_updated: field(&form, "expected_updated"),
+                title: None,
+                body: None,
+                state: Some(target),
+            },
+        )
+        .await
+        .map_err(crate::backend::api::repos::issues::operation_error)
+        .map(|_| ()),
+        Kind::Pull => crate::backend::repositories::pull_requests::mutations::update_pull_request(
+            &ctx.state.pool,
+            &ctx.state.ci_runs,
+            &ctx.state.notification_broadcaster,
+            ctx.require_user()?.id,
+            (owner, name, number),
+            crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
+                expected_state: field(&form, "expected_state"),
+                expected_updated: field(&form, "expected_updated"),
+                title: None,
+                body: None,
+                state: Some(target),
+                base: None,
+            },
+        )
+        .await
+        .map_err(crate::backend::api::repos::pulls::operation_error)
+        .map(|_| ()),
+    };
+    match result {
+        Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_detail(&ctx, &repo, kind, &value, &draft, Some(&message), status).await
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::webui::pages::collaboration as view;
+    fn value() -> view::Item {
+        view::Item {
+            number: 1,
+            stacked: false,
+            stack: None,
+            stack_candidate: None,
+            assignees: Vec::new(),
+            milestone: None,
+            title: "title".into(),
+            body: "body".into(),
+            state: "open".into(),
+            author: "alice".into(),
+            created: "now".into(),
+            updated: "revision-2".into(),
+            labels: vec![],
+            comparison: None,
+        }
+    }
+    #[test]
+    fn stale_or_missing_expected_state_never_matches() {
+        let mut form = HashMap::new();
+        assert!(expected(&form, &value()).is_err());
+        form.insert("expected_state".into(), "open".into());
+        form.insert("expected_updated".into(), "revision-1".into());
+        assert!(expected(&form, &value()).is_err());
+        form.insert("expected_updated".into(), "revision-2".into());
+        assert!(expected(&form, &value()).is_ok());
+        form.insert("expected_state".into(), "closed".into());
+        assert!(expected(&form, &value()).is_err());
+    }
+    #[test]
+    fn submitted_text_is_preserved_without_trimming() {
+        let form = HashMap::from([
+            ("title".into(), "  text & <tag>  ".into()),
+            ("body".into(), "\n</textarea>\n".into()),
+            ("head".into(), "topic/a".into()),
+            ("base".into(), "main".into()),
+            ("draft".into(), "on".into()),
+        ]);
+        let draft = submitted_new(&form);
+        assert_eq!(draft.title, "  text & <tag>  ");
+        assert_eq!(draft.body, "\n</textarea>\n");
+        assert_eq!(draft.head, "topic/a");
+        assert!(draft.draft);
+        assert_eq!(submitted_detail(&form, "comment").comment, draft.body);
+    }
+    #[test]
+    fn internal_and_git_diagnostics_do_not_reach_html_errors() {
+        for (status, code) in [
+            (StatusCode::INTERNAL_SERVER_ERROR, "database_error"),
+            (StatusCode::CONFLICT, "merge_conflict"),
+            (StatusCode::BAD_REQUEST, "git_error"),
+        ] {
+            let failure = (
+                status,
+                Json(ApiError::new(
+                    code,
+                    "postgres://secret@private/internal/repo.git",
+                )),
+            );
+            let (rendered_status, message) = safe_api_error(&failure);
+            assert_eq!(rendered_status, status);
+            assert!(!message.contains("secret"));
+            assert!(!message.contains("/internal/"));
+        }
+    }
+    #[test]
+    fn validation_and_branch_protection_failures_remain_meaningful() {
+        let failure = (
+            StatusCode::CONFLICT,
+            Json(ApiError::new(
+                "branch_protection",
+                "2 approving reviews required, found 0",
+            )),
+        );
+        assert!(safe_api_error(&failure).1.contains("2 approving review"));
+    }
+}

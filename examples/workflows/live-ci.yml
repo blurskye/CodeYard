@@ -1,0 +1,35 @@
+# Copy to .github/workflows/live-ci.yml in a TEST repository.
+# No secrets required. act handles checkout from its prepared local clone;
+# the file check below verifies the repository was really transferred.
+name: Live CI smoke test
+on:
+  workflow_dispatch:
+jobs:
+  smoke:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Verify workspace
+        run: |
+          set -eu
+          test -f .github/workflows/live-ci.yml
+          printf 'Workspace verified at %s\n' "$PWD"
+      - name: Run shell assertions
+        run: |
+          set -eu
+          test "$((6 * 7))" -eq 42
+          actual=$(printf 'codeyard\n' | tr '[:lower:]' '[:upper:]')
+          test "$actual" = 'CODEYARD'
+          echo 'Shell assertions passed'
+      - name: Stream progress
+        run: |
+          set -eu
+          for tick in $(seq 1 15); do
+            printf 'LIVE_TICK %02d/15\n' "$tick"
+            sleep 2
+          done
+      - name: Finish
+        run: echo 'LIVE_CI_PASSED'
