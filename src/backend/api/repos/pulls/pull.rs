@@ -1,23 +1,25 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::api::repos::chrome::{self, page_window};
 use crate::backend::api::repos::milestones::milestone_view;
 use crate::backend::api::repos::pulls::review_forms;
-use crate::backend::api::repos::references::resolve_references_or_none;
-use crate::backend::api::session::get_current_user;
+use crate::backend::api::repos::refs::references::resolve_references_or_none;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::db::pull_requests::reviews::DiscussionItem;
 use crate::backend::issues::{COMMENTS_PER_PAGE, MAX_COMMENT_PAGE};
 use crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest;
 use crate::backend::repositories::pull_requests::restack;
 use crate::backend::repositories::pull_requests::stacks;
 use crate::backend::repositories::store::{allowed_merge_methods, repo_store, MergeMethod};
-use crate::webui::pages::collaboration as view;
-use crate::webui::pages::collaboration::DetailDraft;
-use crate::webui::pages::collaboration::Kind;
-use crate::webui::pages::collaboration::NewDraft;
+use crate::webui::pages::repos::issues as view;
+use crate::webui::pages::repos::issues::DetailDraft;
+use crate::webui::pages::repos::issues::Kind;
+use crate::webui::pages::repos::issues::NewDraft;
+use crate::webui::pages::repos::pulls::MAX_LISTED_COMMITS;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -25,6 +27,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,7 +50,7 @@ pub async fn update_pull_request(
     .map_err(super::operation_error)?;
     let author = db::users::accounts::get_user_by_id(&state.pool, pull_request.author_id)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
     Ok(Json(
         detail_response(&state.pool, pull_request, author.map(UserResponse::from)).await?,
@@ -225,7 +228,7 @@ pub async fn get_pull_request(
 
     let author = db::users::accounts::get_user_by_id(&state.pool, pull_request.author_id)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
     Ok(Json(
         detail_response(&state.pool, pull_request, author.map(UserResponse::from)).await?,
@@ -409,6 +412,7 @@ pub(crate) fn label(value: db::models::Label) -> view::Label {
         id: value.id,
         name: value.name,
         color: value.color,
+        description: value.description.unwrap_or_default(),
     }
 }
 pub(crate) fn issue_item(
@@ -431,6 +435,13 @@ pub(crate) fn issue_item(
         assignees: Vec::new(),
         milestone: None,
         comparison: None,
+        comment_count: 0,
+        commit_count: None,
+        file_count: None,
+        check_count: 0,
+        review_state: None,
+        check_state: None,
+        reactions: Vec::new(),
     }
 }
 /// A pull request's head repository as this viewer may see it. The current name and
@@ -529,7 +540,7 @@ pub(crate) fn pull_item(
     let (head_label, head_url) = match pull.head_repo_id {
         Some(id) if id == repo.record.id => (
             pull.head_branch.clone(),
-            Some(crate::webui::pages::repositories::ref_path::file_url(
+            Some(crate::webui::pages::repos::ref_path::file_url(
                 &repo.view.url(),
                 "tree",
                 &pull.head_branch,
@@ -540,7 +551,7 @@ pub(crate) fn pull_item(
             HeadRepository::Readable(head) => {
                 let owner = head.owner_name.ok_or_else(|| Box::new(unavailable(ctx)))?;
                 let label = format!("{owner}/{}:{}", head.name, pull.head_branch);
-                let url = crate::webui::pages::repositories::ref_path::file_url(
+                let url = crate::webui::pages::repos::ref_path::file_url(
                     &view::repo_url(&owner, &head.name),
                     "tree",
                     &pull.head_branch,
@@ -587,6 +598,13 @@ pub(crate) fn pull_item(
         stack_candidate: None,
         assignees: Vec::new(),
         milestone: None,
+        comment_count: 0,
+        commit_count: None,
+        file_count: None,
+        check_count: 0,
+        review_state: None,
+        check_state: None,
+        reactions: Vec::new(),
         comparison: Some(view::Comparison {
             head_label,
             head_url,
@@ -608,6 +626,8 @@ pub(crate) fn pull_item(
                 .into_iter()
                 .map(|method| method.as_str().to_owned())
                 .collect(),
+            has_checks: false,
+            has_workflows: false,
         }),
     })
 }
@@ -676,9 +696,15 @@ pub(crate) async fn item(
             .await
             .map_err(|_| unavailable(ctx))?;
             let milestone = named_milestone(ctx, repo, value.milestone_id).await?;
+            let comment_count = db::issues::count_issue_comments(&ctx.state.pool, &[value.id])
+                .await
+                .map_err(|_| unavailable(ctx))?
+                .first()
+                .map_or(0, |(_, count)| *count);
             let mut shown = issue_item(value, author, labels);
             shown.assignees = assignees;
             shown.milestone = milestone;
+            shown.comment_count = comment_count;
             Ok(shown)
         }
         Kind::Pull => {
@@ -727,6 +753,7 @@ pub(crate) async fn item(
             let labels = db::labels::get_pull_request_labels(&ctx.state.pool, current)
                 .await
                 .map_err(|_| unavailable(ctx))?;
+            let head_sha = value.head_sha.clone();
             let mut view_item = pull_item(ctx, repo, value, author, head_repository)
                 .map_err(|response| *response)?;
             view_item.labels = labels.into_iter().map(label).collect();
@@ -741,10 +768,55 @@ pub(crate) async fn item(
             )
             .await
             .map_err(|_| unavailable(ctx))?;
+            view_item.comment_count =
+                db::pull_requests::reviews::count_pull_request_comments(&ctx.state.pool, current)
+                    .await
+                    .map_err(|_| unavailable(ctx))?;
+            // A check run or a commit status on the head commit is what makes a green merge box mean
+            // something; the merge box says so when there is none.
+            let runs = db::ci::latest_ci_runs_for_commit(
+                &ctx.state.pool,
+                repo.record.id,
+                &head_sha,
+                current,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
+            let statuses = db::repositories::protection::list_commit_statuses(
+                &ctx.state.pool,
+                repo.record.id,
+                &head_sha,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
+            view_item.check_count = runs.len() as i64;
+            // The Commits tab counts the commits of the pull request. When Git cannot count them the
+            // count is left out, so the tab shows no number instead of a wrong one.
+            let commit_count = match view_item.comparison.as_ref() {
+                Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
+                    .commits_between(&compare.base_sha, &compare.head_sha, MAX_LISTED_COMMITS)
+                    .await
+                    .ok()
+                    .map(|commits| commits.len() as i64),
+                None => None,
+            };
+            view_item.commit_count = commit_count;
+            // The Files changed tab counts the files of the pull request. As with the commits, the count
+            // is left out when Git cannot diff the two revisions.
+            let file_count = match view_item.comparison.as_ref() {
+                Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
+                    .diff(&compare.base_sha, &compare.head_sha)
+                    .await
+                    .ok()
+                    .map(|diff| i64::from(diff.changed_files)),
+                None => None,
+            };
+            view_item.file_count = file_count;
             if let Some(compare) = view_item.comparison.as_mut() {
                 compare.merge_commit_only = merge_with.len() > 1;
                 compare.merge_target = merge_target;
                 compare.merge_with = merge_with;
+                compare.has_checks = !runs.is_empty() || !statuses.is_empty();
             }
             Ok(view_item)
         }
@@ -768,8 +840,10 @@ pub(crate) async fn discussion(
     let offset = offset as i64;
     let mut comments = Vec::new();
     let mut reviews = Vec::new();
-    let mut reviews_limit = None;
     let has_more: bool;
+    // The item and the span of time this page covers, for the events that fall in it.
+    let subject: (db::timeline::Subject, i64);
+    let span: (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
     match kind {
         Kind::Issue => {
             let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
@@ -780,11 +854,16 @@ pub(crate) async fn discussion(
                 .await
                 .map_err(|_| unavailable(ctx))?;
             has_more = chrome::has_next_page(page, rows.len(), COMMENTS_PER_PAGE);
+            subject = (db::timeline::Subject::Issue, issue.id);
+            span = (
+                (page > 1)
+                    .then(|| rows.first().map(|row| row.comment.created_at))
+                    .flatten(),
+                rows.get(COMMENTS_PER_PAGE)
+                    .map(|row| row.comment.created_at),
+            );
             for comment in rows.into_iter().take(COMMENTS_PER_PAGE) {
-                let author = comment
-                    .author
-                    .map(|author| author.username)
-                    .unwrap_or_else(|| "Deleted user".into());
+                let author = comment.author.username;
                 let comment = comment.comment;
                 comments.push(view::Comment {
                     id: comment.id,
@@ -793,6 +872,7 @@ pub(crate) async fn discussion(
                     created: comment.created_at.to_rfc3339(),
                     location: None,
                     conversation: None,
+                    reactions: Vec::new(),
                 });
             }
         }
@@ -805,7 +885,9 @@ pub(crate) async fn discussion(
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
-            let rows = db::pull_requests::reviews::list_pull_request_comments(
+            // The page is a run of Conversation items, so the count, the links and the reviews all
+            // agree. The page's span runs from its first item up to the next page's first item.
+            let rows = db::pull_requests::reviews::list_discussion_items(
                 &ctx.state.pool,
                 pull.id,
                 fetch,
@@ -814,43 +896,49 @@ pub(crate) async fn discussion(
             .await
             .map_err(|_| unavailable(ctx))?;
             has_more = chrome::has_next_page(page, rows.len(), COMMENTS_PER_PAGE);
-            // A review belongs to the page whose span holds it: from this page's first comment up
-            // to the next page's first. The first page starts at the beginning.
-            let first = rows.first().map(|row| row.comment.created_at);
-            let next = rows
-                .get(COMMENTS_PER_PAGE)
-                .map(|row| row.comment.created_at);
-            if page == 1 || first.is_some() {
-                (reviews, reviews_limit) = review_forms::timeline_reviews(
-                    ctx,
-                    &pull,
-                    (page > 1).then_some(first).flatten(),
-                    next,
-                )
-                .await?;
+            let first = rows.first().map(DiscussionItem::created_at);
+            span = (
+                (page > 1).then_some(first).flatten(),
+                rows.get(COMMENTS_PER_PAGE).map(DiscussionItem::created_at),
+            );
+            subject = (db::timeline::Subject::PullRequest, pull.id);
+            let mut page_reviews = Vec::new();
+            for row in rows.into_iter().take(COMMENTS_PER_PAGE) {
+                match row {
+                    DiscussionItem::Comment(entry) => {
+                        comments.push(review_forms::discussion_comment(ctx, repo, &pull, entry));
+                    }
+                    DiscussionItem::Review(entry) => page_reviews.push(entry),
+                }
             }
-            for entry in rows.into_iter().take(COMMENTS_PER_PAGE) {
-                let conversation = (entry.comment.path.is_some()
-                    && entry.comment.in_reply_to_comment_id.is_none())
-                .then(|| {
-                    review_forms::conversation(
-                        ctx,
-                        repo,
-                        pull.author_id,
-                        &pull.head_sha,
-                        &entry.comment,
-                    )
-                });
-                comments.push(review_forms::comment_view(entry, conversation));
-            }
+            reviews = review_forms::page_reviews(ctx, repo, &pull, page_reviews).await?;
         }
     }
+    let events = db::timeline::list_events(
+        &ctx.state.pool,
+        subject.0.name(),
+        subject.1,
+        span.0,
+        span.1,
+        db::timeline::EVENT_LIMIT,
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .into_iter()
+    .map(|event| view::Event {
+        actor: event.actor.unwrap_or_else(|| "Deleted user".to_owned()),
+        kind: event.kind,
+        detail: event.detail,
+        previous: event.previous,
+        created: event.created_at.to_rfc3339(),
+    })
+    .collect();
     Ok(view::CommentPage {
         comments,
         reviews,
-        reviews_limit,
         page,
         has_more,
+        events,
     })
 }
 pub(crate) async fn render_detail(
@@ -864,7 +952,15 @@ pub(crate) async fn render_detail(
 ) -> ResultPage<Response> {
     let mut value = shown.clone();
     fill_merge_blockers(ctx, repo, kind, draft, &mut value).await;
-    let comments = discussion(ctx, repo, kind, value.number).await?;
+    let mut comments = discussion(ctx, repo, kind, value.number).await?;
+    crate::backend::api::repos::issues::reactions::attach(
+        ctx,
+        repo,
+        kind,
+        &mut value,
+        &mut comments,
+    )
+    .await?;
     // Every text this page renders as Markdown, including what a form re-renders.
     let mut texts = vec![value.body.as_str(), draft.comment.as_str()];
     texts.extend(draft.body.as_deref());
@@ -880,9 +976,12 @@ pub(crate) async fn render_detail(
             .iter()
             .filter_map(|review| review.body.as_deref()),
     );
-    if let Some(review) = &draft.review {
-        texts.push(review.body.as_str());
-    }
+    texts.extend(
+        comments
+            .reviews
+            .iter()
+            .flat_map(|review| review.comments.iter().map(|comment| comment.body.as_str())),
+    );
     // A detail page also re-renders the user's submitted draft, so a failed lookup links nothing.
     // Every text here renders as a comment, so the references are resolved in comment mode.
     let references = resolve_references_or_none(
@@ -894,17 +993,12 @@ pub(crate) async fn render_detail(
         false,
     )
     .await;
-    // The add form offers only the labels the item does not have yet.
+    // The label picker lists every label of the repository. A label the item has is removed by
+    // clicking it, and any other label is added the same way.
     let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
         .await
         .map_err(|_| unavailable(ctx))?
         .into_iter()
-        .filter(|candidate| {
-            !value
-                .labels
-                .iter()
-                .any(|applied| applied.id == candidate.id)
-        })
         .map(label)
         .collect();
     // Choices are offered to a writer only. Each form checks the write right again when it is sent.
@@ -1006,6 +1100,14 @@ async fn fill_merge_blockers(
     let Some(compare) = value.comparison.as_mut() else {
         return;
     };
+    // The merge box links "No checks configured" to the Actions page only when the head commit has
+    // workflows. A failed read leaves the link out.
+    if !compare.has_checks {
+        compare.has_workflows = repo_store(&repo.record, ctx.state.cluster.as_ref())
+            .workflow_files(&compare.head_sha)
+            .await
+            .is_ok_and(|files| !files.is_empty());
+    }
     let Ok(Some(pull_request)) =
         db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number).await
     else {
@@ -1059,7 +1161,7 @@ pub(crate) async fn branches(
         .map_err(|error| {
             api_error(
                 ctx,
-                crate::backend::api::error::repo_store_error(
+                crate::backend::api::http::error::repo_store_error(
                     error,
                     StatusCode::SERVICE_UNAVAILABLE,
                 ),

@@ -275,6 +275,197 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
     assert!(base.repo.find_reference("refs/pull/1/head").is_err());
 }
 
+/// A commit on `branch`, by `name`, made at Unix time `time`, that sets `path` to `content`.
+/// Without a branch the commit is made but no ref moves.
+fn commit_by_author(
+    repo: &git2::Repository,
+    branch: Option<&str>,
+    parent: git2::Oid,
+    name: &str,
+    time: i64,
+    path: &str,
+    content: &str,
+) -> git2::Oid {
+    let parent = repo.find_commit(parent).unwrap();
+    let tree = repo
+        .find_tree(with_file(
+            repo,
+            Some(&parent.tree().unwrap()),
+            path,
+            content,
+        ))
+        .unwrap();
+    let email = format!("{}@example.invalid", name.to_lowercase());
+    let author = git2::Signature::new(name, &email, &git2::Time::new(time, 0)).unwrap();
+    let update = branch.map(|branch| format!("refs/heads/{branch}"));
+    repo.commit(update.as_deref(), &author, &author, name, &tree, &[&parent])
+        .unwrap()
+}
+
+#[tokio::test]
+async fn commit_walk_gives_up_at_the_deadline_its_caller_set() {
+    let f = fixture().await;
+    let passed = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    assert!(f
+        .store
+        .commits_until("main", 0, 10, &CommitFilter::default(), passed)
+        .await
+        .is_err());
+    let ahead = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    assert!(!f
+        .store
+        .commits_until("main", 0, 10, &CommitFilter::default(), ahead)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn commit_history_filters_by_author_and_committer_time() {
+    let f = fixture().await;
+    // Two people, three commits at fixed times, on a branch that starts at the fixture's tip.
+    let ada_old = commit_by_author(
+        &f.repo,
+        Some("filtered"),
+        f.second,
+        "Ada",
+        1_700_000_000,
+        "notes.md",
+        "one\n",
+    );
+    let grace = commit_by_author(
+        &f.repo,
+        Some("filtered"),
+        ada_old,
+        "Grace",
+        1_750_000_000,
+        "notes.md",
+        "two\n",
+    );
+    let ada_new = commit_by_author(
+        &f.repo,
+        Some("filtered"),
+        grace,
+        "Ada",
+        1_800_000_000,
+        "notes.md",
+        "three\n",
+    );
+    let filter = |author: Option<&str>, since: Option<i64>, until: Option<i64>| CommitFilter {
+        author: author.map(str::to_owned),
+        since,
+        until,
+        message: None,
+    };
+    let shas = |commits: &[CommitInfo]| -> Vec<String> {
+        commits.iter().map(|commit| commit.sha.clone()).collect()
+    };
+    let (ada_old, grace, ada_new) = (ada_old.to_string(), grace.to_string(), ada_new.to_string());
+
+    // The author matches part of "Name <email>" in any case.
+    let by_ada = f
+        .store
+        .commits("filtered", 0, 10, &filter(Some("ADA"), None, None))
+        .await
+        .unwrap();
+    assert_eq!(shas(&by_ada), vec![ada_new.clone(), ada_old.clone()]);
+    // Dates are Unix seconds on the committer time: `since` keeps newer commits, `until` older.
+    let since = f
+        .store
+        .commits("filtered", 0, 10, &filter(None, Some(1_720_000_000), None))
+        .await
+        .unwrap();
+    assert_eq!(shas(&since)[..2], [ada_new.clone(), grace.clone()]);
+    assert!(!shas(&since).contains(&ada_old));
+    let until = f
+        .store
+        .commits("filtered", 0, 10, &filter(None, None, Some(1_760_000_000)))
+        .await
+        .unwrap();
+    assert_eq!(shas(&until), vec![grace.clone(), ada_old.clone()]);
+    // Filters combine, and paging counts only the commits that pass them.
+    let both = f
+        .store
+        .commits(
+            "filtered",
+            0,
+            10,
+            &filter(Some("ada"), Some(1_720_000_000), None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(shas(&both), vec![ada_new.clone()]);
+    let second_ada = f
+        .store
+        .commits("filtered", 1, 1, &filter(Some("ada"), None, None))
+        .await
+        .unwrap();
+    assert_eq!(shas(&second_ada), vec![ada_old.clone()]);
+
+    // A file history applies the same author and date filters.
+    let grace_notes = f
+        .store
+        .path_commits(
+            "filtered",
+            "notes.md",
+            0,
+            10,
+            &filter(Some("grace"), None, None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(shas(&grace_notes), vec![grace.clone()]);
+    let recent_notes = f
+        .store
+        .path_commits(
+            "filtered",
+            "notes.md",
+            0,
+            10,
+            &filter(None, Some(1_740_000_000), None),
+        )
+        .await
+        .unwrap();
+    assert_eq!(shas(&recent_notes), vec![ada_new, grace]);
+}
+
+#[tokio::test]
+async fn branch_statuses_count_divergence_from_the_default_branch() {
+    let f = fixture().await;
+    // `topic` starts at the first commit and adds one commit of its own.
+    let topic_tip = commit(
+        &f.repo,
+        "topic",
+        Some(f.first),
+        "topic.txt",
+        "topic\n",
+        "topic work",
+    );
+    let main = f.second.to_string();
+    let topic = topic_tip.to_string();
+    let first = f.first.to_string();
+
+    let statuses = f
+        .store
+        .branch_statuses(&main, &[topic, main.clone(), first])
+        .await
+        .unwrap();
+    // `topic` has one commit main lacks, and main has one commit it lacks.
+    assert_eq!((statuses[0].ahead, statuses[0].behind), (1, 1));
+    assert_eq!(
+        statuses[0].updated,
+        f.repo
+            .find_commit(topic_tip)
+            .unwrap()
+            .committer()
+            .when()
+            .seconds()
+    );
+    assert_eq!((statuses[1].ahead, statuses[1].behind), (0, 0));
+    // `first` is an ancestor of main, so only main's second commit is missing from it.
+    assert_eq!((statuses[2].ahead, statuses[2].behind), (0, 1));
+}
+
 #[tokio::test]
 async fn reads_return_owned_values_that_survive_json() {
     let f = fixture().await;
@@ -369,30 +560,67 @@ async fn reads_return_owned_values_that_survive_json() {
         .to_string();
     assert_eq!(f.store.blob_by_id(&readme_id).await.unwrap(), b"# hello\n");
 
-    let commits = round_trip(&f.store.commits("main", 0, 10).await.unwrap());
+    let commits = round_trip(
+        &f.store
+            .commits("main", 0, 10, &Default::default())
+            .await
+            .unwrap(),
+    );
     let shas: Vec<_> = commits.iter().map(|commit| commit.sha.as_str()).collect();
     assert_eq!(shas, vec![second.as_str(), first.as_str()]);
-    let next = f.store.commits("main", 1, 1).await.unwrap();
+    let next = f
+        .store
+        .commits("main", 1, 1, &Default::default())
+        .await
+        .unwrap();
     assert_eq!(next.len(), 1);
     assert_eq!(next[0].sha, first);
     assert!(f
         .store
-        .commits("main", MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE)
+        .commits(
+            "main",
+            MAX_COMMIT_OFFSET,
+            MAX_COMMIT_PAGE_SIZE,
+            &Default::default(),
+        )
         .await
         .unwrap()
         .is_empty());
     assert!(f
         .store
-        .commits("main", MAX_COMMIT_OFFSET + 1, 1)
+        .commits("main", MAX_COMMIT_OFFSET + 1, 1, &Default::default())
         .await
         .unwrap_err()
         .is_response_too_large());
     assert!(f
         .store
-        .commits("main", 0, MAX_COMMIT_PAGE_SIZE + 1)
+        .commits("main", 0, MAX_COMMIT_PAGE_SIZE + 1, &Default::default())
         .await
         .unwrap_err()
         .is_response_too_large());
+
+    // A path lists only the commits that changed it, newest first. A traversal part names no
+    // file, so it lists none.
+    let readme = f
+        .store
+        .path_commits("main", "README.md", 0, 10, &Default::default())
+        .await
+        .unwrap();
+    let readme_shas: Vec<_> = readme.iter().map(|commit| commit.sha.as_str()).collect();
+    assert_eq!(readme_shas, vec![first.as_str()]);
+    let library = f
+        .store
+        .path_commits("main", "src", 0, 10, &Default::default())
+        .await
+        .unwrap();
+    let library_shas: Vec<_> = library.iter().map(|commit| commit.sha.as_str()).collect();
+    assert_eq!(library_shas, vec![second.as_str()]);
+    assert!(f
+        .store
+        .path_commits("main", "../README.md", 0, 10, &Default::default())
+        .await
+        .unwrap()
+        .is_empty());
     let latest = round_trip(&f.store.commit(&second).await.unwrap());
     assert_eq!(latest.message.trim(), "second");
     assert_eq!(latest.parents, vec![first.clone()]);
@@ -551,6 +779,38 @@ async fn tree_reads_resolve_option_looking_refs() {
             f.first.to_string()
         );
     }
+}
+
+#[tokio::test]
+async fn commits_between_lists_only_the_commits_the_head_adds() {
+    let f = fixture().await;
+    let base = f.first.to_string();
+    let head = f.second.to_string();
+    let added = f.store.commits_between(&base, &head, 10).await.unwrap();
+    assert_eq!(
+        added
+            .iter()
+            .map(|commit| commit.sha.as_str())
+            .collect::<Vec<_>>(),
+        [head.as_str()]
+    );
+    assert!(f
+        .store
+        .commits_between(&head, &head, 10)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(f
+        .store
+        .commits_between(&base, &head, 0)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(f
+        .store
+        .commits_between(&base, &head, MAX_COMMIT_PAGE_SIZE + 1)
+        .await
+        .is_err());
 }
 
 #[tokio::test]
@@ -825,7 +1085,7 @@ async fn oversized_commit_and_tag_metadata_return_the_typed_too_large_error() {
         .is_response_too_large());
     assert!(f
         .store
-        .commits("large-commit", 0, 1)
+        .commits("large-commit", 0, 1, &Default::default())
         .await
         .unwrap_err()
         .is_response_too_large());

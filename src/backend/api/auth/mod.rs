@@ -11,7 +11,7 @@ pub mod session;
 pub mod setup;
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::{csrf, middleware};
+    use crate::backend::api::{http::csrf, http::middleware};
     use axum::{
         extract::DefaultBodyLimit,
         middleware::from_fn,
@@ -46,6 +46,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                 .route("/login", get(login::auth_get).post(login::auth_post))
                 .route("/register", get(login::auth_get).post(login::auth_post))
                 .route("/setup", get(login::auth_get).post(login::auth_post))
+                .route("/forgot-password", get(login::password_help_get))
                 .route("/logout", get(logout::logout_get).post(logout::logout_post))
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )

@@ -1,6 +1,7 @@
 use super::OperationError;
 use crate::backend::db;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
+use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
 use serde::Deserialize;
 #[derive(Deserialize)]
@@ -56,6 +57,22 @@ pub async fn create_issue(
         .map_err(super::write_error)?;
 
     let link = format!("/{owner}/{repo}/issues/{}", issue.number);
+    let notified = notify_watchers(
+        pool,
+        broadcaster,
+        WatchedItem {
+            event: WatchEvent::Issue,
+            actor: &user,
+            repository: &repository,
+            owner: &owner,
+            repo: &repo,
+            number: issue.number,
+            title: &issue.title,
+            link: &link,
+            notified: &[],
+        },
+    )
+    .await;
     notify_mentions(
         pool,
         broadcaster,
@@ -65,10 +82,11 @@ pub async fn create_issue(
             owner: &owner,
             repo: &repo,
             number: issue.number,
+            subject: &issue.title,
             link: &link,
             old_text: None,
             text: body,
-            notified: &[],
+            notified: &notified,
         },
     )
     .await;
@@ -172,6 +190,38 @@ pub async fn update_issue(
                 .to_owned(),
     })?;
 
+    let subject = db::timeline::Subject::Issue;
+    if issue.title != existing.title {
+        db::timeline::record(
+            pool,
+            repository.id,
+            subject,
+            existing.id,
+            user.id,
+            "renamed",
+            &issue.title,
+            &existing.title,
+        )
+        .await;
+    }
+    if issue.state != existing.state {
+        let kind = if issue.state == "closed" {
+            "closed"
+        } else {
+            "reopened"
+        };
+        db::timeline::record(
+            pool,
+            repository.id,
+            subject,
+            existing.id,
+            user.id,
+            kind,
+            "",
+            "",
+        )
+        .await;
+    }
     if let Some(body) = req.body.as_deref() {
         let link = format!("/{owner}/{repo}/issues/{number}");
         notify_mentions(
@@ -183,6 +233,7 @@ pub async fn update_issue(
                 owner: &owner,
                 repo: &repo,
                 number,
+                subject: &issue.title,
                 link: &link,
                 old_text: Some(&existing.body),
                 text: body,

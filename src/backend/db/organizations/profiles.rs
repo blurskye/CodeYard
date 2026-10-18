@@ -27,8 +27,8 @@ native_operation!(crate::backend::db::postgres::organizations::profiles::list_ac
 native_operation!(crate::backend::db::postgres::organizations::profiles::list_repository_creation_organizations, crate::backend::db::sqlite::organizations::profiles::list_repository_creation_organizations,
     fn list_repository_creation_organizations(pool: &DbPool, actor: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<OrganizationMetadata>>>);
 
-// Exact, case-sensitive namespace like current users.username equality/UNIQUE.
-// Do not lowercase, rename historical identities, or conflate routing namespaces.
+// Exact, case-sensitive namespace, matching the equality and UNIQUE rules of users.username.
+// Do not lowercase identities or conflate routing namespaces.
 pub(super) fn validate_slug(value: &str) -> std::result::Result<(), OrganizationInputError> {
     if !(3..=1024).contains(&value.len())
         || value.chars().count() > 255

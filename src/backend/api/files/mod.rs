@@ -6,7 +6,7 @@ mod file;
 mod public;
 mod stats;
 
-use crate::backend::{api::error::ApiError, app::AppState};
+use crate::backend::{api::http::error::ApiError, app::AppState};
 use axum::{
     http::StatusCode,
     middleware::from_fn,
@@ -47,9 +47,9 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/api/files/:file_id", delete(file::delete_file))
         .route_layer(from_fn(
-            crate::backend::api::middleware::require_node_access,
+            crate::backend::api::http::middleware::require_node_access,
         ))
         .layer(from_fn(
-            crate::backend::api::middleware::private_api_response,
+            crate::backend::api::http::middleware::private_api_response,
         ))
 }

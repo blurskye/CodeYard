@@ -41,7 +41,6 @@ pub async fn list_user_activity(
                    NULL, NULL, NULL, NULL
             FROM repositories r
             WHERE r.created_by_id = ?1
-               OR (r.created_by_id IS NULL AND r.owner_kind = 'user' AND r.owner_user_id = ?1)
             UNION ALL
             SELECT 'issue_opened', i.id, i.repo_id, i.created_at,
                    i.number, i.title, NULL, NULL
@@ -69,6 +68,7 @@ pub async fn list_user_activity(
             FROM pr_comments c
             JOIN pull_requests p ON p.id = c.pull_request_id
             WHERE c.author_id = ?1
+            AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = c.review_id AND v.state = 'pending')
         )
         SELECT a.kind, a.item_id, a.repo_id, a.created_at, a.number, a.title, a.branch,
                a.commit_count, COALESCE(users.username, organizations.name) AS owner_name,

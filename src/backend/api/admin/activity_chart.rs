@@ -1,6 +1,6 @@
 use crate::backend::api::admin::accounts::require_admin_user;
 use crate::backend::api::auth::errors::database_failure;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::app::AppState;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};

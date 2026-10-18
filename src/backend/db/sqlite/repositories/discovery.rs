@@ -1,11 +1,14 @@
-use crate::backend::db::sqlite::search::{collect_matches, Pattern};
+use super::access::readable_condition;
+use crate::backend::db::sqlite::search::contains;
 use crate::backend::db::{
-    models::{Issue, Repository, User},
-    repositories::discovery::{NewForkedRepository, RepositorySearch},
+    models::{Issue, PullRequest, Repository, User},
+    repositories::{
+        discovery::{repository_order_by, ItemSort, NewForkedRepository, RepositorySearch},
+        records::RepositorySort,
+    },
 };
 use anyhow::{ensure, Result};
-use futures::StreamExt;
-use sqlx::{sqlite::SqliteRow, FromRow, Row, SqlitePool};
+use sqlx::SqlitePool;
 
 pub async fn create_forked_repository(
     pool: &SqlitePool,
@@ -46,102 +49,198 @@ pub async fn list_forks(
     .await?)
 }
 
+/// Joins the owner of `r` and the viewer, which the access projection reads as `u`. `?1` is the
+/// viewer.
+const OWNER_JOINS: &str = "LEFT JOIN users ON r.owner_kind='user' AND r.owner_user_id=users.id \
+    LEFT JOIN organizations ON r.owner_kind='org' AND r.owner_org_id=organizations.id \
+    LEFT JOIN users u ON u.id = ?1";
+
+const OWNER_NAME: &str = "COALESCE(users.username, organizations.name)";
+
+/// The repositories `search` names. Text matches the name, description or owner. An owned search
+/// matches the owner exactly and the name within it. The text is bound at `?2`; an owned search
+/// binds its name at `?3`.
+fn repository_match(search: &RepositorySearch<'_>) -> String {
+    match search {
+        RepositorySearch::Text(_) => {
+            format!("(r.name REGEXP ?2 OR r.description REGEXP ?2 OR {OWNER_NAME} REGEXP ?2)")
+        }
+        RepositorySearch::Owned { .. } => format!("{OWNER_NAME} = ?2 AND r.name REGEXP ?3"),
+    }
+}
+
 pub async fn search_repositories(
     pool: &SqlitePool,
+    viewer: Option<i64>,
     query: &str,
+    sort: RepositorySort,
+    offset: i64,
     limit: i64,
 ) -> Result<Vec<Repository>> {
+    ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    // Each row is read with its owner's name, which the matcher needs.
-    let rows = match RepositorySearch::parse(query) {
-        RepositorySearch::Text(text) => {
-            let pattern = Pattern::contains(text);
-            // Read public repositories through the ordered index so SQLite does not sort them all
-            // before the matching budget applies.
-            let rows = sqlx::query(
-                "SELECT repositories.*, COALESCE(users.username, organizations.name) AS owner_name \
-                 FROM repositories INDEXED BY idx_repositories_public_search \
-                 LEFT JOIN users ON repositories.owner_kind='user' AND repositories.owner_user_id=users.id \
-                 LEFT JOIN organizations ON repositories.owner_kind='org' AND repositories.owner_org_id=organizations.id \
-                 WHERE NOT repositories.is_private \
-                 ORDER BY repositories.stars_count DESC,repositories.updated_at DESC",
-            )
-            .fetch(pool)
-            .map(repository_with_owner);
-            collect_matches(rows, &pattern, limit, |(repo, owner)| {
-                [
-                    Some(repo.name.as_str()),
-                    repo.description.as_deref(),
-                    Some(owner.as_str()),
-                ]
-            })
-            .await?
-        }
-        RepositorySearch::Owned { owner, name } => {
-            let pattern = Pattern::contains(name);
-            let rows = sqlx::query(
-                "SELECT repositories.*, COALESCE(users.username, organizations.name) AS owner_name \
-                 FROM repositories \
-                 LEFT JOIN users ON repositories.owner_kind='user' AND repositories.owner_user_id=users.id \
-                 LEFT JOIN organizations ON repositories.owner_kind='org' AND repositories.owner_org_id=organizations.id \
-                 WHERE NOT repositories.is_private \
-                   AND COALESCE(users.username, organizations.name) = ?1 \
-                 ORDER BY repositories.stars_count DESC,repositories.updated_at DESC",
-            )
-            .bind(owner)
-            .fetch(pool)
-            .map(repository_with_owner);
-            collect_matches(rows, &pattern, limit, |(repo, _)| {
-                [Some(repo.name.as_str()), None, None]
-            })
-            .await?
-        }
+    let search = RepositorySearch::parse(query);
+    // The paging placeholders follow the match's binds: one for text, two for an owned search.
+    let (limit_at, offset_at) = match &search {
+        RepositorySearch::Text(_) => (3, 4),
+        RepositorySearch::Owned { .. } => (4, 5),
     };
-    Ok(rows.into_iter().map(|(repo, _)| repo).collect())
+    let sql = format!(
+        "SELECT r.* FROM repositories r {OWNER_JOINS} WHERE {} AND {} ORDER BY {} LIMIT ?{limit_at} OFFSET ?{offset_at}",
+        readable_condition(),
+        repository_match(&search),
+        repository_order_by(sort)
+    );
+    let statement = sqlx::query_as::<_, Repository>(&sql).bind(viewer);
+    let statement = match search {
+        RepositorySearch::Text(text) => statement.bind(contains(text)),
+        RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
+    };
+    Ok(statement.bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
-fn repository_with_owner(
-    row: std::result::Result<SqliteRow, sqlx::Error>,
-) -> std::result::Result<(Repository, String), sqlx::Error> {
-    let row = row?;
-    let owner: String = row.try_get("owner_name")?;
-    Ok((Repository::from_row(&row)?, owner))
+pub async fn count_repositories(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    query: &str,
+    cap: i64,
+) -> Result<i64> {
+    let search = RepositorySearch::parse(query);
+    // The cap follows the match's binds: one for text, two for an owned search.
+    let cap_at = match &search {
+        RepositorySearch::Text(_) => 3,
+        RepositorySearch::Owned { .. } => 4,
+    };
+    let sql = format!(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM repositories r {OWNER_JOINS} WHERE {} AND {} LIMIT ?{cap_at}) AS matches",
+        readable_condition(),
+        repository_match(&search)
+    );
+    let statement = sqlx::query_scalar::<_, i64>(&sql).bind(viewer);
+    let statement = match search {
+        RepositorySearch::Text(text) => statement.bind(contains(text)),
+        RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
+    };
+    Ok(statement.bind(cap).fetch_one(pool).await?)
 }
 
-pub async fn search_issues(pool: &SqlitePool, query: &str, limit: i64) -> Result<Vec<Issue>> {
+pub async fn search_issues(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    query: &str,
+    sort: ItemSort,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Issue>> {
+    ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let pattern = Pattern::contains(query);
-    // Keep issues as the outer ordered scan so SQLite cannot sort all public issues
-    // before yielding the first row to the matching budget.
-    let rows = sqlx::query_as::<_, Issue>(
-        "SELECT i.* FROM issues i INDEXED BY idx_issues_updated_at CROSS JOIN repositories r ON r.id=i.repo_id WHERE NOT r.is_private ORDER BY i.updated_at DESC",
+    let sql = format!(
+        "SELECT i.* FROM issues i CROSS JOIN repositories r ON r.id=i.repo_id \
+         LEFT JOIN users u ON u.id = ?1 \
+         WHERE {} AND (i.title REGEXP ?2 OR i.body REGEXP ?2) ORDER BY {} LIMIT ?3 OFFSET ?4",
+        readable_condition(),
+        sort.order_by("i")
+    );
+    Ok(sqlx::query_as::<_, Issue>(&sql)
+        .bind(viewer)
+        .bind(contains(query))
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?)
+}
+
+pub async fn count_issues(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    query: &str,
+    cap: i64,
+) -> Result<i64> {
+    let sql = format!(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM issues i CROSS JOIN repositories r ON r.id=i.repo_id \
+         LEFT JOIN users u ON u.id = ?1 \
+         WHERE {} AND (i.title REGEXP ?2 OR i.body REGEXP ?2) LIMIT ?3) AS matches",
+        readable_condition()
+    );
+    Ok(sqlx::query_scalar::<_, i64>(&sql)
+        .bind(viewer)
+        .bind(contains(query))
+        .bind(cap)
+        .fetch_one(pool)
+        .await?)
+}
+
+pub async fn search_pull_requests(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    query: &str,
+    sort: ItemSort,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<PullRequest>> {
+    ensure!(offset >= 0, "Result offset must be nonnegative");
+    ensure!(limit >= 0, "Result limit must be nonnegative");
+    let sql = format!(
+        "SELECT p.* FROM pull_requests p CROSS JOIN repositories r ON r.id=p.repo_id \
+         LEFT JOIN users u ON u.id = ?1 \
+         WHERE {} AND (p.title REGEXP ?2 OR p.body REGEXP ?2) ORDER BY {} LIMIT ?3 OFFSET ?4",
+        readable_condition(),
+        sort.order_by("p")
+    );
+    Ok(sqlx::query_as::<_, PullRequest>(&sql)
+        .bind(viewer)
+        .bind(contains(query))
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?)
+}
+
+pub async fn count_pull_requests(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    query: &str,
+    cap: i64,
+) -> Result<i64> {
+    let sql = format!(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM pull_requests p CROSS JOIN repositories r ON r.id=p.repo_id \
+         LEFT JOIN users u ON u.id = ?1 \
+         WHERE {} AND (p.title REGEXP ?2 OR p.body REGEXP ?2) LIMIT ?3) AS matches",
+        readable_condition()
+    );
+    Ok(sqlx::query_scalar::<_, i64>(&sql)
+        .bind(viewer)
+        .bind(contains(query))
+        .bind(cap)
+        .fetch_one(pool)
+        .await?)
+}
+
+pub async fn search_users(
+    pool: &SqlitePool,
+    query: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<User>> {
+    ensure!(offset >= 0, "Result offset must be nonnegative");
+    ensure!(limit >= 0, "Result limit must be nonnegative");
+    Ok(sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 \
+         ORDER BY username, id LIMIT ?2 OFFSET ?3",
     )
-    .fetch(pool);
-    collect_matches(rows, &pattern, limit, |issue| {
-        [Some(issue.title.as_str()), Some(issue.body.as_str()), None]
-    })
-    .await
+    .bind(contains(query))
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?)
 }
 
-pub async fn search_users(pool: &SqlitePool, query: &str, limit: i64) -> Result<Vec<User>> {
-    ensure!(limit >= 0, "Result limit must be nonnegative");
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-    let pattern = Pattern::contains(query);
-    let rows = sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY username").fetch(pool);
-    collect_matches(rows, &pattern, limit, |user| {
-        [
-            Some(user.username.as_str()),
-            user.display_name.as_deref(),
-            None,
-        ]
-    })
-    .await
+pub async fn count_users(pool: &SqlitePool, query: &str, cap: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 LIMIT ?2) AS matches",
+    )
+    .bind(contains(query))
+    .bind(cap)
+    .fetch_one(pool)
+    .await?)
 }

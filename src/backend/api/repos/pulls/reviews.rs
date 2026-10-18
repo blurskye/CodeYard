@@ -1,7 +1,7 @@
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::api::repos::chrome::{json_page, PageQuery};
-use crate::backend::api::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -73,7 +73,7 @@ pub async fn dismiss_pull_request_review(
         .map_err(super::operation_error)?;
     let author = db::users::accounts::get_user_by_id(&state.pool, dismissed.author_id)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
     Ok(Json(PullRequestReviewResponse {
         id: dismissed.id,
@@ -169,7 +169,7 @@ pub async fn list_pull_request_reviews(
 
     let mut responses = Vec::with_capacity(reviews.len());
     for entry in reviews {
-        let author = entry.author.as_ref().map(UserResponse::from_display);
+        let author = Some(UserResponse::from_display(&entry.author));
         let review = entry.review;
         responses.push(PullRequestReviewResponse {
             id: review.id,

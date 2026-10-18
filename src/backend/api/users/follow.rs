@@ -1,6 +1,6 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session::{get_current_user, get_optional_user};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::{get_current_user, get_optional_user};
 use crate::backend::api::user::responses::{field, mutation_guard, public_api_message, Fields};
 use crate::backend::api::users::profile::profile_response;
 use crate::backend::app::AppState;

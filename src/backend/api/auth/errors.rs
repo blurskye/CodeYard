@@ -1,6 +1,6 @@
 //! HTTP projection of concrete identity operation failures. No driver text escapes.
 
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::identity::accounts::{
     BanError, ManagedAccountError, PasswordChangeError, SignupReviewError,
 };

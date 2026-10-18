@@ -1,9 +1,9 @@
 //! Public profile activity: pushes, issues, pull requests and comments, newest first.
-use crate::backend::api::{error::ApiError, session::get_optional_user};
+use crate::backend::api::{http::error::ApiError, http::session::get_optional_user};
 use crate::backend::app::AppState;
 use crate::backend::db::{self, activity::ActivityRow};
 use crate::backend::identity::activity::{self, ActivityPage};
-use crate::webui::pages::identity::{ProfileActivity, ProfileActivityItem};
+use crate::webui::pages::users::{ProfileActivity, ProfileActivityItem};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;

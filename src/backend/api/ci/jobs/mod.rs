@@ -5,7 +5,7 @@ pub mod history;
 pub mod job;
 pub mod logs;
 use crate::backend::{
-    api::{error::ApiError, session::get_current_user},
+    api::{http::error::ApiError, http::session::get_current_user},
     app::AppState,
     db,
 };

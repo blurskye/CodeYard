@@ -83,6 +83,27 @@ pub async fn list_repo_labels(pool: &PgPool, repo_id: i64) -> Result<Vec<Label>>
     Ok(labels)
 }
 
+/// Each label of the repository with the number of issues and pull requests it is on, as
+/// `(label id, count)`.
+pub async fn list_label_usage(pool: &PgPool, repo_id: i64) -> Result<Vec<(i64, i64)>> {
+    let usage = sqlx::query_as::<_, (i64, i64)>(
+        r"SELECT l.id, COUNT(u.label_id)
+        FROM labels l
+        LEFT JOIN (
+            SELECT label_id FROM issue_labels
+            UNION ALL
+            SELECT label_id FROM pr_labels
+        ) u ON u.label_id = l.id
+        WHERE l.repo_id = $1
+        GROUP BY l.id",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(usage)
+}
+
 pub async fn update_label(
     pool: &PgPool,
     actor_id: i64,

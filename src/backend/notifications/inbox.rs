@@ -25,6 +25,11 @@ pub async fn inbox(
         NotificationInboxAction::ReadAll => Some(None),
         _ => None,
     };
+    // Marking done takes a notification out of the unread count, so it is announced too.
+    let marks_done = matches!(
+        action,
+        NotificationInboxAction::Done { .. } | NotificationInboxAction::DoneAll { .. }
+    );
     let result = records::notification_inbox(pool, session_id, user_id, action)
         .await
         .map_err(|_| InboxError::Unavailable)?
@@ -48,6 +53,14 @@ pub async fn inbox(
                 .await
         }
         _ => {}
+    }
+    if marks_done && result.updated > 0 {
+        broadcaster
+            .send(NotificationEvent::UnreadCount {
+                user_id,
+                unread_count: result.unread_count,
+            })
+            .await;
     }
     Ok(result)
 }

@@ -1,10 +1,10 @@
 //! A user's own picture through the JSON API: point it at one of their confirmed
 //! `avatar` uploads, or take it away.
 
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::pictures;
-use crate::backend::api::session::get_current_user;
 use crate::backend::api::user::profile::settings_response;
 use crate::backend::api::user::responses::{
     require_account, Fields, PublicUserResponse as UserResponse,

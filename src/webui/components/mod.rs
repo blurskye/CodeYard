@@ -2,9 +2,12 @@ mod avatar;
 pub mod code;
 mod copy;
 mod forms;
+pub mod languages;
 mod markdown;
 mod markdown_html;
 mod markdown_toolbar;
+#[cfg(target_arch = "wasm32")]
+pub mod menu;
 pub mod references;
 mod shell;
 mod theme;
@@ -12,13 +15,15 @@ mod theme;
 pub use avatar::Avatar;
 pub use copy::CopyButton;
 pub use forms::{
-    draft_text, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, FieldError, SelectOption,
+    draft_text, submit_form, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, FieldError,
+    SelectOption,
 };
 pub use markdown::{
-    escape_html, markdown_tab_class, parse_markdown, LinkBase, Markdown, RepoMarkdown,
+    document_outline, escape_html, markdown_tab_class, parse_markdown, LinkBase, Markdown,
+    OutlineEntry, RepoMarkdown,
 };
 pub use markdown_toolbar::MarkdownToolbar;
-pub use shell::shell;
+pub use shell::{shell, shell_at, SiteSearch};
 pub use theme::{ThemeForm, ThemeSaved};
 
 /// The wording of every count badge: "1 node", "0 nodes", "2 branches".
@@ -41,6 +46,46 @@ pub fn compact_date(value: &str) -> String {
                 .map(|date| date.format("%b %-d, %Y").to_string())
         })
         .unwrap_or_else(|_| value.to_owned())
+}
+
+/// The current time. Browsers have no `SystemTime` on wasm, so the page asks its own clock there.
+pub fn current_time() -> chrono::DateTime<chrono::Utc> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        chrono::DateTime::from_timestamp_millis(js_sys::Date::now() as i64)
+            .unwrap_or_else(chrono::Utc::now)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        chrono::Utc::now()
+    }
+}
+
+/// A time as an age, as GitHub shows it: "3 days ago". `None` when `value` is not an RFC 3339
+/// time, so the caller shows the text as it is.
+pub fn relative_date(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let then = chrono::DateTime::parse_from_rfc3339(value)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    Some(relative_age(then, now))
+}
+
+/// The age of `then` at `now`: "just now", "5 minutes ago", "3 months ago".
+pub fn relative_age(
+    then: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    let seconds = (now - then).num_seconds().max(0);
+    let (count, unit) = match seconds {
+        0..=59 => return "just now".to_owned(),
+        60..=3_599 => (seconds / 60, "minute"),
+        3_600..=86_399 => (seconds / 3_600, "hour"),
+        86_400..=2_591_999 => (seconds / 86_400, "day"),
+        2_592_000..=31_535_999 => (seconds / 2_592_000, "month"),
+        _ => (seconds / 31_536_000, "year"),
+    };
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{count} {unit}{plural} ago")
 }
 
 /// A byte count in binary units: "512 B", "148.5 KiB", "3.2 GiB".
@@ -153,8 +198,6 @@ pub(crate) fn patch_rows(patch: &str) -> Vec<PatchRow<'_>> {
         .collect()
 }
 
-/// Keep patch prefixes and newlines intact; Dioxus escapes each line as text. The line
-/// numbers are attributes that CSS draws, so copying a diff copies only its text.
 /// The digit count the gutters must fit, when it is more than the four they fit by default.
 /// CSS widens them for a change far into a very long file.
 pub(crate) fn patch_gutter_digits(rows: &[PatchRow<'_>]) -> Option<String> {
@@ -165,19 +208,6 @@ pub(crate) fn patch_gutter_digits(rows: &[PatchRow<'_>]) -> Option<String> {
         .max()
         .map_or(0, |number| number.to_string().len());
     (digits > 4).then(|| digits.to_string())
-}
-
-pub fn patch_lines(patch: &str) -> dioxus::prelude::Element {
-    use dioxus::prelude::*;
-    let rows = patch_rows(patch);
-    let digits = patch_gutter_digits(&rows);
-    let lines = rows.into_iter().filter(|row| !row.header).map(|row| {
-        let (class, text) = (row.class, row.text);
-        let old = row.old.map(|number| number.to_string());
-        let new = row.new.map(|number| number.to_string());
-        rsx! { span { class, "data-old": old, "data-new": new, "{text}" } }
-    });
-    rsx! { code { class: "patch-lines", "data-digits": digits, {lines} } }
 }
 
 /// The badges of a changed file's header: what its status and git header say beyond the line
@@ -298,26 +328,15 @@ mod tests {
     }
 
     #[test]
-    fn rendered_rows_keep_the_original_text_and_carry_numbers_as_attributes() {
-        let html = dioxus_ssr::render_element(patch_lines("@@ -7 +7 @@\n a\n-b\n+<c>\n"));
-        assert!(html.contains("<span class=\"patch-line patch-hunk\">@@ -7 +7 @@\n</span>"));
-        assert!(
-            html.contains("<span class=\"patch-line\" data-old=\"7\" data-new=\"7\"> a\n</span>")
-        );
-        assert!(
-            html.contains("<span class=\"patch-line patch-deletion\" data-old=\"8\">-b\n</span>")
-        );
-        assert!(html.contains(
-            "<span class=\"patch-line patch-addition\" data-new=\"8\">+&#60;c&#62;\n</span>"
-        ));
-    }
-
-    #[test]
     fn wide_line_numbers_name_their_digit_count_and_ordinary_diffs_do_not() {
-        let ordinary = dioxus_ssr::render_element(patch_lines("@@ -9999 +9999 @@\n a\n"));
-        assert!(!ordinary.contains("data-digits"));
-        let wide = dioxus_ssr::render_element(patch_lines("@@ -999999 +1000000 @@\n a\n"));
-        assert!(wide.contains("<code class=\"patch-lines\" data-digits=\"7\">"));
+        assert_eq!(
+            patch_gutter_digits(&patch_rows("@@ -9999 +9999 @@\n a\n")),
+            None
+        );
+        assert_eq!(
+            patch_gutter_digits(&patch_rows("@@ -999999 +1000000 @@\n a\n")).as_deref(),
+            Some("7")
+        );
     }
 
     #[test]
@@ -328,11 +347,6 @@ mod tests {
             headers,
             [true, true, true, true, true, true, true, false, false, false, true, true, false]
         );
-        let html = dioxus_ssr::render_element(patch_lines(patch));
-        assert!(!html.contains("diff --git"));
-        assert!(!html.contains("index 1..2"));
-        assert!(html.contains("--- kept"));
-        assert!(html.contains("Binary files a/logo.png and b/logo.png differ"));
     }
 
     #[test]

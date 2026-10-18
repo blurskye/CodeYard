@@ -1,12 +1,12 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::pulls::pull::*;
-use crate::backend::api::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::collaboration::DetailDraft;
-use crate::webui::pages::collaboration::Kind;
+use crate::webui::pages::repos::issues::DetailDraft;
+use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -36,7 +36,7 @@ pub async fn mark_pull_request_ready(
         .map_err(super::operation_error)?;
     let author = db::users::accounts::get_user_by_id(&state.pool, pull_request.author_id)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
     Ok(Json(
         detail_response(

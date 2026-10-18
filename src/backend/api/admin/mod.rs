@@ -8,7 +8,7 @@ pub(crate) mod storage;
 pub(crate) mod users;
 
 use crate::backend::{
-    api::{csrf, middleware},
+    api::{http::csrf, http::middleware},
     app::AppState,
 };
 use axum::{
@@ -55,7 +55,7 @@ pub fn router() -> Router<Arc<AppState>> {
         // The account list is on the overview; this is the address people try first.
         .route(
             "/admin/users",
-            get(|| async { crate::backend::api::render::redirect_response("/admin") }),
+            get(|| async { crate::backend::api::http::render::redirect_response("/admin") }),
         )
         .route("/admin/access/users", post(users::managed_user_post))
         .route("/admin/ai-crawlers", post(ai_crawlers::ai_crawlers_post))

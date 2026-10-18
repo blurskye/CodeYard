@@ -1,15 +1,15 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::api::repos::labels::LabelResponse;
 use crate::backend::api::repos::pulls::pull::*;
-use crate::backend::api::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::issues::mutations::UpdateIssueRequest;
-use crate::webui::pages::collaboration::DetailDraft;
-use crate::webui::pages::collaboration::Kind;
+use crate::webui::pages::repos::issues::DetailDraft;
+use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -41,10 +41,10 @@ pub async fn update_issue(
     .map_err(super::operation_error)?;
     let author = db::users::accounts::get_user_by_id(&state.pool, issue.author_id)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
     let response = load_issue_response(&state.pool, issue, author.map(UserResponse::from))
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
     Ok(Json(response))
 }
@@ -154,10 +154,10 @@ pub async fn get_issue(
 
     let author = db::users::accounts::get_user_by_id(&state.pool, issue.author_id)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
     let response = load_issue_response(&state.pool, issue, author.map(UserResponse::from))
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
     Ok(Json(response))
 }
@@ -390,7 +390,7 @@ pub(crate) async fn native_change_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::webui::pages::collaboration as view;
+    use crate::webui::pages::repos::issues as view;
     fn value() -> view::Item {
         view::Item {
             number: 1,
@@ -407,6 +407,13 @@ mod tests {
             updated: "revision-2".into(),
             labels: vec![],
             comparison: None,
+            comment_count: 0,
+            commit_count: None,
+            file_count: None,
+            check_count: 0,
+            review_state: None,
+            check_state: None,
+            reactions: Vec::new(),
         }
     }
     #[test]

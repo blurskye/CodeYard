@@ -58,7 +58,6 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                             AND tm.user_id = u.id AND tm.role IN ('member','maintainer')
                         WHERE a.repo_id = r.id AND a.permission BETWEEN 1 AND 5
                             AND t.privacy IN ('visible','secret')
-                            AND t.parent_team_id IS NULL
                     ), 0) ELSE 0 END
                 FROM organizations o JOIN org_memberships m ON m.org_id = o.id
                 WHERE r.owner_kind = 'org' AND r.owner_user_id IS NULL
@@ -73,6 +72,15 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                 THEN 1 ELSE 6 END)
         ELSE 0 END)::smallint
     "#;
+
+/// Whether repository `r` is readable by the viewer, whom the query joins as `u` (NULL for an
+/// anonymous visitor). It follows `repositories::access::can_read`: public repositories, the
+/// personal repositories of a site admin, and the access projection for everything else.
+pub(crate) fn readable_condition() -> String {
+    format!(
+        "(NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1)"
+    )
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum RepositoryRowLock {
@@ -202,7 +210,7 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
         .await?;
 
         let team_ids: Vec<i64> = sqlx::query_scalar(
-            "SELECT t.id FROM teams t WHERE t.org_id=$1 AND t.privacy IN ('visible','secret') AND t.parent_team_id IS NULL AND EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$2 AND m.role IN ('member','maintainer')) AND EXISTS(SELECT 1 FROM team_repo_access a WHERE a.team_id=t.id AND a.repo_id=$3 AND a.permission BETWEEN 1 AND 5) ORDER BY t.id FOR SHARE OF t",
+            "SELECT t.id FROM teams t WHERE t.org_id=$1 AND t.privacy IN ('visible','secret') AND EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$2 AND m.role IN ('member','maintainer')) AND EXISTS(SELECT 1 FROM team_repo_access a WHERE a.team_id=t.id AND a.repo_id=$3 AND a.permission BETWEEN 1 AND 5) ORDER BY t.id FOR SHARE OF t",
         )
         .bind(org_id)
         .bind(user_id)

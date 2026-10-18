@@ -49,8 +49,8 @@ impl CiRun {
         }
     }
 
-    /// Released protection rules use these names; each requires all matching sources.
-    pub fn legacy_commit_status_context(&self) -> String {
+    /// A protection rule may require this shorter name. Every run that shares it must pass.
+    pub fn alias_commit_status_context(&self) -> String {
         let name = if self.workflow_path.contains(',') {
             &self.pipeline
         } else {
@@ -95,12 +95,12 @@ mod tests {
         );
         assert_eq!(runs[4].commit_status_context(), "gitserv/pipeline/ci");
         assert_eq!(
-            runs[0].legacy_commit_status_context(),
-            runs[1].legacy_commit_status_context()
+            runs[0].alias_commit_status_context(),
+            runs[1].alias_commit_status_context()
         );
         assert_eq!(
-            runs[3].legacy_commit_status_context(),
-            runs[4].legacy_commit_status_context()
+            runs[3].alias_commit_status_context(),
+            runs[4].alias_commit_status_context()
         );
         let path = format!(".github/workflows/{}.yml", "a".repeat(240));
         assert_eq!(

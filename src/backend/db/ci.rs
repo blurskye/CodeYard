@@ -118,6 +118,10 @@ native_operation!(crate::backend::db::postgres::ci::latest_ci_runs_for_commit,
     /// Runs that belong to another pull request with the same head commit are left out.
     fn latest_ci_runs_for_commit(pool: &DbPool, repo_id: i64, sha: &str, pull_request_id: i64) -> Result<Vec<CiRun>>);
 
+native_operation!(crate::backend::db::postgres::ci::list_pull_request_check_statuses,
+    crate::backend::db::sqlite::ci::list_pull_request_check_statuses,
+    fn list_pull_request_check_statuses(pool: &DbPool, pull_request_ids: &[i64]) -> Result<Vec<(i64, String)>>);
+
 native_operation!(crate::backend::db::postgres::ci::list_ci_runs_for_user,
     crate::backend::db::sqlite::ci::list_ci_runs_for_user,
     fn list_ci_runs_for_user(pool: &DbPool, user_id: i64, limit: i64) -> Result<Vec<CiRun>>);

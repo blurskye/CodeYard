@@ -53,6 +53,13 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::list_ope
     branches: &[&str],
 ) -> Result<Vec<PullRequestRevisions>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::list_open_pull_requests_from_branches,
+    crate::backend::db::sqlite::pull_requests::records::list_open_pull_requests_from_branches,
+    fn list_open_pull_requests_from_branches(
+    pool: &DbPool,
+    repo_id: i64,
+) -> Result<Vec<PullRequest>>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::records::move_open_pull_request_head,
     crate::backend::db::sqlite::pull_requests::records::move_open_pull_request_head,
     fn move_open_pull_request_head(
@@ -125,6 +132,30 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::list_rep
 native_operation!(crate::backend::db::postgres::pull_requests::records::count_repo_pull_requests,
     crate::backend::db::sqlite::pull_requests::records::count_repo_pull_requests,
     fn count_repo_pull_requests(pool: &DbPool, repo_id: i64, search: Option<&str>) -> Result<StateCounts>);
+
+/// The pull requests a signed-in user is involved in: assigned to them, opened by them, or waiting
+/// for their review. `Involved` is all three, each pull request once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRequestRelation {
+    Assigned,
+    Created,
+    ReviewRequested,
+    Involved,
+}
+
+native_operation!(crate::backend::db::postgres::pull_requests::records::list_viewer_pull_requests,
+    crate::backend::db::sqlite::pull_requests::records::list_viewer_pull_requests,
+    fn list_viewer_pull_requests(
+    pool: &DbPool,
+    viewer_id: i64,
+    relation: PullRequestRelation,
+    open: bool,
+    limit: i64,
+) -> Result<Vec<ViewerPullRequestEntry>>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::records::count_viewer_pull_requests,
+    crate::backend::db::sqlite::pull_requests::records::count_viewer_pull_requests,
+    fn count_viewer_pull_requests(pool: &DbPool, viewer_id: i64, relation: PullRequestRelation) -> Result<StateCounts>);
 
 /// A new base branch for an open pull request, and the commit it points at now.
 pub struct NewBase<'a> {
@@ -433,8 +464,16 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::mark_pul
 #[derive(Debug, Clone)]
 pub struct PullRequestListEntry {
     pub pull_request: PullRequest,
-    pub author: Option<crate::backend::db::users::accounts::AuthorDisplay>,
+    pub author: crate::backend::db::users::accounts::AuthorDisplay,
     pub head_repository: Option<PullRequestHeadDisplay>,
+}
+
+/// A pull request with the owner and name of its repository, for a link to it.
+#[derive(Debug, Clone)]
+pub struct ViewerPullRequestEntry {
+    pub pull_request: PullRequest,
+    pub repo_owner: String,
+    pub repo_name: String,
 }
 
 /// Display only; never substitutes for current repository access or placement.

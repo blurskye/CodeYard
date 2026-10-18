@@ -1088,7 +1088,7 @@ dependencies = [
 
 [[package]]
 name = "codeyard"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes-gcm 0.10.3",
  "anyhow",
@@ -6157,6 +6157,7 @@ dependencies = [
  "libsqlite3-sys",
  "log",
  "percent-encoding",
+ "regex",
  "serde",
  "serde_urlencoded",
  "sqlx-core",

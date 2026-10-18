@@ -56,6 +56,10 @@ native_operation!(crate::backend::db::postgres::labels::list_repo_labels,
     crate::backend::db::sqlite::labels::list_repo_labels,
     fn list_repo_labels(pool: &DbPool, repo_id: i64) -> Result<Vec<Label>>);
 
+native_operation!(crate::backend::db::postgres::labels::list_label_usage,
+    crate::backend::db::sqlite::labels::list_label_usage,
+    fn list_label_usage(pool: &DbPool, repo_id: i64) -> Result<Vec<(i64, i64)>>);
+
 native_operation!(crate::backend::db::postgres::labels::update_label,
     crate::backend::db::sqlite::labels::update_label,
     fn update_label(

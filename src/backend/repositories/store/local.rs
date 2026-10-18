@@ -9,12 +9,12 @@ use super::{
 use crate::backend::{
     db,
     git::{
-        self, repository::process, BlobContent, CiCommit, CiWorkflowFile, CiWorkflowSource,
-        CommitInfo, ContributorInfo, DiffInfo, FileBlame, FileList, LanguageStat, RepoInfo,
-        TagInfo, TreeEntry,
+        self, repository::process, BlobContent, BranchStatus, CiCommit, CiWorkflowFile,
+        CiWorkflowSource, CommitFilter, CommitInfo, ContributorInfo, DiffInfo, FileBlame, FileList,
+        LanguageStat, RepoInfo, TagInfo, TreeEntry,
     },
     repositories::{
-        access,
+        access, languages,
         protection::{
             check_branch_write, BranchWrite, History, Refusal, WriteVia, MERGE_COMMIT_BLOCKED,
         },
@@ -23,7 +23,7 @@ use crate::backend::{
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 use uuid::Uuid;
 
@@ -162,8 +162,9 @@ async fn live_write(
     Ok(repository)
 }
 
-/// Records a branch update made by the web, the API or a merge as profile activity. Git has
-/// already moved the branch, so a failure is logged rather than reported as a failed write.
+/// Records a branch update made by the web, the API or a merge as profile activity, and
+/// refreshes the stored languages when the branch is the default branch. Git has already moved
+/// the branch, so a failure is logged rather than reported as a failed write.
 async fn record_branch_update(
     pool: &db::DbPool,
     repo_id: i64,
@@ -173,6 +174,7 @@ async fn record_branch_update(
     old: Option<&str>,
     new: &str,
 ) {
+    languages::refresh_default_branch(pool.clone(), repo_id, path.to_owned(), branch.to_owned());
     let reference = format!("refs/heads/{branch}");
     let count = match git::count_pushed_commits(path, old, new, &reference).await {
         Ok(count) => i32::try_from(count).unwrap_or(i32::MAX),
@@ -181,10 +183,15 @@ async fn record_branch_update(
             return;
         }
     };
-    if let Err(error) =
-        db::activity::record_repository_push(pool, repo_id, actor, branch, count).await
-    {
-        tracing::warn!(repo_id, %error, "could not record a branch update");
+    // A save must not wait behind a busy database for the sake of a profile feed entry.
+    let record = db::activity::record_repository_push(pool, repo_id, actor, branch, count);
+    match tokio::time::timeout(std::time::Duration::from_millis(500), record).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(repo_id, %error, "could not record a branch update"),
+        Err(_) => tracing::warn!(
+            repo_id,
+            "gave up recording a branch update on a busy database"
+        ),
     }
 }
 
@@ -528,14 +535,66 @@ impl LocalStore {
             .await
     }
 
-    pub(super) async fn commits(
+    /// Like `RepoStore::commits`, but the walk gives up at `deadline`, and its Git permit with it.
+    pub(super) async fn commits_until(
         &self,
         git_ref: &str,
         offset: usize,
         limit: usize,
+        filter: &CommitFilter,
+        deadline: Instant,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        let git_ref = git_ref.to_owned();
-        self.blocking(move |repo| git::list_commits(repo, &git_ref, offset, limit))
+        let (git_ref, filter) = (git_ref.to_owned(), filter.clone());
+        self.blocking(move |repo| {
+            git::list_commits(repo, &git_ref, offset, limit, &filter, deadline)
+        })
+        .await
+    }
+
+    pub(super) async fn search_code(
+        &self,
+        git_ref: &str,
+        text: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<git::CodeMatch>, RepoError> {
+        git::search_code(self.path(), git_ref, text, offset, limit)
+            .await
+            .map_err(RepoError::from)
+    }
+
+    pub(super) async fn commits_between(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+        limit: usize,
+    ) -> Result<Vec<CommitInfo>, RepoError> {
+        let base_ref = base_ref.to_owned();
+        let head_ref = head_ref.to_owned();
+        self.blocking(move |repo| git::list_range_commits(repo, &base_ref, &head_ref, limit))
+            .await
+    }
+
+    pub(super) async fn path_commits(
+        &self,
+        git_ref: &str,
+        path: &str,
+        offset: usize,
+        limit: usize,
+        filter: &CommitFilter,
+    ) -> Result<Vec<CommitInfo>, RepoError> {
+        git::list_path_commits(self.path(), git_ref, path, offset, limit, filter)
+            .await
+            .map_err(RepoError::from)
+    }
+
+    pub(super) async fn branch_statuses(
+        &self,
+        base: &str,
+        heads: &[String],
+    ) -> Result<Vec<BranchStatus>, RepoError> {
+        let (base, heads) = (base.to_owned(), heads.to_vec());
+        self.blocking(move |repo| git::branch_statuses(repo, &base, &heads))
             .await
     }
 

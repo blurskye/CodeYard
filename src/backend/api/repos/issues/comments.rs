@@ -1,9 +1,9 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::api::repos::chrome::{json_page, PageQuery};
 use crate::backend::api::repos::pulls::pull::*;
-use crate::backend::api::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -47,7 +47,7 @@ pub async fn create_issue_comment(
             id: comment.id,
             issue_id: comment.issue_id,
             author_id: comment.author_id,
-            author: Some(UserResponse::from(user)),
+            author: UserResponse::from(user),
             body: comment.body,
             created_at: comment.created_at.to_rfc3339(),
             updated_at: comment.updated_at.to_rfc3339(),
@@ -60,7 +60,7 @@ pub struct CommentResponse {
     pub id: i64,
     pub issue_id: i64,
     pub author_id: i64,
-    pub author: Option<UserResponse>,
+    pub author: UserResponse,
     pub body: String,
     pub created_at: String,
     pub updated_at: String,
@@ -125,7 +125,7 @@ pub async fn list_issue_comments(
 
     let mut responses = Vec::with_capacity(comments.len());
     for entry in comments {
-        let author = entry.author.as_ref().map(UserResponse::from_display);
+        let author = UserResponse::from_display(&entry.author);
         let comment = entry.comment;
         responses.push(CommentResponse {
             id: comment.id,

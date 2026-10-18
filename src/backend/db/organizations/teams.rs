@@ -10,7 +10,6 @@ native_operation!(crate::backend::db::postgres::organizations::teams::create_org
     fn create_organization_team(pool: &DbPool, actor: i64, org: i64, input: &NewTeam) -> Result<OrganizationOutcome<Team>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::update_organization_team, crate::backend::db::sqlite::organizations::teams::update_organization_team,
     fn update_organization_team(pool: &DbPool, actor: i64, org: i64, team: i64, input: &TeamProfile) -> Result<OrganizationOutcome<Team>>);
-// Rejects all child-parent references, including other tenants; no cascade repair.
 native_operation!(crate::backend::db::postgres::organizations::teams::delete_organization_team, crate::backend::db::sqlite::organizations::teams::delete_organization_team,
     fn delete_organization_team(pool: &DbPool, actor: i64, org: i64, team: i64) -> Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::list_organization_teams, crate::backend::db::sqlite::organizations::teams::list_organization_teams,
@@ -31,7 +30,7 @@ native_operation!(crate::backend::db::postgres::organizations::teams::revoke_org
 native_operation!(crate::backend::db::postgres::organizations::teams::list_organization_team_repositories, crate::backend::db::sqlite::organizations::teams::list_organization_team_repositories,
     fn list_organization_team_repositories(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>>);
 // Team pages are for active organization members only. Each read answers `None` when the viewer
-// is not such a member, the team is missing or hidden from the viewer, or the team is a legacy child.
+// is not such a member, or the team is missing or hidden from the viewer.
 native_operation!(crate::backend::db::postgres::organizations::teams::get_public_team, crate::backend::db::sqlite::organizations::teams::get_public_team,
     fn get_public_team(pool: &DbPool, actor: i64, org: i64, slug: &str) -> Result<Option<PublicTeam>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::list_public_team_members, crate::backend::db::sqlite::organizations::teams::list_public_team_members,
@@ -134,7 +133,6 @@ pub struct NewTeam {
     pub(in crate::backend::db) profile: TeamProfile,
 }
 impl NewTeam {
-    // Hierarchy is intentionally unsupported: no parent ID ingress or mutation.
     pub fn new(
         slug: &str,
         profile: TeamProfile,

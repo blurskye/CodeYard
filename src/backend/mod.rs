@@ -8,6 +8,7 @@ pub mod ci;
 pub mod cli;
 pub mod cluster;
 pub mod crypto;
+pub mod dashboard;
 pub mod db;
 pub mod files;
 pub mod git;

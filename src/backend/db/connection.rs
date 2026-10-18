@@ -115,6 +115,7 @@ pub async fn init_db(database_url: &str) -> Result<DbPool> {
     if database_url.starts_with("sqlite:") {
         info!("Connecting to SQLite");
         let options = SqliteConnectOptions::from_str(database_url)?
+            .with_regexp()
             .create_if_missing(true)
             .foreign_keys(true)
             .journal_mode(SqliteJournalMode::Wal)

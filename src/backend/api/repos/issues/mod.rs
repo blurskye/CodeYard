@@ -3,6 +3,7 @@ pub mod collection;
 pub mod comments;
 pub mod issue;
 pub mod labels;
+pub mod reactions;
 
 pub fn json_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
     use axum::{
@@ -57,6 +58,10 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
             post(comments::native_comment),
         )
         .route(
+            "/:owner/:repo/issues/:number/react",
+            post(reactions::native_react),
+        )
+        .route(
             "/:owner/:repo/issues/:number/labels",
             post(labels::native_add_label),
         )
@@ -78,9 +83,9 @@ pub(crate) fn operation_error(
     error: crate::backend::issues::OperationError,
 ) -> (
     axum::http::StatusCode,
-    axum::Json<crate::backend::api::error::ApiError>,
+    axum::Json<crate::backend::api::http::error::ApiError>,
 ) {
-    use crate::backend::api::error::ApiError;
+    use crate::backend::api::http::error::ApiError;
     use crate::backend::issues::OperationError;
     use axum::{http::StatusCode, Json};
     let (status, code, message) = match error {

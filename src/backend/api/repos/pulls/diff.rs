@@ -1,20 +1,23 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::issues::reactions;
 use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::api::repos::pulls::review_forms;
-use crate::backend::api::repos::references::resolve_references_or_none;
+use crate::backend::api::repos::refs::references::resolve_references_or_none;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::{DiffFileInfo, DiffInfo};
-use crate::webui::pages::collaboration as view;
-use crate::webui::pages::collaboration::{Kind, LineComment};
+use crate::webui::pages::repos::{
+    issues::{self as view, Kind},
+    pulls::{self, LineComment, ReviewDraft},
+};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 pub async fn get_pull_request_diff(
     State(state): State<Arc<AppState>>,
@@ -94,7 +97,16 @@ pub(crate) async fn native_diff(
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let composer = composer_from_query(&query);
-    render_diff(&ctx, &repo, &value, composer.as_ref(), None, StatusCode::OK).await
+    render_diff(
+        &ctx,
+        &repo,
+        &value,
+        composer.as_ref(),
+        None,
+        None,
+        StatusCode::OK,
+    )
+    .await
 }
 
 /// The files a signed-in reader marked as viewed. A mark counts only while the file's blob id is
@@ -106,7 +118,7 @@ async fn viewed_marks(
     number: i32,
     user_id: i64,
     files: &[DiffFileInfo],
-) -> ResultPage<view::Viewed> {
+) -> ResultPage<pulls::Viewed> {
     let marks: HashMap<String, String> = db::pull_requests::viewed::list_pull_request_viewed_files(
         &ctx.state.pool,
         pull_id,
@@ -121,7 +133,7 @@ async fn viewed_marks(
         .filter(|file| marks.get(&file.filename) == Some(&file.blob_sha))
         .map(|file| file.filename.clone())
         .collect();
-    Ok(view::Viewed {
+    Ok(pulls::Viewed {
         csrf: repo.view.csrf.clone(),
         action: format!("{}/{number}/viewed", repo.view.family_url(Kind::Pull)),
         paths,
@@ -146,13 +158,36 @@ fn composer_from_query(query: &HashMap<String, String>) -> Option<LineComment> {
     })
 }
 
+/// The diff as the Files changed page, a comparison and a commit page show it. `viewed` holds the
+/// reader's Viewed marks where a pull request has them.
+pub(crate) fn diff_model(diff: DiffInfo, viewed: Option<pulls::Viewed>) -> pulls::Diff {
+    pulls::Diff {
+        additions: diff.additions,
+        deletions: diff.deletions,
+        files: diff
+            .files
+            .into_iter()
+            .map(|file| pulls::DiffFile {
+                filename: file.filename,
+                status: file.status,
+                additions: file.additions,
+                deletions: file.deletions,
+                patch: file.patch,
+            })
+            .collect(),
+        viewed,
+    }
+}
+
 /// The Files changed page: the diff with its inline conversations, and a composer open under
-/// `composer`'s line. A refused comment or resolve comes back here with its error.
+/// `composer`'s line. A refused comment or resolve comes back here with its error, and a refused
+/// review comes back with its text in the review form.
 pub(crate) async fn render_diff(
     ctx: &PageContext,
     repo: &RepositoryData,
     value: &view::Item,
     composer: Option<&LineComment>,
+    review: Option<ReviewDraft>,
     error: Option<&str>,
     status: StatusCode,
 ) -> ResultPage<Response> {
@@ -179,7 +214,23 @@ pub(crate) async fn render_diff(
             .await
             .map_err(|_| unavailable(ctx))?;
     let truncated = inline.truncated;
-    let threads = review_forms::threads(ctx, repo, &pull, inline.comments);
+    // The viewer's own pending comments show here, and nobody else's do.
+    let pending = match ctx.user.as_ref() {
+        Some(user) => db::pull_requests::reviews::list_pending_review_comments(
+            &ctx.state.pool,
+            pull.id,
+            user.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?,
+        None => Vec::new(),
+    };
+    let pending_ids: HashSet<i64> = pending.iter().map(|entry| entry.comment.id).collect();
+    let pending_comments = pending.len();
+    let mut entries = inline.comments;
+    entries.extend(pending);
+    let mut threads = review_forms::threads(ctx, repo, &pull, entries, &pending_ids);
+    reactions::attach_threads(ctx, &mut threads).await?;
     let mut texts: Vec<&str> = threads
         .iter()
         .flat_map(|thread| {
@@ -188,6 +239,7 @@ pub(crate) async fn render_diff(
         })
         .collect();
     texts.extend(composer.map(|draft| draft.body.as_str()));
+    texts.extend(review.as_ref().map(|draft| draft.body.as_str()));
     let references = resolve_references_or_none(
         ctx,
         &repo.record,
@@ -203,22 +255,7 @@ pub(crate) async fn render_diff(
         }
         None => None,
     };
-    let diff = view::Diff {
-        additions: diff.additions,
-        deletions: diff.deletions,
-        files: diff
-            .files
-            .into_iter()
-            .map(|file| view::DiffFile {
-                filename: file.filename,
-                status: file.status,
-                additions: file.additions,
-                deletions: file.deletions,
-                patch: file.patch,
-            })
-            .collect(),
-        viewed,
-    };
+    let diff = diff_model(diff, viewed);
     Ok(with_status(
         ctx.page_model(
             "Pull request diff",
@@ -229,6 +266,8 @@ pub(crate) async fn render_diff(
                 threads,
                 truncated,
                 composer: composer.cloned(),
+                review,
+                pending_comments,
                 error: error.map(str::to_owned),
                 references: Box::new(references),
                 split: ctx.query.get("view").is_some_and(|view| view == "split"),

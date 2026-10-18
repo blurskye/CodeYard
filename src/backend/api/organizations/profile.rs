@@ -3,12 +3,12 @@
 
 use super::membership::project;
 use super::organization::{cursor_with_limit, invalid, unavailable};
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::api::users::profile::profile_repository;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::webui::app::Page;
-use crate::webui::pages::organizations::{Organization, OrganizationProfile, Team};
+use crate::webui::pages::orgs::{Organization, OrganizationProfile, Team};
 use axum::http::StatusCode;
 use axum::response::Response;
 
@@ -105,10 +105,8 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             };
             let more = rows.len() as i64 == TAB_PAGE_LIMIT;
             let after = rows.last().map_or(after, |row| row.team.id);
-            // Legacy child teams have no public page, so they are not listed.
             let teams: Vec<Team> = rows
                 .into_iter()
-                .filter(|row| row.team.parent_team_id.is_none())
                 .map(|row| Team {
                     id: row.team.id,
                     name: row.team.name,

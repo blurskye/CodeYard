@@ -1,6 +1,6 @@
 //! Browser session decoding and repository authority HTTP responses.
 use crate::backend::{
-    api::{error::ApiError, session},
+    api::{http::error::ApiError, http::session},
     db::{
         self,
         models::{Repository, User},

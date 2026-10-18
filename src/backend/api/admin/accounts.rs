@@ -1,17 +1,21 @@
 use crate::backend::api::admin::signup_requests::load_requests;
 use crate::backend::api::auth::errors;
 use crate::backend::api::auth::errors::database_failure;
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::user::profile::{private_access, settings_result};
 use crate::backend::api::user::responses::{
     field, mutation_guard, public_api_message, require_account, ApiFailure, AuthResponse,
     AuthUserResponse as UserResponse, Fields,
 };
-use crate::backend::api::{auth, session};
+use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::{db, identity};
-use crate::webui::pages::identity as view;
+use crate::webui::pages::{
+    account,
+    admin::{normalize_days, Account, Activity, Admin},
+    fields::preserved_values,
+};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -111,7 +115,7 @@ pub(crate) async fn load_admin(
     ctx: &PageContext,
     days: i32,
     submitted: Option<&Fields>,
-) -> Result<view::Admin, Response> {
+) -> Result<Admin, Response> {
     let admin = require_account(ctx, true)?;
     let manage_access = private_access(ctx).await?;
     // Reads persisted facts only: repository sizes are recorded after pushes, never by a GET.
@@ -124,7 +128,7 @@ pub(crate) async fn load_admin(
             )
         })?
         .into_iter()
-        .map(|account| view::Account {
+        .map(|account| Account {
             id: account.id,
             username: account.username,
             email: account.email.unwrap_or_default(),
@@ -148,7 +152,7 @@ pub(crate) async fn load_admin(
             )
         })?
         .into_iter()
-        .map(|point| view::Activity {
+        .map(|point| Activity {
             date: point.day.to_string(),
             contributions: point.daily_contributions,
             cumulative_contributions: point.cumulative_contributions,
@@ -161,7 +165,7 @@ pub(crate) async fn load_admin(
     } else {
         Vec::new()
     };
-    let mut values = submitted.map(view::preserved_values).unwrap_or_default();
+    let mut values = submitted.map(preserved_values).unwrap_or_default();
     values.days = days.to_string();
     let ai_crawlers = db::node_config::get_node_configuration(&ctx.state.pool)
         .await
@@ -175,7 +179,7 @@ pub(crate) async fn load_admin(
             || crate::backend::api::crawlers::BLOCK.to_owned(),
             |config| config.ai_crawlers,
         );
-    Ok(view::Admin {
+    Ok(Admin {
         current_user_id: admin.id,
         accounts,
         activity,
@@ -198,7 +202,7 @@ pub(crate) async fn admin_response(
         Ok(model) => ctx.page_model_status(
             status,
             "Admin",
-            crate::webui::app::Page::Identity(view::Page::Admin {
+            crate::webui::app::Page::Identity(account::Page::Admin {
                 model,
                 csrf_token: ctx.csrf_token.clone(),
                 message: message.map(str::to_owned),
@@ -218,7 +222,7 @@ pub(crate) async fn admin_get(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let days = view::normalize_days(ctx.query.get("days").map(String::as_str));
+    let days = normalize_days(ctx.query.get("days").map(String::as_str));
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("ban") => Some("Account ban status updated."),
         Some("account") => Some("Managed account created. Share the temporary password securely."),
@@ -237,7 +241,7 @@ pub(crate) async fn access_result<T>(
     saved: &str,
 ) -> Response {
     if uri.path().starts_with("/admin/") {
-        let days = view::normalize_days(form.get("days").map(String::as_str));
+        let days = normalize_days(form.get("days").map(String::as_str));
         match result {
             Ok(_) => ctx.redirect(&format!("/admin?days={days}&saved={saved}")),
             Err(error) => {
@@ -282,11 +286,11 @@ pub(crate) async fn ban_get(
     };
     ctx.page_model(
         "Confirm account ban",
-        crate::webui::app::Page::Identity(view::Page::BanConfirmation {
+        crate::webui::app::Page::Identity(account::Page::BanConfirmation {
             username: target.username,
             user_id: id,
             csrf_token: ctx.csrf_token.clone(),
-            days: view::normalize_days(ctx.query.get("days").map(String::as_str)),
+            days: normalize_days(ctx.query.get("days").map(String::as_str)),
         }),
     )
 }
@@ -305,7 +309,7 @@ pub(crate) async fn ban_post(
     if let Err(response) = mutation_guard(&ctx, &form, true) {
         return response;
     }
-    let days = view::normalize_days(form.get("days").map(String::as_str));
+    let days = normalize_days(form.get("days").map(String::as_str));
     let banned = match field(&form, "banned") {
         "true" if field(&form, "confirm_delete") == "yes" => true,
         "false" => false,

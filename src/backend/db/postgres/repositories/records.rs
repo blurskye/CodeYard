@@ -1,5 +1,7 @@
 use crate::backend::db::models::{Repository, SharedRepository};
-use crate::backend::db::repositories::records::{MergeMethodUpdate, RepositorySort};
+use crate::backend::db::repositories::records::{
+    MergeMethodUpdate, RepositoryFilter, RepositorySort,
+};
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -105,6 +107,22 @@ pub async fn list_user_repositories(pool: &PgPool, user_id: i64) -> Result<Vec<R
     Ok(repos)
 }
 
+/// How many repositories `user_id` owns that a profile lists. Private ones are counted only when
+/// `include_private` is set, which is the owner's own view.
+pub async fn count_user_repositories(
+    pool: &PgPool,
+    user_id: i64,
+    include_private: bool,
+) -> Result<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM repositories WHERE owner_kind = 'user' AND owner_user_id = $1 AND ($2 OR is_private = FALSE)",
+    )
+    .bind(user_id)
+    .bind(include_private)
+    .fetch_one(pool)
+    .await?)
+}
+
 pub async fn list_public_repositories(
     pool: &PgPool,
     sort: RepositorySort,
@@ -113,10 +131,16 @@ pub async fn list_public_repositories(
     // The order is part of the query, so the limit keeps the top rows of that order.
     let sql = match sort {
         RepositorySort::Recent => {
-            "SELECT * FROM repositories WHERE is_private = false ORDER BY created_at DESC LIMIT $1"
+            "SELECT * FROM repositories WHERE is_private = false ORDER BY created_at DESC, id DESC LIMIT $1"
         }
         RepositorySort::Stars => {
             "SELECT * FROM repositories WHERE is_private = false ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT $1"
+        }
+        RepositorySort::Forks => {
+            "SELECT * FROM repositories WHERE is_private = false ORDER BY forks_count DESC, created_at DESC, id DESC LIMIT $1"
+        }
+        RepositorySort::Updated => {
+            "SELECT * FROM repositories WHERE is_private = false ORDER BY updated_at DESC, id DESC LIMIT $1"
         }
     };
     let repos = sqlx::query_as::<_, Repository>(sql)
@@ -149,23 +173,47 @@ pub async fn list_shared_repositories(
 pub async fn search_public_repositories(
     pool: &PgPool,
     text: &str,
+    filter: RepositoryFilter<'_>,
     sort: RepositorySort,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     let pattern = crate::backend::db::discussions::contains_pattern(text);
     let order = match sort {
-        RepositorySort::Recent => "created_at DESC",
+        RepositorySort::Recent => "created_at DESC, id DESC",
         RepositorySort::Stars => "stars_count DESC, created_at DESC, id DESC",
+        RepositorySort::Forks => "forks_count DESC, created_at DESC, id DESC",
+        RepositorySort::Updated => "updated_at DESC, id DESC",
     };
+    let kind = filter.kind.condition();
     Ok(sqlx::query_as::<_, Repository>(&format!(
         r#"SELECT * FROM repositories WHERE is_private = false
             AND (LOWER(name COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\'
                 OR LOWER(description COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\')
-        ORDER BY {order} LIMIT $1"#
+            AND ($4::TEXT = '' OR id IN (SELECT repo_id FROM repo_languages WHERE language = $4::TEXT))
+            AND ($5::TEXT = '' OR id IN (SELECT repo_id FROM repository_topics WHERE topic = $5::TEXT))
+            AND {kind}
+        ORDER BY {order} LIMIT $1 OFFSET $3"#
     ))
     .bind(limit)
     .bind(pattern)
+    .bind(offset)
+    .bind(filter.language)
+    .bind(filter.topic)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// The languages found in public repositories, the most used first.
+pub async fn public_languages(pool: &PgPool, limit: i64) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT l.language FROM repo_languages l JOIN repositories r ON r.id = l.repo_id
+            WHERE r.is_private = false GROUP BY l.language
+            ORDER BY COUNT(*) DESC, l.language LIMIT $1"#,
+    )
+    .bind(limit)
     .fetch_all(pool)
     .await?)
 }

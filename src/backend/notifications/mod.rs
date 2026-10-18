@@ -2,11 +2,14 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+pub mod assignments;
 pub mod broadcast;
 pub mod create;
 pub mod delivery;
 pub mod inbox;
 pub mod mentions;
+pub mod reasons;
+pub mod watchers;
 
 pub use broadcast::NotificationBroadcaster;
 pub use delivery::current_event;
@@ -33,6 +36,11 @@ pub enum NotificationEvent {
         user_id: i64,
         unread_count: i64,
     },
+    /// The unread count changed without a read: a notification was marked done or moved back.
+    UnreadCount {
+        user_id: i64,
+        unread_count: i64,
+    },
 }
 
 impl NotificationEvent {
@@ -40,7 +48,8 @@ impl NotificationEvent {
         match self {
             Self::Created { user_id, .. }
             | Self::Read { user_id, .. }
-            | Self::ReadAll { user_id, .. } => *user_id,
+            | Self::ReadAll { user_id, .. }
+            | Self::UnreadCount { user_id, .. } => *user_id,
         }
     }
 
@@ -72,6 +81,10 @@ impl NotificationEvent {
                 unread_count: 0,
             },
             Self::ReadAll { user_id, .. } => Self::ReadAll {
+                user_id: *user_id,
+                unread_count: 0,
+            },
+            Self::UnreadCount { user_id, .. } => Self::UnreadCount {
                 user_id: *user_id,
                 unread_count: 0,
             },

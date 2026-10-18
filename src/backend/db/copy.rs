@@ -97,7 +97,7 @@ pub async fn copy_database(from: &str, to: &str) -> Result<Vec<TableCount>> {
     let destination_catalog = catalog(&mut destination).await?;
     if source_catalog.migrations != destination_catalog.migrations {
         bail!(
-            "migration versions differ (source {:?}, destination {:?}); run this version of Codeyard against the older database to migrate it, then copy",
+            "migration versions differ (source {:?}, destination {:?}): the baseline history does not match; nothing was copied",
             source_catalog.migrations,
             destination_catalog.migrations
         );

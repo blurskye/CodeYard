@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::{error::ApiError, session::get_current_user},
+    api::{http::error::ApiError, http::session::get_current_user},
     app::AppState,
     db::files as files_db,
 };

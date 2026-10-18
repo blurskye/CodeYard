@@ -1,5 +1,5 @@
-use crate::backend::api::error::ApiError;
-use crate::backend::api::repos::commits::statuses::CommitStatusResponse;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::repos::refs::commits::statuses::CommitStatusResponse;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::db;
 use crate::backend::repositories::store::CommitInfo;
@@ -39,6 +39,24 @@ pub(crate) async fn repository_owners(
     Ok(owners)
 }
 
+/// The topics of each listed repository. A repository without topics is absent from the map.
+pub(crate) async fn repository_topics(
+    pool: &db::DbPool,
+    ids: &[i64],
+) -> Result<std::collections::BTreeMap<i64, Vec<String>>, (StatusCode, Json<ApiError>)> {
+    db::repositories::topics::repository_topics(pool, ids)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiError::new(
+                    "unavailable",
+                    "Repository topics are unavailable",
+                )),
+            )
+        })
+}
+
 pub(crate) fn map_commit_status_response(
     status: db::models::CommitStatus,
     creator: Option<UserResponse>,
@@ -65,6 +83,8 @@ pub struct RepoResponse {
     pub name: String,
     pub full_name: String,
     pub description: Option<String>,
+    pub website: Option<String>,
+    pub topics: Vec<String>,
     pub is_private: bool,
     pub is_archived: bool,
     pub allow_merge_commit: bool,
@@ -211,7 +231,7 @@ pub(crate) fn ref_error(
 ) -> (StatusCode, Json<ApiError>) {
     use crate::backend::repositories::refs::RefError;
     let (status, code, message) = match error {
-        RefError::Access(error) => return super::access::access_error(error),
+        RefError::Access(error) => return crate::backend::api::repos::access::access_error(error),
         RefError::Git(error) => return repo_store_error(error, StatusCode::BAD_REQUEST),
         RefError::Invalid(message) => (StatusCode::BAD_REQUEST, "validation_error", message),
         RefError::Protected(reason) => (StatusCode::FORBIDDEN, "protected_branch", reason),
@@ -226,7 +246,9 @@ pub(crate) fn engagement_error(
 ) -> (StatusCode, Json<ApiError>) {
     use crate::backend::repositories::engagement::EngagementError;
     let message = match error {
-        EngagementError::Access(error) => return super::access::access_error(error),
+        EngagementError::Access(error) => {
+            return crate::backend::api::repos::access::access_error(error)
+        }
         EngagementError::Unavailable => "Repository operation is unavailable",
         EngagementError::ChangedCountUnavailable => {
             "The repository preference changed, but its updated count is unavailable"

@@ -2,14 +2,14 @@
 //! comments written from the diff, conversation resolution and Viewed marks on files. Each form checks the head it was
 //! written against, then calls the repository function its REST endpoint calls, so the rules
 //! stay in one place. The review data the Conversation tab and the diff show is built here too.
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::pulls::diff::render_diff;
 use crate::backend::api::repos::pulls::operation_error;
 use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::pull_requests::reviews::{PullRequestCommentEntry, PullRequestReviewEntry};
-use crate::backend::issues::comment_link;
+use crate::backend::issues::{comment_link, discussion_link, discussion_page};
 use crate::backend::repositories::pull_requests::comments as comment_rules;
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 use crate::backend::repositories::pull_requests::reviews as review_rules;
@@ -17,19 +17,15 @@ use crate::backend::repositories::pull_requests::reviews::{
     CreatePullRequestReviewRequest, DismissPullRequestReviewRequest, RequestReviewerRequest,
 };
 use crate::backend::repositories::store::repo_store;
-use crate::webui::pages::collaboration::{
-    self as view, DetailDraft, Kind, LineComment, ReviewDraft,
+use crate::webui::pages::repos::{
+    issues::{self as view, DetailDraft, Kind},
+    pulls::{self, LineComment, ReviewDraft},
 };
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
-use chrono::{DateTime, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-
-/// Reviews are loaded for one discussion page's time span. A pull request with more reviews than
-/// this shows the oldest ones only.
-const TIMELINE_REVIEW_LIMIT: i64 = 1_000;
 
 /// The Conversation tab's state for a root comment on a file. Resolving is offered to the pull
 /// request author and to anyone who may write; the resolve handler checks both again.
@@ -39,9 +35,9 @@ pub(crate) fn conversation(
     pull_author_id: i64,
     head: &str,
     comment: &db::models::PullRequestComment,
-) -> view::Conversation {
+) -> pulls::Conversation {
     let viewer = ctx.user.as_ref();
-    view::Conversation {
+    pulls::Conversation {
         resolved: comment.resolved_at.is_some(),
         outdated: comment.commit_sha.as_deref() != Some(head),
         can_resolve: viewer.is_some_and(|user| user.id == pull_author_id || repo.view.can_write),
@@ -52,18 +48,13 @@ pub(crate) fn conversation(
 /// One discussion comment: its author, its text and, for a file comment, its location.
 pub(crate) fn comment_view(
     entry: PullRequestCommentEntry,
-    conversation: Option<view::Conversation>,
+    conversation: Option<pulls::Conversation>,
 ) -> view::Comment {
-    let author = entry
-        .author
-        .map(|author| author.username)
-        .unwrap_or_else(|| "Deleted user".into());
+    let author = entry.author.username;
     let comment = entry.comment;
+    // The side is not shown. The thread's link on the Files changed tab marks the old and new lines.
     let location = comment.path.map(|path| match comment.line {
-        Some(line) => format!(
-            "{path}:{line} ({})",
-            comment.side.as_deref().unwrap_or("diff")
-        ),
+        Some(line) => format!("{path}:{line}"),
         None => path,
     });
     view::Comment {
@@ -73,17 +64,33 @@ pub(crate) fn comment_view(
         created: comment.created_at.to_rfc3339(),
         location,
         conversation,
+        reactions: Vec::new(),
     }
 }
 
+/// One discussion comment as the page shows it. A root comment on a file is a review conversation.
+pub(crate) fn discussion_comment(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    pull: &db::models::PullRequest,
+    entry: PullRequestCommentEntry,
+) -> view::Comment {
+    let conversation = (entry.comment.path.is_some()
+        && entry.comment.in_reply_to_comment_id.is_none())
+    .then(|| conversation(ctx, repo, pull.author_id, &pull.head_sha, &entry.comment));
+    comment_view(entry, conversation)
+}
+
 /// The inline conversations of a pull request. Replies join the root of their chain. A reply
-/// whose chain leaves the loaded list has no place to show, so it is left out.
+/// whose chain leaves the loaded list has no place to show, so it is left out. `pending` holds
+/// the comments of the viewer's own pending review.
 pub(crate) fn threads(
     ctx: &PageContext,
     repo: &RepositoryData,
     pull: &db::models::PullRequest,
     entries: Vec<PullRequestCommentEntry>,
-) -> Vec<view::Thread> {
+    pending: &HashSet<i64>,
+) -> Vec<pulls::Thread> {
     let parents: HashMap<i64, Option<i64>> = entries
         .iter()
         .map(|entry| (entry.comment.id, entry.comment.in_reply_to_comment_id))
@@ -116,10 +123,11 @@ pub(crate) fn threads(
         .map(|entry| {
             let id = entry.comment.id;
             let state = conversation(ctx, repo, pull.author_id, &pull.head_sha, &entry.comment);
-            view::Thread {
+            pulls::Thread {
                 path: entry.comment.path.clone().unwrap_or_default(),
                 line: entry.comment.line,
                 side: entry.comment.side.clone().unwrap_or_default(),
+                pending: pending.contains(&id),
                 replies: replies.remove(&id).unwrap_or_default(),
                 root: comment_view(entry, Some(state)),
             }
@@ -127,13 +135,10 @@ pub(crate) fn threads(
         .collect()
 }
 
-fn review_view(entry: PullRequestReviewEntry, head: &str) -> view::Review {
-    let author = entry
-        .author
-        .map(|author| author.username)
-        .unwrap_or_else(|| "Deleted user".into());
+fn review_view(entry: PullRequestReviewEntry, head: &str) -> pulls::Review {
+    let author = entry.author.username;
     let review = entry.review;
-    view::Review {
+    pulls::Review {
         id: review.id,
         author,
         state: review.state,
@@ -142,37 +147,36 @@ fn review_view(entry: PullRequestReviewEntry, head: &str) -> view::Review {
         created: review.created_at.to_rfc3339(),
         stale: review.commit_sha.as_deref() != Some(head),
         dismissed_reason: review.dismissed_reason,
+        comments: Vec::new(),
+        reactions: Vec::new(),
     }
 }
 
-/// The reviews created at or after `after` and before `before`, oldest first. A discussion page
-/// passes its first comment's time and the next page's, so every review shows on one page. The
-/// second value is the load limit when the pull request has more reviews than that.
-pub(crate) async fn timeline_reviews(
+/// The reviews of one discussion page, oldest first. Each carries the inline comments filed in it.
+pub(crate) async fn page_reviews(
     ctx: &PageContext,
+    repo: &RepositoryData,
     pull: &db::models::PullRequest,
-    after: Option<DateTime<Utc>>,
-    before: Option<DateTime<Utc>>,
-) -> ResultPage<(Vec<view::Review>, Option<usize>)> {
-    let entries = db::pull_requests::reviews::list_pull_request_reviews(
-        &ctx.state.pool,
-        pull.id,
-        TIMELINE_REVIEW_LIMIT,
-        0,
-    )
-    .await
-    .map_err(|_| unavailable(ctx))?;
-    let limit =
-        (entries.len() as i64 >= TIMELINE_REVIEW_LIMIT).then_some(TIMELINE_REVIEW_LIMIT as usize);
-    let reviews = entries
+    entries: Vec<PullRequestReviewEntry>,
+) -> ResultPage<Vec<pulls::Review>> {
+    let ids: Vec<i64> = entries.iter().map(|entry| entry.review.id).collect();
+    let comments = db::pull_requests::reviews::list_review_comments(&ctx.state.pool, &ids)
+        .await
+        .map_err(|_| unavailable(ctx))?;
+    let mut reviews: Vec<pulls::Review> = entries
         .into_iter()
-        .filter(|entry| {
-            after.is_none_or(|after| entry.review.created_at >= after)
-                && before.is_none_or(|before| entry.review.created_at < before)
-        })
         .map(|entry| review_view(entry, &pull.head_sha))
         .collect();
-    Ok((reviews, limit))
+    for entry in comments {
+        let Some(review_id) = entry.comment.review_id else {
+            continue;
+        };
+        let comment = discussion_comment(ctx, repo, pull, entry);
+        if let Some(review) = reviews.iter_mut().find(|review| review.id == review_id) {
+            review.comments.push(comment);
+        }
+    }
+    Ok(reviews)
 }
 
 /// The sidebar reviewers: each one's latest decision, then the review requests still open.
@@ -181,7 +185,7 @@ pub(crate) async fn reviewers(
     repo: &RepositoryData,
     number: i32,
     head: &str,
-) -> ResultPage<Vec<view::Reviewer>> {
+) -> ResultPage<Vec<pulls::Reviewer>> {
     let pull =
         db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number)
             .await
@@ -195,19 +199,19 @@ pub(crate) async fn reviewers(
         db::pull_requests::reviews::list_pull_request_reviewers(&ctx.state.pool, pull.id)
             .await
             .map_err(|_| unavailable(ctx))?;
-    let mut reviewers: Vec<view::Reviewer> = decisions
+    let mut reviewers: Vec<pulls::Reviewer> = decisions
         .into_iter()
         .filter_map(|decision| {
             let status = match decision.state.as_str() {
-                "approved" => view::ReviewerStatus::Approved,
-                "changes_requested" => view::ReviewerStatus::ChangesRequested,
-                "dismissed" => view::ReviewerStatus::Dismissed,
+                "approved" => pulls::ReviewerStatus::Approved,
+                "changes_requested" => pulls::ReviewerStatus::ChangesRequested,
+                "dismissed" => pulls::ReviewerStatus::Dismissed,
                 _ => return None,
             };
-            Some(view::Reviewer {
-                username: decision.username.unwrap_or_else(|| "Deleted user".into()),
+            Some(pulls::Reviewer {
+                username: decision.username,
                 status,
-                stale: status != view::ReviewerStatus::Dismissed
+                stale: status != pulls::ReviewerStatus::Dismissed
                     && decision.commit_sha.as_deref() != Some(head),
                 pending: requested.iter().any(|user| user.id == decision.author_id),
             })
@@ -218,9 +222,9 @@ pub(crate) async fn reviewers(
             .iter()
             .any(|reviewer| reviewer.username == user.username)
         {
-            reviewers.push(view::Reviewer {
+            reviewers.push(pulls::Reviewer {
                 username: user.username,
-                status: view::ReviewerStatus::Requested,
+                status: pulls::ReviewerStatus::Requested,
                 stale: false,
                 pending: true,
             });
@@ -229,7 +233,29 @@ pub(crate) async fn reviewers(
     Ok(reviewers)
 }
 
-/// Shows a refused review again with the reviewer's text kept.
+/// Where a review is shown: its place in the Conversation, found from its own time.
+async fn review_location(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    number: i32,
+    review: &db::models::PullRequestReview,
+) -> String {
+    let position = db::pull_requests::reviews::count_discussion_items_through(
+        &ctx.state.pool,
+        review.pull_request_id,
+        db::pull_requests::reviews::DiscussionRef::Review(review.id),
+    )
+    .await;
+    let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+    discussion_link(
+        &base,
+        discussion_page(position),
+        &format!("review-{}", review.id),
+    )
+}
+
+/// Shows a refused review again with the reviewer's text kept. The review form is on the Files
+/// changed page.
 async fn refuse_review(
     ctx: &PageContext,
     repo: &RepositoryData,
@@ -238,11 +264,7 @@ async fn refuse_review(
     error: Option<&str>,
     status: StatusCode,
 ) -> ResultPage<Response> {
-    let draft = DetailDraft {
-        review: Some(review),
-        ..DetailDraft::default()
-    };
-    render_detail(ctx, repo, Kind::Pull, value, &draft, error, status).await
+    render_diff(ctx, repo, value, None, Some(review), error, status).await
 }
 
 /// Shows a refused comment again. A comment from the diff reopens its composer on the diff; one
@@ -257,7 +279,7 @@ async fn refuse_comment(
     status: StatusCode,
 ) -> ResultPage<Response> {
     if from_diff {
-        render_diff(ctx, repo, value, Some(line), error, status).await
+        render_diff(ctx, repo, value, Some(line), None, error, status).await
     } else {
         let draft = DetailDraft {
             comment: line.body.clone(),
@@ -323,12 +345,10 @@ pub(crate) async fn native_review(
     .await
     .map_err(operation_error)
     {
-        Ok(review) => Ok(ctx.redirect(&format!(
-            "{}/{}#review-{}",
-            repo.view.family_url(Kind::Pull),
-            number,
-            review.id
-        ))),
+        Ok(review) => {
+            let location = review_location(&ctx, &repo, number, &review).await;
+            Ok(ctx.redirect(&location))
+        }
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
             refuse_review(&ctx, &repo, &value, submitted, Some(&message), status).await
@@ -364,12 +384,10 @@ pub(crate) async fn native_dismiss_review(
     .await
     .map_err(operation_error)
     {
-        Ok(_) => Ok(ctx.redirect(&format!(
-            "{}/{}#review-{}",
-            repo.view.family_url(Kind::Pull),
-            number,
-            review_id
-        ))),
+        Ok(review) => {
+            let location = review_location(&ctx, &repo, number, &review).await;
+            Ok(ctx.redirect(&location))
+        }
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
             render_detail(
@@ -561,6 +579,8 @@ pub(crate) async fn native_pull_comment(
         side: (!line.side.is_empty()).then(|| line.side.clone()),
         commit_sha: inline.then(|| head.to_owned()),
         in_reply_to_comment_id: line.in_reply_to,
+        // "Start a review" and "Add to review" file the comment in the pending review.
+        pending: field(&form, "intent") == "review",
     };
     let user = ctx.require_user()?.id;
     match comment_rules::create_pull_request_comment(
@@ -588,9 +608,10 @@ pub(crate) async fn native_pull_comment(
                 };
                 Ok(ctx.redirect(&format!("{base}/diff{view}#thread-{root}")))
             } else {
-                let position = db::pull_requests::reviews::count_pull_request_comments(
+                let position = db::pull_requests::reviews::count_discussion_items_through(
                     &ctx.state.pool,
                     comment.pull_request_id,
+                    db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
                 )
                 .await;
                 Ok(ctx.redirect(&comment_link(&base, comment.id, position)))
@@ -694,6 +715,32 @@ pub(crate) async fn native_set_viewed(
     Ok(ctx.redirect(&format!("{base}/diff#diff-file-{index}")))
 }
 
+/// Discards the viewer's pending review and its comments, then returns to the Files changed page.
+pub(crate) async fn native_discard_review(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number)): Path<(String, String, i32)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    authorize_post(&ctx, &form)?;
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = item(&ctx, &repo, Kind::Pull, number).await?;
+    let user = ctx.require_user()?.id;
+    let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+    match review_rules::discard_pending_review(&ctx.state.pool, user, owner, name, number)
+        .await
+        .map_err(operation_error)
+    {
+        Ok(()) => Ok(ctx.redirect(&format!("{base}/diff"))),
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_diff(&ctx, &repo, &value, None, None, Some(&message), status).await
+        }
+    }
+}
+
 /// Resolves or reopens a conversation, then returns to its thread on the page it was sent from.
 async fn set_resolution(
     state: Arc<AppState>,
@@ -736,7 +783,7 @@ async fn set_resolution(
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
             if from_diff {
-                render_diff(&ctx, &repo, &value, None, Some(&message), status).await
+                render_diff(&ctx, &repo, &value, None, None, Some(&message), status).await
             } else {
                 render_detail(
                     &ctx,

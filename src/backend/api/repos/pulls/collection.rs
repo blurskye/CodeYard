@@ -1,7 +1,7 @@
 use super::pull::{detail_response, PullRequestDetailResponse, PullRequestResponse};
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -113,7 +113,7 @@ pub async fn list_pull_requests(
 
     let mut responses = Vec::with_capacity(prs.len());
     for entry in prs {
-        let author = entry.author.as_ref().map(PublicUserResponse::from_display);
+        let author = Some(PublicUserResponse::from_display(&entry.author));
         responses.push(PullRequestResponse::from_pull_request(
             entry.pull_request,
             author,

@@ -39,6 +39,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_user
     crate::backend::db::sqlite::repositories::records::list_user_repositories,
     fn list_user_repositories(pool: &DbPool, user_id: i64) -> Result<Vec<Repository>>);
 
+native_operation!(crate::backend::db::postgres::repositories::records::count_user_repositories,
+    crate::backend::db::sqlite::repositories::records::count_user_repositories,
+    fn count_user_repositories(pool: &DbPool, user_id: i64, include_private: bool) -> Result<i64>);
+
 native_operation!(crate::backend::db::postgres::repositories::records::list_shared_repositories,
     crate::backend::db::sqlite::repositories::records::list_shared_repositories,
     fn list_shared_repositories(pool: &DbPool, user_id: i64) -> Result<Vec<SharedRepository>>);
@@ -50,7 +54,47 @@ pub enum RepositorySort {
     Recent,
     /// Most stars first, then newest first.
     Stars,
+    /// Most forks first, then newest first.
+    Forks,
+    /// Most recently changed first.
+    Updated,
 }
+
+/// Which public repositories an Explore search keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RepositoryKind {
+    #[default]
+    All,
+    /// Repositories that are not forks.
+    Sources,
+    Forks,
+    Archived,
+}
+
+/// Narrowing for an Explore search. An empty language or topic keeps every repository's language
+/// or topics.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RepositoryFilter<'a> {
+    pub language: &'a str,
+    pub topic: &'a str,
+    pub kind: RepositoryKind,
+}
+
+impl RepositoryKind {
+    /// The condition on `repositories` columns that keeps this kind.
+    pub fn condition(self) -> &'static str {
+        match self {
+            Self::All => "TRUE",
+            Self::Sources => "NOT is_fork",
+            Self::Forks => "is_fork",
+            Self::Archived => "is_archived",
+        }
+    }
+}
+
+native_operation!(crate::backend::db::postgres::repositories::records::public_languages,
+    crate::backend::db::sqlite::repositories::records::public_languages,
+    fn public_languages(pool: &DbPool, limit: i64) -> Result<Vec<String>>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::list_public_repositories,
     crate::backend::db::sqlite::repositories::records::list_public_repositories,
@@ -65,8 +109,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::search_pu
     fn search_public_repositories(
     pool: &DbPool,
     text: &str,
+    filter: RepositoryFilter<'_>,
     sort: RepositorySort,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<Repository>>);
 
 /// Stable policy refusals; unrecognized database failures remain unknown errors.
@@ -82,6 +128,10 @@ pub enum RepositorySettingsRefusal {
     NameConflict,
     #[error("At least one merge method must stay allowed")]
     NoMergeMethod,
+    #[error("Invalid repository topics")]
+    InvalidTopics,
+    #[error("Invalid repository website")]
+    InvalidWebsite,
 }
 
 pub(crate) fn validate_repository_alias(name: &str) -> Result<()> {

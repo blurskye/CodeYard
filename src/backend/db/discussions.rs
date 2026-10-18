@@ -20,6 +20,8 @@ pub enum DiscussionWriteRefusal {
     Denied,
     #[error("discussion_review_invalid")]
     InvalidReview,
+    #[error("discussion_review_full")]
+    ReviewFull,
 }
 
 pub struct DiscussionEdit<'a> {
@@ -107,7 +109,9 @@ pub enum ListSort {
     Newest,
     Oldest,
     RecentlyUpdated,
+    LeastRecentlyUpdated,
     MostCommented,
+    LeastCommented,
 }
 
 impl ListSort {
@@ -116,7 +120,9 @@ impl ListSort {
             "newest" => Some(Self::Newest),
             "oldest" => Some(Self::Oldest),
             "recently-updated" => Some(Self::RecentlyUpdated),
+            "least-recently-updated" => Some(Self::LeastRecentlyUpdated),
             "most-commented" => Some(Self::MostCommented),
+            "least-commented" => Some(Self::LeastCommented),
             _ => None,
         }
     }
@@ -126,23 +132,36 @@ impl ListSort {
             Self::Newest => "newest",
             Self::Oldest => "oldest",
             Self::RecentlyUpdated => "recently-updated",
+            Self::LeastRecentlyUpdated => "least-recently-updated",
             Self::MostCommented => "most-commented",
+            Self::LeastCommented => "least-commented",
         }
     }
 
     /// The ORDER BY terms over the list alias `i`. `comments` and `parent` name the comment
-    /// table and its column that points at the list row; they come from code, never from input.
-    pub(crate) fn order_by(self, comments: &str, parent: &str) -> String {
+    /// table and its column that points at the list row. `counted` is an extra condition on the
+    /// comment alias `c` that leaves out comments the list does not show. All of them come from
+    /// code, never from input.
+    pub(crate) fn order_by(self, comments: &str, parent: &str, counted: &str) -> String {
         match self {
             Self::Newest => "i.created_at DESC".into(),
             Self::Oldest => "i.created_at ASC".into(),
             Self::RecentlyUpdated => "i.updated_at DESC".into(),
+            Self::LeastRecentlyUpdated => "i.updated_at ASC".into(),
             Self::MostCommented => format!(
-                "(SELECT COUNT(*) FROM {comments} c WHERE c.{parent} = i.id) DESC, i.created_at DESC"
+                "(SELECT COUNT(*) FROM {comments} c WHERE c.{parent} = i.id {counted}) DESC, i.created_at DESC"
+            ),
+            Self::LeastCommented => format!(
+                "(SELECT COUNT(*) FROM {comments} c WHERE c.{parent} = i.id {counted}) ASC, i.created_at DESC"
             ),
         }
     }
 }
+
+/// The pull request comments a list counts: those outside a pending review, which the list shows
+/// to nobody but its author.
+pub(crate) const SHOWN_PR_COMMENT: &str =
+    "AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = c.review_id AND v.state = 'pending')";
 
 /// The narrowing of an issue or pull request list. `labels` are label names, matched
 /// case-insensitively; an item must carry every one of them. The names must be distinct ignoring

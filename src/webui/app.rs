@@ -11,23 +11,42 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "lane", content = "model")]
 pub enum Page {
-    Identity(pages::identity::Page),
-    Organizations(pages::organizations::Page),
-    OrganizationProfile(pages::organizations::OrganizationProfile),
-    OrganizationTeam(pages::organizations::TeamPage),
+    Identity(pages::account::Page),
+    Organizations(pages::orgs::Page),
+    OrganizationProfile(pages::orgs::OrganizationProfile),
+    OrganizationTeam(pages::orgs::TeamPage),
     Discovery(pages::discovery::Page),
-    Repositories(pages::repositories::Page),
-    Collaboration(Box<pages::collaboration::Page>),
-    Actions(pages::actions::Page),
-    Nodes(pages::nodes::Page),
-    Storage(pages::storage::Page),
+    /// `/help`: keyboard shortcuts, the documentation and how to report a problem.
+    Help,
+    /// `/issues` and `/pulls`: the signed-in user's own lists.
+    Dashboard(pages::dashboard::WorkList),
+    /// `/issues/new`: the repositories the viewer can open an issue in.
+    IssueRepositories(Vec<pages::dashboard::RepositoryChoice>),
+    Repositories(pages::repos::page::Page),
+    Collaboration(Box<pages::repos::issues::Page>),
+    Actions(pages::ci::Page),
+    Nodes(pages::admin::nodes::Page),
+    Storage(pages::admin::storage::Page),
     /// `repo` is set only when the viewer may read that repository.
     Error {
         status: u16,
         message: String,
-        repo: Option<Box<pages::repositories::RepoChrome>>,
+        repo: Option<Box<pages::repos::chrome::RepoChrome>>,
         signed_in: bool,
     },
+}
+
+impl Page {
+    /// The repository a page belongs to. The site header draws its tabs from it.
+    fn repo_chrome(&self) -> Option<&pages::repos::chrome::RepoChrome> {
+        match self {
+            Page::Repositories(page) => Some(page.repo_chrome()),
+            Page::Collaboration(page) => Some(page.repo_chrome()),
+            Page::Actions(page) => page.repo_chrome(),
+            Page::Error { repo, .. } => repo.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// The browser tab title: the page's title and the site name, unless the title has it already.
@@ -88,6 +107,8 @@ pub fn App(initial: PageEnvelope) -> Element {
             let _ = root.set_attribute("data-hydrated", "true");
         }
     });
+    #[cfg(target_arch = "wasm32")]
+    use_effect(move || components::menu::install());
     rsx! {
         dioxus_router::components::HistoryProvider { history: move |_| page_history(&initial_path),
             dioxus_router::Router::<PageRoute> {}
@@ -97,16 +118,19 @@ pub fn App(initial: PageEnvelope) -> Element {
 
 pub(crate) fn render_body(page: Page) -> Element {
     match page {
-        Page::Identity(page) => pages::identity::render(page),
-        Page::Organizations(page) => pages::organizations::render(page),
-        Page::OrganizationProfile(page) => pages::organizations::profile_page(page),
-        Page::OrganizationTeam(page) => pages::organizations::team_page(page),
+        Page::Identity(page) => pages::account::render(page),
+        Page::Organizations(page) => pages::orgs::render(page),
+        Page::OrganizationProfile(page) => pages::orgs::profile_page(page),
+        Page::OrganizationTeam(page) => pages::orgs::team_page(page),
         Page::Discovery(page) => pages::discovery::render(page),
-        Page::Repositories(page) => pages::repositories::render(page),
-        Page::Collaboration(page) => pages::collaboration::render(*page),
-        Page::Actions(page) => pages::actions::render(page),
-        Page::Nodes(page) => pages::nodes::render(page),
-        Page::Storage(page) => pages::storage::render(page),
+        Page::Help => pages::help::help_page(),
+        Page::Dashboard(list) => pages::dashboard::render(list),
+        Page::IssueRepositories(choices) => pages::dashboard::choose_repository(&choices),
+        Page::Repositories(page) => pages::repos::page::render(page),
+        Page::Collaboration(page) => pages::repos::issues::render(*page),
+        Page::Actions(page) => pages::ci::render(page),
+        Page::Nodes(page) => pages::admin::nodes::render(page),
+        Page::Storage(page) => pages::admin::storage::render(page),
         Page::Error {
             status,
             message,
@@ -127,8 +151,10 @@ pub(crate) fn page_tree(envelope: PageEnvelope) -> Element {
     // A genuinely different URL resets scoped drafts/tasks; same-URL log polling
     // retains component state, whose controls still need proper local handlers.
     let location = &envelope.location;
+    let repo = envelope.page.repo_chrome().cloned();
+    let located = !matches!(envelope.page, Page::Error { repo: None, .. });
     let body = rsx! { PageBody { key: "{location}", page: envelope.page } };
-    components::shell(envelope.chrome, body)
+    components::shell_at(envelope.chrome, repo, located, body)
 }
 
 #[cfg(test)]
@@ -148,7 +174,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn shared_page_boundary_preserves_same_location_but_resets_changed_location() {
-        use pages::repositories::{Editor, Page as RepositoryPage, RepoChrome};
+        use pages::repos::{chrome::RepoChrome, editor::Editor, page::Page as RepositoryPage};
         use std::{cell::RefCell, rc::Rc};
         #[derive(Clone)]
         struct Harness {

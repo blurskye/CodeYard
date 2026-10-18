@@ -1,4 +1,4 @@
-use crate::backend::{api::session::get_optional_user, app::AppState, files};
+use crate::backend::{api::http::session::get_optional_user, app::AppState, files};
 use axum::{
     extract::{Path, State},
     http::HeaderMap,

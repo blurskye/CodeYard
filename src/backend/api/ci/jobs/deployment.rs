@@ -1,5 +1,5 @@
 use super::{authorized_run, unavailable, CiReadError};
-use crate::backend::{api::error::ApiError, app::AppState, db};
+use crate::backend::{api::http::error::ApiError, app::AppState, db};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},

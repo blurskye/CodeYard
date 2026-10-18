@@ -2,8 +2,9 @@
 //! A repository error passes the repository header, which the backend builds only for
 //! a viewer who may read that repository.
 use crate::webui::{
+    components::SiteSearch,
     navigation::NavLink,
-    pages::repositories::{chrome, RepoChrome},
+    pages::repos::chrome::{chrome, RepoChrome},
 };
 use dioxus::prelude::*;
 
@@ -18,6 +19,9 @@ pub fn render(status: u16, message: &str, repo: Option<&RepoChrome>, signed_in: 
                 h1 { "{heading}" }
             }
             p { class: "error-message", "{message}" }
+            if status == 404 {
+                SiteSearch { id: "error-search-query", class: "site-search error-search" }
+            }
             div { class: "error-actions",
                 if let Some(repo) = repo {
                     NavLink { href: repo.base(), class: "btn btn-primary".to_string(), "Go to repository" }
@@ -68,6 +72,15 @@ mod tests {
     }
 
     #[test]
+    fn not_found_page_offers_a_search_field() {
+        let page = html(render(404, "Check the address and try again.", None, true));
+        assert!(page.contains("action=\"/search\""));
+        assert!(page.contains("error-search"));
+        let forbidden = html(render(403, "You cannot open this page.", None, true));
+        assert!(!forbidden.contains("action=\"/search\""));
+    }
+
+    #[test]
     fn signed_in_error_shows_the_status_and_a_way_back() {
         let page = html(render(403, "You cannot open this page.", None, true));
         assert!(page.contains("error-code"));
@@ -92,10 +105,17 @@ mod tests {
             Some(&repo),
             true,
         ));
-        assert!(page.contains("repo-tabs"));
         assert!(page.contains("href=\"/alice/demo\""));
         assert!(page.contains("Go to repository"));
         assert!(page.contains("Page not found"));
+        // The repository tabs are drawn by the site header, which gets the repository too.
+        let header = html(crate::webui::components::shell(
+            crate::webui::document::Chrome::default(),
+            Some(repo.clone()),
+            rsx! {},
+        ));
+        assert!(header.contains("repo-tabs"));
+        assert!(header.contains("href=\"/alice/demo\""));
     }
 
     #[test]

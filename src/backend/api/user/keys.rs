@@ -1,6 +1,6 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session::{extract_session_id, get_current_user};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::{extract_session_id, get_current_user};
 use crate::backend::api::user::profile::{settings_response, settings_result};
 use crate::backend::api::user::responses::{field, mutation_guard, within_bounds, Fields};
 use crate::backend::app::AppState;

@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::session::get_current_user,
+    api::http::session::get_current_user,
     app::AppState,
     files::{self, ConfirmationError},
 };
@@ -30,7 +30,7 @@ pub async fn confirm_upload(
     Json(req): Json<ConfirmUploadRequest>,
 ) -> Result<Json<ConfirmUploadResponse>, Failure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::csrf::check(state.clone(), &headers).await?;
+    super::super::http::csrf::check(state.clone(), &headers).await?;
     files::confirm_upload(&state.pool, &state.storage, user.id, req.file_id)
         .await
         .map_err(confirmation_failure)?;

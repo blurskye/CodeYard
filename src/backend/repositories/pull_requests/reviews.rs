@@ -1,6 +1,8 @@
 use super::OperationError;
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
+use crate::backend::db::pull_requests::reviews::DiscussionRef;
+use crate::backend::issues::{discussion_link, discussion_page};
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
@@ -108,8 +110,12 @@ pub async fn create_pull_request_review(
             message: "state must be one of: approved, changes_requested, commented".to_owned(),
         });
     }
-    // Approvals may stand alone; comments and change requests must say why.
-    if review_state != "approved" && req.body.as_deref().unwrap_or("").trim().is_empty() {
+    // Approvals may stand alone. Comments and change requests must say why, in the summary or in the
+    // inline comments of the pending review that this review submits.
+    if review_state != "approved"
+        && req.body.as_deref().unwrap_or("").trim().is_empty()
+        && !has_pending_comments(pool, pull_request.id, user.id).await?
+    {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "A review body is required unless the review is approved".to_owned(),
@@ -186,13 +192,24 @@ pub async fn create_pull_request_review(
     .await
     .map_err(super::write_error)?;
 
+    // The review sits at its own place in the Conversation, and its notices link to that place.
+    let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
+    let page = discussion_page(
+        db::pull_requests::reviews::count_discussion_items_through(
+            pool,
+            pull_request.id,
+            DiscussionRef::Review(review.id),
+        )
+        .await,
+    );
+    let link = discussion_link(&base, page, &format!("review-{}", review.id));
+
     if pull_request.author_id != user.id {
         let title = format!(
             "{} submitted a {} review",
             user.username,
             review.state.as_str()
         );
-        let link = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
         let _ = create_and_broadcast_notification(
             pool,
             broadcaster,
@@ -208,6 +225,7 @@ pub async fn create_pull_request_review(
                     "repo_owner": owner,
                     "repo_name": repo,
                     "pull_number": pull_request.number,
+                    "subject": pull_request.title,
                     "review_id": review.id,
                     "state": review.state.as_str(),
                 }),
@@ -216,7 +234,6 @@ pub async fn create_pull_request_review(
         .await;
     }
 
-    let link = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
     notify_mentions(
         pool,
         broadcaster,
@@ -226,6 +243,7 @@ pub async fn create_pull_request_review(
             owner: &owner,
             repo: &repo,
             number: pull_request.number,
+            subject: &pull_request.title,
             link: &link,
             old_text: None,
             text: review.body.as_deref().unwrap_or(""),
@@ -234,7 +252,50 @@ pub async fn create_pull_request_review(
     )
     .await;
 
+    // The inline comments this review published were held back, so their mentions go out now.
+    let published = db::pull_requests::reviews::list_review_comments(pool, &[review.id])
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })?;
+    for entry in &published {
+        let comment_link = discussion_link(&base, page, &format!("comment-{}", entry.comment.id));
+        notify_mentions(
+            pool,
+            broadcaster,
+            MentionSource {
+                actor: &user,
+                repository: &repository,
+                owner: &owner,
+                repo: &repo,
+                number: pull_request.number,
+                subject: &pull_request.title,
+                link: &comment_link,
+                old_text: None,
+                text: &entry.comment.body,
+                notified: &[pull_request.author_id],
+            },
+        )
+        .await;
+    }
+
     Ok(review)
+}
+
+/// Whether the author has inline comments waiting in a pending review.
+async fn has_pending_comments(
+    pool: &db::DbPool,
+    pr_id: i64,
+    author_id: i64,
+) -> Result<bool, OperationError> {
+    db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, author_id)
+        .await
+        .map(|comments| !comments.is_empty())
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })
 }
 
 pub async fn dismiss_pull_request_review(
@@ -296,6 +357,13 @@ pub async fn dismiss_pull_request_review(
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "Review does not belong to this pull request".to_owned(),
+        });
+    }
+    // A pending review is private to its author until it is submitted, so it has no dismissal.
+    if review.state == "pending" {
+        return Err(OperationError::Missing {
+            code: "not_found",
+            message: "Review not found".to_owned(),
         });
     }
 
@@ -393,6 +461,7 @@ pub async fn request_reviewer(
                     "repo_owner": owner,
                     "repo_name": repo,
                     "pull_number": pull_request.number,
+                    "subject": pull_request.title,
                 }),
             },
         )
@@ -460,6 +529,51 @@ pub async fn remove_requested_reviewer(
         Err(OperationError::Missing {
             code: "not_found",
             message: "Reviewer request not found".to_owned(),
+        })
+    }
+}
+
+/// Deletes the viewer's pending review and the comments it holds. Nobody else has seen them.
+pub async fn discard_pending_review(
+    pool: &db::DbPool,
+    actor_id: i64,
+    owner: String,
+    repo: String,
+    number: i32,
+) -> Result<(), OperationError> {
+    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository not found".to_owned(),
+        })?;
+
+    super::require_read(pool, &super::actor(pool, actor_id).await?, &repository).await?;
+    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Pull request not found".to_owned(),
+        })?;
+
+    let discarded =
+        db::pull_requests::reviews::discard_pending_review(pool, pull_request.id, actor_id)
+            .await
+            .map_err(super::write_error)?;
+    if discarded {
+        Ok(())
+    } else {
+        Err(OperationError::Missing {
+            code: "not_found",
+            message: "No pending review to discard".to_owned(),
         })
     }
 }

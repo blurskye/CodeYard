@@ -547,54 +547,6 @@ async fn real_fixture(act: Option<PathBuf>) {
     .await;
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("Permission denied"));
-    // The released per-user constraint permits copies, but neither identity may authenticate.
-    let other = db::users::accounts::create_user(&database.pool, "legacy-copy-owner", None)
-        .await
-        .unwrap();
-    let duplicate: i64 = sqlx::query_scalar("INSERT INTO ssh_keys(user_id,name,fingerprint,public_key,key_type) SELECT $1,'legacy copy',fingerprint,public_key,key_type FROM ssh_keys WHERE id = $2 RETURNING id")
-        .bind(other.id).bind(key.id).fetch_one(&database.native).await.unwrap();
-    assert!(
-        db::users::ssh_keys::get_user_by_key_fingerprint(&database.pool, &key.fingerprint)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    for id in [key.id, duplicate] {
-        assert!(
-            db::users::ssh_keys::get_user_by_ssh_key_id(&database.pool, id)
-                .await
-                .unwrap()
-                .is_none()
-        );
-    }
-    assert!(broker.keys(&public, &user).await.stdout.is_empty());
-    // sshd retains the previously authorized line, so fresh broker validation must deny it.
-    assert!(!git(
-        &broker,
-        &config,
-        &source_path,
-        &["ls-remote", "ssh://owned-fixture/alice/private.git"]
-    )
-    .await
-    .status
-    .success());
-    assert_eq!(
-        db::users::ssh_keys::list_user_keys(&database.pool, actor.id)
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        db::users::ssh_keys::list_user_keys(&database.pool, other.id)
-            .await
-            .unwrap()
-            .len(),
-        1
-    );
-    db::users::ssh_keys::delete_ssh_key(&database.pool, duplicate)
-        .await
-        .unwrap();
     assert!(!broker.keys(&public, &user).await.stdout.is_empty());
     success(
         git(

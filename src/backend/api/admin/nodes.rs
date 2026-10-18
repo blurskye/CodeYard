@@ -1,7 +1,7 @@
 //! Admin nodes page: the cluster's members, with approve and revoke.
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::{app::AppState, cluster, db};
-use crate::webui::{app::Page, components::format_bytes, pages::nodes as view};
+use crate::webui::{app::Page, components::format_bytes, pages::admin::nodes as view};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},

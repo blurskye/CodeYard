@@ -1,7 +1,7 @@
 use crate::backend::api::auth::errors;
 use crate::backend::api::auth::session::LoginSessionRequest;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session;
 use crate::backend::api::user::responses::{AuthResponse, AuthUserResponse as UserResponse};
 use crate::backend::app::AppState;
 use crate::backend::identity::credentials::PasswordAccount;

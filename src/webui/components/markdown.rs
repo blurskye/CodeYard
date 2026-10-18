@@ -1618,6 +1618,79 @@ pub fn RepoMarkdown(
     }
 }
 
+/// One heading of a Markdown file, for the outline menu.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OutlineEntry {
+    pub level: usize,
+    pub text: String,
+    pub id: String,
+}
+
+/// The headings of a Markdown file in order. They are read back from the HTML the page renders,
+/// so each id is the one its section has.
+pub fn document_outline(content: &str, references: &References) -> Vec<OutlineEntry> {
+    outline_of_html(&parse_document(content, references))
+}
+
+fn outline_of_html(html: &str) -> Vec<OutlineEntry> {
+    let mut entries = Vec::new();
+    let mut rest = html;
+    while let Some(start) = rest.find("<h") {
+        let after = &rest[start + 2..];
+        let Some(level) = after
+            .chars()
+            .next()
+            .and_then(|digit| digit.to_digit(10))
+            .filter(|level| (1..=6).contains(level))
+        else {
+            rest = after;
+            continue;
+        };
+        let Some(open_end) = after.find('>') else {
+            break;
+        };
+        let body = &after[open_end + 1..];
+        let close = format!("</h{level}>");
+        let Some(end) = body.find(close.as_str()) else {
+            break;
+        };
+        let id = after[..open_end]
+            .split_once(" id=\"")
+            .and_then(|(_, value)| value.split_once('"'))
+            .map(|(id, _)| id.to_owned());
+        if let Some(id) = id {
+            entries.push(OutlineEntry {
+                level: level as usize,
+                text: heading_text(&body[..end]),
+                id,
+            });
+        }
+        rest = &body[end + close.len()..];
+    }
+    entries
+}
+
+/// The text of a heading's HTML: its tags removed and its escaped characters restored.
+fn heading_text(html: &str) -> String {
+    let mut text = String::new();
+    let mut in_tag = false;
+    for character in html.chars() {
+        match character {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => text.push(character),
+            _ => {}
+        }
+    }
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+        .trim()
+        .to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1633,6 +1706,23 @@ mod tests {
 
     fn bounded_markdown(text: &str, document: bool) -> Option<String> {
         super::bounded_markdown(text, document, &References::default())
+    }
+
+    #[test]
+    fn document_outline_lists_headings_with_the_ids_their_sections_have() {
+        let source =
+            "# Title\n\ntext\n\n## Setup & install\n\n### `cargo` steps\n\n## Setup & install\n";
+        let outline = super::document_outline(source, &References::default());
+        let levels: Vec<usize> = outline.iter().map(|entry| entry.level).collect();
+        assert_eq!(levels, vec![1, 2, 3, 2]);
+        assert_eq!(outline[1].text, "Setup & install");
+        assert_eq!(outline[2].text, "cargo steps");
+        assert_ne!(outline[1].id, outline[3].id);
+        let html = parse_document(source);
+        for entry in &outline {
+            assert!(html.contains(&format!("id=\"{}\"", entry.id)));
+        }
+        assert!(super::document_outline("No headings here.", &References::default()).is_empty());
     }
 
     fn base() -> LinkBase {
@@ -1682,7 +1772,7 @@ mod tests {
 
     #[test]
     fn over_long_bases_leave_links_images_and_srcsets_as_written() {
-        use crate::webui::pages::repositories::ref_path::link_base;
+        use crate::webui::pages::repos::ref_path::link_base;
         let long = link_base("/alice/demo", &"b".repeat(5_000), "docs");
         let candidates = ["img/a.png 1x"; 16].join(", ");
         let source = format!(

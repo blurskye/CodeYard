@@ -1,0 +1,19 @@
+mod blame;
+mod branch_protection_settings;
+mod branch_tabs;
+mod dashboard_repositories;
+mod discovery_pages;
+mod editor_save;
+mod find;
+mod initial_files;
+mod label_authority;
+mod languages;
+mod readme;
+mod search;
+mod secret_authority;
+mod settings_authority;
+mod settings_confirmation;
+#[path = "../support/mod.rs"]
+mod support;
+mod topics;
+mod upload_files;

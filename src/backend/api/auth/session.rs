@@ -1,7 +1,9 @@
 use crate::backend::api::auth::errors::{database_failure, session_failure};
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session;
-use crate::backend::api::session::{extract_session_id, extract_user_agent, generate_session_id};
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session;
+use crate::backend::api::http::session::{
+    extract_session_id, extract_user_agent, generate_session_id,
+};
 use crate::backend::app::AppState;
 use crate::backend::db::users::sessions as stored;
 use crate::backend::{db, identity};

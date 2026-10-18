@@ -15,10 +15,16 @@ fn describe(theme: Theme) -> (&'static str, ShellIcon) {
     }
 }
 
-/// The header theme button. The icon shows the current theme and one press saves the next
-/// one: system, dark, light, system. Without scripts it is a plain form post.
+/// The theme button. The icon shows the current theme and one press saves the next one: system,
+/// dark, light, system. Without scripts it is a plain form post. The header draws it as an icon;
+/// `menu` draws the phone copy in the navigation menu, as a row with its label.
 #[component]
-pub fn ThemeForm(csrf_token: String, return_to: String, theme: Theme) -> Element {
+pub fn ThemeForm(
+    csrf_token: String,
+    return_to: String,
+    theme: Theme,
+    #[props(default)] menu: bool,
+) -> Element {
     let notice = use_signal(String::new);
     let next = theme.next();
     #[cfg(target_arch = "wasm32")]
@@ -26,8 +32,16 @@ pub fn ThemeForm(csrf_token: String, return_to: String, theme: Theme) -> Element
     let (current_label, icon) = describe(theme);
     let (next_label, _) = describe(next);
     let hint = format!("Theme: {current_label}. Switch to {next_label}.");
+    let (form_class, button_class) = if menu {
+        ("site-theme-toggle site-theme-menu", "site-menu-link")
+    } else {
+        (
+            "site-theme-toggle",
+            "site-icon-button icon-tooltip icon-tooltip-end",
+        )
+    };
     rsx! {
-        form { action: "/_forms/theme", method: "post", class: "site-theme-toggle",
+        form { action: "/_forms/theme", method: "post", class: form_class,
             onsubmit: move |event| {
                 event.prevent_default();
                 #[cfg(target_arch = "wasm32")]
@@ -36,8 +50,9 @@ pub fn ThemeForm(csrf_token: String, return_to: String, theme: Theme) -> Element
             input { r#type: "hidden", name: "csrf_token", value: csrf_token }
             input { r#type: "hidden", name: "return_to", value: return_to }
             input { r#type: "hidden", name: "theme", value: next.as_str() }
-            button { r#type: "submit", class: "site-icon-button", "aria-label": hint.clone(), title: hint,
+            button { r#type: "submit", class: button_class, "aria-label": hint,
                 {shell_icon(icon)}
+                if menu { span { "Theme: {current_label}" } }
             }
             span { class: "site-sr-only", role: "status", "Theme: {current_label}" }
             span { class: "site-theme-error", role: "alert", "{notice}" }
@@ -144,5 +159,17 @@ mod tests {
         let html = render(Theme::Dark);
         assert!(html.contains("aria-label=\"Theme: Dark. Switch to Light.\""));
         assert!(html.contains("Theme: Dark"));
+    }
+
+    #[test]
+    fn the_menu_row_is_labelled_and_posts_the_next_theme() {
+        let html = dioxus_ssr::render_element(rsx! {
+            ThemeForm { csrf_token: "csrf-1".to_string(), return_to: "/alice".to_string(), theme: Theme::Dark, menu: true }
+        });
+        assert!(html.contains("class=\"site-theme-toggle site-theme-menu\""));
+        assert!(html.contains("class=\"site-menu-link\""));
+        assert!(html.contains("Theme: Dark"));
+        assert!(html.contains("name=\"theme\" value=\"light\""));
+        assert_eq!(html.matches("<button").count(), 1);
     }
 }

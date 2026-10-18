@@ -87,7 +87,7 @@ gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "Node", "Location", "History", "Navigator", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "NodeList", "Storage", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "Node", "Location", "History", "Navigator", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "HtmlFormElement", "KeyboardEvent", "NodeList", "Storage", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
@@ -97,7 +97,7 @@ http-body-util = "0.1"
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [workspace.dependencies]
@@ -107,7 +107,7 @@ axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "limit", "compression-gzip", "compression-br"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
-sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "sqlite", "migrate", "chrono", "uuid"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "sqlite", "regexp", "migrate", "chrono", "uuid"] }
 sha2 = "0.10"
 hex = "0.4"
 anyhow = "1"

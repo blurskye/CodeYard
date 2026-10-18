@@ -2,8 +2,13 @@
 use crate::backend::{
     cluster::{placement, NodeContext},
     db::{self, models::Repository, repositories::creation as repo_lifecycle},
-    repositories::store::{repo_store, ErrorKind, RepoError},
+    repositories::{
+        languages,
+        store::{repo_store, ErrorKind, RepoError, UploadFile, UploadWrite},
+        templates::{self, Template},
+    },
 };
+use chrono::{Datelike, Utc};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -49,6 +54,8 @@ fn storage_error(error: anyhow::Error) -> StorageError {
             Some(db::repositories::records::RepositorySettingsRefusal::InvalidName) => StorageError { kind: LifecycleFailure::Invalid, message: "Invalid repository name." },
             Some(db::repositories::records::RepositorySettingsRefusal::NameConflict) => StorageError { kind: LifecycleFailure::Conflict, message: "A repository with this name already exists." },
             Some(db::repositories::records::RepositorySettingsRefusal::NoMergeMethod) => StorageError { kind: LifecycleFailure::Invalid, message: "At least one merge method must stay allowed." },
+            Some(db::repositories::records::RepositorySettingsRefusal::InvalidTopics) => StorageError { kind: LifecycleFailure::Invalid, message: "Invalid repository topics." },
+            Some(db::repositories::records::RepositorySettingsRefusal::InvalidWebsite) => StorageError { kind: LifecycleFailure::Invalid, message: "Invalid repository website." },
             None => unavailable(),
         },
     }
@@ -195,23 +202,147 @@ pub async fn provision(
     }
     .await;
     if let Err(error) = initialized {
-        // Network and disk work are never performed while a DB transaction is held.
-        let (row_removed, storage_removed) =
-            cleanup_failed_initialization(pool, context, owner.actor_id, &repository).await;
-        if !row_removed || !storage_removed {
-            tracing::error!(
-                repo_id = repository.id,
-                storage_node_id = ?repository.storage_node_id,
-                disk_path = %repository.disk_path,
-                row_removed,
-                storage_removed,
-                "failed repository creation cleanup incomplete"
-            );
-            return Err(StorageError { kind: LifecycleFailure::InitializationCleanupFailed, message: "Repository initialization failed and cleanup was incomplete. Check your repositories before retrying." });
-        }
-        return Err(error);
+        return Err(abandon_repository(pool, context, owner.actor_id, &repository, error).await);
     }
     Ok(repository)
+}
+
+/// The files a new repository's first commit holds, as its creator chose them. The default
+/// holds nothing, which leaves the repository empty.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct InitialFiles {
+    pub readme: bool,
+    pub gitignore: Option<&'static Template>,
+    pub license: Option<&'static Template>,
+}
+
+impl InitialFiles {
+    fn is_empty(&self) -> bool {
+        !self.readme && self.gitignore.is_none() && self.license.is_none()
+    }
+}
+
+/// Creates a repository as [`provision`] does and, when `files` asks for any, commits them as
+/// the first commit on the default branch. A commit that fails removes the repository again.
+pub async fn provision_with_initial_files(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    owner: repo_lifecycle::RepositoryCreationOwner,
+    name: &str,
+    description: Option<&str>,
+    private: bool,
+    files: InitialFiles,
+) -> Result<Repository, StorageError> {
+    let repository = provision(node, repos_path, owner, name, description, private, None).await?;
+    if files.is_empty() {
+        return Ok(repository);
+    }
+    let (pool, context) = node;
+    match commit_initial_files(
+        pool,
+        context,
+        owner.actor_id,
+        &repository,
+        description,
+        files,
+    )
+    .await
+    {
+        Ok(()) => Ok(repository),
+        Err(error) => {
+            Err(abandon_repository(pool, context, owner.actor_id, &repository, error).await)
+        }
+    }
+}
+
+async fn commit_initial_files(
+    pool: &db::DbPool,
+    context: Option<&NodeContext>,
+    actor: i64,
+    repository: &Repository,
+    description: Option<&str>,
+    files: InitialFiles,
+) -> Result<(), StorageError> {
+    let user = db::users::accounts::get_user_by_id(pool, actor)
+        .await
+        .map_err(|_| unavailable())?
+        .ok_or_else(unavailable)?;
+    // The license names the display name when there is one, and never a line break.
+    let holder = user
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.contains(['\r', '\n']))
+        .unwrap_or(&user.username);
+    let year = Utc::now().year();
+    let mut texts: Vec<(&str, String)> = Vec::new();
+    if files.readme {
+        texts.push((
+            "README.md",
+            templates::readme(&repository.name, description),
+        ));
+    }
+    if let Some(template) = files.gitignore {
+        texts.push((".gitignore", template.text.to_owned()));
+    }
+    if let Some(template) = files.license {
+        texts.push((
+            "LICENSE",
+            templates::fill_license(template.text, year, holder),
+        ));
+    }
+    let write = UploadWrite {
+        branch: repository.default_branch.clone(),
+        message: "Initial commit".into(),
+        expected_revision: "unborn".into(),
+        files: texts
+            .iter()
+            .map(|(path, text)| UploadFile {
+                path: (*path).into(),
+                size: text.len(),
+            })
+            .collect(),
+    };
+    let content: Vec<u8> = texts.iter().flat_map(|(_, text)| text.bytes()).collect();
+    let store = repo_store(repository, context);
+    let prepared = store
+        .prepare_upload(&write, &content, &user.username, &user.commit_email())
+        .await
+        .map_err(git_storage_error)?;
+    store
+        .publish_file_as(pool, repository.id, actor, &prepared)
+        .await
+        .map_err(git_storage_error)?;
+    Ok(())
+}
+
+/// Removes a repository whose setup failed, and returns the error to report. When the removal
+/// is incomplete, that failure is reported instead, because the repository may still exist.
+async fn abandon_repository(
+    pool: &db::DbPool,
+    context: Option<&NodeContext>,
+    actor: i64,
+    repository: &Repository,
+    error: StorageError,
+) -> StorageError {
+    // Network and disk work are never performed while a DB transaction is held.
+    let (row_removed, storage_removed) =
+        cleanup_failed_initialization(pool, context, actor, repository).await;
+    if row_removed && storage_removed {
+        return error;
+    }
+    tracing::error!(
+        repo_id = repository.id,
+        storage_node_id = ?repository.storage_node_id,
+        disk_path = %repository.disk_path,
+        row_removed,
+        storage_removed,
+        "failed repository creation cleanup incomplete"
+    );
+    StorageError {
+        kind: LifecycleFailure::InitializationCleanupFailed,
+        message: "Repository initialization failed and cleanup was incomplete. Check your repositories before retrying.",
+    }
 }
 
 pub async fn visibility_locked(
@@ -237,7 +368,7 @@ pub fn validate_name(name: &str) -> Result<(), StorageError> {
 }
 
 /// Creation and updates check the description the user sends. A fork copies its
-/// source's description without this check, so existing longer values stay usable.
+/// source's description without this check, so a fork can hold a longer one.
 pub fn validate_description(description: &str) -> Result<(), StorageError> {
     if description.len() > 2_000 {
         return Err(StorageError {
@@ -374,12 +505,21 @@ pub async fn fork(
         Some(&source),
     )
     .await?;
+    let store = repo_store(&fork, context);
+    if let Some(path) = store.local_dir() {
+        languages::refresh_default_branch(
+            pool.clone(),
+            fork.id,
+            path.to_owned(),
+            fork.default_branch.clone(),
+        );
+    }
     if let Some(recipient) = source.personal_owner_id().filter(|id| *id != actor) {
         let title = format!("{} forked {}/{}", user.username, owner, source.name);
         let body = format!("New fork: {}/{}", user.username, source.name);
         let link = format!("/{}/{}", user.username, source.name);
         let _ = crate::backend::notifications::create::create_and_broadcast_notification(pool, broadcaster, crate::backend::notifications::create::NotificationRequest {
-            user_id: recipient, actor_id: Some(actor), repo_id: Some(source.id), kind: "repository_forked", title: &title, body: Some(&body), link: Some(&link), metadata: serde_json::json!({"source_owner": owner, "source_repo": source.name, "fork_owner": user.username, "fork_repo": fork.name}),
+            user_id: recipient, actor_id: Some(actor), repo_id: Some(source.id), kind: "repository_forked", title: &title, body: Some(&body), link: Some(&link), metadata: serde_json::json!({"source_owner": owner, "source_repo": source.name, "subject": format!("{owner}/{}", source.name), "fork_owner": user.username, "fork_repo": fork.name}),
         }).await;
     }
     Ok(fork)

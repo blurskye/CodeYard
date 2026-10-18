@@ -1,11 +1,12 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::discovery::stars::{star_order_and_text, star_sort, starred_page};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::user::profile::profile_model;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::api::users::activity::ActivityQuery;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::identity as view;
+use crate::webui::pages::{account, users};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -37,20 +38,81 @@ pub async fn get_user(
     Ok(Json(UserResponse::from(user)))
 }
 
+/// The Stars tab: how many of the user's stars the viewer can read, and the open page of them when
+/// that tab is the open one. The list is read only for the open tab.
+async fn profile_stars(
+    ctx: &PageContext,
+    target: i64,
+    page: i64,
+) -> Result<users::ProfileStars, Response> {
+    let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
+    let unavailable = || {
+        ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unable to load this user's stars.",
+        )
+    };
+    let count = db::repositories::engagement::count_starred_repositories(
+        &ctx.state.pool,
+        target,
+        viewer,
+        "",
+    )
+    .await
+    .map_err(|_| unavailable())?;
+    if ctx.query.get("tab").map(String::as_str) != Some("stars") {
+        return Ok(users::ProfileStars {
+            count,
+            ..users::ProfileStars::default()
+        });
+    }
+    let (sort, text) = star_order_and_text(&ctx.query)
+        .map_err(|message| ctx.error(StatusCode::BAD_REQUEST, message))?;
+    let page = usize::try_from(page.max(1)).unwrap_or(usize::MAX);
+    let listed = starred_page(&ctx.state, target, viewer, &text, star_sort(&sort), page)
+        .await
+        .map_err(|_| unavailable())?;
+    Ok(users::ProfileStars {
+        count,
+        open: true,
+        page,
+        has_older: listed.has_older,
+        repositories: listed.repositories,
+        sort,
+        query: text,
+    })
+}
+
+/// `page` is the page of the open tab: activity on the Repositories tab, stars on the Stars tab.
 pub(crate) async fn profile_response(
     ctx: &PageContext,
     username: &str,
     status: StatusCode,
     message: Option<&str>,
-    activity_page: i64,
+    page: i64,
 ) -> Response {
-    let (target, repositories) = match crate::backend::identity::profiles::repositories_on_profile(
-        &ctx.state.pool,
-        username,
-        ctx.user.as_ref().map(|viewer| viewer.id),
-    )
-    .await
-    {
+    // The Stars tab shows the repository count and its own list. Only the Repositories tab reads the
+    // repositories and the activity feed.
+    let stars_tab = ctx.query.get("tab").map(String::as_str) == Some("stars");
+    let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
+    let listing = if stars_tab {
+        crate::backend::identity::profiles::repository_count_on_profile(
+            &ctx.state.pool,
+            username,
+            viewer,
+        )
+        .await
+        .map(|(target, count)| (target, count, Vec::new()))
+    } else {
+        crate::backend::identity::profiles::repositories_on_profile(
+            &ctx.state.pool,
+            username,
+            viewer,
+        )
+        .await
+        .map(|(target, repositories)| (target, repositories.len(), repositories))
+    };
+    let (target, repository_count, repositories) = match listing {
         Ok(value) => value,
         Err(crate::backend::identity::profiles::ProfileReadError::Missing) => {
             return ctx.error(
@@ -108,29 +170,38 @@ pub(crate) async fn profile_response(
             )
         }
     };
-    let activity = match crate::backend::identity::activity::profile_activity(
-        &ctx.state.pool,
-        ctx.user.as_ref(),
-        target.id,
-        activity_page,
-    )
-    .await
-    {
-        Ok(page) => crate::backend::api::users::activity::profile_activity_view(page),
-        Err(_) => {
-            return ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load this user's activity.",
-            )
+    let activity = if stars_tab {
+        users::ProfileActivity::default()
+    } else {
+        match crate::backend::identity::activity::profile_activity(
+            &ctx.state.pool,
+            ctx.user.as_ref(),
+            target.id,
+            page,
+        )
+        .await
+        {
+            Ok(page) => crate::backend::api::users::activity::profile_activity_view(page),
+            Err(_) => {
+                return ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load this user's activity.",
+                )
+            }
         }
+    };
+    let stars = match profile_stars(ctx, target.id, page).await {
+        Ok(stars) => stars,
+        Err(response) => return response,
     };
     let title = format!("{}'s profile", target.username);
     ctx.page_model_status(
         status,
         &title,
-        crate::webui::app::Page::Identity(view::Page::Profile {
+        crate::webui::app::Page::Identity(account::Page::Profile {
             profile: profile_model(&target),
             repositories,
+            repository_count,
             csrf_token: ctx.csrf_token.clone(),
             own,
             authenticated: ctx.user.is_some(),
@@ -139,13 +210,14 @@ pub(crate) async fn profile_response(
             follows,
             message: message.map(str::to_owned),
             activity,
+            stars,
         }),
     )
 }
 
 /// One repository row on a public page. Users and organizations list the same fields.
-pub(crate) fn profile_repository(repo: db::models::Repository) -> view::Repository {
-    view::Repository {
+pub(crate) fn profile_repository(repo: db::models::Repository) -> users::Repository {
+    users::Repository {
         name: repo.name,
         description: repo.description.unwrap_or_default(),
         private: repo.is_private,

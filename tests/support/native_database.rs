@@ -33,6 +33,7 @@ impl NativeDatabase {
             .expect("native SQLite migration");
         let options = SqliteConnectOptions::from_str(&url)
             .unwrap()
+            .with_regexp()
             .foreign_keys(true)
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Full)
@@ -70,6 +71,7 @@ impl NativeDatabase {
             .connect_with(
                 SqliteConnectOptions::from_str(&self.url)
                     .unwrap()
+                    .with_regexp()
                     .foreign_keys(true)
                     .busy_timeout(Duration::from_secs(3)),
             )

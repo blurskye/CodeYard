@@ -22,6 +22,44 @@ pub enum Engagement {
     Watch,
 }
 
+/// Saves how the actor watches a repository. `level` is `participating` (the default, no row),
+/// `watching`, `custom` or `ignoring`; `events` lists the kinds a `custom` watch wants.
+pub async fn set_level(
+    pool: &db::DbPool,
+    actor: i64,
+    repo_id: i64,
+    level: &str,
+    events: &[&str],
+) -> Result<(), EngagementError> {
+    access::check_read(pool, repo_id, Some(actor))
+        .await
+        .map_err(EngagementError::Access)?;
+    let saved = match level {
+        "participating" => db::repositories::engagement::unwatch_repo(pool, actor, repo_id)
+            .await
+            .map(|_| ()),
+        "watching" | "ignoring" => {
+            db::repositories::engagement::set_watch_level(pool, actor, repo_id, level, "").await
+        }
+        "custom" => {
+            let events: Vec<&str> = ["issues", "pulls"]
+                .into_iter()
+                .filter(|name| events.contains(name))
+                .collect();
+            db::repositories::engagement::set_watch_level(
+                pool,
+                actor,
+                repo_id,
+                "custom",
+                &events.join(","),
+            )
+            .await
+        }
+        _ => return Err(EngagementError::Unavailable),
+    };
+    saved.map_err(|_| EngagementError::Unavailable)
+}
+
 pub async fn change(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -64,7 +102,7 @@ pub async fn change(
             "is now watching",
         ),
     };
-    // Star notifications historically occur on repeated star requests as well.
+    // A repeated star request still notifies; a watch notifies only when the watch changed.
     if let Some(recipient) = repository
         .personal_owner_id()
         .filter(|id| enabled && *id != actor && (matches!(kind, Engagement::Star) || changed))
@@ -81,10 +119,10 @@ pub async fn change(
             };
             let metadata = match kind {
                 Engagement::Star => {
-                    json!({"repo_owner": owner, "repo_name": repository.name, "stars_count": count})
+                    json!({"repo_owner": owner, "repo_name": repository.name, "stars_count": count, "subject": format!("{owner}/{}", repository.name)})
                 }
                 Engagement::Watch => {
-                    json!({"repo_owner": owner, "repo_name": repository.name, "watchers_count": count})
+                    json!({"repo_owner": owner, "repo_name": repository.name, "watchers_count": count, "subject": format!("{owner}/{}", repository.name)})
                 }
             };
             let _ = create_and_broadcast_notification(

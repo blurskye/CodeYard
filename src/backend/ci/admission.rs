@@ -59,7 +59,7 @@ impl From<RepoError> for AdmissionError {
 
 pub fn is_safe_owner(value: &str) -> bool {
     crate::backend::identity::credentials::validate_username(value).is_ok()
-        // Keep historical short or dotted namespaces accepted by CI.
+        // Also accept the names the repository rules allow, such as short or dotted namespaces.
         || crate::backend::repositories::lifecycle::validate_name(value).is_ok()
 }
 

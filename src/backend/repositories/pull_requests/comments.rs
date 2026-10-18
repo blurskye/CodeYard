@@ -18,15 +18,18 @@ pub struct CreatePullRequestCommentRequest {
     pub side: Option<String>,
     pub commit_sha: Option<String>,
     pub in_reply_to_comment_id: Option<i64>,
+    /// A new thread on a file goes into the author's pending review instead of being published.
+    #[serde(default)]
+    pub pending: bool,
 }
 
 fn is_valid_sha1_hex(sha: &str) -> bool {
     sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// The root of the thread that `parent` belongs to. Replies are stored one level deep, but
-/// replies saved before that rule can sit deeper, so the chain is followed to its root. A chain
-/// that comes back to a comment it already passed is damaged and takes no reply.
+/// The root of the thread that `parent` belongs to. A reply may name another reply as its
+/// parent, so the chain is followed up to its root. A chain that loops back on itself has no
+/// root and takes no reply.
 async fn thread_root(
     pool: &db::DbPool,
     parent: &db::models::PullRequestComment,
@@ -57,20 +60,41 @@ async fn thread_root(
     Ok(root_id)
 }
 
-/// The discussion page and anchor of a saved pull request comment. The comment count is
-/// read only when a notification names this link.
+/// The discussion page and anchor of a saved pull request comment. The position is read only when
+/// a notification names this link.
 async fn pull_request_comment_link(
     pool: &db::DbPool,
     owner: &str,
     repo: &str,
     pull_request: &db::models::PullRequest,
-    comment_id: i64,
+    comment: &db::models::PullRequestComment,
 ) -> String {
     let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
-    // The new comment is the newest, so its position is the discussion's comment count.
-    let position =
-        db::pull_requests::reviews::count_pull_request_comments(pool, pull_request.id).await;
-    comment_link(&base, comment_id, position)
+    let position = db::pull_requests::reviews::count_discussion_items_through(
+        pool,
+        pull_request.id,
+        db::pull_requests::reviews::DiscussionRef::of_comment(comment),
+    )
+    .await;
+    comment_link(&base, comment.id, position)
+}
+
+/// Whether a comment is filed in a review that is still pending. Nothing is sent for it until the
+/// review is submitted, and a discard removes it without a trace.
+async fn in_pending_review(
+    pool: &db::DbPool,
+    comment: &db::models::PullRequestComment,
+) -> Result<bool, OperationError> {
+    let Some(review_id) = comment.review_id else {
+        return Ok(false);
+    };
+    let review = db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })?;
+    Ok(review.is_some_and(|review| review.state == "pending"))
 }
 
 /// The file must be one this pull request changes, and the line must be a line of its diff on the
@@ -323,21 +347,35 @@ pub async fn create_pull_request_comment(
         }
     }
 
-    let comment = db::pull_requests::reviews::add_pull_request_comment(
-        pool,
-        db::pull_requests::reviews::NewPullRequestComment {
-            pr_id: pull_request.id,
-            author_id: user.id,
-            body: &req.body,
-            path: path.as_deref(),
-            line,
-            side: side.as_deref(),
-            commit_sha: commit_sha.as_deref(),
-            in_reply_to_comment_id: reply_root,
-        },
-    )
-    .await
-    .map_err(super::write_error)?;
+    // A new thread on a file can wait in the author's pending review. Its notices and mentions
+    // go out when the review is submitted, so nothing is sent for it here.
+    let pending = req.pending && path.is_some() && req.in_reply_to_comment_id.is_none();
+    if pending && pull_request.state != "open" {
+        return Err(OperationError::Invalid {
+            code: "invalid_state",
+            message: "Pull request is not open".to_owned(),
+        });
+    }
+    let input = db::pull_requests::reviews::NewPullRequestComment {
+        pr_id: pull_request.id,
+        author_id: user.id,
+        body: &req.body,
+        path: path.as_deref(),
+        line,
+        side: side.as_deref(),
+        commit_sha: commit_sha.as_deref(),
+        in_reply_to_comment_id: reply_root,
+    };
+    let stored = if pending {
+        db::pull_requests::reviews::add_pending_pull_request_comment(pool, input).await
+    } else {
+        db::pull_requests::reviews::add_pull_request_comment(pool, input).await
+    };
+    let comment = stored.map_err(super::write_error)?;
+    // A new thread on a file, and a reply that joins one, wait in the pending review.
+    if in_pending_review(pool, &comment).await? {
+        return Ok(comment);
+    }
 
     // The users this comment already notifies. A mention of one of them adds nothing.
     let mut notified = vec![pull_request.author_id];
@@ -349,7 +387,7 @@ pub async fn create_pull_request_comment(
         reply_parent.filter(|(_, author)| *author != user.id && *author != pull_request.author_id);
     if notifies_author || reply_to.is_some() || mentions_anyone(&req.body) {
         // One link serves every notification of this comment.
-        let link = pull_request_comment_link(pool, &owner, &repo, &pull_request, comment.id).await;
+        let link = pull_request_comment_link(pool, &owner, &repo, &pull_request, &comment).await;
         if notifies_author {
             let title = format!(
                 "{} commented on pull request #{}",
@@ -370,6 +408,7 @@ pub async fn create_pull_request_comment(
                         "repo_owner": owner,
                         "repo_name": repo,
                         "pull_number": pull_request.number,
+                        "subject": pull_request.title,
                         "comment_id": comment.id,
                         "in_reply_to_comment_id": comment.in_reply_to_comment_id,
                     }),
@@ -394,6 +433,7 @@ pub async fn create_pull_request_comment(
                         "repo_owner": owner,
                         "repo_name": repo,
                         "pull_number": pull_request.number,
+                        "subject": pull_request.title,
                         "comment_id": comment.id,
                         "parent_comment_id": parent_id,
                     }),
@@ -410,6 +450,7 @@ pub async fn create_pull_request_comment(
                 owner: &owner,
                 repo: &repo,
                 number: pull_request.number,
+                subject: &pull_request.title,
                 link: &link,
                 old_text: None,
                 text: &req.body,

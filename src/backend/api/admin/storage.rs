@@ -1,7 +1,7 @@
 //! Admin storage overview page.
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::{app::AppState, db};
-use crate::webui::{app::Page, pages::storage as view};
+use crate::webui::{app::Page, pages::admin::storage as view};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},

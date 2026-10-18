@@ -47,6 +47,26 @@ pub async fn get_repo_languages(pool: &PgPool, repo_id: i64) -> Result<Vec<RepoL
     Ok(langs)
 }
 
+/// The primary language of each repository in `repo_ids`, the one with the most bytes. A
+/// repository without stored languages has no row.
+pub async fn get_primary_repo_languages(
+    pool: &PgPool,
+    repo_ids: &[i64],
+) -> Result<Vec<RepoLanguage>> {
+    if repo_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut query = sqlx::QueryBuilder::<sqlx::Postgres>::new(
+        "SELECT id,repo_id,language,bytes,percentage::double precision AS percentage,color,updated_at FROM (SELECT *, ROW_NUMBER() OVER (PARTITION BY repo_id ORDER BY bytes DESC, language) AS rn FROM repo_languages WHERE repo_id IN (",
+    );
+    let mut ids = query.separated(",");
+    for id in repo_ids {
+        ids.push_bind(id);
+    }
+    query.push(")) ranked WHERE rn = 1");
+    Ok(query.build_query_as().fetch_all(pool).await?)
+}
+
 pub async fn upsert_repo_contributors(
     pool: &PgPool,
     repo_id: i64,

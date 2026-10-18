@@ -47,13 +47,14 @@ async fn locate_item(
     Ok((link, column))
 }
 
+/// Assigns `user_id`. Returns whether that was a new assignment: an existing assignee returns false.
 pub async fn assign_user(
     pool: &PgPool,
     actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
     user_id: i64,
-) -> Result<()> {
+) -> Result<bool> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     let (link, column) = locate_item(&mut tx, repo_id, item).await?;
     // The personal owner and anyone with direct access to the repository may be assigned.
@@ -73,6 +74,7 @@ pub async fn assign_user(
     .bind(user_id)
     .fetch_one(&mut *tx)
     .await?;
+    let mut added = false;
     if !assigned {
         let count: i64 =
             sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {link} WHERE {column} = $1"))
@@ -80,16 +82,19 @@ pub async fn assign_user(
                 .fetch_one(&mut *tx)
                 .await?;
         anyhow::ensure!(count < MAX_ASSIGNEES, AssignmentRefusal::TooMany);
-        sqlx::query(&format!(
+        // A row that a concurrent request inserted first is not a new assignment.
+        added = sqlx::query(&format!(
             "INSERT INTO {link} ({column}, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
         ))
         .bind(item_id(item))
         .bind(user_id)
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected()
+            == 1;
     }
     tx.commit().await?;
-    Ok(())
+    Ok(added)
 }
 
 pub async fn unassign_user(
@@ -97,15 +102,16 @@ pub async fn unassign_user(
     actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
-    user_id: i64,
+    username: &str,
 ) -> Result<bool> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     let (link, column) = locate_item(&mut tx, repo_id, item).await?;
+    // A name that is no user matches no row, so nothing is removed.
     let result = sqlx::query(&format!(
-        "DELETE FROM {link} WHERE {column} = $1 AND user_id = $2"
+        "DELETE FROM {link} WHERE {column} = $1 AND user_id = (SELECT id FROM users WHERE username = $2)"
     ))
     .bind(item_id(item))
-    .bind(user_id)
+    .bind(username)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

@@ -1,13 +1,13 @@
 //! The site-wide AI crawler setting, changed from the admin page or the admin API.
 use super::accounts::{admin_response, require_admin_user};
 use crate::backend::api::auth::errors::database_failure;
-use crate::backend::api::context::PageContext;
 use crate::backend::api::crawlers::{self, BLOCK};
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::identity as view;
+use crate::webui::pages::admin::normalize_days;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -81,7 +81,7 @@ pub(crate) async fn ai_crawlers_post(
     let Some(value) = crawlers::setting_value(field(&form, "ai_crawlers")) else {
         return admin_response(
             &ctx,
-            view::normalize_days(None),
+            normalize_days(None),
             Some(&form),
             StatusCode::BAD_REQUEST,
             Some("Choose allow or block for AI crawlers."),
@@ -93,7 +93,7 @@ pub(crate) async fn ai_crawlers_post(
         Ok(false) => {
             admin_response(
                 &ctx,
-                view::normalize_days(None),
+                normalize_days(None),
                 Some(&form),
                 StatusCode::CONFLICT,
                 Some("Finish setup before changing this setting."),
@@ -103,7 +103,7 @@ pub(crate) async fn ai_crawlers_post(
         Err(_) => {
             admin_response(
                 &ctx,
-                view::normalize_days(None),
+                normalize_days(None),
                 Some(&form),
                 StatusCode::SERVICE_UNAVAILABLE,
                 Some("Unable to save the AI crawler setting."),

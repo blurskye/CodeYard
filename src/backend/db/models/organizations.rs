@@ -65,9 +65,6 @@ pub struct Team {
     pub slug: String,
     pub description: Option<String>,
     pub privacy: String,
-    // Unsupported legacy hierarchy is persistence only, never safe presentation.
-    #[serde(skip_serializing)]
-    pub parent_team_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

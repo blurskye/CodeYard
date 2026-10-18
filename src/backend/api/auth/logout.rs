@@ -1,12 +1,12 @@
 use crate::backend::api::auth::errors::session_failure;
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session;
-use crate::backend::api::session::{build_logout_cookie, extract_session_id};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session;
+use crate::backend::api::http::session::{build_logout_cookie, extract_session_id};
 use crate::backend::api::user::responses::{AuthResponse, Fields};
 use crate::backend::app::AppState;
 use crate::backend::identity;
-use crate::webui::pages::identity as view;
+use crate::webui::pages::account;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -43,7 +43,7 @@ pub(crate) async fn logout_get(
     };
     ctx.page_model(
         "Sign out",
-        crate::webui::app::Page::Identity(view::Page::Logout {
+        crate::webui::app::Page::Identity(account::Page::Logout {
             csrf_token: ctx.csrf_token.clone(),
         }),
     )

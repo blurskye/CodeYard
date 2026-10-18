@@ -1,12 +1,12 @@
 use crate::backend::api::auth::errors;
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session::extract_session_id;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::extract_session_id;
 use crate::backend::api::user::profile::{settings_response, settings_result};
 use crate::backend::api::user::responses::{
     field, mutation_guard, within_bounds, AuthResponse, AuthUserResponse as UserResponse, Fields,
 };
-use crate::backend::api::{auth, session};
+use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::identity;
 use crate::backend::identity::accounts::PasswordChange;

@@ -1,0 +1,21 @@
+pub mod actions;
+pub mod blame;
+pub mod blob;
+pub mod branches;
+pub mod chrome;
+pub mod commits;
+pub mod compare;
+pub mod editor;
+pub mod find;
+pub mod issues;
+mod labels;
+mod milestones;
+pub mod page;
+pub mod pulls;
+pub mod ref_path;
+pub mod ref_switcher;
+pub mod settings;
+pub mod tree;
+
+#[cfg(test)]
+mod tests;

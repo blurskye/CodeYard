@@ -98,6 +98,7 @@
   border-radius: 6px;
   color: var(--foreground);
   text-align: left;
+  transition: background-color .15s ease, color .15s ease;
 }
 .actions-page .actions-nav-item svg {
   flex: 0 0 auto;
@@ -157,14 +158,12 @@
   margin-top: 3px;
   color: var(--muted-foreground);
 }
-.actions-page .actions-heading-controls,
-.actions-page .actions-search-row {
+.actions-page .actions-heading-controls {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
-.actions-page .actions-search-row { width: 300px; max-width: 100%; }
-.actions-page .actions-heading-controls { flex-wrap: wrap; }
 .actions-page .actions-search-field {
   position: relative;
   display: block;
@@ -218,6 +217,7 @@
   gap: 8px;
 }
 .actions-page .actions-filter-field { display: block; min-width: 0; }
+.actions-page .actions-filters .actions-search-field { flex: 1 1 220px; width: auto; max-width: 320px; }
 :is(.actions-page, .actions-repository .repo-content .actions-page) .actions-filter {
   max-width: 132px;
   height: 32px;
@@ -258,6 +258,7 @@
 
 .actions-page .actions-dispatch { position: relative; }
 .actions-page .actions-dispatch > summary { list-style: none; }
+.actions-page .actions-dispatch[open] > .actions-dispatch-menu { animation: actions-reveal .14s ease-out; }
 .actions-page .actions-dispatch-menu {
   position: absolute;
   top: 38px;
@@ -345,7 +346,7 @@
 .actions-page .actions-runs li + li { border-top: 1px solid var(--border); }
 .actions-page .actions-run-row {
   display: grid;
-  grid-template-columns: 20px minmax(220px, 1fr) minmax(120px, .55fr) 170px;
+  grid-template-columns: 116px minmax(220px, 1fr) minmax(120px, .55fr) 170px;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -353,9 +354,24 @@
   background: var(--background);
   color: var(--foreground);
   text-align: left;
+  transition: background-color .15s ease;
 }
 .actions-page .actions-run-row:hover { background: var(--muted); }
-.actions-page .actions-run-icon { display: flex; align-self: start; padding-top: 3px; }
+/* The icon and label take the colour of the ci-status class on the same element. */
+.actions-page .actions-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 6px;
+  padding: 2px 9px 2px 7px;
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
 .actions-page .actions-run-description { min-width: 0; }
 .actions-page .actions-run-title {
   display: block;
@@ -450,6 +466,7 @@
 .actions-page [class*=" ci-status-"] { flex: 0 0 auto; }
 .actions-page .actions-status-spinner { animation: actions-spin 1s linear infinite; }
 @keyframes actions-spin { to { transform: rotate(360deg); } }
+@keyframes actions-reveal { from { opacity: 0; transform: translateY(-4px); } }
 
 /* Run detail */
 .actions-page .actions-run-heading { margin: 24px 32px 28px; }
@@ -466,11 +483,11 @@
   justify-content: space-between;
   gap: 16px;
 }
-.actions-page .actions-run-heading-title {
+.actions-page .actions-run-heading-actions {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
+  gap: 8px;
 }
 .actions-page .actions-run-heading h1 {
   overflow-wrap: anywhere;
@@ -478,11 +495,14 @@
   font-weight: 600;
 }
 .actions-page .actions-run-number { color: var(--muted-foreground); font-weight: 400; }
-.actions-page .actions-run-heading > p {
-  margin: 6px 0 0 26px;
+.actions-page .actions-run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 16px;
+  margin-top: 10px;
   color: var(--muted-foreground);
 }
-.actions-page .actions-run-state { color: var(--foreground); font-weight: 500; }
 .actions-page .actions-heading-branch { overflow-wrap: anywhere; }
 .actions-page .actions-detail-layout {
   grid-template-columns: 260px minmax(0, 1fr);
@@ -518,7 +538,6 @@
   font-size: 12px;
   font-weight: 400;
 }
-.actions-page .actions-summary-status { display: flex; align-items: center; gap: 6px; }
 .actions-page .actions-workflow-card > header {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
@@ -584,6 +603,9 @@
   font-size: 14px;
   font-weight: 600;
 }
+
+/* A select's list inside the log panel must not be clipped by the panel's corners. */
+.actions-page .actions-log-panel:has(.app-select-list) { overflow: visible; }
 
 /* Logs intentionally use a stable dark console in every appearance. */
 .actions-page .actions-log-panel {
@@ -656,9 +678,11 @@
   left: 12px;
   color: #8b949e;
   font-size: 19px;
+  transition: transform .18s ease;
 }
 .actions-page .actions-step[open] > .actions-step-heading { background: #21262d; }
 .actions-page .actions-step[open] > .actions-step-heading::before { transform: rotate(90deg); }
+.actions-page .actions-step[open] > .actions-log-lines { animation: actions-reveal .18s ease-out; }
 .actions-page .actions-step-heading:hover { background: #161b22; }
 .actions-page .actions-step-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: #c9d1d9; }
 .actions-page .actions-step-name > span:not(.actions-sr-only) { overflow-wrap: anywhere; }
@@ -738,8 +762,7 @@
   .actions-page .actions-detail-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 20px; }
   .actions-page .actions-list-heading { flex-wrap: wrap; }
   .actions-page .actions-heading-controls { width: 100%; }
-  .actions-page .actions-search-row { flex: 1; width: auto; }
-  .actions-page .actions-run-row { grid-template-columns: 20px minmax(0, 1fr) 150px; }
+  .actions-page .actions-run-row { grid-template-columns: 116px minmax(0, 1fr) 150px; }
   .actions-page .actions-branch-badge { grid-column: 2; grid-row: 2; }
   .actions-page .actions-run-time { grid-column: 3; grid-row: 1 / 3; }
   .actions-page .actions-summary-grid,
@@ -763,22 +786,21 @@
   .actions-page .actions-nav-item.is-selected::before { left: 0; }
   .actions-page .actions-list-heading { margin-top: 20px; }
   .actions-page .actions-run-toolbar { position: relative; }
-  /* The count sits on the first row. The filters are a two-column grid below it: the branch field
-     across the top, then Workflow and Event, then Status beside Filter runs. Run workflow takes the
-     full last row. Run on and View workflows take a full row of the header, above the search. */
+  /* The count sits on the first row. The filters are one two-column grid below it: the search across
+     the top, then Workflow and Event, then Status and Branch, then Filter runs across the bottom. */
   .actions-page .actions-run-count { width: auto; }
-  .actions-page .actions-version-form { flex: 1 1 100%; }
-  :is(.actions-page, .actions-repository .repo-content .actions-page) .actions-version-form .actions-branch-filter { width: 96px; }
   .actions-page .actions-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; flex: 1 1 100%; }
-  .actions-page .actions-filter-branch { grid-column: 1 / -1; grid-row: 1; }
+  .actions-page .actions-filters .actions-search-field { grid-column: 1 / -1; max-width: none; }
+  .actions-page .actions-filters > .actions-button { grid-column: 1 / -1; }
   :is(.actions-page, .actions-repository .repo-content .actions-page) .actions-filters .actions-filter { width: 100%; max-width: none; }
-  .actions-page .actions-dispatch { position: static; flex: 1 1 100%; }
+  /* Run workflow shares the heading row with Refresh. */
+  .actions-page .actions-dispatch { position: static; flex: 1 1 0; }
   .actions-page .actions-dispatch > summary { width: 100%; }
   :is(.actions-page, .actions-repository .repo-content .actions-page) .actions-filter { max-width: 104px; }
-  .actions-page .actions-run-row { grid-template-columns: 20px minmax(0, 1fr); padding: 12px; }
+  .actions-page .actions-run-row { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px; }
   .actions-page .actions-run-title { font-size: 14px; }
   .actions-page .actions-branch-badge,
-  .actions-page .actions-run-time { grid-column: 2; grid-row: auto; }
+  .actions-page .actions-run-time { grid-column: 1; grid-row: auto; }
   .actions-page .actions-run-time { flex-direction: row; flex-wrap: wrap; gap: 6px 12px; }
   .actions-page .actions-run-heading { margin: 22px 0; }
   .actions-page .actions-run-heading-row { gap: 8px; }
@@ -786,7 +808,7 @@
   .actions-page .actions-log-panel { min-height: 380px; }
   .actions-page .actions-log-heading { padding: 12px; }
   .actions-page .actions-log-controls { width: 100%; }
-  /* The search takes the first row; Wrap and Filter logs share the second. */
+  /* The search takes the first row; Wrap takes the second. */
   .actions-page .actions-log-search { flex: 1 1 100%; }
   .actions-page .actions-log-line { grid-template-columns: 2.5rem minmax(0, 1fr); padding-inline: 4px; }
   /* On a phone the run menu is a bottom sheet, so every field is on screen without scrolling. */
@@ -796,7 +818,6 @@
 @media (max-width: 440px) {
   .actions-page .actions-list-heading h1 { font-size: 21px; }
   .actions-page .actions-heading-controls { align-items: stretch; }
-  .actions-page .actions-search-row { min-width: 0; }
   .actions-page .actions-summary-grid,
   .actions-page .actions-metadata-grid { grid-template-columns: minmax(0, 1fr); }
   .actions-page .actions-run-heading-row { flex-wrap: wrap; }
@@ -805,5 +826,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .actions-page .actions-status-spinner { animation: none; }
+  .actions-page .actions-status-spinner,
+  .actions-page .actions-step[open] > .actions-log-lines,
+  .actions-page .actions-dispatch[open] > .actions-dispatch-menu { animation: none; }
+  .actions-page .actions-step-heading::before,
+  .actions-page .actions-run-row,
+  .actions-page .actions-nav-item { transition: none; }
 }

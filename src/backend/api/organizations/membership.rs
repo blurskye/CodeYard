@@ -1,13 +1,13 @@
-//! Native membership commands; hierarchy and last-owner policy belong to the DAO.
+//! Native membership commands; last-owner policy belongs to the DAO.
 
 use super::organization;
 use super::organization::{unavailable, unit, Fields};
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::db;
 use crate::backend::db::models::OrgRole;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::webui::pages::organizations as view;
+use crate::webui::pages::orgs as view;
 use axum::response::Response;
 use std::collections::HashMap;
 

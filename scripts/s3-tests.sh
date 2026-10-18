@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs the #[ignore]d S3 tests of tests/production_storage.rs against a throwaway RustFS.
+# Runs the #[ignore]d S3 tests of tests/storage/production_storage.rs against a throwaway RustFS.
 #
 #   GITSERV_TEST_DATABASE_URL=postgres://USER:PASSWORD@HOST:5432/DATABASE bash scripts/s3-tests.sh
 #
@@ -53,4 +53,4 @@ GITSERV_STORAGE_TEST_PUBLIC_ENDPOINT=http://localhost:$port \
 GITSERV_STORAGE_TEST_BUCKET=$bucket \
 GITSERV_STORAGE_TEST_ACCESS_KEY=$access \
 GITSERV_STORAGE_TEST_SECRET_KEY=$secret \
-    cargo test --locked --test production_storage -- --ignored --test-threads=1
+    cargo test --locked --test storage -- production_storage --ignored --test-threads=1

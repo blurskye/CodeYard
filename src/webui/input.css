@@ -496,6 +496,10 @@ html {
 	line-height: 1.4;
 }
 
+.discovery-dashboard .discovery-find {
+	margin-bottom: 16px;
+}
+
 .discovery-dashboard .discovery-shared {
 	margin-top: 32px;
 }
@@ -632,20 +636,14 @@ html {
 }
 
 .discovery-dashboard .discovery-trending-header .discovery-link,
-.discovery-dashboard .discovery-trending-scope,
-.discovery-dashboard .discovery-trending-empty {
+.discovery-dashboard .discovery-trending-scope {
 	font-size: 12px;
 }
 
-.discovery-dashboard .discovery-trending-scope,
-.discovery-dashboard .discovery-trending-empty {
+.discovery-dashboard .discovery-trending-scope {
 	margin: 0;
 	color: var(--muted-foreground);
 	overflow-wrap: anywhere;
-}
-
-.discovery-dashboard .discovery-trending-empty {
-	margin-top: 16px;
 }
 
 .discovery-dashboard .discovery-trending-list {

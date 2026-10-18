@@ -6,7 +6,8 @@ use crate::backend::{
 };
 use std::collections::HashMap;
 
-/// Prefer the stored branch, then the historical main/master/lexical fallback.
+/// Prefer `stored` when Git has that branch, then `database`, then `main`, `master`, or the
+/// first branch by name.
 pub fn default_branch(refs: &HashMap<String, String>, stored: &str, database: &str) -> String {
     if refs.is_empty() || refs.contains_key(&format!("refs/heads/{stored}")) {
         return stored.to_owned();

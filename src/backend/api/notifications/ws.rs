@@ -1,5 +1,5 @@
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session::get_current_user;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::notifications::broadcast::SocketSlot;
@@ -77,7 +77,7 @@ pub(crate) async fn notifications_ws_handler(
     headers: HeaderMap,
 ) -> Response {
     if headers.get_all(header::ORIGIN).iter().count() != 1
-        || !crate::backend::api::origin::same_origin_submission(&headers)
+        || !crate::backend::api::http::origin::same_origin_submission(&headers)
     {
         return (
             StatusCode::FORBIDDEN,
@@ -90,7 +90,7 @@ pub(crate) async fn notifications_ws_handler(
     }
     match get_current_user(&state.pool, &headers).await {
         Ok(user) => {
-            let Some(session_id) = crate::backend::api::session::extract_session_id(&headers)
+            let Some(session_id) = crate::backend::api::http::session::extract_session_id(&headers)
             else {
                 return StatusCode::UNAUTHORIZED.into_response();
             };

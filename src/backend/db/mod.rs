@@ -34,9 +34,11 @@ pub mod node_config;
 pub mod notifications;
 pub mod organizations;
 pub mod pull_requests;
+pub mod reactions;
 pub mod repositories;
 pub mod repository_stats;
 pub mod secrets;
+pub mod timeline;
 pub mod users;
 
 pub use connection::{init_db, DbPool};

@@ -7,7 +7,7 @@ pub mod profile;
 pub mod repos;
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::{csrf, middleware};
+    use crate::backend::api::{http::csrf, http::middleware};
     use axum::{extract::DefaultBodyLimit, middleware::from_fn, routing::get, Router};
     Router::new()
         .merge(

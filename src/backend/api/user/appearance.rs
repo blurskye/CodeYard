@@ -1,8 +1,8 @@
 use crate::backend::{
     api::{
-        context::PageContext,
-        origin::safe_redirect_path,
-        render::{accepts_page_model, secure_html_headers},
+        http::context::PageContext,
+        http::origin::safe_redirect_path,
+        http::render::{accepts_page_model, secure_html_headers},
     },
     app::AppState,
 };

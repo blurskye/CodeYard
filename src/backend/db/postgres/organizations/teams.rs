@@ -42,7 +42,6 @@ pub async fn update_organization_team(
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
     }
-    // Metadata repair leaves historical parent untouched; no inherited authority.
     let team = sqlx::query_as("UPDATE teams SET name=$3,description=$4,privacy=$5,updated_at=NOW() WHERE id=$1 AND org_id=$2 RETURNING *")
         .bind(team).bind(org).bind(&input.name).bind(&input.description).bind(input.privacy.as_str()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
@@ -61,16 +60,6 @@ pub async fn delete_organization_team(
     }
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
-    }
-    // FOR UPDATE blocks new FK references. Reject ANY child, including foreign
-    // or self references: historical ON DELETE CASCADE is not tenant authority.
-    let children: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams WHERE parent_team_id=$1)")
-            .bind(team)
-            .fetch_one(&mut *tx)
-            .await?;
-    if children {
-        return Ok(Conflict);
     }
     let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE status IN ('queued','running') AND triggered_by_id IN (SELECT user_id FROM team_memberships WHERE team_id=$1) AND repo_id IN (SELECT tra.repo_id FROM team_repo_access tra JOIN repositories r ON r.id=tra.repo_id WHERE tra.team_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$2 AND r.owner_user_id IS NULL)")
         .bind(team).bind(org).fetch_all(&mut *tx).await?;
@@ -111,7 +100,7 @@ pub async fn count_organization_teams(
 ) -> Result<OrganizationOutcome<i64>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
-    let count = sqlx::query_scalar("SELECT COUNT(*) FROM teams t WHERE t.org_id=$1 AND t.parent_team_id IS NULL AND (t.privacy='visible' OR (t.privacy='secret' AND ($2 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$3 AND m.role IN ('member','maintainer')))))")
+    let count = sqlx::query_scalar("SELECT COUNT(*) FROM teams t WHERE t.org_id=$1 AND (t.privacy='visible' OR (t.privacy='secret' AND ($2 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=$3 AND m.role IN ('member','maintainer')))))")
         .bind(org).bind(administers(role)).bind(actor)
         .fetch_one(&mut *tx)
         .await?;
@@ -291,7 +280,7 @@ pub async fn list_organization_team_repositories(
     }
     // Team visibility is not READ. Apply effective access before LIMIT/projection;
     // same-org team joins match the canonical contribution helper below.
-    let rows = sqlx::query_as("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE a.team_id=$1 AND a.id>$2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$3 AND r.owner_user_id IS NULL AND ($5 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$6 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$6 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret') AND t.parent_team_id IS NULL)) ORDER BY a.id LIMIT $4")
+    let rows = sqlx::query_as("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE a.team_id=$1 AND a.id>$2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$3 AND r.owner_user_id IS NULL AND ($5 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$6 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$6 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY a.id LIMIT $4")
         .bind(team.id).bind(page.after).bind(org).bind(page.limit).bind(administers(role)).bind(actor).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))
@@ -307,13 +296,11 @@ pub async fn get_public_team(
     let Applied(role) = read_authority(&mut tx, actor, org).await? else {
         return Ok(None);
     };
-    let Some(team) = sqlx::query_as::<_, Team>(
-        "SELECT * FROM teams WHERE org_id=$1 AND slug=$2 AND parent_team_id IS NULL",
-    )
-    .bind(org)
-    .bind(slug)
-    .fetch_optional(&mut *tx)
-    .await?
+    let Some(team) = sqlx::query_as::<_, Team>("SELECT * FROM teams WHERE org_id=$1 AND slug=$2")
+        .bind(org)
+        .bind(slug)
+        .fetch_optional(&mut *tx)
+        .await?
     else {
         return Ok(None);
     };
@@ -322,7 +309,7 @@ pub async fn get_public_team(
     }
     let member_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=$1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=$2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password")
         .bind(org).bind(team.id).fetch_one(&mut *tx).await?;
-    let repository_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id WHERE a.team_id=$1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$2 AND r.owner_user_id IS NULL AND ($3 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$4 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$4 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret') AND t.parent_team_id IS NULL))")
+    let repository_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id WHERE a.team_id=$1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$2 AND r.owner_user_id IS NULL AND ($3 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$4 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$4 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret')))")
         .bind(team.id).bind(org).bind(administers(role)).bind(actor).fetch_one(&mut *tx).await?;
     let maintainer: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM team_memberships WHERE team_id=$1 AND user_id=$2 AND role='maintainer')")
         .bind(team.id).bind(actor).fetch_one(&mut *tx).await?;
@@ -348,7 +335,7 @@ pub async fn list_public_team_members(
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
         return Ok(None);
     };
-    if team.parent_team_id.is_some() || !team_visible(&mut tx, actor, role, &team).await? {
+    if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(None);
     }
     let members = sqlx::query_as("SELECT tm.* FROM team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=$1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=$2 AND tm.id>$3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT $4")
@@ -370,11 +357,11 @@ pub async fn list_public_team_repositories(
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
         return Ok(None);
     };
-    if team.parent_team_id.is_some() || !team_visible(&mut tx, actor, role, &team).await? {
+    if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(None);
     }
     // Same READ filter as list_organization_team_repositories.
-    let rows = sqlx::query_as("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE a.team_id=$1 AND a.id>$2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$3 AND r.owner_user_id IS NULL AND ($5 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$6 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$6 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret') AND t.parent_team_id IS NULL)) ORDER BY a.id LIMIT $4")
+    let rows = sqlx::query_as("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE a.team_id=$1 AND a.id>$2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$3 AND r.owner_user_id IS NULL AND ($5 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$6 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$6 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY a.id LIMIT $4")
         .bind(team.id).bind(page.after).bind(org).bind(page.limit).bind(administers(role)).bind(actor).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(rows))

@@ -3,7 +3,7 @@
 
 use super::organization;
 use super::organization::{not_found, Fields};
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::api::pictures;
 use crate::backend::api::user::avatar::avatar_status;
 use crate::backend::app::AppState;

@@ -40,10 +40,13 @@ pub fn authorize_operation(
         Operation::BlobById { .. } => ("BlobById", true),
         Operation::Commits { .. } => ("Commits", false),
         Operation::CommitPage { .. } => ("CommitPage", false),
+        Operation::SearchCode { .. } => ("SearchCode", false),
+        Operation::PathCommits { .. } => ("PathCommits", false),
         Operation::Commit { .. } => ("Commit", false),
         Operation::PrimaryCommit { .. } => ("PrimaryCommit", false),
         Operation::CommitDiff { .. } => ("CommitDiff", false),
         Operation::Diff { .. } => ("Diff", false),
+        Operation::CommitsBetween { .. } => ("CommitsBetween", false),
         Operation::DiffFile { .. } => ("DiffFile", false),
         Operation::ChangedPaths { .. } => ("ChangedPaths", false),
         Operation::DiffFrom { .. } => ("DiffFrom", false),
@@ -54,6 +57,7 @@ pub fn authorize_operation(
         Operation::Blame { .. } => ("Blame", false),
         Operation::Contributors => ("Contributors", false),
         Operation::IsAncestor { .. } => ("IsAncestor", false),
+        Operation::BranchStatuses { .. } => ("BranchStatuses", false),
         Operation::ResolveCiCommit { .. } => ("ResolveCiCommit", false),
         Operation::CiWorkflowFile { .. } => ("CiWorkflowFile", false),
         Operation::CreateBranch { .. } => ("CreateBranch", false),
@@ -398,17 +402,40 @@ impl RpcHandler {
                 output = store.blob_by_id(&id).await?;
                 Value::Null
             }
-            Operation::Commits { git_ref, limit } => json!(store.commits(&git_ref, 0, limit)),
+            Operation::Commits {
+                git_ref,
+                limit,
+                filter,
+            } => json!(store.commits(&git_ref, 0, limit, &filter)),
             Operation::CommitPage {
                 git_ref,
                 offset,
                 limit,
-            } => json!(store.commits(&git_ref, offset, limit)),
+                filter,
+            } => json!(store.commits(&git_ref, offset, limit, &filter)),
+            Operation::SearchCode {
+                git_ref,
+                text,
+                offset,
+                limit,
+            } => json!(store.search_code(&git_ref, &text, offset, limit)),
+            Operation::PathCommits {
+                git_ref,
+                path,
+                offset,
+                limit,
+                filter,
+            } => json!(store.path_commits(&git_ref, &path, offset, limit, &filter)),
             Operation::Commit { revision } | Operation::PrimaryCommit { revision } => {
                 json!(store.commit(&revision))
             }
             Operation::CommitDiff { revision } => json!(store.commit_diff(&revision)),
             Operation::Diff { base_ref, head_ref } => json!(store.diff(&base_ref, &head_ref)),
+            Operation::CommitsBetween {
+                base_ref,
+                head_ref,
+                limit,
+            } => json!(store.commits_between(&base_ref, &head_ref, limit)),
             Operation::DiffFile {
                 base_ref,
                 head_ref,
@@ -439,6 +466,9 @@ impl RpcHandler {
                 ancestor,
                 descendant,
             } => json!(store.is_ancestor(&ancestor, &descendant)),
+            Operation::BranchStatuses { base, heads } => {
+                json!(store.branch_statuses(&base, &heads))
+            }
             Operation::ResolveCiCommit {
                 reference,
                 sha,

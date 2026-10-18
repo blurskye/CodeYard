@@ -1,15 +1,15 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_admin_access;
 use crate::backend::api::repos::issues::assignees::assigned_item;
 use crate::backend::api::repos::labels::label_write_error;
 use crate::backend::api::repos::labels::LabelResponse;
 use crate::backend::api::repos::pulls::pull::*;
-use crate::backend::api::session::get_current_user;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::assignees::AssignedItem;
-use crate::webui::pages::collaboration::DetailDraft;
+use crate::webui::pages::repos::issues::DetailDraft;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -54,10 +54,29 @@ pub async fn add_issue_labels(
             )
         })?;
 
+    let before = db::labels::get_issue_labels(&state.pool, issue.id)
+        .await
+        .map_err(label_write_error)?;
     let labels =
         db::labels::add_issue_labels(&state.pool, actor.id, repository.id, issue.id, &req.labels)
             .await
             .map_err(label_write_error)?;
+    for label in labels
+        .iter()
+        .filter(|label| !before.iter().any(|old| old.id == label.id))
+    {
+        db::timeline::record(
+            &state.pool,
+            repository.id,
+            db::timeline::Subject::Issue,
+            issue.id,
+            actor.id,
+            "labeled",
+            &label.name,
+            "",
+        )
+        .await;
+    }
 
     Ok(Json(labels.into_iter().map(LabelResponse::from).collect()))
 }
@@ -89,9 +108,29 @@ pub async fn remove_issue_label(
             )
         })?;
 
-    db::labels::remove_issue_label(&state.pool, actor.id, repository.id, issue.id, label_id)
+    let name = db::labels::get_issue_labels(&state.pool, issue.id)
         .await
-        .map_err(label_write_error)?;
+        .map_err(label_write_error)?
+        .into_iter()
+        .find(|label| label.id == label_id)
+        .map(|label| label.name);
+    let removed =
+        db::labels::remove_issue_label(&state.pool, actor.id, repository.id, issue.id, label_id)
+            .await
+            .map_err(label_write_error)?;
+    if let (true, Some(name)) = (removed, name) {
+        db::timeline::record(
+            &state.pool,
+            repository.id,
+            db::timeline::Subject::Issue,
+            issue.id,
+            actor.id,
+            "unlabeled",
+            &name,
+            "",
+        )
+        .await;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -150,6 +189,21 @@ pub(crate) async fn native_add_label(
     .map_err(crate::backend::api::repos::labels::label_write_error);
     match applied {
         Ok(applied) if applied.iter().any(|label| label.id == id) => {
+            if !value.labels.iter().any(|label| label.id == id) {
+                let name = labels
+                    .iter()
+                    .find(|label| label.id == id)
+                    .map_or("", |label| label.name.as_str());
+                db::timeline::record_for(
+                    &ctx.state.pool,
+                    repo.record.id,
+                    subject,
+                    actor,
+                    "labeled",
+                    name,
+                )
+                .await;
+            }
             Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number)))
         }
         Ok(_) => {
@@ -215,7 +269,23 @@ pub(crate) async fn native_remove_label(
     }
     .map_err(crate::backend::api::repos::labels::label_write_error);
     match removed {
-        Ok(_) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
+        Ok(_) => {
+            let name = value
+                .labels
+                .iter()
+                .find(|label| label.id == label_id)
+                .map_or("", |label| label.name.as_str());
+            db::timeline::record_for(
+                &ctx.state.pool,
+                repo.record.id,
+                subject,
+                actor,
+                "unlabeled",
+                name,
+            )
+            .await;
+            Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number)))
+        }
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
             render_detail(

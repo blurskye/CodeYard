@@ -1,5 +1,7 @@
+pub mod checks;
 pub mod collection;
 pub mod comments;
+pub mod commits;
 pub mod diff;
 pub mod merge;
 pub mod pull;
@@ -108,6 +110,10 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
             post(review_forms::native_pull_comment),
         )
         .route(
+            "/:owner/:repo/pulls/:number/react",
+            post(issues::reactions::native_react),
+        )
+        .route(
             "/:owner/:repo/pulls/:number/comments/:comment_id/resolve",
             post(review_forms::native_resolve_comment),
         )
@@ -118,6 +124,10 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         .route(
             "/:owner/:repo/pulls/:number/reviews",
             post(review_forms::native_review),
+        )
+        .route(
+            "/:owner/:repo/pulls/:number/reviews/pending/discard",
+            post(review_forms::native_discard_review),
         )
         .route(
             "/:owner/:repo/pulls/:number/reviews/:review_id/dismiss",
@@ -131,7 +141,17 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
             "/:owner/:repo/pulls/:number/requested_reviewers/:username/remove",
             post(review_forms::native_remove_requested_reviewer),
         )
+        .route(
+            "/:owner/:repo/pulls/:number/commits",
+            get(commits::native_commits),
+        )
+        .route(
+            "/:owner/:repo/pulls/:number/checks",
+            get(checks::native_checks),
+        )
         .route("/:owner/:repo/pulls/:number/diff", get(diff::native_diff))
+        // GitHub's address for the same page, so shared links to it open the Files changed view.
+        .route("/:owner/:repo/pulls/:number/files", get(diff::native_diff))
         .route(
             "/:owner/:repo/pulls/:number/viewed",
             post(review_forms::native_set_viewed),
@@ -182,9 +202,9 @@ pub(crate) fn operation_error(
     error: crate::backend::repositories::pull_requests::OperationError,
 ) -> (
     axum::http::StatusCode,
-    axum::Json<crate::backend::api::error::ApiError>,
+    axum::Json<crate::backend::api::http::error::ApiError>,
 ) {
-    use crate::backend::api::error::ApiError;
+    use crate::backend::api::http::error::ApiError;
     use crate::backend::repositories::pull_requests::OperationError;
     use axum::{http::StatusCode, Json};
     let (status, code, message) = match error {

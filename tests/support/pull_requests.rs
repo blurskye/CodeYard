@@ -1,14 +1,15 @@
 //! A signed-in user talking to the application's JSON API and HTML forms, for the
-//! pull request tests. The including test declares `db` and `native` (see
+//! pull request tests. Uses the shared `native` database fixture (see
 //! support/native_database.rs).
 #![allow(dead_code)]
-use super::{db, native};
+use crate::support::native_database as native;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
     Router,
 };
 use base64::Engine;
+use codeyard::backend::db;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -235,6 +236,36 @@ impl Client {
     /// An HTML page, as the browser would get it.
     pub async fn page(&self, path: &str) -> (StatusCode, String) {
         self.send("GET", path, "text/html", String::new()).await
+    }
+
+    /// A page as typed data, the way the browser loads it on navigation. Answers that are not
+    /// pages, such as redirects, come back through `exchange`.
+    pub async fn model(&self, path: &str) -> (StatusCode, codeyard::webui::app::Page) {
+        let mut request = Request::builder().uri(path).header(
+            header::ACCEPT,
+            codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+        );
+        if !self.session.is_empty() {
+            request = request.header(header::COOKIE, format!("session_id={}", self.session));
+        }
+        let response = self
+            .router
+            .clone()
+            .oneshot(request.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+            "{path}"
+        );
+        let body = to_bytes(response.into_body(), 8 * 1024 * 1024)
+            .await
+            .unwrap();
+        let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_slice(&body)
+            .unwrap_or_else(|error| panic!("{path}: not a page model: {error}"));
+        (status, envelope.page)
     }
 
     /// Posts an HTML form together with this session's CSRF token and keeps the whole

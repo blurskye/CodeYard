@@ -1,6 +1,6 @@
 use crate::backend::api::auth::errors::session_failure;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session::extract_session_id;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::extract_session_id;
 use crate::backend::api::user::responses::{AuthResponse, AuthUserResponse as UserResponse};
 use crate::backend::app::AppState;
 use crate::backend::db::users::sessions as stored;

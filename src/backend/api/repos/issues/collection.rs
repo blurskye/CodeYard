@@ -1,23 +1,25 @@
 use super::issue::{load_issue_response, IssueResponse};
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::compare::comparison;
 use crate::backend::api::repos::issues::assignees::user_id;
 use crate::backend::api::repos::milestones::milestone_view;
 use crate::backend::api::repos::pulls::pull::*;
-use crate::backend::api::repos::references::resolve_references_or_none;
+use crate::backend::api::repos::refs::compare::comparison;
+use crate::backend::api::repos::refs::references::resolve_references_or_none;
 use crate::backend::api::repos::repository::repeated;
-use crate::backend::api::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::assignees::AssignedItem;
 use crate::backend::db::discussions::{ListFilter, ListSort, Pick};
 use crate::backend::issues::mutations::CreateIssueRequest;
+use crate::backend::notifications::assignments::{notify_assignees, Assignment};
+use crate::backend::notifications::NotificationBroadcaster;
 use crate::webui::components::references::References;
-use crate::webui::pages::collaboration as view;
-use crate::webui::pages::collaboration::Kind;
+use crate::webui::pages::repos::issues as view;
+use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -53,7 +55,7 @@ pub async fn create_issue(
         Some(PublicUserResponse::from(current_actor)),
     )
     .await
-    .map_err(crate::backend::api::error::discussion_write_error)?;
+    .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
     Ok((StatusCode::CREATED, Json(response)))
 }
@@ -167,15 +169,15 @@ pub async fn list_issues(
         .collect::<Vec<_>>();
     let mut labels = db::labels::get_issues_labels(&state.pool, &ids)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?;
+        .map_err(crate::backend::api::http::error::discussion_write_error)?;
     let mut comments: HashMap<i64, i64> = db::issues::count_issue_comments(&state.pool, &ids)
         .await
-        .map_err(crate::backend::api::error::discussion_write_error)?
+        .map_err(crate::backend::api::http::error::discussion_write_error)?
         .into_iter()
         .collect();
     let mut responses = Vec::with_capacity(issues.len());
     for entry in issues {
-        let author = entry.author.as_ref().map(PublicUserResponse::from_display);
+        let author = Some(PublicUserResponse::from_display(&entry.author));
         let issue_labels = labels.remove(&entry.issue.id).unwrap_or_default();
         let comments_count = comments.remove(&entry.issue.id).unwrap_or(0);
         responses.push(IssueResponse::from_issue(
@@ -245,7 +247,7 @@ async fn query_narrowing(
     let sort = match query_value(ctx, "sort").as_str() {
         "" => ListSort::Newest,
         text => ListSort::parse(text).ok_or_else(|| {
-            unknown("Sort must be newest, oldest, recently-updated or most-commented.")
+            unknown("Sort must be newest, oldest, recently-updated, least-recently-updated, most-commented or least-commented.")
         })?,
     };
     Ok(ListFilter {
@@ -270,7 +272,7 @@ async fn list_filters(
         .await
         .map_err(|_| unavailable(ctx))?
         .into_iter()
-        .map(|label| label.name)
+        .map(label)
         .collect();
     Ok(view::ListFilters {
         labels,
@@ -295,9 +297,26 @@ pub(crate) async fn native_index(
     headers: HeaderMap,
     uri: Uri,
 ) -> ResultPage<Response> {
-    let ctx = PageContext::load(state, headers, &uri).await?;
+    let mut ctx = PageContext::load(state, headers, &uri).await?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
+    // The milestones name each row and feed the milestone filter, so they are read once.
+    let milestones = db::milestones::list_repo_milestones(&ctx.state.pool, repo.record.id, None)
+        .await
+        .map_err(|_| unavailable(&ctx))?;
+    // The search box holds the filters as qualifiers (`state:closed label:bug`); they replace the
+    // parameters the menus and links use, and the words left over are the search.
+    let mut typed_search = view::parse_search(ctx.query.get("q").map(String::as_str).unwrap_or(""));
+    if let Some(view::MilestoneFilter::Title(title)) = typed_search.milestone.as_mut() {
+        if let Some(found) = milestones
+            .iter()
+            .find(|summary| summary.milestone.title.eq_ignore_ascii_case(title))
+        {
+            *title = found.milestone.number.to_string();
+        }
+    }
+    typed_search.apply_to(&mut ctx.query);
+    let search_labels = std::mem::take(&mut typed_search.labels);
     let filter = ctx.query.get("state").map(String::as_str).unwrap_or("open");
     if !matches!(filter, "open" | "closed" | "all") {
         return Err(ctx.error(
@@ -324,7 +343,10 @@ pub(crate) async fn native_index(
     let typed = repeated(&raw_query_pairs(&uri), "label");
     let labels = filter_label_names(
         ctx.query.get("labels").map(String::as_str),
-        typed.iter().map(String::as_str),
+        typed
+            .iter()
+            .map(String::as_str)
+            .chain(search_labels.iter().map(String::as_str)),
     )
     .map_err(|message| ctx.error(StatusCode::BAD_REQUEST, message))?;
     let list = ListFilter {
@@ -333,10 +355,6 @@ pub(crate) async fn native_index(
         labels: &labels,
         ..narrowing
     };
-    // The milestones name each row and feed the milestone filter, so they are read once.
-    let milestones = db::milestones::list_repo_milestones(&ctx.state.pool, repo.record.id, None)
-        .await
-        .map_err(|_| unavailable(&ctx))?;
     let named_milestones: HashMap<i64, view::Milestone> = milestones
         .iter()
         .map(|summary| (summary.milestone.id, milestone_view(summary.clone())))
@@ -360,20 +378,25 @@ pub(crate) async fn native_index(
                 .await
                 .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, false).await?;
+            let mut comments: HashMap<i64, i64> =
+                db::issues::count_issue_comments(&ctx.state.pool, &ids)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?
+                    .into_iter()
+                    .collect();
             for entry in entries {
-                let author = entry
-                    .author
-                    .map(|author| author.username)
-                    .unwrap_or_else(|| "Deleted user".into());
-                let issue_labels = labels.remove(&entry.issue.id).unwrap_or_default();
-                let issue_assignees = assignees.remove(&entry.issue.id).unwrap_or_default();
+                let id = entry.issue.id;
+                let author = entry.author.username;
+                let issue_labels = labels.remove(&id).unwrap_or_default();
+                let issue_assignees = assignees.remove(&id).unwrap_or_default();
                 let milestone = entry
                     .issue
                     .milestone_id
-                    .and_then(|id| named_milestones.get(&id).cloned());
+                    .and_then(|milestone| named_milestones.get(&milestone).cloned());
                 let mut item = issue_item(entry.issue, author, issue_labels);
                 item.assignees = issue_assignees;
                 item.milestone = milestone;
+                item.comment_count = comments.remove(&id).unwrap_or(0);
                 items.push(item);
             }
         }
@@ -401,13 +424,24 @@ pub(crate) async fn native_index(
                 .await
                 .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, true).await?;
+            let mut comments: HashMap<i64, i64> =
+                db::pull_requests::reviews::count_pull_request_comments_for(&ctx.state.pool, &ids)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?
+                    .into_iter()
+                    .collect();
+            let reviews =
+                db::pull_requests::reviews::list_pull_request_review_states(&ctx.state.pool, &ids)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?;
+            let checks = db::ci::list_pull_request_check_statuses(&ctx.state.pool, &ids)
+                .await
+                .map_err(|_| unavailable(&ctx))?;
             for value in pulls {
-                let author = value
-                    .author
-                    .map(|author| author.username)
-                    .unwrap_or_else(|| "Deleted user".into());
+                let author = value.author.username;
                 let head = listed_head(&ctx, value.head_repository).await?;
                 let id = value.pull_request.id;
+                let head_sha = value.pull_request.head_sha.clone();
                 let milestone = value
                     .pull_request
                     .milestone_id
@@ -422,6 +456,9 @@ pub(crate) async fn native_index(
                     .collect();
                 item.assignees = assignees.remove(&id).unwrap_or_default();
                 item.milestone = milestone;
+                item.comment_count = comments.remove(&id).unwrap_or(0);
+                item.review_state = review_state(&reviews, id, &head_sha);
+                item.check_state = check_state(&checks, id);
                 items.push(item);
             }
         }
@@ -447,6 +484,52 @@ pub(crate) async fn native_index(
             filters,
         }),
     ))
+}
+
+/// The review state a pull request row shows, from each reviewer's latest decision. A change
+/// request counts on any commit. An approval counts only on the head commit, so a new push asks
+/// for a fresh approval.
+fn review_state(
+    reviews: &[(i64, String, Option<String>)],
+    pull_request: i64,
+    head_sha: &str,
+) -> Option<String> {
+    let mut approved = false;
+    for (_, state, commit) in reviews.iter().filter(|row| row.0 == pull_request) {
+        match state.as_str() {
+            "changes_requested" => return Some("changes_requested".to_owned()),
+            "approved" if commit.as_deref() == Some(head_sha) => approved = true,
+            _ => {}
+        }
+    }
+    approved.then(|| "approved".to_owned())
+}
+
+/// The check state a pull request row shows, from the latest run of each workflow on its head
+/// commit. A run that failed or was cancelled decides it first, then a run still going, and only
+/// all successful runs make it a success. No runs leave the state out.
+fn check_state(checks: &[(i64, String)], pull_request: i64) -> Option<String> {
+    let statuses: Vec<&str> = checks
+        .iter()
+        .filter(|row| row.0 == pull_request)
+        .map(|row| row.1.as_str())
+        .collect();
+    if statuses.is_empty() {
+        return None;
+    }
+    if statuses
+        .iter()
+        .any(|status| !matches!(*status, "success" | "queued" | "running"))
+    {
+        return Some("failure".to_owned());
+    }
+    if statuses
+        .iter()
+        .any(|status| matches!(*status, "queued" | "running"))
+    {
+        return Some("pending".to_owned());
+    }
+    Some("success".to_owned())
 }
 
 /// The references of a new entry's body: its preview, and any form that re-renders it, link them.
@@ -538,17 +621,19 @@ fn issue_choices_valid(
 }
 
 /// Puts the picks of a new issue on it through the store functions the issue page uses. Each one
-/// checks the write right again.
+/// checks the write right again. A user who is newly assigned hears about it.
 async fn apply_issue_choices(
     pool: &db::DbPool,
-    actor_id: i64,
-    repo_id: i64,
+    broadcaster: &NotificationBroadcaster,
+    assignment: &Assignment<'_>,
     issue_id: i64,
     draft: &view::NewDraft,
 ) -> anyhow::Result<()> {
+    let actor_id = assignment.actor.id;
+    let repo_id = assignment.repository.id;
     for username in &draft.assignees {
         if let Some(user) = db::users::accounts::get_user_by_username(pool, username).await? {
-            db::assignees::assign_user(
+            let added = db::assignees::assign_user(
                 pool,
                 actor_id,
                 repo_id,
@@ -556,6 +641,9 @@ async fn apply_issue_choices(
                 user.id,
             )
             .await?;
+            if added {
+                notify_assignees(pool, broadcaster, assignment, &[user.id]).await;
+            }
         }
     }
     let labels = draft
@@ -784,13 +872,13 @@ pub(crate) async fn native_create(
     }
     let result: Result<i32, ApiFailure> = match kind {
         Kind::Issue => {
-            let actor_id = ctx.require_user()?.id;
+            let actor = ctx.require_user()?;
             let created = crate::backend::issues::mutations::create_issue(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
-                actor_id,
-                owner,
-                name,
+                actor.id,
+                owner.clone(),
+                name.clone(),
                 crate::backend::issues::mutations::CreateIssueRequest {
                     title: draft.title.clone(),
                     body: Some(draft.body.clone()),
@@ -801,9 +889,25 @@ pub(crate) async fn native_create(
             // The issue exists now, so a failure here cannot undo it. The redirect opens the issue,
             // where the missing assignees, labels or milestone can be added again.
             if let Ok(issue) = &created {
-                if let Err(error) =
-                    apply_issue_choices(&ctx.state.pool, actor_id, repo.record.id, issue.id, &draft)
-                        .await
+                let link = format!("/{owner}/{name}/issues/{}", issue.number);
+                let assignment = Assignment {
+                    actor,
+                    repository: &repo.record,
+                    owner: &owner,
+                    repo: &name,
+                    number: issue.number,
+                    pull_request: false,
+                    title: &issue.title,
+                    link: &link,
+                };
+                if let Err(error) = apply_issue_choices(
+                    &ctx.state.pool,
+                    &ctx.state.notification_broadcaster,
+                    &assignment,
+                    issue.id,
+                    &draft,
+                )
+                .await
                 {
                     tracing::warn!(number = issue.number, %error, "a new issue lost its assignees, labels or milestone");
                 }
@@ -852,5 +956,43 @@ pub(crate) async fn native_create(
                 status,
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_state, review_state};
+
+    #[test]
+    fn a_change_request_counts_on_any_commit_and_an_approval_only_on_the_head() {
+        let reviews = vec![
+            (7, "approved".to_owned(), Some("old".to_owned())),
+            (7, "changes_requested".to_owned(), Some("old".to_owned())),
+            (8, "approved".to_owned(), Some("head".to_owned())),
+        ];
+        assert_eq!(
+            review_state(&reviews, 7, "head").as_deref(),
+            Some("changes_requested")
+        );
+        assert_eq!(
+            review_state(&reviews, 8, "head").as_deref(),
+            Some("approved")
+        );
+        let stale = vec![(7, "approved".to_owned(), Some("old".to_owned()))];
+        assert_eq!(review_state(&stale, 7, "head"), None);
+    }
+
+    #[test]
+    fn a_failed_run_decides_the_checks_state_before_a_running_one() {
+        let checks = vec![
+            (7, "success".to_owned()),
+            (7, "running".to_owned()),
+            (8, "success".to_owned()),
+        ];
+        assert_eq!(check_state(&checks, 7).as_deref(), Some("pending"));
+        assert_eq!(check_state(&checks, 8).as_deref(), Some("success"));
+        assert_eq!(check_state(&checks, 9), None);
+        let failed = vec![(7, "running".to_owned()), (7, "failed".to_owned())];
+        assert_eq!(check_state(&failed, 7).as_deref(), Some("failure"));
     }
 }

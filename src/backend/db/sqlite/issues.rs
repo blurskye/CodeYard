@@ -2,6 +2,7 @@ use super::models::{Issue, IssueComment};
 use crate::backend::db::discussions::{contains_pattern, ListFilter, StateCounts};
 use crate::backend::db::issues::IssueCommentEntry;
 use crate::backend::db::issues::IssueListEntry;
+use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -64,9 +65,9 @@ pub async fn list_repo_issues(
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
     let labels = super::discussions::label_names_json(filter.labels)?;
-    let order = filter.sort.order_by("issue_comments", "issue_id");
+    let order = filter.sort.order_by("issue_comments", "issue_id", "");
     let issues = sqlx::query_as::<_, IssueListEntry>(&format!(
-        r"SELECT i.*, {columns} FROM issues i LEFT JOIN users u ON u.id=i.author_id
+        r"SELECT i.*, {columns} FROM issues i JOIN users u ON u.id=i.author_id
         WHERE i.repo_id = ?1 AND (?2 IS NULL OR i.state = ?2)
             AND (?3 IS NULL OR i.title LIKE ?3 ESCAPE '\' OR i.body LIKE ?3 ESCAPE '\')
             AND (?5 IS NULL OR i.author_id = ?5)
@@ -204,7 +205,7 @@ pub async fn list_issue_comments(
 ) -> Result<Vec<IssueCommentEntry>> {
     let columns = crate::backend::db::sqlite::users::accounts::AUTHOR_DISPLAY_COLUMNS;
     let comments = sqlx::query_as::<_, IssueCommentEntry>(
-        &format!("SELECT i.*, {columns} FROM issue_comments i LEFT JOIN users u ON u.id=i.author_id WHERE i.issue_id = ?1 ORDER BY i.created_at, i.id LIMIT ?2 OFFSET ?3"),
+        &format!("SELECT i.*, {columns} FROM issue_comments i JOIN users u ON u.id=i.author_id WHERE i.issue_id = ?1 ORDER BY i.created_at, i.id LIMIT ?2 OFFSET ?3"),
     )
     .bind(issue_id)
     .bind(limit)
@@ -240,6 +241,83 @@ pub async fn count_issue_comments(pool: &SqlitePool, issue_ids: &[i64]) -> Resul
     }
     query.push(") GROUP BY issue_id");
     Ok(query.build_query_as().fetch_all(pool).await?)
+}
+
+/// The condition that picks a viewer's issues. `?1` is the viewer.
+fn viewer_issue_sql(relation: IssueRelation) -> &'static str {
+    match relation {
+        IssueRelation::Assigned => {
+            "EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id AND a.user_id = ?1)"
+        }
+        IssueRelation::Created => "i.author_id = ?1",
+    }
+}
+
+/// The issues in repositories `viewer_id` can read that the viewer was assigned or opened. The
+/// visibility rule is the access projection the repository pages use, applied before the limit so
+/// hidden rows do not take up a page.
+pub async fn list_viewer_issues(
+    pool: &SqlitePool,
+    viewer_id: i64,
+    relation: IssueRelation,
+    open: bool,
+    limit: i64,
+) -> Result<Vec<ViewerIssueEntry>> {
+    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let relation_sql = viewer_issue_sql(relation);
+    let issues = sqlx::query_as::<_, ViewerIssueEntry>(&format!(
+        r"SELECT i.*, r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
+        FROM issues i
+        JOIN repositories r ON r.id = i.repo_id
+        LEFT JOIN users ou ON ou.id = r.owner_user_id
+        LEFT JOIN organizations og ON og.id = r.owner_org_id
+        JOIN users u ON u.id = ?1
+        WHERE (i.state = 'open') = ?2 AND {relation_sql}
+            AND NOT u.is_banned AND NOT u.must_change_password
+            AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
+        ORDER BY i.created_at DESC, i.id DESC LIMIT ?3"
+    ))
+    .bind(viewer_id)
+    .bind(open)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(issues)
+}
+
+/// Open and closed counts of the viewer's issues, with the same visibility as the list.
+pub async fn count_viewer_issues(
+    pool: &SqlitePool,
+    viewer_id: i64,
+    relation: IssueRelation,
+) -> Result<StateCounts> {
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let relation_sql = viewer_issue_sql(relation);
+    let rows = sqlx::query_as::<_, (String, i64)>(&format!(
+        r"SELECT CASE WHEN i.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
+        FROM issues i
+        JOIN repositories r ON r.id = i.repo_id
+        JOIN users u ON u.id = ?1
+        WHERE {relation_sql} AND NOT u.is_banned AND NOT u.must_change_password
+            AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
+        GROUP BY bucket"
+    ))
+    .bind(viewer_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(StateCounts::from_rows(rows))
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for ViewerIssueEntry {
+    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(Self {
+            issue: Issue::from_row(row)?,
+            repo_owner: row.try_get("repo_owner")?,
+            repo_name: row.try_get("repo_name")?,
+        })
+    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for IssueListEntry {

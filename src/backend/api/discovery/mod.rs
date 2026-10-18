@@ -1,20 +1,25 @@
 //! Discovery routes and safe repository-card projection.
+mod content_search;
 pub(crate) mod explore;
 mod home;
 pub(crate) mod search;
+pub(crate) mod stars;
 
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::{
-    api::{context::PageContext, csrf, middleware},
+    api::{http::context::PageContext, http::csrf, http::middleware},
     app::AppState,
     db,
 };
-use crate::webui::pages::discovery::RepositoryCard;
+use crate::webui::{components::languages::LanguageShare, pages::discovery::RepositoryCard};
 use axum::{
     extract::DefaultBodyLimit, http::StatusCode, middleware::from_fn, response::Response,
     routing::get, Json, Router,
 };
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 pub fn router() -> Router<Arc<AppState>> {
     let api = Router::new()
@@ -27,6 +32,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/", get(home::home))
         .route("/explore", get(explore::explore_page))
         .route("/search", get(search::search_page))
+        .route("/stars", get(stars::stars_page))
         .route("/demo", get(home::demo))
         .route("/demo/no-nav", get(home::demo_no_nav))
         .layer(DefaultBodyLimit::max(16 * 1024));
@@ -34,7 +40,7 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 #[derive(Debug)]
-enum DiscoveryReadError {
+pub(crate) enum DiscoveryReadError {
     Unavailable,
     InvalidOwner,
     MissingOwner,
@@ -70,6 +76,19 @@ fn unavailable(ctx: &PageContext, operation: &'static str) -> Response {
     )
 }
 
+/// The 1-based `page` of a list; a list whose address names no page starts on page 1.
+fn page_number(query: &HashMap<String, String>) -> Result<usize, &'static str> {
+    match query.get("page") {
+        None => Ok(1),
+        Some(raw) => raw
+            .parse::<u32>()
+            .ok()
+            .filter(|page| *page >= 1)
+            .map(|page| page as usize)
+            .ok_or("Page must be a positive number."),
+    }
+}
+
 fn owner_name(
     repo: &db::models::Repository,
     owners: &BTreeMap<i64, String>,
@@ -89,20 +108,31 @@ fn owner_name(
         .ok_or(DiscoveryReadError::MissingOwner)
 }
 
-fn repository_card(repo: db::models::Repository, owner: String) -> RepositoryCard {
+/// Most topic chips a repository card shows.
+const CARD_TOPICS: usize = 5;
+
+fn repository_card(
+    repo: db::models::Repository,
+    owner: String,
+    topics: Vec<String>,
+    primary_language: Option<LanguageShare>,
+) -> RepositoryCard {
     RepositoryCard {
         owner,
         name: repo.name,
         description: repo.description,
+        topics,
         is_private: repo.is_private,
         stars: repo.stars_count,
         forks: repo.forks_count,
         default_branch: repo.default_branch,
+        primary_language,
         updated_at: repo.updated_at.format("%Y-%m-%d").to_string(),
     }
 }
 
-async fn repository_cards(
+/// The cards of a list, with the owner, topics and primary language of each repository.
+pub(crate) async fn repository_cards(
     state: &AppState,
     repos: Vec<db::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
@@ -110,10 +140,57 @@ async fn repository_cards(
     let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
+    let topics = db::repositories::topics::repository_topics(&state.pool, &ids)
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?;
+    let languages = db::repository_stats::get_primary_repo_languages(&state.pool, &ids)
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?
+        .into_iter()
+        .map(|row| {
+            (
+                row.repo_id,
+                LanguageShare {
+                    name: row.language,
+                    percentage: row.percentage,
+                    color: row.color.unwrap_or_default(),
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    card_list(repos, &owners, topics, languages)
+}
+
+/// The cards of the dashboard lists. The dashboard shows no topics or languages, so they are not
+/// read.
+pub(crate) async fn dashboard_cards(
+    state: &AppState,
+    repos: Vec<db::models::Repository>,
+) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
+    let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
+    let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?;
+    card_list(repos, &owners, BTreeMap::new(), HashMap::new())
+}
+
+fn card_list(
+    repos: Vec<db::models::Repository>,
+    owners: &BTreeMap<i64, String>,
+    mut topics: BTreeMap<i64, Vec<String>>,
+    mut languages: HashMap<i64, LanguageShare>,
+) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let mut cards = Vec::with_capacity(repos.len());
     for repo in repos {
-        let owner = owner_name(&repo, &owners)?;
-        cards.push(repository_card(repo, owner));
+        let owner = owner_name(&repo, owners)?;
+        let shown: Vec<String> = topics
+            .remove(&repo.id)
+            .unwrap_or_default()
+            .into_iter()
+            .take(CARD_TOPICS)
+            .collect();
+        let language = languages.remove(&repo.id);
+        cards.push(repository_card(repo, owner, shown, language));
     }
     Ok(cards)
 }
@@ -136,6 +213,7 @@ mod tests {
             owner_org_id: org_id,
             name: "fixture-repository".into(),
             description: Some("Fixture description".into()),
+            website: None,
             is_private: false,
             is_archived: false,
             is_fork: false,
@@ -163,7 +241,7 @@ mod tests {
         let org_repo = repository(20, "org", None, Some(7));
         assert_eq!(owner_name(&user_repo, &owners).unwrap(), "alice");
         assert_eq!(owner_name(&org_repo, &owners).unwrap(), "team");
-        let card = repository_card(org_repo, "team".into());
+        let card = repository_card(org_repo, "team".into(), Vec::new(), None);
         assert_eq!(card.owner, "team");
         assert_eq!(card.name, "fixture-repository");
         assert_eq!(card.stars, 3);

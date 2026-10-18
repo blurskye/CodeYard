@@ -2,16 +2,16 @@ use crate::backend::api::admin::accounts::{access_result, require_admin_user};
 use crate::backend::api::auth::errors;
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::auth::setup::node_setup_status;
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::user::responses::{
     field, mutation_guard, require_account, AuthResponse, AuthUserResponse as UserResponse, Fields,
 };
-use crate::backend::api::{auth, session};
+use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::identity::accounts::SignupReviewOutcome;
 use crate::backend::{db, identity};
-use crate::webui::pages::identity as view;
+use crate::webui::pages::admin::Signup;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -96,7 +96,7 @@ pub(crate) fn signup_decision(action: &str) -> Option<identity::accounts::Signup
     }
 }
 
-pub(crate) async fn load_requests(ctx: &PageContext) -> Result<Vec<view::Signup>, Response> {
+pub(crate) async fn load_requests(ctx: &PageContext) -> Result<Vec<Signup>, Response> {
     // Callers must pass the admin + private-node guard before reading identities.
     require_account(ctx, true)?;
     let requests = db::users::signup_requests::list_signup_requests(&ctx.state.pool, "pending")
@@ -109,7 +109,7 @@ pub(crate) async fn load_requests(ctx: &PageContext) -> Result<Vec<view::Signup>
         })?;
     Ok(requests
         .into_iter()
-        .map(|request| view::Signup {
+        .map(|request| Signup {
             id: request.id,
             username: request.username,
             email: request.email.unwrap_or_default(),

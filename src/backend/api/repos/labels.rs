@@ -1,13 +1,19 @@
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_admin_access;
 use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::session::get_current_user;
+use crate::backend::api::repos::pulls::pull::{label, page, repository, unavailable, ResultPage};
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::webui::pages::repos::issues as view;
 use axum::extract::Path;
+use axum::extract::Query;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::http::Uri;
+use axum::response::Response;
 use axum::Json;
 use serde::Deserialize;
 use serde::Serialize;
@@ -175,6 +181,54 @@ pub async fn delete_label(
         .map_err(label_write_error)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The search text and sort order of the labels page. Both are optional.
+#[derive(Deserialize)]
+pub(crate) struct LabelsQuery {
+    #[serde(default)]
+    q: String,
+    #[serde(default)]
+    sort: String,
+}
+
+/// The labels page. Anyone who can read the repository sees its labels; the forms that change them
+/// are for administrators and are checked again when they are posted.
+pub(crate) async fn native_index(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name)): Path<(String, String)>,
+    Query(query): Query<LabelsQuery>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    let repo = repository(&ctx, &owner, &name).await?;
+    let items = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+        .await
+        .map_err(|_| unavailable(&ctx))?
+        .into_iter()
+        .map(label)
+        .collect();
+    let usage: std::collections::BTreeMap<i64, i64> =
+        db::labels::list_label_usage(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(&ctx))?
+            .into_iter()
+            .collect();
+    Ok(ctx.page_model(
+        "Labels",
+        page(view::Page::Labels {
+            repository: repo.view,
+            items,
+            usage,
+            query: query.q,
+            sort: query.sort,
+        }),
+    ))
+}
+
+pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
+    axum::Router::new().route("/:owner/:repo/labels", axum::routing::get(native_index))
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {

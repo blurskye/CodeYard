@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::{error::ApiError, session::get_current_user},
+    api::{http::error::ApiError, http::session::get_current_user},
     app::AppState,
     ci::runs::DispatchRequest,
 };
@@ -42,8 +42,9 @@ pub async fn trigger_ci(
     }))
 }
 
-use crate::backend::api::context::PageContext;
-use crate::webui::pages::actions as view;
+use crate::backend::api::http::context::PageContext;
+use crate::webui::pages::ci as view;
+use crate::webui::pages::repos::actions as view_actions;
 use axum::{
     extract::{OriginalUri, Path},
     http::Uri,
@@ -69,13 +70,16 @@ pub(super) async fn repository_dispatch(
     dispatch(state, headers, uri, form, Some((owner, repo))).await
 }
 
-fn draft(form: &HashMap<String, String>, scope: Option<&(String, String)>) -> view::DispatchDraft {
+fn draft(
+    form: &HashMap<String, String>,
+    scope: Option<&(String, String)>,
+) -> view_actions::DispatchDraft {
     let value = |key: &str| {
         form.get(key)
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
     };
-    view::DispatchDraft {
+    view_actions::DispatchDraft {
         owner: scope
             .map(|(owner, _)| owner.clone())
             .unwrap_or_else(|| value("repo_owner")),
@@ -138,7 +142,7 @@ async fn refusal_workflows(
     owner: &str,
     name: &str,
     branch: &str,
-) -> anyhow::Result<Vec<view::Workflow>> {
+) -> anyhow::Result<Vec<view_actions::Workflow>> {
     anyhow::ensure!(
         crate::backend::ci::admission::is_safe_ref(branch),
         "unsafe ref"
@@ -161,7 +165,7 @@ async fn dispatch_error(
     status: StatusCode,
     base_path: &str,
     scope: Option<&(String, String)>,
-    draft: view::DispatchDraft,
+    draft: view_actions::DispatchDraft,
     message: &str,
 ) -> Response {
     // Only repository routes can supply chrome. Global drafts are untrusted input,
@@ -331,7 +335,7 @@ async fn dispatch(
                     }
                 }
             }
-            ctx.redirect(&view::query_url(
+            ctx.redirect(&view_actions::query_url(
                 &base_path,
                 &query,
                 &[("job", &result.run_id.to_string()), ("view", "logs")],
@@ -354,7 +358,7 @@ mod tests {
     use super::*;
     #[test]
     fn dispatch_form_offers_only_events_the_server_accepts() {
-        for event in view::TRIGGER_EVENTS {
+        for event in view_actions::TRIGGER_EVENTS {
             assert!(crate::backend::ci::is_supported_event(event), "{event}");
         }
     }

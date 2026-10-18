@@ -1,5 +1,5 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::db;
 use axum::http::StatusCode;
 use axum::response::Response;

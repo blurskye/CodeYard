@@ -375,6 +375,7 @@ async fn finish_in_tx(
                 json_object('run_id', ?4, 'status', ?2)
             FROM repositories r LEFT JOIN users u ON r.owner_user_id = u.id AND r.owner_kind = 'user'
             LEFT JOIN organizations o ON r.owner_org_id = o.id AND r.owner_kind = 'org' WHERE r.id = ?5
+            AND NOT EXISTS (SELECT 1 FROM watches w WHERE w.user_id = ?1 AND w.repo_id = r.id AND w.level = 'ignoring')
             RETURNING user_id, id"#)
             .bind(actor)
             .bind(status)
@@ -615,6 +616,36 @@ pub async fn latest_ci_runs_for_commit(
     .bind(pull_request_id)
     .fetch_all(pool)
     .await?)
+}
+
+/// The status of the latest attempt of each workflow or pipeline on the head commit of each pull
+/// request in `pull_request_ids`. It makes the same choice `latest_ci_runs_for_commit` makes for
+/// one pull request. A pull request without runs is absent.
+pub async fn list_pull_request_check_statuses(
+    pool: &SqlitePool,
+    pull_request_ids: &[i64],
+) -> Result<Vec<(i64, String)>> {
+    debug_assert!(pull_request_ids.len() <= 500);
+    if pull_request_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut query = sqlx::QueryBuilder::<Sqlite>::new(
+        "SELECT pull_request_id, status FROM (
+            SELECT pulls.id AS pull_request_id, runs.status, ROW_NUMBER() OVER (
+                PARTITION BY pulls.id, instr(runs.workflow_path, ',') > 0,
+                    CASE WHEN instr(runs.workflow_path, ',') > 0 THEN runs.pipeline ELSE runs.workflow_path END
+                ORDER BY runs.id DESC) AS attempt
+            FROM pull_requests AS pulls
+            JOIN ci_runs AS runs ON runs.repo_id = pulls.repo_id AND runs.head_sha = pulls.head_sha
+                AND (runs.pull_request_id IS NULL OR runs.pull_request_id = pulls.id)
+            WHERE pulls.id IN (",
+    );
+    let mut ids = query.separated(",");
+    for id in pull_request_ids {
+        ids.push_bind(id);
+    }
+    query.push(")) WHERE attempt = 1");
+    Ok(query.build_query_as().fetch_all(pool).await?)
 }
 
 /// The runs `user_id` started, in repositories the user can read today.

@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::session::get_current_user,
+    api::http::session::get_current_user,
     app::AppState,
     files::{self, DeleteError},
 };
@@ -18,7 +18,7 @@ pub async fn delete_file(
     Path(file_id): Path<String>,
 ) -> Result<StatusCode, Failure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::csrf::check(state.clone(), &headers).await?;
+    super::super::http::csrf::check(state.clone(), &headers).await?;
     let file_uuid = Uuid::parse_str(&file_id).map_err(|_| {
         failure(
             StatusCode::BAD_REQUEST,

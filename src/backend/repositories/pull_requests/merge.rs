@@ -16,7 +16,7 @@ use crate::backend::repositories::store::ErrorKind;
 use crate::backend::repositories::store::MergeMethod;
 use crate::backend::repositories::store::MergeRequest as StoreMerge;
 use crate::backend::repositories::store::RepoError;
-use crate::webui::pages::collaboration::MERGE_COMMIT_REFUSED;
+use crate::webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
@@ -157,15 +157,15 @@ fn required_status_check_failures(
     {
         for context in [
             run.commit_status_context(),
-            run.legacy_commit_status_context(),
+            run.alias_commit_status_context(),
         ] {
             ci_by_context.entry(context).or_default().push(run);
         }
     }
     let mut failures = Vec::new();
     for required in required_checks {
-        // Old stored successes may have hidden another producer's failure.
-        // CI requirements use the latest actual runs, including released names.
+        // A stored success can hide another producer's failure, so a server-owned requirement
+        // is checked against the actual runs, under their full names and their aliases.
         if db::repositories::protection::server_owned_status_context(required) {
             match ci_by_context.get(required) {
                 Some(runs) => {
@@ -235,15 +235,6 @@ async fn merge_blockers(
     // Every rule judges the same reviews, so they are read once, when the first rule needs them.
     let mut reviews = None;
     for rule in &rules {
-        if rule.require_signed_commits || rule.require_code_owner_reviews {
-            blockers.push(OperationError::Conflict {
-                code: "unsupported_protection",
-                message:
-                    "Signed-commit/code-owner enforcement is unavailable, so this merge is denied. Delete the branch protection rule and create it again to clear these flags."
-                        .to_owned(),
-            });
-        }
-
         if reviews.is_none() {
             reviews = Some(
                 eligible_reviews(pool, pull_request, repository)
@@ -1085,6 +1076,17 @@ pub async fn publish_prepared_merge(
     .await;
 
     for layer in &chain {
+        db::timeline::record(
+            pool,
+            repository.id,
+            db::timeline::Subject::PullRequest,
+            layer.id,
+            user.id,
+            "merged",
+            &merge.base_branch,
+            "",
+        )
+        .await;
         if layer.author_id == user.id {
             continue;
         }
@@ -1105,6 +1107,7 @@ pub async fn publish_prepared_merge(
                     "repo_owner": &owner,
                     "repo_name": &repo,
                     "pull_number": layer.number,
+                    "subject": layer.title,
                     "merge_sha": merge_sha.as_str(),
                 }),
             },
@@ -1143,7 +1146,7 @@ mod tests {
             author_id,
             state: state.into(),
             commit_sha: sha.map(str::to_owned),
-            username: None,
+            username: format!("reviewer-{author_id}"),
         }
     }
     #[test]

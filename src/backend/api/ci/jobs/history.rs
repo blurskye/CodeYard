@@ -1,6 +1,6 @@
 use super::{authorized_run, unavailable, CiReadError};
 use crate::backend::ci::logs::normalize_stage_name;
-use crate::backend::{api::error::ApiError, app::AppState, db};
+use crate::backend::{api::http::error::ApiError, app::AppState, db};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -70,15 +70,6 @@ pub(super) async fn readable_history(
         }
         bytes += size;
         count += 1;
-    }
-    if !rows.is_empty() && count == 0 {
-        return Err((
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(ApiError::new(
-                "legacy_log_too_large",
-                "This legacy log row exceeds the bounded history response size",
-            )),
-        ));
     }
     has_more |= count < rows.len();
     rows.truncate(count);

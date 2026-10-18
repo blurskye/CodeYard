@@ -57,7 +57,6 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                             AND tm.user_id = u.id AND tm.role IN ('member','maintainer')
                         WHERE a.repo_id = r.id AND a.permission BETWEEN 1 AND 5
                             AND t.privacy IN ('visible','secret')
-                            AND t.parent_team_id IS NULL
                     ), 0) ELSE 0 END
                 FROM organizations o JOIN org_memberships m ON m.org_id = o.id
                 WHERE r.owner_kind = 'org' AND r.owner_user_id IS NULL
@@ -72,6 +71,15 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                 THEN 1 ELSE 6 END)
         ELSE 0 END)
     "#;
+
+/// Whether repository `r` is readable by the viewer, whom the query joins as `u` (NULL for an
+/// anonymous visitor). It follows `repositories::access::can_read`: public repositories, the
+/// personal repositories of a site admin, and the access projection for everything else.
+pub(crate) fn readable_condition() -> String {
+    format!(
+        "(NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1)"
+    )
+}
 
 async fn grant_repo_access_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,

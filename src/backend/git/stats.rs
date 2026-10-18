@@ -188,6 +188,17 @@ fn is_not_found(error: &anyhow::Error) -> bool {
         .is_some_and(|error| error.code() == git2::ErrorCode::NotFound)
 }
 
+/// The commit `branch` points at, or `None` while the branch is unborn.
+pub(crate) fn branch_tip(repo_path: &Path, branch: &str) -> Result<Option<String>> {
+    let repo = Repository::open_bare(repo_path)?;
+    let tip = match peel_to_commit_checked(&repo, &format!("refs/heads/{branch}")) {
+        Ok(commit) => Some(commit.id().to_string()),
+        Err(error) if is_not_found(&error) => None,
+        Err(error) => return Err(error),
+    };
+    Ok(tip)
+}
+
 pub(crate) async fn compute_language_stats(
     repo_path: &Path,
     git_ref: &str,

@@ -25,7 +25,7 @@ pub async fn list_organization_profile_repositories(
     viewer: Option<i64>,
 ) -> Result<Vec<Repository>> {
     // The private-repository rule is the one list_organization_repositories uses, without paging.
-    Ok(sqlx::query_as("SELECT r.* FROM repositories r WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND (NOT r.is_private OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=$2 AND m.role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$2 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$2 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret') AND t.parent_team_id IS NULL)) ORDER BY r.name")
+    Ok(sqlx::query_as("SELECT r.* FROM repositories r WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND (NOT r.is_private OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=$2 AND m.role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$2 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$2 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY r.name")
         .bind(org)
         .bind(viewer)
         .fetch_all(pool)
@@ -40,7 +40,7 @@ pub async fn list_organization_repositories(
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
     // READ filter before LIMIT: admins, public repositories, direct access, or a visible team grant.
-    let rows = sqlx::query_as("SELECT r.id, o.name AS owner, r.name FROM repositories r JOIN organizations o ON o.id=r.owner_org_id WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND r.id>$2 AND ($3 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$4 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$4 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret') AND t.parent_team_id IS NULL)) ORDER BY r.id LIMIT $5")
+    let rows = sqlx::query_as("SELECT r.id, o.name AS owner, r.name FROM repositories r JOIN organizations o ON o.id=r.owner_org_id WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=$1 AND r.id>$2 AND ($3 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$4 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$4 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY r.id LIMIT $5")
         .bind(org)
         .bind(page.after)
         .bind(administers(role))

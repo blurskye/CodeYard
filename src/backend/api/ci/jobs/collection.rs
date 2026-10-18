@@ -1,7 +1,7 @@
 use super::super::responses::{map_job_info, JobInfo};
 use super::{ensure_repo_read_access, missing, CiReadError};
 use crate::backend::{
-    api::{error::ApiError, session::get_current_user},
+    api::{http::error::ApiError, http::session::get_current_user},
     app::AppState,
     db,
 };
@@ -63,9 +63,10 @@ pub async fn list_ci_jobs(
     }))
 }
 
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::repositories::store::repo_store;
-use crate::webui::pages::actions::{self as view, logs::LogLine};
+use crate::webui::pages::ci as view;
+use crate::webui::pages::repos::actions::{self as view_actions, logs::LogLine};
 use axum::http::Uri;
 use std::collections::{BTreeMap, HashMap};
 pub(crate) async fn global_actions(
@@ -161,8 +162,11 @@ fn bounded_limit(
     }
 }
 
-fn map_run(run: db::models::CiRun, repository: &db::models::Repository) -> view::Run {
-    view::Run {
+pub(crate) fn map_run(
+    run: db::models::CiRun,
+    repository: &db::models::Repository,
+) -> view_actions::Run {
+    view_actions::Run {
         commit_status_context: run.commit_status_context(),
         id: run.run_id.to_string(),
         repository: repository.name.clone(),
@@ -190,8 +194,10 @@ fn map_run(run: db::models::CiRun, repository: &db::models::Repository) -> view:
 }
 
 /// A workflow as the Actions page lists it: its inputs only matter when it can be dispatched.
-pub(crate) fn workflow_view(workflow: crate::backend::ci::WorkflowDefinition) -> view::Workflow {
-    view::Workflow {
+pub(crate) fn workflow_view(
+    workflow: crate::backend::ci::WorkflowDefinition,
+) -> view_actions::Workflow {
+    view_actions::Workflow {
         path: workflow.path,
         name: workflow.name,
         dispatchable: workflow.triggers.workflow_dispatch,
@@ -206,17 +212,17 @@ pub(crate) fn workflow_view(workflow: crate::backend::ci::WorkflowDefinition) ->
 
 fn workflow_input_view(
     input: crate::backend::ci::dispatch_inputs::DispatchInput,
-) -> view::WorkflowInput {
+) -> view_actions::WorkflowInput {
     use crate::backend::ci::dispatch_inputs::InputKind;
-    view::WorkflowInput {
+    view_actions::WorkflowInput {
         name: input.name,
         description: input.description,
         kind: match input.kind {
-            InputKind::Text => view::InputKind::Text,
-            InputKind::Boolean => view::InputKind::Boolean,
-            InputKind::Number => view::InputKind::Number,
-            InputKind::Choice => view::InputKind::Choice,
-            InputKind::Environment => view::InputKind::Environment,
+            InputKind::Text => view_actions::InputKind::Text,
+            InputKind::Boolean => view_actions::InputKind::Boolean,
+            InputKind::Number => view_actions::InputKind::Number,
+            InputKind::Choice => view_actions::InputKind::Choice,
+            InputKind::Environment => view_actions::InputKind::Environment,
         },
         required: input.required,
         default: input.default,
@@ -250,7 +256,7 @@ pub(crate) fn bound_log_projection(
 
 fn selected_run_mut(
     envelope: &mut crate::webui::app::PageEnvelope,
-) -> Option<&mut view::SelectedRun> {
+) -> Option<&mut view_actions::SelectedRun> {
     match &mut envelope.page {
         crate::webui::app::Page::Actions(view::Page::Actions(model)) => model.selected.as_mut(),
         _ => None,
@@ -417,9 +423,9 @@ async fn actions(
             .filter(|path| !path.is_empty())
         {
             if !workflows.iter().any(|workflow| workflow.path == path) {
-                workflows.push(view::Workflow {
+                workflows.push(view_actions::Workflow {
                     path: path.to_string(),
-                    name: view::workflow_name(path),
+                    name: view_actions::workflow_name(path),
                     dispatchable: false,
                     inputs: Vec::new(),
                 });
@@ -470,17 +476,19 @@ async fn actions(
             })
             .collect();
         let deployment = match db::ci::get_ci_deployment_by_run_id(&ctx.state.pool, run.id).await {
-            Ok(Some(deployment)) if deployment.repo_id == run.repo_id => Some(view::Deployment {
-                environment: deployment.environment,
-                status: deployment.status,
-                approved_at: deployment.approved_at.map(|value| value.timestamp()),
-                started_at: deployment.started_at.map(|value| value.timestamp()),
-                completed_at: deployment.completed_at.map(|value| value.timestamp()),
-            }),
+            Ok(Some(deployment)) if deployment.repo_id == run.repo_id => {
+                Some(view_actions::Deployment {
+                    environment: deployment.environment,
+                    status: deployment.status,
+                    approved_at: deployment.approved_at.map(|value| value.timestamp()),
+                    started_at: deployment.started_at.map(|value| value.timestamp()),
+                    completed_at: deployment.completed_at.map(|value| value.timestamp()),
+                })
+            }
             Ok(None) => None,
             _ => return unavailable(&ctx),
         };
-        Some(view::SelectedRun {
+        Some(view_actions::SelectedRun {
             run: map_run(run, &run_repository),
             logs,
             deployment,
@@ -500,7 +508,7 @@ async fn actions(
     } else {
         None
     };
-    let model = view::ActionsPage {
+    let model = view_actions::ActionsPage {
         repository: scope,
         repo_chrome,
         title: title.clone(),

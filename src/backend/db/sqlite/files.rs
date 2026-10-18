@@ -406,8 +406,8 @@ pub async fn get_user_file_stats(
     pool: &SqlitePool,
     user_id: i64,
 ) -> Result<Option<super::models::UserFileStats>, sqlx::Error> {
-    // Aggregate each relation independently; the historical view multiplied
-    // storage/upload sums by the download/upload join cardinalities.
+    // Aggregate each relation separately. Joining the relations first would multiply
+    // the storage and upload sums by the join counts.
     sqlx::query_as(r#"WITH active_files AS (
         SELECT COUNT(*) AS total_files,COALESCE(SUM(file_size),0) AS total_bytes,
             COUNT(*) FILTER(WHERE reason='avatar') AS avatar_count,

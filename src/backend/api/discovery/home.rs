@@ -1,7 +1,7 @@
-use super::{repository_cards, unavailable};
+use super::{dashboard_cards, unavailable};
 use crate::backend::db::models::AccessLevel;
 use crate::backend::db::repositories::records::RepositorySort;
-use crate::backend::{api::context::PageContext, app::AppState, db};
+use crate::backend::{api::http::context::PageContext, app::AppState, db};
 use crate::webui::app::Page as AppPage;
 use crate::webui::pages::discovery::{self as view, HomeModel, SharedRepositoryCard};
 use axum::{
@@ -27,6 +27,11 @@ pub(super) async fn home(
         );
     };
     let username = user.username.clone();
+    let find = ctx
+        .query
+        .get("q")
+        .map(|text| text.trim().chars().take(100).collect::<String>())
+        .unwrap_or_default();
     // This scope comes from the verified session, never from a query/form owner.
     let own =
         match db::repositories::records::list_user_repositories(&ctx.state.pool, user.id).await {
@@ -50,19 +55,30 @@ pub(super) async fn home(
     };
     // Trending is for other people's repositories, so the viewer's own are left out.
     let own_ids: std::collections::HashSet<i64> = own.iter().map(|repo| repo.id).collect();
+    // The filter narrows every repository list on the dashboard, Trending included.
+    let needle = find.to_lowercase();
+    let matches = |repo: &db::models::Repository| {
+        repo.name.to_lowercase().contains(&needle)
+            || repo
+                .description
+                .as_deref()
+                .is_some_and(|text| text.to_lowercase().contains(&needle))
+    };
     let public: Vec<_> = public
         .into_iter()
-        .filter(|repo| !own_ids.contains(&repo.id))
+        .filter(|repo| !own_ids.contains(&repo.id) && matches(repo))
         .collect();
-    let repositories = match repository_cards(&ctx.state, own).await {
+    let own: Vec<_> = own.into_iter().filter(|repo| matches(repo)).collect();
+    let repositories = match dashboard_cards(&ctx.state, own).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_repository_owners"),
     };
     let (shared_repos, levels): (Vec<_>, Vec<_>) = shared
         .into_iter()
+        .filter(|row| matches(&row.repository))
         .map(|row| (row.repository, row.access_level))
         .unzip();
-    let shared = match repository_cards(&ctx.state, shared_repos).await {
+    let shared = match dashboard_cards(&ctx.state, shared_repos).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_shared_owners"),
     };
@@ -74,12 +90,32 @@ pub(super) async fn home(
             role: role_name(level).to_owned(),
         })
         .collect();
-    let mut trending = match repository_cards(&ctx.state, public).await {
+    let mut trending = match dashboard_cards(&ctx.state, public).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_trending_owners"),
     };
     trending.sort_by_key(|repo| std::cmp::Reverse(repo.stars));
     trending.truncate(5);
+    let assigned_issues = match db::issues::count_viewer_issues(
+        &ctx.state.pool,
+        user.id,
+        db::issues::IssueRelation::Assigned,
+    )
+    .await
+    {
+        Ok(counts) => counts.open,
+        Err(_) => return unavailable(&ctx, "home_assigned_issues"),
+    };
+    let open_pull_requests = match db::pull_requests::records::count_viewer_pull_requests(
+        &ctx.state.pool,
+        user.id,
+        db::pull_requests::records::PullRequestRelation::Involved,
+    )
+    .await
+    {
+        Ok(counts) => counts.open,
+        Err(_) => return unavailable(&ctx, "home_pull_request_counts"),
+    };
     ctx.page_model(
         "Dashboard",
         AppPage::Discovery(view::Page::Home(HomeModel {
@@ -87,9 +123,12 @@ pub(super) async fn home(
             avatar_url: user
                 .avatar_file_id
                 .map(|id| format!("/api/files/{id}/download")),
+            assigned_issues,
+            open_pull_requests,
             repositories,
             shared,
             trending,
+            find,
         })),
     )
 }

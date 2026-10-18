@@ -1,7 +1,7 @@
 //! Organization settings, bounded native commands and authorized page projections.
 
 use super::INDEX;
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 use crate::backend::db::models::OrgRole;
 use crate::backend::db::organizations;
@@ -9,7 +9,7 @@ use crate::backend::db::organizations::OrganizationOutcome::*;
 use crate::backend::db::organizations::*;
 use crate::backend::repositories::lifecycle;
 use crate::webui::app::Page;
-use crate::webui::pages::organizations as view;
+use crate::webui::pages::orgs as view;
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};

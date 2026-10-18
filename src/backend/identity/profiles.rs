@@ -69,6 +69,24 @@ pub async fn repositories_on_profile(
     Ok((user, repositories))
 }
 
+/// The profile's user, and how many repositories the profile lists to `viewer`. The Stars tab shows
+/// that count without the list.
+pub async fn repository_count_on_profile(
+    pool: &DbPool,
+    username: &str,
+    viewer: Option<i64>,
+) -> Result<(User, usize), ProfileReadError> {
+    let user = accounts::get_user_by_username(pool, username)
+        .await
+        .map_err(|_| ProfileReadError::UserUnavailable)?
+        .ok_or(ProfileReadError::Missing)?;
+    let own = viewer == Some(user.id);
+    let count = repositories::count_user_repositories(pool, user.id, own)
+        .await
+        .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
+    Ok((user, usize::try_from(count).unwrap_or(usize::MAX)))
+}
+
 pub async fn update(
     pool: &DbPool,
     actor: i64,

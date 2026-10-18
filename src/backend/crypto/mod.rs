@@ -2,7 +2,7 @@
 //! Availability: absent key disables secret operations; a configured malformed
 //! key is a startup error, not equivalent to absence. Recovery requires the exact
 //! original master key plus ciphertext AND nonce backups. Losing it is irreversible.
-//! Rotation: this legacy format has no key ID. Do not simply replace the env key.
+//! Rotation: the current format has no key ID. Do not simply replace the env key.
 //! Quiesce secret writes, decrypt with the old key, re-encrypt with fresh random
 //! nonces/new key transactionally, verify restore, and retain the old key for old
 //! backups. Online/key-ring rotation requires a separately reviewed DB upgrade.

@@ -66,6 +66,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::Commits {
                 git_ref: "main".into(),
                 limit: 10,
+                filter: Default::default(),
             },
             false,
         ),
@@ -73,6 +74,25 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::CommitPage {
                 git_ref: "main".into(),
                 offset: 1,
+                limit: 10,
+                filter: Default::default(),
+            },
+            false,
+        ),
+        (
+            Operation::PathCommits {
+                git_ref: "main".into(),
+                path: "README.md".into(),
+                offset: 0,
+                limit: 10,
+                filter: Default::default(),
+            },
+            false,
+        ),
+        (
+            Operation::CommitsBetween {
+                base_ref: "main".into(),
+                head_ref: "main".into(),
                 limit: 10,
             },
             false,
@@ -118,6 +138,13 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             false,
         ),
         (Operation::Tags, false),
+        (
+            Operation::BranchStatuses {
+                base: sha.into(),
+                heads: vec![sha.into()],
+            },
+            false,
+        ),
         (
             Operation::ArchiveZip {
                 git_ref: "main".into(),

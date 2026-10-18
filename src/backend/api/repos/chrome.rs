@@ -1,13 +1,13 @@
-use super::access::check_repo_read_access;
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::db;
 use crate::backend::repositories::lifecycle;
 use crate::backend::repositories::store::{
     repo_store, CommitInfo, ErrorKind, RepoError, MAX_COMMIT_PAGE_SIZE,
 };
-use crate::webui::pages::repositories as view;
-use crate::webui::pages::repositories::ref_path::{resolve_repo_ref_path, split_path};
-use crate::webui::pages::repositories::RepoChrome;
+use crate::webui::pages::repos as view;
+use crate::webui::pages::repos::chrome::RepoChrome;
+use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
 use axum::http::StatusCode;
 use axum::response::Response;
 use chrono::TimeZone;
@@ -91,11 +91,18 @@ pub(crate) async fn load_metadata(
         ctx,
         check_repo_read_access(&ctx.state.pool, &repository, &ctx.headers).await,
     )?;
+    let topics = db::repositories::topics::repository_topics(&ctx.state.pool, &[repository.id])
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .remove(&repository.id)
+        .unwrap_or_default();
     let mut chrome = RepoChrome {
         id: repository.id,
         owner: owner.to_owned(),
         name: repository.name.clone(),
         description: repository.description.clone().unwrap_or_default(),
+        website: repository.website.clone().unwrap_or_default(),
+        topics,
         is_private: repository.is_private,
         is_archived: repository.is_archived,
         stars: repository.stars_count,
@@ -107,6 +114,16 @@ pub(crate) async fn load_metadata(
         viewer_id: ctx.user.as_ref().map_or(0, |user| user.id),
         ..RepoChrome::default()
     };
+    // The Issues and Pull requests tabs show open counts, and every reader of the repository sees them.
+    chrome.open_issues = db::issues::count_repo_issues(&ctx.state.pool, repository.id, None)
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .open;
+    chrome.open_pulls =
+        db::pull_requests::records::count_repo_pull_requests(&ctx.state.pool, repository.id, None)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .open;
     if let Some(user) = &ctx.user {
         chrome.is_owner = repository.is_personal_owner(user.id);
         chrome.can_manage_collaborators = repository.is_personal_owner(user.id);
@@ -131,10 +148,14 @@ pub(crate) async fn load_metadata(
             db::repositories::engagement::is_repo_starred(&ctx.state.pool, user.id, repository.id)
                 .await
                 .map_err(|_| unavailable(ctx))?;
-        chrome.watching =
-            db::repositories::engagement::is_repo_watched(&ctx.state.pool, user.id, repository.id)
+        if let Some((level, events)) =
+            db::repositories::engagement::get_watch_level(&ctx.state.pool, user.id, repository.id)
                 .await
-                .map_err(|_| unavailable(ctx))?;
+                .map_err(|_| unavailable(ctx))?
+        {
+            chrome.watch_level = level;
+            chrome.watch_events = events;
+        }
         if let Some(fork) =
             db::repositories::discovery::get_user_fork(&ctx.state.pool, user.id, repository.id)
                 .await
@@ -190,6 +211,7 @@ pub(crate) async fn load_metadata(
         }
         Err(error) => return Err(store_error(ctx, Some(&chrome), error)),
     };
+    chrome.default_branch = default_branch.clone();
     Ok(Loaded {
         repository,
         chrome,
@@ -220,6 +242,24 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
         .collect();
     names.sort();
     names.dedup();
+    names
+}
+
+/// Whether `reference` is a branch. Only a branch takes a commit from the file pages, so only a
+/// branch offers edit and delete there.
+pub(crate) fn is_branch(loaded: &Loaded, reference: &str) -> bool {
+    loaded.refs.contains_key(&format!("refs/heads/{reference}"))
+}
+
+/// The names under one ref prefix, `refs/heads/` or `refs/tags/`, sorted.
+pub(crate) fn ref_names_under(loaded: &Loaded, prefix: &str) -> Vec<String> {
+    let mut names: Vec<String> = loaded
+        .refs
+        .keys()
+        .filter_map(|name| name.strip_prefix(prefix))
+        .map(str::to_owned)
+        .collect();
+    names.sort();
     names
 }
 
@@ -283,6 +323,22 @@ pub(crate) fn resolve(
     Ok(resolved)
 }
 
+/// A ref switch asks for the same path on another ref. When that path is missing there, the
+/// answer is a redirect to the ref's root; any other failure stays an error.
+pub(crate) fn root_if_missing(
+    ctx: &PageContext,
+    loaded: &Loaded,
+    reference: &str,
+    error: &RepoError,
+) -> Option<Response> {
+    let switching = ctx.query.contains_key(view::ref_path::ROOT_IF_MISSING);
+    let missing = matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath);
+    (switching && missing).then(|| {
+        let root = view::ref_path::file_url(&loaded.chrome.base(), "tree", reference, "");
+        crate::backend::api::http::render::redirect_response(&root)
+    })
+}
+
 pub(crate) fn date(timestamp: i64) -> String {
     Utc.timestamp_opt(timestamp, 0)
         .single()
@@ -290,8 +346,8 @@ pub(crate) fn date(timestamp: i64) -> String {
         .unwrap_or_else(|| "Unknown date".into())
 }
 
-pub(crate) fn commit(commit: CommitInfo) -> view::Commit {
-    view::Commit {
+pub(crate) fn commit(commit: CommitInfo) -> view::commits::Commit {
+    view::commits::Commit {
         sha: commit.sha,
         message: commit.message,
         author: commit.author_name,
@@ -363,10 +419,13 @@ pub(crate) struct PageQuery {
     pub(crate) per_page: Option<u32>,
 }
 
-fn page_error() -> (StatusCode, axum::Json<crate::backend::api::error::ApiError>) {
+fn page_error() -> (
+    StatusCode,
+    axum::Json<crate::backend::api::http::error::ApiError>,
+) {
     (
         StatusCode::BAD_REQUEST,
-        axum::Json(crate::backend::api::error::ApiError::new(
+        axum::Json(crate::backend::api::http::error::ApiError::new(
             "validation_error",
             "Page must be between 1 and 1000",
         )),
@@ -399,15 +458,26 @@ pub(crate) fn has_next_page(page: usize, fetched: usize, per_page: usize) -> boo
 pub(crate) fn json_page(
     page: Option<u32>,
     per_page: Option<u32>,
-) -> Result<(usize, usize), (StatusCode, axum::Json<crate::backend::api::error::ApiError>)> {
+) -> Result<
+    (usize, usize),
+    (
+        StatusCode,
+        axum::Json<crate::backend::api::http::error::ApiError>,
+    ),
+> {
     let page = usize::try_from(page.unwrap_or(1)).map_err(|_| page_error())?;
     let per_page =
         usize::try_from(per_page.unwrap_or(DEFAULT_PER_PAGE as u32)).map_err(|_| page_error())?;
     page_window(page, per_page).ok_or_else(page_error)
 }
 
-pub(crate) type ApiResult<T> =
-    Result<T, (StatusCode, axum::Json<crate::backend::api::error::ApiError>)>;
+pub(crate) type ApiResult<T> = Result<
+    T,
+    (
+        StatusCode,
+        axum::Json<crate::backend::api::http::error::ApiError>,
+    ),
+>;
 
 pub(crate) async fn load_refs_from_repo(
     state: &crate::backend::app::AppState,
@@ -417,7 +487,12 @@ pub(crate) async fn load_refs_from_repo(
     repo_store(repository, state.cluster.as_ref())
         .refs()
         .await
-        .map_err(|error| super::responses::repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE))
+        .map_err(|error| {
+            crate::backend::api::repos::responses::repo_store_error(
+                error,
+                StatusCode::SERVICE_UNAVAILABLE,
+            )
+        })
 }
 
 /// Metadata may use the stored branch when optional Git enrichment is unavailable;
@@ -428,10 +503,12 @@ pub(crate) async fn repository_default_branch_or_db(
 ) -> ApiResult<String> {
     match repo_store(repository, state.cluster.as_ref()).info().await {
         Ok(info) => Ok(info.default_branch),
-        Err(error) if error.is_response_too_large() => Err(super::responses::repo_store_error(
-            error,
-            StatusCode::SERVICE_UNAVAILABLE,
-        )),
+        Err(error) if error.is_response_too_large() => {
+            Err(crate::backend::api::repos::responses::repo_store_error(
+                error,
+                StatusCode::SERVICE_UNAVAILABLE,
+            ))
+        }
         Err(_) => Ok(repository.default_branch.clone()),
     }
 }
@@ -444,7 +521,12 @@ pub(crate) async fn repository_default_branch(
         .info()
         .await
         .map(|info| info.default_branch)
-        .map_err(|error| super::responses::repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE))
+        .map_err(|error| {
+            crate::backend::api::repos::responses::repo_store_error(
+                error,
+                StatusCode::SERVICE_UNAVAILABLE,
+            )
+        })
 }
 
 #[cfg(test)]

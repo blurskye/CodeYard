@@ -1,5 +1,7 @@
 use crate::backend::db::models::{Repository, SharedRepository};
-use crate::backend::db::repositories::records::{MergeMethodUpdate, RepositorySort};
+use crate::backend::db::repositories::records::{
+    MergeMethodUpdate, RepositoryFilter, RepositorySort,
+};
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
@@ -105,6 +107,22 @@ pub async fn list_user_repositories(pool: &SqlitePool, user_id: i64) -> Result<V
     Ok(repos)
 }
 
+/// How many repositories `user_id` owns that a profile lists. Private ones are counted only when
+/// `include_private` is set, which is the owner's own view.
+pub async fn count_user_repositories(
+    pool: &SqlitePool,
+    user_id: i64,
+    include_private: bool,
+) -> Result<i64> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM repositories WHERE owner_kind = 'user' AND owner_user_id = ?1 AND (?2 OR is_private = false)",
+    )
+    .bind(user_id)
+    .bind(include_private)
+    .fetch_one(pool)
+    .await?)
+}
+
 pub async fn list_public_repositories(
     pool: &SqlitePool,
     sort: RepositorySort,
@@ -115,10 +133,16 @@ pub async fn list_public_repositories(
     // The stars index lets SQLite find that top row without sorting every public repository.
     let sql = match sort {
         RepositorySort::Recent => {
-            "SELECT * FROM repositories WHERE is_private = false ORDER BY created_at DESC LIMIT ?1"
+            "SELECT * FROM repositories WHERE is_private = false ORDER BY created_at DESC, id DESC LIMIT ?1"
         }
         RepositorySort::Stars => {
             "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?1"
+        }
+        RepositorySort::Forks => {
+            "SELECT * FROM repositories WHERE is_private = false ORDER BY forks_count DESC, created_at DESC, id DESC LIMIT ?1"
+        }
+        RepositorySort::Updated => {
+            "SELECT * FROM repositories WHERE is_private = false ORDER BY updated_at DESC, id DESC LIMIT ?1"
         }
     };
     let repos = sqlx::query_as::<_, Repository>(sql)
@@ -146,33 +170,58 @@ pub async fn list_shared_repositories(
     .await?)
 }
 
-/// The public repositories whose name or description contains `text`, ignoring case, in the
-/// order `list_public_repositories` uses. An empty text matches every public repository.
+/// The public repositories whose name or description contains `text`, ignoring case, that pass
+/// `filter`, in the order `list_public_repositories` uses. An empty text matches every public
+/// repository.
 pub async fn search_public_repositories(
     pool: &SqlitePool,
     text: &str,
+    filter: RepositoryFilter<'_>,
     sort: RepositorySort,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     let pattern = crate::backend::db::discussions::contains_pattern(text);
-    let sql = match sort {
-        RepositorySort::Recent => {
-            r#"SELECT * FROM repositories WHERE is_private = false
-                AND (name LIKE ?2 ESCAPE '\' OR description LIKE ?2 ESCAPE '\')
-                ORDER BY created_at DESC LIMIT ?1"#
-        }
-        RepositorySort::Stars => {
-            r#"SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false
-                AND (name LIKE ?2 ESCAPE '\' OR description LIKE ?2 ESCAPE '\')
-                ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?1"#
-        }
+    let (index, order) = match sort {
+        RepositorySort::Recent => ("", "created_at DESC, id DESC"),
+        RepositorySort::Stars => (
+            "INDEXED BY idx_repositories_public_stars",
+            "stars_count DESC, created_at DESC, id DESC",
+        ),
+        RepositorySort::Forks => ("", "forks_count DESC, created_at DESC, id DESC"),
+        RepositorySort::Updated => ("", "updated_at DESC, id DESC"),
     };
-    Ok(sqlx::query_as::<_, Repository>(sql)
+    let sql = format!(
+        r#"SELECT * FROM repositories {index} WHERE is_private = false
+            AND (name LIKE ?2 ESCAPE '\' OR description LIKE ?2 ESCAPE '\')
+            AND (?4 = '' OR id IN (SELECT repo_id FROM repo_languages WHERE language = ?4))
+            AND (?5 = '' OR id IN (SELECT repo_id FROM repository_topics WHERE topic = ?5))
+            AND {kind}
+            ORDER BY {order} LIMIT ?1 OFFSET ?3"#,
+        kind = filter.kind.condition(),
+    );
+    Ok(sqlx::query_as::<_, Repository>(&sql)
         .bind(limit)
         .bind(pattern)
+        .bind(offset)
+        .bind(filter.language)
+        .bind(filter.topic)
         .fetch_all(pool)
         .await?)
+}
+
+/// The languages found in public repositories, the most used first.
+pub async fn public_languages(pool: &SqlitePool, limit: i64) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        r#"SELECT l.language FROM repo_languages l JOIN repositories r ON r.id = l.repo_id
+            WHERE r.is_private = false GROUP BY l.language
+            ORDER BY COUNT(*) DESC, l.language LIMIT ?1"#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn update_repository(

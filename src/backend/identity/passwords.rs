@@ -5,9 +5,7 @@ use argon2::{
     Algorithm, Argon2, Params, Version,
 };
 use rand_core::OsRng;
-use sha2::{Digest, Sha256};
 use std::sync::{Arc, OnceLock};
-use subtle::ConstantTimeEq;
 use tokio::sync::Semaphore;
 
 pub const MAX_PASSWORD_BYTES: usize = 1024;
@@ -27,7 +25,6 @@ pub enum PasswordError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Verification {
     pub valid: bool,
-    pub legacy: bool,
 }
 
 fn engine() -> Argon2<'static> {
@@ -68,19 +65,6 @@ fn accepted_phc(stored: &str) -> Option<PasswordHash<'_>> {
     Some(hash)
 }
 
-fn legacy_verify(password: &[u8], stored: &str) -> Option<bool> {
-    let (salt, digest) = stored.split_once(':')?;
-    if salt.len() != 32 || digest.len() != 64 {
-        return None;
-    }
-    let salt = hex::decode(salt).ok()?;
-    let digest = hex::decode(digest).ok()?;
-    let mut sha = Sha256::new();
-    sha.update(salt);
-    sha.update(password);
-    Some(bool::from(sha.finalize()[..].ct_eq(&digest)))
-}
-
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, PasswordError> + Send + 'static,
 ) -> Result<T, PasswordError> {
@@ -106,8 +90,8 @@ async fn blocking_on<T: Send + 'static>(
 }
 
 pub async fn hash_password(password: &str) -> Result<String, PasswordError> {
-    // Creation/change operations enforce the minimum; rehash must preserve even an
-    // older short credential rather than silently lock its legitimate owner out.
+    // Creation and change enforce the minimum length. Hashing accepts any password up to the
+    // maximum length.
     if password.len() > MAX_PASSWORD_BYTES {
         return Err(PasswordError::InvalidInput);
     }
@@ -135,20 +119,13 @@ pub async fn verify_password(
         if let Some(hash) = stored.as_deref().and_then(accepted_phc) {
             return Ok(Verification {
                 valid: engine().verify_password(&password, &hash).is_ok(),
-                legacy: false,
             });
         }
-        // Missing, OAuth-only, legacy and malformed hashes all pay one normal KDF cost.
-        // No username existence / legacy fast-digest timing bypass.
+        // Missing, OAuth-only and malformed hashes pay one normal KDF cost, so response time does
+        // not show which accounts have a usable password.
         let dummy = PasswordHash::new(DUMMY).map_err(|_| PasswordError::Failed)?;
         let _ = engine().verify_password(&password, &dummy);
-        let legacy = stored
-            .as_deref()
-            .and_then(|hash| legacy_verify(&password, hash));
-        Ok(Verification {
-            valid: legacy == Some(true),
-            legacy: legacy.is_some(),
-        })
+        Ok(Verification { valid: false })
     })
     .await
 }
@@ -156,6 +133,7 @@ pub async fn verify_password(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     #[tokio::test]
     async fn salts_phc_and_negative_costs() {
         let a = hash_password("correct horse battery").await.unwrap();
@@ -197,16 +175,21 @@ mod tests {
             Err(PasswordError::InvalidInput)
         );
     }
-    #[test]
-    fn legacy_only_exact_format_and_constant_time_digest() {
+    #[tokio::test]
+    async fn other_hash_formats_fail_verification() {
+        // Only Argon2id hashes are accepted. A salted SHA-256 digest must not verify, even with
+        // the right password.
         let salt = [7_u8; 16];
         let mut sha = Sha256::new();
         sha.update(salt);
-        sha.update(b"legacy password");
-        let hash = format!("{}:{}", hex::encode(salt), hex::encode(sha.finalize()));
-        assert_eq!(legacy_verify(b"legacy password", &hash), Some(true));
-        assert_eq!(legacy_verify(b"wrong", &hash), Some(false));
-        assert_eq!(legacy_verify(b"legacy password", "00:00"), None);
+        sha.update(b"correct horse battery");
+        let stored = format!("{}:{}", hex::encode(salt), hex::encode(sha.finalize()));
+        assert!(
+            !verify_password("correct horse battery", Some(&stored))
+                .await
+                .unwrap()
+                .valid
+        );
     }
     #[tokio::test]
     async fn blocking_cancellation_holds_permit_until_real_work_exits() {

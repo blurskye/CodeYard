@@ -56,7 +56,7 @@ native_operation!(crate::backend::db::postgres::cluster::delete_join_token,
 
 native_operation!(crate::backend::db::postgres::cluster::list_unplaced_repositories,
     crate::backend::db::sqlite::cluster::list_unplaced_repositories,
-    /// Repositories from before the cluster: id and `disk_path` of those with no storage node.
+    /// Repositories with no storage node: id and `disk_path` of each.
     fn list_unplaced_repositories(pool: &DbPool) -> Result<Vec<(i64, String)>>);
 
 native_operation!(crate::backend::db::postgres::cluster::place_repository,

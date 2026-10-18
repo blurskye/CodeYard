@@ -20,16 +20,16 @@ use crate::backend::{
     git,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt, path::Path};
+use std::{collections::HashMap, fmt, path::Path, time::Instant};
 
 pub(crate) use crate::backend::git::validate_merge_revision;
 pub use crate::backend::git::{
-    BlameHunk, BlobContent, CiCommit, CiWorkflowFile, CiWorkflowSource, CommitInfo,
-    ContributorInfo, DiffFileInfo, DiffInfo, FileBlame, FileList, LanguageStat, RepoInfo, TagInfo,
-    TreeEntry, MAX_CI_CHANGED_PATHS, MAX_CI_CHANGED_PATH_BYTES, MAX_CI_CHANGED_PATH_TOTAL_BYTES,
-    MAX_CI_WORKFLOW_BYTES, MAX_CONTRIBUTORS, MAX_DIFF_FILES, MAX_DIFF_FILE_PATCH_BYTES,
-    MAX_DIFF_TOTAL_PATCH_BYTES, MAX_LANGUAGE_FILES, MAX_REPOSITORY_REFS, MAX_TREE_ENTRIES,
-    MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
+    BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource, CommitFilter,
+    CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame, FileList, LanguageStat,
+    RepoInfo, TagInfo, TreeEntry, MAX_CI_CHANGED_PATHS, MAX_CI_CHANGED_PATH_BYTES,
+    MAX_CI_CHANGED_PATH_TOTAL_BYTES, MAX_CI_WORKFLOW_BYTES, MAX_CONTRIBUTORS, MAX_DIFF_FILES,
+    MAX_DIFF_FILE_PATCH_BYTES, MAX_DIFF_TOTAL_PATCH_BYTES, MAX_LANGUAGE_FILES, MAX_REPOSITORY_REFS,
+    MAX_TREE_ENTRIES, MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
 pub use editor::{
     FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_BYTES,
@@ -841,31 +841,139 @@ impl RepoStore {
         }
     }
 
-    /// Up to `limit` commits after `offset`, starting at `git_ref` and visiting the
-    /// newest pending ancestor first. Unvisited history is never loaded.
+    /// Up to `limit` commits after `offset` that pass `filter`, starting at `git_ref` and visiting
+    /// the newest pending ancestor first. Unvisited history is never loaded.
     pub async fn commits(
         &self,
         git_ref: &str,
         offset: usize,
         limit: usize,
+        filter: &CommitFilter,
+    ) -> Result<Vec<CommitInfo>, RepoError> {
+        let deadline = Instant::now() + git::COMMIT_WALK_TIMEOUT;
+        self.commits_until(git_ref, offset, limit, filter, deadline)
+            .await
+    }
+
+    /// `commits`, where a local walk stops at `deadline`. A replica walks with its own limit, and
+    /// a caller that stops waiting leaves that walk to finish.
+    pub async fn commits_until(
+        &self,
+        git_ref: &str,
+        offset: usize,
+        limit: usize,
+        filter: &CommitFilter,
+        deadline: Instant,
     ) -> Result<Vec<CommitInfo>, RepoError> {
         if offset > MAX_COMMIT_OFFSET || limit > MAX_COMMIT_PAGE_SIZE {
             return Err(RepoError::response_too_large());
         }
         match &self.0 {
-            Backend::Local(local) => local.commits(git_ref, offset, limit).await,
+            Backend::Local(local) => {
+                local
+                    .commits_until(git_ref, offset, limit, filter, deadline)
+                    .await
+            }
             Backend::Remote(remote) => {
                 let operation = if offset == 0 {
                     Operation::Commits {
                         git_ref: git_ref.into(),
                         limit,
+                        filter: filter.clone(),
                     }
                 } else {
                     Operation::CommitPage {
                         git_ref: git_ref.into(),
                         offset,
                         limit,
+                        filter: filter.clone(),
                     }
+                };
+                remote.call(operation, b"").await
+            }
+        }
+    }
+
+    /// Lines of the files at `git_ref` that contain `text`, from the `offset`th on.
+    pub async fn search_code(
+        &self,
+        git_ref: &str,
+        text: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<git::CodeMatch>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.search_code(git_ref, text, offset, limit).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::SearchCode {
+                            git_ref: git_ref.into(),
+                            text: text.into(),
+                            offset,
+                            limit,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Up to `limit` commits reachable from `head_ref` but not from `base_ref`, newest first. These
+    /// are the commits of a pull request.
+    pub async fn commits_between(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+        limit: usize,
+    ) -> Result<Vec<CommitInfo>, RepoError> {
+        if limit > MAX_COMMIT_PAGE_SIZE {
+            return Err(RepoError::response_too_large());
+        }
+        match &self.0 {
+            Backend::Local(local) => local.commits_between(base_ref, head_ref, limit).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::CommitsBetween {
+                            base_ref: base_ref.into(),
+                            head_ref: head_ref.into(),
+                            limit,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Up to `limit` commits after `offset` that pass `filter` and changed `path`, newest first,
+    /// from `git_ref`.
+    pub async fn path_commits(
+        &self,
+        git_ref: &str,
+        path: &str,
+        offset: usize,
+        limit: usize,
+        filter: &CommitFilter,
+    ) -> Result<Vec<CommitInfo>, RepoError> {
+        if offset > MAX_COMMIT_OFFSET || limit > MAX_COMMIT_PAGE_SIZE {
+            return Err(RepoError::response_too_large());
+        }
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .path_commits(git_ref, path, offset, limit, filter)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                let operation = Operation::PathCommits {
+                    git_ref: git_ref.into(),
+                    path: path.into(),
+                    offset,
+                    limit,
+                    filter: filter.clone(),
                 };
                 remote.call(operation, b"").await
             }
@@ -1024,6 +1132,28 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.tags().await,
             Backend::Remote(remote) => remote.call(Operation::Tags, b"").await,
+        }
+    }
+
+    /// Each head's divergence from `base`, in the order of `heads`, with the time of its commit.
+    pub async fn branch_statuses(
+        &self,
+        base: &str,
+        heads: &[String],
+    ) -> Result<Vec<BranchStatus>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.branch_statuses(base, heads).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::BranchStatuses {
+                            base: base.into(),
+                            heads: heads.to_vec(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -1724,6 +1854,14 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.set_head_target(target).await,
             Backend::Remote(_) => Err(rpc::wire::invalid("replica copies live on this node")),
+        }
+    }
+
+    /// This node's directory for the repository, or `None` when another node holds it.
+    pub fn local_dir(&self) -> Option<&Path> {
+        match &self.0 {
+            Backend::Local(local) => Some(local.path()),
+            Backend::Remote(_) => None,
         }
     }
 

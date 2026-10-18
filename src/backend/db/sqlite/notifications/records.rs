@@ -1,8 +1,13 @@
 use crate::backend::db::models::Notification;
-use crate::backend::db::notifications::records::{NotificationCursor, NotificationScopes};
+use crate::backend::db::notifications::records::{
+    NotificationCounts, NotificationCursor, NotificationFilter, NotificationMark,
+    NotificationScopes,
+};
 use crate::backend::db::notifications::{
     NewNotification, NotificationInbox, NotificationInboxAction,
 };
+use crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+use crate::backend::db::sqlite::search::contains;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -31,103 +36,69 @@ pub async fn create_notification(
     Ok(notification)
 }
 
-// Every caller starts BEGIN IMMEDIATE before reading any authority or payload.
+/// Whether the recipient is an active account. Callers read it inside their transaction.
 async fn notification_recipient(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
-) -> Result<Option<bool>> {
+) -> Result<bool> {
     Ok(sqlx::query_scalar(
-        "SELECT is_admin FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)",
     )
     .bind(user_id)
-    .fetch_optional(connection)
+    .fetch_one(connection)
     .await?)
 }
 
-async fn notification_scope_readable(
-    connection: &mut sqlx::SqliteConnection,
-    user_id: i64,
-    admin: bool,
-    scope_repository_id: Option<i64>,
-) -> Result<bool> {
-    // NULL is ambiguous history, never account data. The original positive
-    // scope survives repository deletion and must still resolve to current Read.
-    let Some(id) = scope_repository_id.filter(|id| *id >= 0) else {
-        return Ok(false);
-    };
-    if id == 0 {
-        return Ok(true);
-    }
-    let repo: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
-        "SELECT owner_kind,owner_user_id,owner_org_id FROM repositories WHERE id=?1",
-    )
-    .bind(id)
-    .fetch_optional(&mut *connection)
-    .await?;
-    let Some((kind, owner, org)) = repo else {
-        return Ok(false);
-    };
-    let personal = match (kind.as_str(), owner, org) {
-        ("user", Some(owner), None) => {
-            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")
-                .bind(owner)
-                .fetch_one(&mut *connection)
-                .await?;
-            if !exists {
-                return Ok(false);
-            }
-            true
-        }
-        ("org", None, Some(org)) => {
-            let exists: bool =
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations WHERE id=?1)")
-                    .bind(org)
-                    .fetch_one(&mut *connection)
-                    .await?;
-            if !exists {
-                return Ok(false);
-            }
-            false
-        }
-        _ => return Ok(false),
-    };
-    // Canonical Read includes archived/suspended-governance reads and the
-    // persisted private-fork visibility floor; write authority is not Read.
-    let access = super::super::repositories::access::user_repo_access_in_transaction(
-        connection, user_id, id,
-    )
-    .await?;
-    Ok(access.can_read() || (personal && admin))
-}
-
-/// Decides one repository for this transaction, the first time a query reaches it.
-async fn scope_readable(
-    connection: &mut sqlx::SqliteConnection,
-    user_id: i64,
-    admin: bool,
-    scopes: &mut NotificationScopes,
-    scope_repository_id: Option<i64>,
-) -> Result<bool> {
-    if let Some(readable) = scopes.readable.get(&scope_repository_id) {
-        return Ok(*readable);
-    }
-    let readable =
-        notification_scope_readable(connection, user_id, admin, scope_repository_id).await?;
-    scopes.readable.insert(scope_repository_id, readable);
-    Ok(readable)
-}
-
 // Keep SQLite's exact persisted ordering value, not a re-encoded timestamp.
-type NotificationCandidate = (i64, Option<i64>, String);
+type NotificationCandidate = (i64, i64, String);
 
+/// Whether the recipient can read the repository a notification names, as the list has always
+/// decided it. The owner must exist and be well formed, even for a public repository. Then the
+/// recipient needs Read, or is a site admin over a personal repository. Canonical Read includes
+/// archived and suspended-governance reads, as `USER_REPO_ACCESS_SQL` computes them.
+fn scope_readable_condition() -> String {
+    format!(
+        "((r.owner_kind='user' AND r.owner_user_id IS NOT NULL AND r.owner_org_id IS NULL
+            AND EXISTS (SELECT 1 FROM users ow WHERE ow.id=r.owner_user_id))
+          OR (r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id IS NOT NULL
+            AND EXISTS (SELECT 1 FROM organizations og WHERE og.id=r.owner_org_id)))
+         AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin))"
+    )
+}
+
+/// Decides every repository the recipient's notifications point at, in one statement. A
+/// repository that is gone is unreadable, because the scope outlives the repository.
 async fn notification_scopes(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
 ) -> Result<NotificationScopes> {
+    let readable = scope_readable_condition();
+    let decided: Vec<(i64, bool)> = sqlx::query_as(&format!(
+        "SELECT s.scope, EXISTS(
+            SELECT 1 FROM repositories r
+            JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
+            WHERE r.id=s.scope AND {readable})
+         FROM (SELECT DISTINCT scope_repository_id AS scope FROM notifications
+               WHERE user_id=?1 AND scope_repository_id>0) s"
+    ))
+    .bind(user_id)
+    .fetch_all(&mut *connection)
+    .await?;
     Ok(NotificationScopes {
         high_water: notification_high_water(connection, user_id).await?,
-        readable: std::collections::BTreeMap::new(),
+        readable: decided.into_iter().collect(),
     })
+}
+
+/// Whether the recipient can read the scope, as `notification_scopes` decided it. The account
+/// scope, 0, is always readable.
+fn scope_readable(scopes: &NotificationScopes, scope_repository_id: i64) -> bool {
+    scope_repository_id == 0
+        || scopes
+            .readable
+            .get(&scope_repository_id)
+            .copied()
+            .unwrap_or(false)
 }
 
 async fn notification_high_water(
@@ -142,30 +113,48 @@ async fn notification_high_water(
     )
 }
 
+/// The filter as SQL. It binds ?3 unread only, ?4 the view, ?5 the repository, ?6 the kinds
+/// as a JSON array and ?7 the search pattern; each query names its other parameters itself.
+/// The pattern is case-insensitive for Unicode, which SQLite's lower() is not.
+const FILTER_SQL: &str = "(NOT ?3 OR (read_at IS NULL AND done_at IS NULL))
+  AND ((?4='inbox' AND done_at IS NULL)
+    OR (?4='saved' AND saved_at IS NOT NULL AND done_at IS NULL)
+    OR (?4='done' AND done_at IS NOT NULL))
+  AND (?5 IS NULL OR scope_repository_id=?5)
+  AND (json_array_length(?6)=0 OR kind IN (SELECT value FROM json_each(?6)))
+  AND (?7 IS NULL OR title REGEXP ?7 OR json_extract(metadata,'$.subject') REGEXP ?7
+    OR EXISTS (SELECT 1 FROM repositories r
+               WHERE r.id=notifications.scope_repository_id AND r.name REGEXP ?7))";
+
 async fn notification_candidates(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
     high_water: i64,
-    unread_only: bool,
+    filter: &NotificationFilter,
+    search: Option<&str>,
     unreadable: Vec<i64>,
     cursor: Option<&NotificationCandidate>,
 ) -> Result<Vec<NotificationCandidate>> {
-    Ok(sqlx::query_as(
+    let sql = format!(
         "SELECT id,scope_repository_id,created_at FROM notifications
-         WHERE user_id=?1 AND id <= ?2 AND (NOT ?3 OR read_at IS NULL)
-           AND scope_repository_id IS NOT NULL
-           AND scope_repository_id NOT IN (SELECT value FROM json_each(?4))
-           AND (?5 IS NULL OR (created_at,id) < (?5,?6))
-         ORDER BY created_at DESC,id DESC LIMIT 100",
-    )
-    .bind(user_id)
-    .bind(high_water)
-    .bind(unread_only)
-    .bind(serde_json::to_string(&unreadable)?)
-    .bind(cursor.map(|c| c.2.as_str()))
-    .bind(cursor.map(|c| c.0))
-    .fetch_all(connection)
-    .await?)
+         WHERE user_id=?1 AND id <= ?2 AND {FILTER_SQL}
+           AND scope_repository_id NOT IN (SELECT value FROM json_each(?8))
+           AND (?9 IS NULL OR (created_at,id) < (?9,?10))
+         ORDER BY created_at DESC,id DESC LIMIT 100"
+    );
+    Ok(sqlx::query_as(&sql)
+        .bind(user_id)
+        .bind(high_water)
+        .bind(filter.unread_only)
+        .bind(filter.view.as_str())
+        .bind(filter.repository_id)
+        .bind(serde_json::to_string(&filter.kinds)?)
+        .bind(search)
+        .bind(serde_json::to_string(&unreadable)?)
+        .bind(cursor.map(|c| c.2.as_str()))
+        .bind(cursor.map(|c| c.0))
+        .fetch_all(connection)
+        .await?)
 }
 
 pub async fn list_notifications_for_user(
@@ -175,18 +164,17 @@ pub async fn list_notifications_for_user(
     unread_only: bool,
 ) -> Result<Vec<Notification>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let Some(admin) = notification_recipient(&mut tx, user_id).await? else {
+    if !notification_recipient(&mut tx, user_id).await? {
         tx.commit().await?;
         return Ok(Vec::new());
-    };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    }
+    let scopes = notification_scopes(&mut tx, user_id).await?;
     let (notifications, _) = notification_list(
         &mut tx,
         user_id,
-        admin,
-        &mut scopes,
+        &scopes,
+        &NotificationFilter::inbox(unread_only),
         limit,
-        unread_only,
         None,
     )
     .await?;
@@ -197,14 +185,15 @@ pub async fn list_notifications_for_user(
 async fn notification_list(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
-    admin: bool,
-    scopes: &mut NotificationScopes,
+    scopes: &NotificationScopes,
+    filter: &NotificationFilter,
     limit: i64,
-    unread_only: bool,
     before: Option<NotificationCursor>,
 ) -> Result<(Vec<Notification>, Option<NotificationCursor>)> {
     let limit = limit.clamp(1, 100) as usize;
-    let mut cursor = before.map(|c| (c.id, None, c.created_at));
+    let search = filter.search_text().map(|text| contains(&text));
+    // The page position is (created_at, id); the scope slot is never read.
+    let mut cursor = before.map(|c| (c.id, 0, c.created_at));
     let mut last_visible = None;
     let mut notifications = Vec::with_capacity(limit);
     loop {
@@ -212,7 +201,8 @@ async fn notification_list(
             connection,
             user_id,
             scopes.high_water,
-            unread_only,
+            filter,
+            search.as_deref(),
             scopes.unreadable(),
             cursor.as_ref(),
         )
@@ -221,7 +211,7 @@ async fn notification_list(
             break;
         }
         for candidate in page {
-            if !scope_readable(connection, user_id, admin, scopes, candidate.1).await? {
+            if !scope_readable(scopes, candidate.1) {
                 cursor = Some(candidate);
                 continue;
             }
@@ -229,7 +219,7 @@ async fn notification_list(
                 return Ok((notifications, last_visible));
             }
             if let Some(notification) = sqlx::query_as::<_, Notification>(
-                "SELECT * FROM notifications WHERE id=?1 AND user_id=?2 AND scope_repository_id IS ?3",
+                "SELECT * FROM notifications WHERE id=?1 AND user_id=?2 AND scope_repository_id = ?3",
             ).bind(candidate.0).bind(user_id).bind(candidate.1).fetch_optional(&mut *connection).await? {
                 last_visible = Some(NotificationCursor { created_at: candidate.2.clone(), id: candidate.0 });
                 notifications.push(notification);
@@ -240,13 +230,13 @@ async fn notification_list(
     Ok((notifications, None))
 }
 
-/// Unread rows grouped by repository, in id order with NULL last. Each group needs one
+/// Unread rows grouped by repository, ordered by repository ID. Each group needs one
 /// authorization, however many notifications it holds.
 async fn unread_groups(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
     high_water: i64,
-) -> Result<Vec<(Option<i64>, i64)>> {
+) -> Result<Vec<(i64, i64)>> {
     Ok(sqlx::query_as(
         "SELECT scope_repository_id,COUNT(*) FROM notifications
          WHERE user_id=?1 AND id<=?2 AND read_at IS NULL
@@ -258,29 +248,130 @@ async fn unread_groups(
     .await?)
 }
 
-async fn unread_notification_count(
+/// Unread inbox rows grouped by repository, ordered by repository ID. The unread badge
+/// authorizes only the repositories that still have one.
+async fn unread_inbox_groups(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
-    admin: bool,
-    scopes: &mut NotificationScopes,
+    high_water: i64,
+) -> Result<Vec<(i64, i64)>> {
+    Ok(sqlx::query_as(
+        "SELECT scope_repository_id,COUNT(*) FROM notifications
+         WHERE user_id=?1 AND id<=?2 AND read_at IS NULL AND done_at IS NULL
+         GROUP BY scope_repository_id ORDER BY scope_repository_id",
+    )
+    .bind(user_id)
+    .bind(high_water)
+    .fetch_all(connection)
+    .await?)
+}
+
+/// Unread notifications in the inbox. Done rows are not counted.
+async fn notification_unread_count(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    scopes: &NotificationScopes,
 ) -> Result<i64> {
     let mut count = 0;
-    for (scope, unread) in unread_groups(connection, user_id, scopes.high_water).await? {
-        if scope_readable(connection, user_id, admin, scopes, scope).await? {
+    for (scope, unread) in unread_inbox_groups(connection, user_id, scopes.high_water).await? {
+        if scope_readable(scopes, scope) {
             count += unread;
         }
     }
     Ok(count)
 }
 
+/// Counts per repository scope, ordered by repository ID: inbox, saved and done rows. The
+/// grouping reads no authority; `notification_counts` decides each group.
+async fn notification_scope_counts(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    high_water: i64,
+) -> Result<Vec<(i64, i64, i64, i64)>> {
+    Ok(sqlx::query_as(
+        "SELECT scope_repository_id,
+                COUNT(*) FILTER (WHERE done_at IS NULL),
+                COUNT(*) FILTER (WHERE done_at IS NULL AND saved_at IS NOT NULL),
+                COUNT(*) FILTER (WHERE done_at IS NOT NULL)
+         FROM notifications WHERE user_id=?1 AND id<=?2
+         GROUP BY scope_repository_id ORDER BY scope_repository_id",
+    )
+    .bind(user_id)
+    .bind(high_water)
+    .fetch_all(connection)
+    .await?)
+}
+
+/// The tab counts and the repositories with notifications, over what the recipient can read.
+async fn notification_counts(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    scopes: &NotificationScopes,
+) -> Result<NotificationCounts> {
+    let names = readable_repository_names(connection, scopes).await?;
+    let mut counts = NotificationCounts::default();
+    for (scope, inbox, saved, done) in
+        notification_scope_counts(connection, user_id, scopes.high_water).await?
+    {
+        if scope_readable(scopes, scope) {
+            counts.views.inbox += inbox;
+            counts.views.saved += saved;
+            counts.views.done += done;
+            if let Some(name) = names.get(&scope) {
+                counts.repositories.push((scope, name.clone()));
+            }
+        }
+    }
+    Ok(counts)
+}
+
+/// `owner/name` for each repository the recipient can read among the scopes. It is read in
+/// the transaction that decided the scopes, so a repository revoked since is never named.
+async fn readable_repository_names(
+    connection: &mut sqlx::SqliteConnection,
+    scopes: &NotificationScopes,
+) -> Result<std::collections::BTreeMap<i64, String>> {
+    let readable: Vec<i64> = scopes
+        .readable
+        .iter()
+        .filter(|(_, readable)| **readable)
+        .map(|(scope, _)| *scope)
+        .collect();
+    let rows: Vec<(i64, String)> = sqlx::query_as(
+        "SELECT r.id, COALESCE(ou.username, oo.name) || '/' || r.name
+         FROM repositories r
+         LEFT JOIN users ou ON r.owner_kind='user' AND ou.id=r.owner_user_id
+         LEFT JOIN organizations oo ON r.owner_kind='org' AND oo.id=r.owner_org_id
+         WHERE r.id IN (SELECT value FROM json_each(?1))",
+    )
+    .bind(serde_json::to_string(&readable)?)
+    .fetch_all(connection)
+    .await?;
+    Ok(rows.into_iter().collect())
+}
+
 pub async fn count_unread_notifications(pool: &SqlitePool, user_id: i64) -> Result<i64> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let count = match notification_recipient(&mut tx, user_id).await? {
-        Some(admin) => {
-            let mut scopes = notification_scopes(&mut tx, user_id).await?;
-            unread_notification_count(&mut tx, user_id, admin, &mut scopes).await?
-        }
-        None => 0,
+    let count = if notification_recipient(&mut tx, user_id).await? {
+        let scopes = notification_scopes(&mut tx, user_id).await?;
+        notification_unread_count(&mut tx, user_id, &scopes).await?
+    } else {
+        0
+    };
+    tx.commit().await?;
+    Ok(count)
+}
+
+/// The unread count the page header shows: unread inbox notifications the recipient can read.
+/// It reads what the notification list reads, without the list's high-water mark, which only
+/// paging needs. It only reads, so a deferred transaction keeps the writer lock free.
+pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64> {
+    let mut tx = pool.begin().await?;
+    let count = if notification_recipient(&mut tx, user_id).await? {
+        let scopes = notification_scopes(&mut tx, user_id).await?;
+        notification_unread_count(&mut tx, user_id, &scopes).await?
+    } else {
+        0
     };
     tx.commit().await?;
     Ok(count)
@@ -293,19 +384,19 @@ pub async fn notification_delivery(
     notification_id: Option<i64>,
 ) -> Result<Option<crate::backend::db::notifications::NotificationDelivery>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let Some(admin) = notification_recipient(&mut tx, user_id).await? else {
+    if !notification_recipient(&mut tx, user_id).await? {
         return Ok(None);
-    };
+    }
     let expiry: Option<String> = sqlx::query_scalar(
         "SELECT expires_at FROM sessions WHERE id=?1 AND user_id=?2 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
     ).bind(session_id).bind(user_id).fetch_optional(&mut *tx).await?;
     let Some(expiry) = expiry else {
         return Ok(None);
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let scopes = notification_scopes(&mut tx, user_id).await?;
     let mut notification = None;
     if let Some(id) = notification_id {
-        let scope: Option<Option<i64>> = sqlx::query_scalar(
+        let scope: Option<i64> = sqlx::query_scalar(
             "SELECT scope_repository_id FROM notifications WHERE id=?1 AND user_id=?2",
         )
         .bind(id)
@@ -313,13 +404,13 @@ pub async fn notification_delivery(
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(scope) = scope {
-            if scope_readable(&mut tx, user_id, admin, &mut scopes, scope).await? {
-                notification = sqlx::query_as("SELECT * FROM notifications WHERE id=?1 AND user_id=?2 AND scope_repository_id IS ?3")
+            if scope_readable(&scopes, scope) {
+                notification = sqlx::query_as("SELECT * FROM notifications WHERE id=?1 AND user_id=?2 AND scope_repository_id = ?3")
                     .bind(id).bind(user_id).bind(scope).fetch_optional(&mut *tx).await?;
             }
         }
     }
-    let unread_count = unread_notification_count(&mut tx, user_id, admin, &mut scopes).await?;
+    let unread_count = notification_unread_count(&mut tx, user_id, &scopes).await?;
     let alive: bool = sqlx::query_scalar("SELECT ?1>strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(expiry)
         .fetch_one(&mut *tx)
@@ -342,13 +433,12 @@ pub async fn mark_notification_read(
     notification_id: i64,
 ) -> Result<Option<Notification>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let Some(admin) = notification_recipient(&mut tx, user_id).await? else {
+    if !notification_recipient(&mut tx, user_id).await? {
         tx.commit().await?;
         return Ok(None);
-    };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
-    let (notification, _) =
-        notification_read(&mut tx, user_id, admin, &mut scopes, notification_id).await?;
+    }
+    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let (notification, _) = notification_read(&mut tx, user_id, &scopes, notification_id).await?;
     tx.commit().await?;
     Ok(notification)
 }
@@ -356,11 +446,10 @@ pub async fn mark_notification_read(
 async fn notification_read(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
-    admin: bool,
-    scopes: &mut NotificationScopes,
+    scopes: &NotificationScopes,
     notification_id: i64,
 ) -> Result<(Option<Notification>, u64)> {
-    let scope: Option<(Option<i64>, bool)> = sqlx::query_as(
+    let scope: Option<(i64, bool)> = sqlx::query_as(
         "SELECT scope_repository_id,read_at IS NULL FROM notifications WHERE id=?1 AND user_id=?2",
     )
     .bind(notification_id)
@@ -368,9 +457,9 @@ async fn notification_read(
     .fetch_optional(&mut *connection)
     .await?;
     if let Some((scope_repository_id, unread)) = scope {
-        if scope_readable(connection, user_id, admin, scopes, scope_repository_id).await? {
+        if scope_readable(scopes, scope_repository_id) {
             let notification = sqlx::query_as::<_, Notification>(
-                "UPDATE notifications SET read_at=COALESCE(read_at,strftime('%Y-%m-%dT%H:%M:%f000Z','now')) WHERE id=?1 AND user_id=?2 AND scope_repository_id IS ?3 RETURNING *",
+                "UPDATE notifications SET read_at=COALESCE(read_at,strftime('%Y-%m-%dT%H:%M:%f000Z','now')) WHERE id=?1 AND user_id=?2 AND scope_repository_id = ?3 RETURNING *",
             ).bind(notification_id).bind(user_id).bind(scope_repository_id).fetch_optional(connection).await?;
             let updated = u64::from(unread && notification.is_some());
             return Ok((notification, updated));
@@ -379,14 +468,51 @@ async fn notification_read(
     Ok((None, 0))
 }
 
+/// Sets or clears a mark on a notification the recipient can read. Setting a mark that
+/// is already set keeps its first time, so the change count is zero.
+async fn notification_mark(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    scopes: &NotificationScopes,
+    notification_id: i64,
+    mark: NotificationMark,
+    on: bool,
+) -> Result<(Option<Notification>, u64)> {
+    let column = mark.column();
+    let scope: Option<(i64, bool)> = sqlx::query_as(&format!(
+        "SELECT scope_repository_id,{column} IS NOT NULL FROM notifications WHERE id=?1 AND user_id=?2"
+    ))
+    .bind(notification_id)
+    .bind(user_id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    if let Some((scope_repository_id, was_set)) = scope {
+        if scope_readable(scopes, scope_repository_id) {
+            let notification = sqlx::query_as::<_, Notification>(&format!(
+                "UPDATE notifications SET {column}=CASE WHEN ?3 THEN COALESCE({column},strftime('%Y-%m-%dT%H:%M:%f000Z','now')) ELSE NULL END
+                 WHERE id=?1 AND user_id=?2 AND scope_repository_id=?4 RETURNING *"
+            ))
+            .bind(notification_id)
+            .bind(user_id)
+            .bind(on)
+            .bind(scope_repository_id)
+            .fetch_optional(connection)
+            .await?;
+            let updated = u64::from(was_set != on && notification.is_some());
+            return Ok((notification, updated));
+        }
+    }
+    Ok((None, 0))
+}
+
 pub async fn mark_all_notifications_read(pool: &SqlitePool, user_id: i64) -> Result<u64> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let Some(admin) = notification_recipient(&mut tx, user_id).await? else {
+    if !notification_recipient(&mut tx, user_id).await? {
         tx.commit().await?;
         return Ok(0);
-    };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
-    let count = notification_read_all(&mut tx, user_id, admin, &mut scopes).await?;
+    }
+    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let count = notification_read_all(&mut tx, user_id, &scopes).await?;
     tx.commit().await?;
     Ok(count)
 }
@@ -394,15 +520,50 @@ pub async fn mark_all_notifications_read(pool: &SqlitePool, user_id: i64) -> Res
 async fn notification_read_all(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
-    admin: bool,
-    scopes: &mut NotificationScopes,
+    scopes: &NotificationScopes,
 ) -> Result<u64> {
     let mut count = 0;
     for (scope, _) in unread_groups(connection, user_id, scopes.high_water).await? {
-        if scope_readable(connection, user_id, admin, scopes, scope).await? {
+        if scope_readable(scopes, scope) {
             count += sqlx::query(
-                "UPDATE notifications SET read_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id<=?1 AND user_id=?2 AND read_at IS NULL AND scope_repository_id IS ?3",
+                "UPDATE notifications SET read_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id<=?1 AND user_id=?2 AND read_at IS NULL AND scope_repository_id = ?3",
             ).bind(scopes.high_water).bind(user_id).bind(scope).execute(&mut *connection).await?.rows_affected();
+        }
+    }
+    Ok(count)
+}
+
+/// Marks every notification of the filter as done, in each repository the recipient can
+/// read. Hidden repositories are skipped, so their history is never changed.
+async fn notification_done_all(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    scopes: &NotificationScopes,
+    filter: &NotificationFilter,
+) -> Result<u64> {
+    let sql = format!(
+        "UPDATE notifications SET done_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')
+         WHERE user_id=?1 AND id<=?2 AND done_at IS NULL AND scope_repository_id=?8 AND {FILTER_SQL}"
+    );
+    let kinds = serde_json::to_string(&filter.kinds)?;
+    let search = filter.search_text().map(|text| contains(&text));
+    let mut count = 0;
+    for (scope, _, _, _) in
+        notification_scope_counts(connection, user_id, scopes.high_water).await?
+    {
+        if scope_readable(scopes, scope) {
+            count += sqlx::query(&sql)
+                .bind(user_id)
+                .bind(scopes.high_water)
+                .bind(filter.unread_only)
+                .bind(filter.view.as_str())
+                .bind(filter.repository_id)
+                .bind(&kinds)
+                .bind(search.as_deref())
+                .bind(scope)
+                .execute(&mut *connection)
+                .await?
+                .rows_affected();
         }
     }
     Ok(count)
@@ -416,10 +577,10 @@ pub async fn notification_inbox(
 ) -> Result<Option<NotificationInbox>> {
     // Reserved writer ownership precedes every authority read, including waiters.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let Some(admin) = notification_recipient(&mut tx, user_id).await? else {
+    if !notification_recipient(&mut tx, user_id).await? {
         tx.rollback().await?;
         return Ok(None);
-    };
+    }
     let expiry: Option<String> = sqlx::query_scalar(
         "SELECT expires_at FROM sessions WHERE id=?1 AND user_id=?2 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
     ).bind(session_id).bind(user_id).fetch_optional(&mut *tx).await?;
@@ -427,38 +588,70 @@ pub async fn notification_inbox(
         tx.rollback().await?;
         return Ok(None);
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let scopes = notification_scopes(&mut tx, user_id).await?;
     let mut next_cursor = None;
+    let wants_counts = matches!(action, NotificationInboxAction::List { .. });
     let (notifications, updated) = match action {
         NotificationInboxAction::List {
+            filter,
             limit,
-            unread_only,
             before,
         } => {
-            let (notifications, next) = notification_list(
-                &mut tx,
-                user_id,
-                admin,
-                &mut scopes,
-                limit,
-                unread_only,
-                before,
-            )
-            .await?;
+            let (notifications, next) =
+                notification_list(&mut tx, user_id, &scopes, &filter, limit, before).await?;
             next_cursor = next;
             (notifications, 0)
         }
         NotificationInboxAction::Read { notification_id } => {
             let (notification, updated) =
-                notification_read(&mut tx, user_id, admin, &mut scopes, notification_id).await?;
+                notification_read(&mut tx, user_id, &scopes, notification_id).await?;
             (notification.into_iter().collect(), updated)
         }
         NotificationInboxAction::ReadAll => (
             Vec::new(),
-            notification_read_all(&mut tx, user_id, admin, &mut scopes).await?,
+            notification_read_all(&mut tx, user_id, &scopes).await?,
+        ),
+        NotificationInboxAction::Save {
+            notification_id,
+            saved,
+        } => {
+            let (notification, updated) = notification_mark(
+                &mut tx,
+                user_id,
+                &scopes,
+                notification_id,
+                NotificationMark::Saved,
+                saved,
+            )
+            .await?;
+            (notification.into_iter().collect(), updated)
+        }
+        NotificationInboxAction::Done {
+            notification_id,
+            done,
+        } => {
+            let (notification, updated) = notification_mark(
+                &mut tx,
+                user_id,
+                &scopes,
+                notification_id,
+                NotificationMark::Done,
+                done,
+            )
+            .await?;
+            (notification.into_iter().collect(), updated)
+        }
+        NotificationInboxAction::DoneAll { filter } => (
+            Vec::new(),
+            notification_done_all(&mut tx, user_id, &scopes, &filter).await?,
         ),
     };
-    let unread_count = unread_notification_count(&mut tx, user_id, admin, &mut scopes).await?;
+    let unread_count = notification_unread_count(&mut tx, user_id, &scopes).await?;
+    let counts = if wants_counts {
+        Some(notification_counts(&mut tx, user_id, &scopes).await?)
+    } else {
+        None
+    };
     let alive: bool = sqlx::query_scalar("SELECT ?1>strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(expiry)
         .fetch_one(&mut *tx)
@@ -473,6 +666,7 @@ pub async fn notification_inbox(
         notifications,
         next_cursor,
         unread_count,
+        counts,
         updated,
     }))
 }

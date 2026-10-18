@@ -48,8 +48,7 @@ RUN curl -fsSL "https://github.com/nektos/act/releases/download/v${ACT_VERSION}/
 WORKDIR /app
 # Database: DATABASE_URL (PostgreSQL) or, unset, SQLite at $GITSERV_STATE_DIR/gitserv.db.
 # Uploads: $GITSERV_STATE_DIR/objects, or the S3 bucket when S3_* is set.
-# An existing installation whose gitserv.db sits directly in /data runs with
-# GITSERV_STATE_DIR=/data; the default /data/state would start an empty database.
+# GITSERV_STATE_DIR=/data places gitserv.db directly in /data. The default is /data/state.
 ENV RUST_LOG=info \
     GITSERV_STATE_DIR=/data/state \
     REPOS_PATH=/data/repos \

@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::session::get_current_user,
+    api::http::session::get_current_user,
     app::AppState,
     db::models::{FileReason, FileVisibility},
     files::{self, UploadCapability, UploadDeclaration, UploadError},
@@ -56,7 +56,7 @@ pub async fn create_upload_url(
     Json(req): Json<CreateUploadUrlRequest>,
 ) -> Result<Json<CreateUploadUrlResponse>, Failure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::csrf::check(state.clone(), &headers).await?;
+    super::super::http::csrf::check(state.clone(), &headers).await?;
     let reservation = files::reserve_and_sign_upload(
         &state.pool,
         &state.storage,

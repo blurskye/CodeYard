@@ -15,5 +15,7 @@ pub struct Notification {
     pub link: Option<String>,
     pub metadata: Value,
     pub read_at: Option<DateTime<Utc>>,
+    pub saved_at: Option<DateTime<Utc>>,
+    pub done_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
 }

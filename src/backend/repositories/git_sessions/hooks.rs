@@ -9,6 +9,7 @@ use crate::backend::{
         models::{AccessLevel, Repository},
     },
     repositories::{
+        languages,
         protection::{
             check_branch_write_with, load_rules, BranchWrite, History, Refusal, WriteVia,
         },
@@ -209,11 +210,18 @@ impl Gateway {
             self.bare_path(&current_repo).await? == operation.path,
             "repository location changed"
         );
-        // Branch pushes appear in the pusher's profile activity, with or without CI.
+        // Branch pushes appear in the pusher's profile activity, with or without CI. A push to
+        // the default branch also refreshes its stored languages.
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
             let Some(branch) = update.reference.strip_prefix("refs/heads/") else {
                 continue;
             };
+            languages::refresh_default_branch(
+                self.pool.clone(),
+                repo.id,
+                path.clone(),
+                branch.to_owned(),
+            );
             let old = (update.old != ZERO_SHA).then_some(update.old.as_str());
             let recorded = match crate::backend::git::count_pushed_commits(
                 &path,
@@ -236,9 +244,9 @@ impl Gateway {
                 }
                 Err(error) => Err(error),
             };
+            // Profile activity is not worth failing a push that Git has already accepted.
             if let Err(error) = recorded {
                 tracing::warn!(repo_id = repo.id, %error, "could not record a branch push");
-                failed = true;
             }
         }
         if !current_identity.is_admin

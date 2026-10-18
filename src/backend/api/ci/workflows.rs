@@ -1,6 +1,6 @@
 use super::responses::WorkflowInfo;
 use crate::backend::{
-    api::{error::ApiError, session::get_current_user},
+    api::{http::error::ApiError, http::session::get_current_user},
     app::AppState,
     ci::{admission::is_safe_owner, list_workflows_for_ref},
     db,

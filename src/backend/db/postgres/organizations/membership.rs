@@ -99,25 +99,22 @@ pub async fn update_organization_member_role(
     let Some(old) = membership_role(&mut tx, org, target).await? else {
         return Ok(Missing);
     };
-    let old = old.parse::<OrgRole>().ok();
-    // Unknown TARGET roles may be freshly assigned only by a known active owner.
-    // Unknown ACTOR roles never pass authority; admins cannot use repair to escalate.
-    if old.is_none() {
-        if actor_role != OrgRole::Owner {
-            return Ok(Denied);
-        }
-    } else if !can_change_member(actor_role, old, Some(role)) {
+    // A role this build does not recognize is refused; it cannot be changed here.
+    let Ok(old) = old.parse::<OrgRole>() else {
+        return Ok(Denied);
+    };
+    if !can_change_member(actor_role, Some(old), Some(role)) {
         return Ok(Denied);
     }
-    // No new authority for inactive targets; only known owner/admin -> member.
+    // Inactive targets get no new authority: only an owner may lower an owner or admin to member.
     if !target_active
         && !(actor_role == OrgRole::Owner
             && role == OrgRole::Member
-            && matches!(old, Some(OrgRole::Owner | OrgRole::Admin)))
+            && matches!(old, OrgRole::Owner | OrgRole::Admin))
     {
         return Ok(Denied);
     }
-    if old == Some(OrgRole::Owner)
+    if old == OrgRole::Owner
         && role != OrgRole::Owner
         && !remaining_active_owner(&mut tx, org, target).await?
     {
@@ -131,9 +128,8 @@ pub async fn update_organization_member_role(
     .bind(role.as_str())
     .fetch_one(&mut *tx)
     .await?;
-    if old.is_none()
-        || (old == Some(OrgRole::Owner) && role != OrgRole::Owner)
-        || (old == Some(OrgRole::Admin) && role == OrgRole::Member)
+    if (old == OrgRole::Owner && role != OrgRole::Owner)
+        || (old == OrgRole::Admin && role == OrgRole::Member)
     {
         cancel_actor(&mut tx, org, target).await?;
     }
@@ -157,15 +153,14 @@ pub async fn remove_organization_member(
     let Some(old) = membership_role(&mut tx, org, target).await? else {
         return Ok(Missing);
     };
-    let old = old.parse::<OrgRole>().ok();
-    if old.is_none() {
-        if actor_role != OrgRole::Owner {
-            return Ok(Denied);
-        }
-    } else if !can_change_member(actor_role, old, None) {
+    // A role this build does not recognize is refused; it cannot be removed here.
+    let Ok(old) = old.parse::<OrgRole>() else {
+        return Ok(Denied);
+    };
+    if !can_change_member(actor_role, Some(old), None) {
         return Ok(Denied);
     }
-    if old == Some(OrgRole::Owner) && !remaining_active_owner(&mut tx, org, target).await? {
+    if old == OrgRole::Owner && !remaining_active_owner(&mut tx, org, target).await? {
         return Ok(Conflict);
     }
     sqlx::query("DELETE FROM team_memberships WHERE user_id=$1 AND team_id IN (SELECT id FROM teams WHERE org_id=$2)")

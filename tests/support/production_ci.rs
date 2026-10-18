@@ -257,7 +257,7 @@ impl Fixture {
             .expect("scoped PG fixture");
         db::run_migrations(&schema.pool.clone().into())
             .await
-            .expect("required ordered migrations including004");
+            .expect("CI fixture schema migrations");
         let pool: db::DbPool = schema.pool.clone().into();
         let owner = db::users::accounts::create_user(&pool, "ci_owner", None)
             .await

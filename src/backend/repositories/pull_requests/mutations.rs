@@ -4,6 +4,7 @@ use crate::backend::db;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
+use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
 use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
@@ -252,6 +253,7 @@ pub async fn create_pull_request(
                     "repo_owner": owner,
                     "repo_name": repo,
                     "pull_number": pull_request.number,
+                    "subject": pull_request.title,
                     "head_branch": pull_request.head_branch.as_str(),
                     "base_branch": pull_request.base_branch.as_str(),
                 }),
@@ -261,6 +263,24 @@ pub async fn create_pull_request(
     }
 
     let link = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
+    let owner_ids: Vec<i64> = repository.personal_owner_id().into_iter().collect();
+    let mut notified = notify_watchers(
+        pool,
+        broadcaster,
+        WatchedItem {
+            event: WatchEvent::Pull,
+            actor: &user,
+            repository: &repository,
+            owner: &owner,
+            repo: &repo,
+            number: pull_request.number,
+            title: &pull_request.title,
+            link: &link,
+            notified: &owner_ids,
+        },
+    )
+    .await;
+    notified.extend(&owner_ids);
     notify_mentions(
         pool,
         broadcaster,
@@ -270,13 +290,11 @@ pub async fn create_pull_request(
             owner: &owner,
             repo: &repo,
             number: pull_request.number,
+            subject: &pull_request.title,
             link: &link,
             old_text: None,
             text: &pull_request.body,
-            notified: &repository
-                .personal_owner_id()
-                .into_iter()
-                .collect::<Vec<_>>(),
+            notified: &notified,
         },
     )
     .await;
@@ -410,6 +428,38 @@ pub async fn update_pull_request(
         }
     })?.ok_or_else(|| OperationError::Conflict { code: "conflict", message: "This entry, merge operation, or your permission changed; reload and review your preserved submission".to_owned() })?;
 
+    let subject = db::timeline::Subject::PullRequest;
+    if pull_request.title != existing.title {
+        db::timeline::record(
+            pool,
+            repository.id,
+            subject,
+            existing.id,
+            user.id,
+            "renamed",
+            &pull_request.title,
+            &existing.title,
+        )
+        .await;
+    }
+    if pull_request.state != existing.state {
+        let kind = if pull_request.state == "closed" {
+            "closed"
+        } else {
+            "reopened"
+        };
+        db::timeline::record(
+            pool,
+            repository.id,
+            subject,
+            existing.id,
+            user.id,
+            kind,
+            "",
+            "",
+        )
+        .await;
+    }
     if let Some(body) = req.body.as_deref() {
         let link = format!("/{owner}/{repo}/pulls/{number}");
         notify_mentions(
@@ -421,6 +471,7 @@ pub async fn update_pull_request(
                 owner: &owner,
                 repo: &repo,
                 number,
+                subject: &pull_request.title,
                 link: &link,
                 old_text: Some(&existing.body),
                 text: body,

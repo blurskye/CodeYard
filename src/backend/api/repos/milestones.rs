@@ -1,8 +1,8 @@
 //! Milestones: the list and page of a repository's milestones, their plain forms, and the
 //! milestone an issue or pull request is given. Writers manage milestones; the database checks that
 //! again.
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::issues::assignees::assigned_item;
 use crate::backend::api::repos::pulls::pull::{
     api_error, authorize_post, detail_outcome, field, item, kind, label, listed_assignees,
@@ -16,7 +16,7 @@ use crate::backend::db::discussions::{ListFilter, Pick};
 use crate::backend::db::milestones::MilestoneWriteRefusal;
 use crate::backend::db::models::MilestoneSummary;
 use crate::backend::issues::{parse_due_date, validate_milestone};
-use crate::webui::pages::collaboration::{self as view, ListCounts, MilestoneDraft};
+use crate::webui::pages::repos::issues::{self as view, ListCounts, MilestoneDraft};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -140,11 +140,13 @@ pub(crate) async fn native_index(
         closed: all.iter().filter(|m| m.milestone.state == "closed").count() as i64,
         all: all.len() as i64,
     };
-    let items = all
+    let sort = ctx.query.get("sort").cloned().unwrap_or_default();
+    let mut items: Vec<view::Milestone> = all
         .into_iter()
         .filter(|m| m.milestone.state == tab)
         .map(milestone_view)
         .collect();
+    sort_milestones(&mut items, &sort);
     Ok(ctx.page_model(
         "Milestones",
         page(view::Page::Milestones {
@@ -152,8 +154,35 @@ pub(crate) async fn native_index(
             state: tab.to_owned(),
             counts,
             items,
+            sort,
         }),
     ))
+}
+
+/// Puts the milestones in the order `sort` names. An unknown or empty name gives the closest
+/// due date first; milestones without a due date come last in both due date orders.
+fn sort_milestones(items: &mut [view::Milestone], sort: &str) {
+    let total = |m: &view::Milestone| m.open_items + m.closed_items;
+    match sort {
+        "furthest-due" => items.sort_by(|a, b| match (&a.due_date, &b.due_date) {
+            (Some(a), Some(b)) => b.cmp(a),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }),
+        "most-complete" => items.sort_by_key(|m| std::cmp::Reverse(m.progress())),
+        "least-complete" => items.sort_by_key(|m| m.progress()),
+        "most-issues" => items.sort_by_key(|m| std::cmp::Reverse(total(m))),
+        "least-issues" => items.sort_by_key(total),
+        "alphabetical" => items.sort_by_key(|m| m.title.to_lowercase()),
+        "reverse-alphabetical" => items.sort_by_key(|m| std::cmp::Reverse(m.title.to_lowercase())),
+        _ => items.sort_by(|a, b| match (&a.due_date, &b.due_date) {
+            (Some(a), Some(b)) => a.cmp(b),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }),
+    }
 }
 
 /// Refuses the page to anyone who cannot manage milestones.
@@ -295,10 +324,7 @@ async fn milestone_page(
     let mut assignees = listed_assignees(ctx, &ids, false).await?;
     let mut items = Vec::new();
     for entry in entries {
-        let author = entry
-            .author
-            .map(|author| author.username)
-            .unwrap_or_else(|| "Deleted user".into());
+        let author = entry.author.username;
         let issue_labels = labels.remove(&entry.issue.id).unwrap_or_default();
         let issue_assignees = assignees.remove(&entry.issue.id).unwrap_or_default();
         let mut row =
@@ -337,10 +363,7 @@ async fn milestone_page(
     let mut pull_assignees = listed_assignees(ctx, &pull_ids, true).await?;
     let mut pull_items = Vec::new();
     for value in pulls {
-        let author = value
-            .author
-            .map(|author| author.username)
-            .unwrap_or_else(|| "Deleted user".into());
+        let author = value.author.username;
         let head = listed_head(ctx, value.head_repository).await?;
         let id = value.pull_request.id;
         let mut row =
@@ -498,6 +521,12 @@ pub(crate) async fn native_delete(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     require_writer(&ctx, &repo)?;
+    if field(&form, "confirm") != "yes" {
+        return Err(ctx.error(
+            StatusCode::BAD_REQUEST,
+            "Confirm the deletion before the milestone is deleted.",
+        ));
+    }
     let actor = ctx.require_user()?.id;
     match db::milestones::delete_milestone(&ctx.state.pool, actor, repo.record.id, number).await {
         Ok(()) => Ok(ctx.redirect(&format!("{}/milestones", repo.view.url()))),
@@ -568,6 +597,34 @@ pub(crate) async fn native_set_item_milestone(
         }
     }
     .map_err(milestone_write_error);
+    let previous = value.milestone.as_ref();
+    if outcome.is_ok() && chosen != previous.map(|milestone| milestone.number) {
+        let (event, title) = match chosen {
+            Some(number) => {
+                let found = db::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
+                    .await
+                    .ok()
+                    .flatten();
+                (
+                    "milestoned",
+                    found.map(|found| found.milestone.title).unwrap_or_default(),
+                )
+            }
+            None => (
+                "demilestoned",
+                previous.map(|old| old.title.clone()).unwrap_or_default(),
+            ),
+        };
+        db::timeline::record_for(
+            &ctx.state.pool,
+            repo.record.id,
+            subject,
+            actor,
+            event,
+            &title,
+        )
+        .await;
+    }
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
 }
 

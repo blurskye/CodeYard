@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-gitserv}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gitserv}
       POSTGRES_DB: ${POSTGRES_DB:-gitserv}
-      # Explicit legacy mount layout; never relocate a populated volume implicitly.
+      # Explicit data directory in the volume. Never relocate a populated volume implicitly.
       PGDATA: /var/lib/postgresql/data
     volumes:
       - ${GIT_SERV_DATA_ROOT:-./data}/postgres:/var/lib/postgresql/data:Z
@@ -62,7 +62,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-gitserv-files}
       S3_REGION: ${S3_REGION:-us-east-1}
       # Server state (SQLite database and local uploads) lives on the /data volume.
-      # An installation whose gitserv.db sits directly in /data sets GITSERV_STATE_DIR=/data.
+      # Set GITSERV_STATE_DIR=/data to place gitserv.db directly in the volume root.
       GITSERV_STATE_DIR: ${GITSERV_STATE_DIR:-/data/state}
       REPOS_PATH: /data/repos
       GITSERV_NODE_ROLES: ${GITSERV_NODE_ROLES:-web,storage,ssh,actions-worker}

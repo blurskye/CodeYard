@@ -18,7 +18,7 @@ pub enum AccountInputError {
 
 pub(crate) fn validate_username(username: &str) -> Result<(), AccountInputError> {
     // PostgreSQL VARCHAR(255) is a character bound, not a UTF-8 byte bound.
-    // Preserve existing non-ASCII identities while bounding request work.
+    // Non-ASCII usernames pass this check; the byte limit keeps request work bounded.
     if !(3..=1024).contains(&username.len()) || username.chars().count() > 255 {
         return Err(AccountInputError::UsernameBounds);
     }
@@ -40,8 +40,8 @@ pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), Accoun
     Ok(())
 }
 
-/// Reserved names guard only the creation of a new account. An existing account keeps
-/// its name, so setup recovery for an administrator called `admin` can still finish.
+/// Reserved names are checked only when a new account is created. An existing account
+/// keeps its name, so setup can still finish for an administrator named `admin`.
 pub(crate) fn validate_new_account_name(username: &str) -> Result<(), AccountInputError> {
     if crate::backend::db::users::is_reserved_name(username) {
         return Err(AccountInputError::UsernameReserved);
@@ -78,7 +78,7 @@ mod tests {
             validate_account(&account("a/b")),
             Err(AccountInputError::UsernameCharacters)
         );
-        // Existing names pass the account rules; only creating one is reserved-checked.
+        // The account rules accept reserved names; only creating an account checks them.
         assert_eq!(validate_account(&account("Settings")), Ok(()));
         assert_eq!(
             validate_new_account_name("Settings"),

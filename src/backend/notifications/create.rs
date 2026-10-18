@@ -13,14 +13,27 @@ pub struct NotificationRequest<'a> {
 }
 
 #[derive(Debug, thiserror::Error)]
-#[error("Notification storage is temporarily unavailable")]
-pub struct CreateError;
+pub enum CreateError {
+    #[error("Notification storage is temporarily unavailable")]
+    Unavailable,
+    /// The recipient ignores the repository, so nothing is created.
+    #[error("The recipient ignores this repository")]
+    Ignored,
+}
 
 pub async fn create_and_broadcast_notification(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     request: NotificationRequest<'_>,
 ) -> Result<db::models::Notification, CreateError> {
+    if let Some(repo_id) = request.repo_id {
+        let level = db::repositories::engagement::get_watch_level(pool, request.user_id, repo_id)
+            .await
+            .map_err(|_| CreateError::Unavailable)?;
+        if level.is_some_and(|(level, _)| level == "ignoring") {
+            return Err(CreateError::Ignored);
+        }
+    }
     let notification = records::create_notification(
         pool,
         records::NewNotification {
@@ -35,7 +48,7 @@ pub async fn create_and_broadcast_notification(
         },
     )
     .await
-    .map_err(|_| CreateError)?;
+    .map_err(|_| CreateError::Unavailable)?;
     // Delivery reloads the count under the recipient's current authority.
     broadcaster
         .send(super::NotificationEvent::Created {

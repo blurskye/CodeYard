@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::session::get_current_user,
+    api::http::session::get_current_user,
     app::AppState,
     files::{self, LocalUploadError},
 };
@@ -28,7 +28,7 @@ pub async fn put_upload_content(
     body: Body,
 ) -> Result<StatusCode, Failure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::csrf::check(state.clone(), &headers).await?;
+    super::super::http::csrf::check(state.clone(), &headers).await?;
     let mut types = headers.get_all(header::CONTENT_TYPE).iter();
     let content_type = types
         .next()

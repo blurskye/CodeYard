@@ -1,10 +1,13 @@
-use crate::backend::db::discussions::{contains_pattern, ListFilter, StateCounts};
+use crate::backend::db::discussions::{
+    contains_pattern, ListFilter, StateCounts, SHOWN_PR_COMMENT,
+};
 use crate::backend::db::models::PullRequest;
 use crate::backend::db::pull_requests::records::PullRequestListEntry;
 use crate::backend::db::pull_requests::records::{
     decide_join, DuplicateOpenPullRequest, JoinCheck, NewBase, NewPullRequest,
     PullRequestRevisions, ReadyOutcome, StackJoin, StackRefusal,
 };
+use crate::backend::db::pull_requests::records::{PullRequestRelation, ViewerPullRequestEntry};
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -34,6 +37,21 @@ pub async fn list_open_pull_request_revisions_on_branches(
     )
     .bind(repo_id)
     .bind(branches)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// The open pull requests whose head branch is one of this repository's branches, in number
+/// order. A fork's pull requests are left out: their head branch is in the fork.
+pub async fn list_open_pull_requests_from_branches(
+    pool: &PgPool,
+    repo_id: i64,
+) -> Result<Vec<PullRequest>> {
+    let rows = sqlx::query_as::<_, PullRequest>(
+        "SELECT * FROM pull_requests WHERE repo_id = $1 AND head_repo_id = $1 AND state = 'open' ORDER BY number",
+    )
+    .bind(repo_id)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -262,9 +280,11 @@ pub async fn list_repo_pull_requests(
     let (assignee_mode, assignee_id) = filter.assignee.binding();
     let (milestone_mode, milestone_id) = filter.milestone.binding();
     let labels = super::super::discussions::label_names_array(filter.labels);
-    let order = filter.sort.order_by("pr_comments", "pull_request_id");
+    let order = filter
+        .sort
+        .order_by("pr_comments", "pull_request_id", SHOWN_PR_COMMENT);
     let prs = sqlx::query_as::<_, PullRequestListEntry>(&format!(
-        r#"SELECT i.*, {columns}, h.id AS head_display_id, h.name AS head_display_name, CASE WHEN h.owner_kind='user' AND h.owner_org_id IS NULL THEN hu.username WHEN h.owner_kind='org' AND h.owner_user_id IS NULL THEN ho.name END AS head_display_owner FROM pull_requests i LEFT JOIN users u ON u.id=i.author_id LEFT JOIN repositories h ON h.id=i.head_repo_id LEFT JOIN users hu ON h.owner_kind='user' AND h.owner_user_id=hu.id LEFT JOIN organizations ho ON h.owner_kind='org' AND h.owner_org_id=ho.id
+        r#"SELECT i.*, {columns}, h.id AS head_display_id, h.name AS head_display_name, CASE WHEN h.owner_kind='user' AND h.owner_org_id IS NULL THEN hu.username WHEN h.owner_kind='org' AND h.owner_user_id IS NULL THEN ho.name END AS head_display_owner FROM pull_requests i JOIN users u ON u.id=i.author_id LEFT JOIN repositories h ON h.id=i.head_repo_id LEFT JOIN users hu ON h.owner_kind='user' AND h.owner_user_id=hu.id LEFT JOIN organizations ho ON h.owner_kind='org' AND h.owner_org_id=ho.id
         WHERE i.repo_id = $1 AND ($2::TEXT IS NULL OR i.state = $2)
             AND ($3::TEXT IS NULL OR LOWER(i.title COLLATE "C") LIKE LOWER($3::TEXT COLLATE "C") ESCAPE '\' OR LOWER(i.body COLLATE "C") LIKE LOWER($3::TEXT COLLATE "C") ESCAPE '\')
             AND ($5::BIGINT IS NULL OR i.author_id = $5)
@@ -290,6 +310,80 @@ pub async fn list_repo_pull_requests(
     .await?;
 
     Ok(prs)
+}
+
+/// The condition that picks a viewer's pull requests. `$1` is the viewer.
+fn viewer_pull_request_sql(relation: PullRequestRelation) -> &'static str {
+    match relation {
+        PullRequestRelation::Assigned => {
+            "EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = p.id AND a.user_id = $1)"
+        }
+        PullRequestRelation::Created => "p.author_id = $1",
+        PullRequestRelation::ReviewRequested => {
+            "EXISTS (SELECT 1 FROM pr_reviewers a WHERE a.pull_request_id = p.id AND a.user_id = $1)"
+        }
+        PullRequestRelation::Involved => {
+            "(p.author_id = $1 \
+             OR EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = p.id AND a.user_id = $1) \
+             OR EXISTS (SELECT 1 FROM pr_reviewers a WHERE a.pull_request_id = p.id AND a.user_id = $1))"
+        }
+    }
+}
+
+/// The pull requests in repositories `viewer_id` can read that the viewer was assigned, opened, or
+/// was asked to review. Visibility is applied before the limit, as for issues. A merged pull
+/// request is closed, so the closed list includes it.
+pub async fn list_viewer_pull_requests(
+    pool: &PgPool,
+    viewer_id: i64,
+    relation: PullRequestRelation,
+    open: bool,
+    limit: i64,
+) -> Result<Vec<ViewerPullRequestEntry>> {
+    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let relation_sql = viewer_pull_request_sql(relation);
+    let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(&format!(
+        r"SELECT p.*, r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
+        FROM pull_requests p
+        JOIN repositories r ON r.id = p.repo_id
+        LEFT JOIN users ou ON ou.id = r.owner_user_id
+        LEFT JOIN organizations og ON og.id = r.owner_org_id
+        JOIN users u ON u.id = $1
+        WHERE (p.state = 'open') = $2::BOOLEAN AND {relation_sql}
+            AND NOT u.is_banned AND NOT u.must_change_password
+            AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
+        ORDER BY p.created_at DESC, p.id DESC LIMIT $3"
+    ))
+    .bind(viewer_id)
+    .bind(open)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(prs)
+}
+
+/// Open and closed counts of the viewer's pull requests, with the same visibility as the list.
+pub async fn count_viewer_pull_requests(
+    pool: &PgPool,
+    viewer_id: i64,
+    relation: PullRequestRelation,
+) -> Result<StateCounts> {
+    let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    let relation_sql = viewer_pull_request_sql(relation);
+    let rows = sqlx::query_as::<_, (String, i64)>(&format!(
+        r"SELECT CASE WHEN p.state = 'open' THEN 'open' ELSE 'closed' END AS bucket, COUNT(*)
+        FROM pull_requests p
+        JOIN repositories r ON r.id = p.repo_id
+        JOIN users u ON u.id = $1
+        WHERE {relation_sql} AND NOT u.is_banned AND NOT u.must_change_password
+            AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) >= 1)
+        GROUP BY bucket"
+    ))
+    .bind(viewer_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(StateCounts::from_rows(rows))
 }
 
 pub async fn count_repo_pull_requests(
@@ -671,6 +765,17 @@ pub async fn list_stack_members(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ViewerPullRequestEntry {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+        Ok(Self {
+            pull_request: PullRequest::from_row(row)?,
+            repo_owner: row.try_get("repo_owner")?,
+            repo_name: row.try_get("repo_name")?,
+        })
+    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for PullRequestListEntry {

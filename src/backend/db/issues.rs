@@ -70,14 +70,43 @@ native_operation!(crate::backend::db::postgres::issues::count_issue_comments,
     crate::backend::db::sqlite::issues::count_issue_comments,
     fn count_issue_comments(pool: &DbPool, issue_ids: &[i64]) -> Result<Vec<(i64, i64)>>);
 
+/// The issues a signed-in user is involved in: assigned to them, or opened by them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueRelation {
+    Assigned,
+    Created,
+}
+
+native_operation!(crate::backend::db::postgres::issues::list_viewer_issues,
+    crate::backend::db::sqlite::issues::list_viewer_issues,
+    fn list_viewer_issues(
+    pool: &DbPool,
+    viewer_id: i64,
+    relation: IssueRelation,
+    open: bool,
+    limit: i64,
+) -> Result<Vec<ViewerIssueEntry>>);
+
+native_operation!(crate::backend::db::postgres::issues::count_viewer_issues,
+    crate::backend::db::sqlite::issues::count_viewer_issues,
+    fn count_viewer_issues(pool: &DbPool, viewer_id: i64, relation: IssueRelation) -> Result<StateCounts>);
+
 #[derive(Debug, Clone)]
 pub struct IssueListEntry {
     pub issue: Issue,
-    pub author: Option<crate::backend::db::users::accounts::AuthorDisplay>,
+    pub author: crate::backend::db::users::accounts::AuthorDisplay,
 }
 
 #[derive(Debug, Clone)]
 pub struct IssueCommentEntry {
     pub comment: IssueComment,
-    pub author: Option<crate::backend::db::users::accounts::AuthorDisplay>,
+    pub author: crate::backend::db::users::accounts::AuthorDisplay,
+}
+
+/// An issue with the owner and name of its repository, for a link to it.
+#[derive(Debug, Clone)]
+pub struct ViewerIssueEntry {
+    pub issue: Issue,
+    pub repo_owner: String,
+    pub repo_name: String,
 }

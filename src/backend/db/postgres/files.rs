@@ -427,8 +427,8 @@ pub async fn get_user_file_stats(
     pool: &PgPool,
     user_id: i64,
 ) -> Result<Option<super::models::UserFileStats>, sqlx::Error> {
-    // Aggregate each relation independently; the historical view multiplied
-    // storage/upload sums by the download/upload join cardinalities.
+    // Aggregate each relation separately. Joining the relations first would multiply
+    // the storage and upload sums by the join counts.
     sqlx::query_as(r#"SELECT u.id AS user_id, u.username, f.*,
         (SELECT COUNT(*) FROM download_rate_limit d WHERE d.user_id = u.id AND d.downloaded_at > NOW() - INTERVAL '24 hours') AS downloads_24h,
         uploads.uploads_24h, uploads.bytes_24h

@@ -75,7 +75,14 @@ async fn insert_ssh_key(
     .bind(public_key)
     .bind(&key_type)
     .fetch_one(&mut *tx)
-    .await?;
+    .await
+    // The unique index is the final guard; report its violation as the refusal above.
+    .map_err(|error| match &error {
+        sqlx::Error::Database(database) if database.is_unique_violation() => {
+            anyhow::Error::from(SshKeyWriteRefusal::AlreadyUsed)
+        }
+        _ => anyhow::Error::from(error),
+    })?;
     tx.commit().await?;
 
     Ok(result)
@@ -133,7 +140,6 @@ pub async fn get_user_by_key_fingerprint(
         FROM users u
         INNER JOIN ssh_keys k ON u.id = k.user_id
         WHERE k.fingerprint = ?1
-          AND NOT EXISTS(SELECT 1 FROM ssh_keys other WHERE other.fingerprint = k.fingerprint AND other.id <> k.id)
         "#,
     )
     .bind(fingerprint)

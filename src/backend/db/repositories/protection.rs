@@ -15,8 +15,7 @@ pub enum ProtectionWriteRefusal {
 }
 
 /// One rule as an administrator saves it. `Default` is the strictest rule, which is what
-/// an omitted setting means. Signed commits and code owners are not part of this input: a
-/// new rule starts without them, and saving an existing rule keeps what it stored.
+/// an omitted setting means.
 pub struct BranchProtectionRuleUpsert<'a> {
     pub actor_id: i64,
     pub repo_id: i64,
@@ -71,24 +70,16 @@ pub struct CommitStatusUpsert<'a> {
     pub creator_id: Option<i64>,
 }
 
-/// The longest pattern a new rule may have. A legacy pattern of exactly 255 characters that
-/// ends in `*` was never widened to `**`, so new patterns stop one character short of that.
-const MAX_NEW_PATTERN_CHARS: usize = 254;
+/// The longest pattern a rule may have. The stored column has the same limit.
+const MAX_PATTERN_CHARS: usize = 255;
 
 /// A pattern is a branch name that may hold `*`, `**` and `?`. Git must accept the name
-/// once each wildcard is a letter. A leading `!` is reserved for negated patterns. `existing`
-/// says that the repository already has a rule with this pattern. Such a rule keeps its
-/// pattern, even one that a new rule could not have.
-pub fn validate_branch_pattern(
-    pattern: &str,
-    existing: bool,
-) -> Result<(), ProtectionWriteRefusal> {
+/// once each wildcard is a letter. A leading `!` is reserved for negated patterns.
+pub fn validate_branch_pattern(pattern: &str) -> Result<(), ProtectionWriteRefusal> {
     let candidate = pattern.replace(['*', '?'], "x");
-    let too_long = !existing && pattern.chars().count() > MAX_NEW_PATTERN_CHARS;
-    let negated = !existing && pattern.starts_with('!');
     if pattern.is_empty()
-        || too_long
-        || negated
+        || pattern.chars().count() > MAX_PATTERN_CHARS
+        || pattern.starts_with('!')
         || !git2::Reference::is_valid_name(&format!("refs/heads/{candidate}"))
     {
         return Err(ProtectionWriteRefusal::InvalidPattern);
@@ -107,16 +98,6 @@ pub(crate) fn branch_pattern_matches(
     if !pattern.contains(['*', '?']) {
         return Ok(pattern == branch);
     }
-    // The migration widens a trailing `*` to `**` only when the row has room. A 255-character
-    // row ending in `*` was left alone, and it keeps the `**` meaning it had before.
-    let widened;
-    let pattern =
-        if pattern.chars().count() == 255 && pattern.ends_with('*') && !pattern.ends_with("**") {
-            widened = format!("{pattern}*");
-            widened.as_str()
-        } else {
-            pattern
-        };
     github_glob_matches_bounded(pattern, branch, budget)
 }
 
@@ -184,7 +165,7 @@ mod tests {
             "release/?",
             "feature/雪",
         ] {
-            assert_eq!(validate_branch_pattern(pattern, false), Ok(()), "{pattern}");
+            assert_eq!(validate_branch_pattern(pattern), Ok(()), "{pattern}");
         }
         for pattern in [
             "",
@@ -197,7 +178,7 @@ mod tests {
             "release/*.lock",
         ] {
             assert_eq!(
-                validate_branch_pattern(pattern, false),
+                validate_branch_pattern(pattern),
                 Err(ProtectionWriteRefusal::InvalidPattern),
                 "{pattern}"
             );
@@ -223,42 +204,10 @@ mod tests {
     }
 
     #[test]
-    fn legacy_255_character_star_pattern_keeps_its_double_star_meaning() {
-        let stem = "p".repeat(254);
-        let legacy = format!("{stem}*");
-        assert_eq!(legacy.chars().count(), 255);
-        assert!(pattern_matches(&legacy, &format!("{stem}/rc")));
-        assert!(pattern_matches(&legacy, &stem));
+    fn protection_patterns_stop_at_the_stored_length() {
+        assert_eq!(validate_branch_pattern(&"p".repeat(255)), Ok(()));
         assert_eq!(
-            validate_branch_pattern(&legacy, false),
-            Err(ProtectionWriteRefusal::InvalidPattern)
-        );
-        // Saving a rule again keeps its pattern; only the length limit is waived.
-        assert_eq!(validate_branch_pattern(&legacy, true), Ok(()));
-        assert_eq!(
-            validate_branch_pattern("bad..name", true),
-            Err(ProtectionWriteRefusal::InvalidPattern)
-        );
-
-        let stem = "p".repeat(253);
-        let current = format!("{stem}*");
-        assert_eq!(current.chars().count(), 254);
-        assert!(!pattern_matches(&current, &format!("{stem}/rc")));
-        assert!(pattern_matches(&current, &stem));
-        assert_eq!(validate_branch_pattern(&current, false), Ok(()));
-    }
-
-    #[test]
-    fn legacy_negated_pattern_can_be_saved_again_but_not_created() {
-        // The `!` reservation is waived for a saved rule, like the length limit. Every other
-        // check still applies to it.
-        assert_eq!(validate_branch_pattern("!main", true), Ok(()));
-        assert_eq!(
-            validate_branch_pattern("!main", false),
-            Err(ProtectionWriteRefusal::InvalidPattern)
-        );
-        assert_eq!(
-            validate_branch_pattern("!bad..name", true),
+            validate_branch_pattern(&"p".repeat(256)),
             Err(ProtectionWriteRefusal::InvalidPattern)
         );
     }

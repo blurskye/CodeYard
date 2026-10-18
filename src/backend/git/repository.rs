@@ -1,11 +1,14 @@
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use git2::{ObjectType, Repository};
 use serde::{Deserialize, Serialize};
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::os::unix::ffi::OsStringExt;
 use std::path::Path;
+use std::process::Stdio;
 use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::ChildStdout;
 
 mod checked;
 pub(crate) mod locks;
@@ -73,7 +76,8 @@ pub const MAX_COMMIT_OBJECT_BYTES: usize = 256 * 1024;
 pub const MAX_COMMIT_PAGE_BYTES: usize = 1024 * 1024;
 const MAX_COMMIT_WALK_OBJECTS: usize = 200_000;
 const MAX_COMMIT_WALK_BYTES: usize = 64 * 1024 * 1024;
-const COMMIT_WALK_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a commit walk may run when its caller sets no shorter deadline.
+pub(crate) const COMMIT_WALK_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_TAG_OBJECT_BYTES: usize = 256 * 1024;
 const MAX_TAG_DEPTH: usize = 32;
 const MAX_TAG_CHAIN_BYTES: usize = 1024 * 1024;
@@ -376,6 +380,64 @@ pub struct CommitInfo {
     pub timestamp: i64,
     pub committer_timestamp: i64,
     pub parents: Vec<String>,
+}
+
+/// Which commits a history lists. The author is matched against "Name <email>", ignoring case,
+/// as `git log --author` matches it. The dates are Unix seconds, compared with the committer time.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommitFilter {
+    pub author: Option<String>,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+    /// Text the commit message must contain, ignoring case.
+    pub message: Option<String>,
+}
+
+impl CommitFilter {
+    /// True when every commit passes. An empty filter is left out of replica requests, so an
+    /// older node still answers an unfiltered history.
+    pub fn is_empty(&self) -> bool {
+        self.author.is_none()
+            && self.since.is_none()
+            && self.until.is_none()
+            && self.message.is_none()
+    }
+
+    fn matches(&self, commit: &git2::Commit<'_>) -> bool {
+        let time = commit.committer().when().seconds();
+        if self.since.is_some_and(|since| time < since)
+            || self.until.is_some_and(|until| time > until)
+        {
+            return false;
+        }
+        if let Some(message) = &self.message {
+            let text = commit.message().unwrap_or("").to_lowercase();
+            if !text.contains(&message.to_lowercase()) {
+                return false;
+            }
+        }
+        match &self.author {
+            None => true,
+            Some(author) => {
+                let person = commit.author();
+                let signature = format!(
+                    "{} <{}>",
+                    person.name().unwrap_or(""),
+                    person.email().unwrap_or("")
+                );
+                signature.to_lowercase().contains(&author.to_lowercase())
+            }
+        }
+    }
+}
+
+/// A branch against the default branch: the commits it has that the default lacks, the commits
+/// the default has that it lacks, and when its tip commit was made.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchStatus {
+    pub ahead: usize,
+    pub behind: usize,
+    pub updated: i64,
 }
 
 pub const MAX_TREE_ENTRIES: usize = 1_000;
@@ -1094,16 +1156,18 @@ pub(crate) fn is_not_a_commit(error: &anyhow::Error) -> bool {
     })
 }
 
+/// Up to `limit` commits after `offset` that pass `filter`, newest first.
 pub(crate) fn list_commits(
     repo_path: &Path,
     git_ref: &str,
     offset: usize,
     limit: usize,
+    filter: &CommitFilter,
+    deadline: Instant,
 ) -> Result<Vec<CommitInfo>> {
     if limit == 0 {
         return Ok(Vec::new());
     }
-    let started = Instant::now();
     let repo = Repository::open_bare(repo_path)?;
     let tip = peel_to_commit_checked(&repo, git_ref)?;
     let mut pending = BinaryHeap::from([(tip.time().seconds(), tip.id())]);
@@ -1116,24 +1180,20 @@ pub(crate) fn list_commits(
     // libgit2's time sort eagerly loads the entire history. Visit only the frontier,
     // newest first, and check every object before loading it, including skipped rows.
     while let Some((_, oid)) = pending.pop() {
-        ensure!(
-            started.elapsed() < COMMIT_WALK_TIMEOUT,
-            "Git commit walk timed out"
-        );
+        ensure!(Instant::now() < deadline, "Git commit walk timed out");
         let commit = find_commit_checked(&repo, oid)?;
-        if position >= offset {
-            add_commit_to_budget(&mut total_bytes, commit_object_size(&repo, oid)?, true)?;
-            commits.push(commit_info(&commit));
-            if commits.len() == limit {
-                break;
+        if filter.matches(&commit) {
+            if position >= offset {
+                add_commit_to_budget(&mut total_bytes, commit_object_size(&repo, oid)?, true)?;
+                commits.push(commit_info(&commit));
+                if commits.len() == limit {
+                    break;
+                }
             }
+            position += 1;
         }
-        position += 1;
         for parent in commit.parent_ids() {
-            ensure!(
-                started.elapsed() < COMMIT_WALK_TIMEOUT,
-                "Git commit walk timed out"
-            );
+            ensure!(Instant::now() < deadline, "Git commit walk timed out");
             if !seen.insert(parent) {
                 continue;
             }
@@ -1153,10 +1213,244 @@ pub(crate) fn list_commits(
     Ok(commits)
 }
 
+/// The commits reachable from `head` but not from `base`, newest first, at most `limit` of them.
+/// These are the commits of a pull request. Both revisions are peeled to commit IDs first, so a
+/// ref name is never read as an option.
+pub(crate) fn list_range_commits(
+    repo_path: &Path,
+    base: &str,
+    head: &str,
+    limit: usize,
+) -> Result<Vec<CommitInfo>> {
+    let repo = Repository::open_bare(repo_path)?;
+    let base = peel_to_commit_checked(&repo, base)?.id();
+    let head = peel_to_commit_checked(&repo, head)?.id();
+    let mut walk = repo.revwalk()?;
+    walk.set_sorting(git2::Sort::TIME)?;
+    walk.push(head)?;
+    walk.hide(base)?;
+    let mut commits = Vec::new();
+    for oid in walk.take(limit) {
+        let commit = find_commit_checked(&repo, oid?)?;
+        commits.push(commit_info(&commit));
+    }
+    Ok(commits)
+}
+
 pub(crate) fn get_commit(repo_path: &Path, sha: &str) -> Result<CommitInfo> {
     let repo = Repository::open_bare(repo_path)?;
     let commit = peel_to_commit_checked(&repo, sha)?;
     Ok(commit_info(&commit))
+}
+
+/// Enough for one page of commit IDs, which is far below this limit.
+/// A line of a file that contains the text a code search looks for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeMatch {
+    pub path: String,
+    pub line_number: u32,
+    pub line: String,
+}
+
+const CODE_SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
+/// A match shows at most this many characters of its line.
+const MAX_CODE_LINE_CHARS: usize = 200;
+/// The bytes kept from one `git grep` record. A record holds a path, a line number and the whole
+/// line, so one very long line keeps only its start.
+const MAX_GREP_RECORD_BYTES: usize = 16 * 1024;
+
+/// Up to `limit` lines of the files at `git_ref` that contain `text`, ignoring case, after the first
+/// `offset` of them, at most two per file. Binary files are skipped. The text is a literal given
+/// after `-e`. Git's output is read as it is printed, and git is stopped once the page is full, so
+/// many or very long matching lines cannot fail the search.
+pub(crate) async fn search_code(
+    repo_path: &Path,
+    git_ref: &str,
+    text: &str,
+    offset: usize,
+    limit: usize,
+) -> Result<Vec<CodeMatch>> {
+    if limit == 0 || text.is_empty() {
+        return Ok(Vec::new());
+    }
+    let tip = {
+        let repo = Repository::open_bare(repo_path)?;
+        let commit = peel_to_commit_checked(&repo, git_ref)?;
+        commit.id().to_string()
+    };
+    let mut command = process::git_command()?;
+    command
+        .args(["grep", "-I", "-n", "-i", "-F", "-z", "--max-count=2", "-e"])
+        .arg(text)
+        .arg(&tip)
+        .arg("--")
+        .current_dir(repo_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
+    let mut child = command.spawn().context("start git")?;
+    // Kills git's process group if the search returns before git has finished.
+    let mut group = process::ProcessGroup(child.id());
+    let stdout = child.stdout.take().context("git stdout")?;
+    let prefix = format!("{tip}:");
+    let mut records = BufReader::new(stdout);
+    let mut matches = Vec::new();
+    let mut skipped = 0;
+    let read = async {
+        while let Some(record) = read_grep_record(&mut records).await? {
+            let Some(found) = parse_code_match(&record, &prefix) else {
+                continue;
+            };
+            if skipped < offset {
+                skipped += 1;
+            } else {
+                matches.push(found);
+                if matches.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+    tokio::time::timeout(CODE_SEARCH_TIMEOUT, read)
+        .await
+        .context("git timed out")??;
+    if matches.len() < limit {
+        // Git printed every record, so its status tells whether the search ran. Status 1 means no
+        // line matched.
+        let status = child.wait().await?;
+        group.0 = None;
+        ensure!(
+            status.success() || status.code() == Some(1),
+            "Git could not search the code"
+        );
+    }
+    Ok(matches)
+}
+
+/// The next record of `git grep -z -n` output, which ends at a newline. Only the first
+/// `MAX_GREP_RECORD_BYTES` of a record are kept; the rest of a long line is read and dropped.
+async fn read_grep_record(reader: &mut BufReader<ChildStdout>) -> Result<Option<Vec<u8>>> {
+    let mut record = Vec::new();
+    loop {
+        let chunk = reader.fill_buf().await?;
+        if chunk.is_empty() {
+            return Ok((!record.is_empty()).then_some(record));
+        }
+        let newline = chunk.iter().position(|&byte| byte == b'\n');
+        let used = newline.map_or(chunk.len(), |at| at + 1);
+        let room = MAX_GREP_RECORD_BYTES - record.len();
+        record.extend_from_slice(&chunk[..used.min(room)]);
+        reader.consume(used);
+        if newline.is_some() {
+            return Ok(Some(record));
+        }
+    }
+}
+
+/// The match in one record, which holds `path`, a line number and the line. Git writes the path
+/// after the revision and a colon, and this strips that prefix.
+fn parse_code_match(record: &[u8], prefix: &str) -> Option<CodeMatch> {
+    let record = String::from_utf8_lossy(record);
+    let mut parts = record.splitn(3, '\0');
+    let path = parts.next()?.strip_prefix(prefix)?;
+    let line_number = parts.next()?.parse().ok()?;
+    let text = parts.next()?;
+    Some(CodeMatch {
+        path: path.to_owned(),
+        line_number,
+        line: text.trim().chars().take(MAX_CODE_LINE_CHARS).collect(),
+    })
+}
+
+const MAX_PATH_COMMIT_OUTPUT_BYTES: usize = 64 * 1024;
+
+/// The commits after `offset` that changed `path`, newest first, as `git log -- <path>` lists
+/// them. The ref is peeled to a commit ID first, so `git log` never reads the ref name as an
+/// option, and the path comes after `--` as a literal pathspec.
+pub(crate) async fn list_path_commits(
+    repo_path: &Path,
+    git_ref: &str,
+    path: &str,
+    offset: usize,
+    limit: usize,
+    filter: &CommitFilter,
+) -> Result<Vec<CommitInfo>> {
+    // No tree entry is named empty, `.` or `..`, so such a path changed in no commit. Git would
+    // refuse it as a pathspec outside the repository instead.
+    if limit == 0 || path.split('/').any(|part| matches!(part, "" | "." | "..")) {
+        return Ok(Vec::new());
+    }
+    let tip = {
+        let repo = Repository::open_bare(repo_path)?;
+        let commit = peel_to_commit_checked(&repo, git_ref)?;
+        commit.id().to_string()
+    };
+    let mut command = process::git_command()?;
+    command
+        .arg("--literal-pathspecs")
+        .arg("log")
+        .arg(format!("--skip={offset}"))
+        .arg(format!("--max-count={limit}"))
+        .arg("--format=%H");
+    if let Some(author) = &filter.author {
+        // The author text is a literal, matched without case, as `list_commits` matches it.
+        command
+            .arg("--fixed-strings")
+            .arg("--regexp-ignore-case")
+            .arg(format!("--author={author}"));
+    }
+    if let Some(since) = filter.since {
+        command.arg(format!("--since={since}"));
+    }
+    if let Some(until) = filter.until {
+        command.arg(format!("--until={until}"));
+    }
+    command.arg(&tip).arg("--").arg(path).current_dir(repo_path);
+    let (status, output) = process::buffered(
+        command,
+        b"",
+        MAX_PATH_COMMIT_OUTPUT_BYTES,
+        process::RPC_TIMEOUT,
+    )
+    .await?;
+    ensure!(
+        status.success(),
+        "Git could not list the commits for the path"
+    );
+    let repo = Repository::open_bare(repo_path)?;
+    std::str::from_utf8(&output)?
+        .lines()
+        .map(|line| -> Result<CommitInfo> {
+            let commit = find_commit_checked(&repo, git2::Oid::from_str(line)?)?;
+            Ok(commit_info(&commit))
+        })
+        .collect()
+}
+
+/// Each head's divergence from `base`, in the order of `heads`. Git counts both sides from their
+/// merge base, so a branch with a long history of its own costs a longer walk.
+pub(crate) fn branch_statuses(
+    repo_path: &Path,
+    base: &str,
+    heads: &[String],
+) -> Result<Vec<BranchStatus>> {
+    let repo = Repository::open_bare(repo_path)?;
+    let base = peel_to_commit_checked(&repo, base)?.id();
+    heads
+        .iter()
+        .map(|head| {
+            let tip = peel_to_commit_checked(&repo, head)?;
+            let (ahead, behind) = repo.graph_ahead_behind(tip.id(), base)?;
+            let updated = tip.committer().when().seconds();
+            Ok(BranchStatus {
+                ahead,
+                behind,
+                updated,
+            })
+        })
+        .collect()
 }
 
 /// Decode an already opened commit without resolving a mutable repository path.
@@ -1199,6 +1493,9 @@ pub struct TagInfo {
     pub name: String,
     pub sha: String,
     pub message: Option<String>,
+    /// When the tag was made: the tagger's time for an annotated tag, else its commit's time.
+    #[serde(default)]
+    pub date: Option<i64>,
 }
 
 pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
@@ -1220,10 +1517,15 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
             let name = String::from_utf8_lossy(name)
                 .trim_start_matches("refs/tags/")
                 .to_owned();
-            let message = if kind == ObjectType::Tag {
-                repo.find_tag(oid)?.message().map(ToOwned::to_owned)
+            let (message, date) = if kind == ObjectType::Tag {
+                let tag = repo.find_tag(oid)?;
+                let date = tag.tagger().map(|tagger| tagger.when().seconds());
+                (tag.message().map(ToOwned::to_owned), date)
             } else {
-                None
+                let date = find_commit_checked(&repo, oid)
+                    .ok()
+                    .map(|commit| commit.time().seconds());
+                (None, date)
             };
             let bytes = name.len()
                 + 40
@@ -1240,6 +1542,7 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
                 name,
                 sha: oid.to_string(),
                 message,
+                date,
             });
             Ok::<_, anyhow::Error>(())
         })();
@@ -1276,16 +1579,19 @@ pub(crate) fn prepare_create_tag(
         git2::Oid::from_str(target_sha).map_err(|_| anyhow!("Invalid commit SHA: {target_sha}"))?;
     let commit =
         find_commit_checked(&repo, oid).map_err(|_| anyhow!("Commit '{target_sha}' not found"))?;
-    let target = if let Some(message) = message {
+    let (target, date) = if let Some(message) = message {
         let signature = git2::Signature::now(tagger_name, tagger_email)?;
-        repo.tag_annotation_create(tag_name, commit.as_object(), &signature, message)?
+        let target =
+            repo.tag_annotation_create(tag_name, commit.as_object(), &signature, message)?;
+        (target, signature.when().seconds())
     } else {
-        commit.id()
+        (commit.id(), commit.time().seconds())
     };
     Ok(TagInfo {
         name: tag_name.to_owned(),
         sha: target.to_string(),
         message: message.map(str::to_owned),
+        date: Some(date),
     })
 }
 
@@ -2243,7 +2549,19 @@ mod read_limit_tests {
         assert_eq!(get_commit(path, &normal_sha).unwrap().sha, normal_sha);
         assert_eq!(get_commit(path, &normal_sha[..12]).unwrap().sha, normal_sha);
         assert_eq!(get_commit(path, "main").unwrap().sha, normal_sha);
-        assert_eq!(list_commits(path, "main", 0, 10).unwrap().len(), 1);
+        assert_eq!(
+            list_commits(
+                path,
+                "main",
+                0,
+                10,
+                &Default::default(),
+                Instant::now() + COMMIT_WALK_TIMEOUT
+            )
+            .unwrap()
+            .len(),
+            1
+        );
         assert_eq!(blob_metadata(path, "main", "README.md").unwrap().1, 6);
         assert!(prepare_create_branch(path, "copy", &normal_sha).is_ok());
         assert!(resolve_ci_commit(path, "main", None, false).is_ok());
@@ -2257,7 +2575,14 @@ mod read_limit_tests {
         assert_unknown_revision(get_commit(path, "refs/heads/huge~1"));
         assert_unknown_revision(get_commit(path, "huge-tag^{commit}"));
         assert_unknown_revision(get_commit(path, "main^{commit}"));
-        assert_too_large(list_commits(path, "refs/heads/huge", 0, 10));
+        assert_too_large(list_commits(
+            path,
+            "refs/heads/huge",
+            0,
+            10,
+            &Default::default(),
+            Instant::now() + COMMIT_WALK_TIMEOUT,
+        ));
         assert_too_large(list_tags(path));
         assert_too_large(blob_metadata(path, "refs/heads/huge", "README.md"));
         assert!(prepare_create_branch(path, "copy-huge", &huge_sha).is_err());

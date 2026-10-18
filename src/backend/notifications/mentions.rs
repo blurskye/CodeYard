@@ -29,6 +29,8 @@ pub struct MentionSource<'a> {
     pub repo: &'a str,
     /// The issue or pull request number.
     pub number: i32,
+    /// The title of the issue or pull request, which the notification is headed by.
+    pub subject: &'a str,
     /// Where the notification leads: the item, or the comment on it.
     pub link: &'a str,
     /// The text before an edit. `None` for new text, so every name counts.
@@ -109,6 +111,7 @@ pub async fn notify_mentions(
                     "repo_owner": source.owner,
                     "repo_name": source.repo,
                     "number": source.number,
+                    "subject": source.subject,
                 }),
             },
         )

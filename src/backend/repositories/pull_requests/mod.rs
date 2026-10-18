@@ -129,6 +129,10 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
             code: "conflict",
             message: "The pull request no longer accepts this review".into(),
         },
+        Some(DiscussionWriteRefusal::ReviewFull) => OperationError::Invalid {
+            code: "validation_error",
+            message: "A review holds at most 200 comments.".into(),
+        },
         None => OperationError::Unavailable {
             code: "database_error",
             message: "Discussion storage is unavailable; no success was confirmed".into(),

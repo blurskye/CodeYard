@@ -117,11 +117,11 @@ impl ObjectStore {
         }
     }
 
-    /// Human-readable location for the admin page: the bucket or "state directory".
-    pub fn location(&self) -> String {
+    /// The bucket for the admin page. Local files have no location to show.
+    pub fn location(&self) -> Option<String> {
         match &self.backend {
-            Backend::Local(_) => "state directory".into(),
-            Backend::S3(store) => store.bucket().to_owned(),
+            Backend::Local(_) => None,
+            Backend::S3(store) => Some(store.bucket().to_owned()),
         }
     }
 

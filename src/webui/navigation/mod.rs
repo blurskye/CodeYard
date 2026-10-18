@@ -84,6 +84,7 @@ pub fn NavLink(
     #[props(default)] class: String,
     #[props(default)] aria_label: Option<String>,
     #[props(default)] aria_current: Option<String>,
+    #[props(default)] title: Option<String>,
     #[props(default = true)] mark_current: bool,
     children: Element,
 ) -> Element {
@@ -98,7 +99,7 @@ pub fn NavLink(
         };
         let target = href.clone();
         rsx! {
-            a { href, class, "aria-label": aria_label, "aria-current": aria_current, onclick: move |event| {
+            a { href, class, title, "aria-label": aria_label, "aria-current": aria_current, onclick: move |event| {
                 // Modified and middle clicks keep the browser's own behaviour.
                 if event.modifiers().is_empty() && event.trigger_button() == Some(MouseButton::Primary) {
                     event.prevent_default();
@@ -107,7 +108,7 @@ pub fn NavLink(
             }, {children} }
         }
     } else {
-        rsx! { a { href, class, "aria-label": aria_label, "aria-current": aria_current, {children} } }
+        rsx! { a { href, class, title, "aria-label": aria_label, "aria-current": aria_current, {children} } }
     }
 }
 
@@ -357,7 +358,7 @@ mod tests {
         let explore = anchor_tag(&html, "href=\"/explore\"");
         assert_eq!(explore.matches("aria-current").count(), 1, "{explore}");
         assert!(explore.contains("aria-current=\"page\""), "{explore}");
-        let logo = anchor_tag(&html, "aria-label=\"Codeyard home\"");
+        let logo = anchor_tag(&html, "aria-label=\"Home\"");
         assert!(!logo.contains("aria-current"), "{logo}");
     }
 

@@ -1,5 +1,5 @@
 //! Selects the existing disposable SQLite or seeded PostgreSQL fixture.
-use crate::{native, production};
+use crate::support::{native_database as native, production_ci as production};
 use codeyard::backend::db;
 
 pub enum Database {
@@ -48,6 +48,34 @@ impl Database {
         match self {
             Self::Postgres(f) => f.finish().await,
             Self::Sqlite(f) => f.close().await,
+        }
+    }
+    pub async fn actor(&self, name: &str) -> i64 {
+        db::users::accounts::create_user(self.pool(), name, None)
+            .await
+            .unwrap()
+            .id
+    }
+    pub async fn count(&self) -> i64 {
+        let sql = "SELECT COUNT(*) FROM repositories";
+        match self {
+            Self::Postgres(f) => sqlx::query_scalar(sql).fetch_one(&f.raw).await.unwrap(),
+            Self::Sqlite(f) => sqlx::query_scalar(sql).fetch_one(&f.raw).await.unwrap(),
+        }
+    }
+    pub async fn repository(&self, id: i64) -> db::models::Repository {
+        let sql = "SELECT * FROM repositories WHERE id=$1";
+        match self {
+            Self::Postgres(f) => sqlx::query_as(sql)
+                .bind(id)
+                .fetch_one(&f.raw)
+                .await
+                .unwrap(),
+            Self::Sqlite(f) => sqlx::query_as(sql)
+                .bind(id)
+                .fetch_one(&f.raw)
+                .await
+                .unwrap(),
         }
     }
 }

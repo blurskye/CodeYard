@@ -14,6 +14,10 @@ native_operation!(crate::backend::db::postgres::repository_stats::get_repo_langu
     crate::backend::db::sqlite::repository_stats::get_repo_languages,
     fn get_repo_languages(pool: &DbPool, repo_id: i64) -> Result<Vec<RepoLanguage>>);
 
+native_operation!(crate::backend::db::postgres::repository_stats::get_primary_repo_languages,
+    crate::backend::db::sqlite::repository_stats::get_primary_repo_languages,
+    fn get_primary_repo_languages(pool: &DbPool, repo_ids: &[i64]) -> Result<Vec<RepoLanguage>>);
+
 native_operation!(crate::backend::db::postgres::repository_stats::upsert_repo_contributors,
     crate::backend::db::sqlite::repository_stats::upsert_repo_contributors,
     fn upsert_repo_contributors(

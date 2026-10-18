@@ -26,7 +26,7 @@ pub async fn current_event(
         | NotificationEvent::Read {
             notification_id, ..
         } => Some(*notification_id),
-        NotificationEvent::ReadAll { .. } => None,
+        NotificationEvent::ReadAll { .. } | NotificationEvent::UnreadCount { .. } => None,
     };
     let projection =
         db::notifications::records::notification_delivery(pool, session_id, user_id, id)
@@ -56,6 +56,10 @@ pub async fn current_event(
                 unread_count,
             }),
         NotificationEvent::ReadAll { .. } => Some(NotificationEvent::ReadAll {
+            user_id,
+            unread_count,
+        }),
+        NotificationEvent::UnreadCount { .. } => Some(NotificationEvent::UnreadCount {
             user_id,
             unread_count,
         }),

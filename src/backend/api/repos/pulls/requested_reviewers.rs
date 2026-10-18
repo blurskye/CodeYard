@@ -1,6 +1,6 @@
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::session::get_current_user;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::pull_requests::reviews::RequestReviewerRequest;

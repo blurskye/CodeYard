@@ -221,8 +221,8 @@ pub async fn list_admin_account_summaries(pool: &SqlitePool) -> Result<Vec<Admin
             (SELECT COUNT(*) FROM pull_requests p WHERE p.author_id=u.id)
                 + (SELECT COUNT(*) FROM issues i WHERE i.author_id=u.id)
                 + (SELECT COUNT(*) FROM issue_comments c WHERE c.author_id=u.id)
-                + (SELECT COUNT(*) FROM pr_comments c WHERE c.author_id=u.id)
-                + (SELECT COUNT(*) FROM pr_reviews c WHERE c.author_id=u.id)
+                + (SELECT COUNT(*) FROM pr_comments c WHERE c.author_id=u.id AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state='pending'))
+                + (SELECT COUNT(*) FROM pr_reviews c WHERE c.author_id=u.id AND c.state<>'pending')
                 + (SELECT COUNT(*) FROM releases r WHERE r.author_id=u.id)
                 + (SELECT COUNT(*) FROM repositories r WHERE r.owner_kind='user' AND r.owner_user_id=u.id) AS other_contributions
         FROM users u)
@@ -255,9 +255,9 @@ pub async fn list_admin_activity_points(
             UNION ALL SELECT date(created_at),COUNT(*) FROM issue_comments,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
             UNION ALL SELECT date(created_at),COUNT(*) FROM pr_comments,window_start
-                WHERE created_at>=moment GROUP BY date(created_at)
+                WHERE created_at>=moment AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id=pr_comments.review_id AND v.state='pending') GROUP BY date(created_at)
             UNION ALL SELECT date(created_at),COUNT(*) FROM pr_reviews,window_start
-                WHERE created_at>=moment GROUP BY date(created_at)
+                WHERE created_at>=moment AND state<>'pending' GROUP BY date(created_at)
             UNION ALL SELECT date(created_at),COUNT(*) FROM releases,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
             UNION ALL SELECT date(created_at),COUNT(*) FROM repositories,window_start
@@ -309,17 +309,15 @@ pub async fn count_unbanned_admin_users(pool: &SqlitePool) -> Result<i64> {
     )
 }
 
-/// Decode the same safe left-joined author projection for discussion reads.
+/// Decode the author that discussion reads join in. The join is inner: each discussion's
+/// `author_id` is NOT NULL and references `users`, so every row has an author.
 pub(crate) fn author_display(
     row: &sqlx::sqlite::SqliteRow,
-) -> Result<Option<crate::backend::db::users::accounts::AuthorDisplay>, sqlx::Error> {
+) -> Result<crate::backend::db::users::accounts::AuthorDisplay, sqlx::Error> {
     use crate::backend::db::users::accounts::AuthorDisplay;
     use sqlx::Row;
-    let Some(id) = row.try_get::<Option<i64>, _>("display_id")? else {
-        return Ok(None);
-    };
-    Ok(Some(AuthorDisplay {
-        id,
+    Ok(AuthorDisplay {
+        id: row.try_get("display_id")?,
         username: row.try_get("display_username")?,
         avatar_file_id: row.try_get("display_avatar_file_id")?,
         display_name: row.try_get("display_name")?,
@@ -328,7 +326,7 @@ pub(crate) fn author_display(
         website: row.try_get("display_website")?,
         is_admin: row.try_get("display_is_admin")?,
         created_at: row.try_get("display_created_at")?,
-    }))
+    })
 }
 
 pub(crate) const AUTHOR_DISPLAY_COLUMNS: &str = "u.id AS display_id, u.username AS display_username, u.avatar_file_id AS display_avatar_file_id, u.display_name AS display_name, u.bio AS display_bio, u.location AS display_location, u.website AS display_website, u.is_admin AS display_is_admin, u.created_at AS display_created_at";

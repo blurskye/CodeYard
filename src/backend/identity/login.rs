@@ -4,7 +4,7 @@ use super::{
     sessions::{self, SessionContext, SessionIssueError},
     setup, AuthenticatedAccount,
 };
-use crate::backend::db::{self, users::transitions, DbPool};
+use crate::backend::db::{self, DbPool};
 
 pub struct PasswordCredentials<'a> {
     /// Username or email; admission is charged to the resolved canonical account.
@@ -68,27 +68,9 @@ pub async fn password_login(
     if !verification.valid {
         return Err(LoginError::InvalidCredentials);
     }
-    let mut user = user.ok_or(LoginError::InvalidCredentials)?;
+    let user = user.ok_or(LoginError::InvalidCredentials)?;
     if user.is_banned {
         return Err(LoginError::Banned);
-    }
-    if verification.legacy {
-        let old = user
-            .password_hash
-            .as_deref()
-            .ok_or(LoginError::InvalidCredentials)?;
-        let upgraded = passwords::hash_password(credentials.password)
-            .await
-            .map_err(LoginError::Password)?;
-        let changed =
-            transitions::compare_exchange_password(pool, user.id, old, &upgraded, false, false)
-                .await
-                .map_err(|_| LoginError::AccountUnavailable)?;
-        // A concurrent reset/rehash wins; never overwrite or issue from stale credentials.
-        if !changed {
-            return Err(LoginError::InvalidCredentials);
-        }
-        user.password_hash = Some(upgraded);
     }
     // Password authentication deliberately permits the must-change account's
     // restricted session. Ordinary resource authority remains denied elsewhere.

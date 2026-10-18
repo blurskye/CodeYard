@@ -1,6 +1,6 @@
 use crate::backend::repositories::store::{
-    BlobRange, ErrorKind, FileWrite, GitService, GitSession, MergeFailure, MergeMethod,
-    MergeRequest, PreparedFile, RepoError, RestackMove, UploadWrite, MAX_EDITOR_BYTES,
+    BlobRange, CommitFilter, ErrorKind, FileWrite, GitService, GitSession, MergeFailure,
+    MergeMethod, MergeRequest, PreparedFile, RepoError, RestackMove, UploadWrite, MAX_EDITOR_BYTES,
     MAX_UPLOAD_BYTES,
 };
 use anyhow::{ensure, Result};
@@ -13,6 +13,11 @@ use uuid::Uuid;
 pub const MAX_JSON: usize = 8 * 1024 * 1024;
 pub const MAX_BYTES: usize = 128 * 1024 * 1024;
 pub const TIMEOUT: Duration = Duration::from_secs(300);
+
+/// A first page leaves its zero offset out, so an older node answers it as before.
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operation {
@@ -59,11 +64,32 @@ pub enum Operation {
     Commits {
         git_ref: String,
         limit: usize,
+        #[serde(default, skip_serializing_if = "CommitFilter::is_empty")]
+        filter: CommitFilter,
     },
     CommitPage {
         git_ref: String,
         offset: usize,
         limit: usize,
+        #[serde(default, skip_serializing_if = "CommitFilter::is_empty")]
+        filter: CommitFilter,
+    },
+    /// Lines of the files at `git_ref` that contain `text`, as `RepoStore::search_code` finds them.
+    SearchCode {
+        git_ref: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        offset: usize,
+        limit: usize,
+    },
+    /// Commits that changed `path`, as `git log -- <path>` lists them.
+    PathCommits {
+        git_ref: String,
+        path: String,
+        offset: usize,
+        limit: usize,
+        #[serde(default, skip_serializing_if = "CommitFilter::is_empty")]
+        filter: CommitFilter,
     },
     Commit {
         revision: String,
@@ -79,6 +105,12 @@ pub enum Operation {
     Diff {
         base_ref: String,
         head_ref: String,
+    },
+    /// Commits reachable from `head_ref` but not from `base_ref`, newest first.
+    CommitsBetween {
+        base_ref: String,
+        head_ref: String,
+        limit: usize,
     },
     DiffFile {
         base_ref: String,
@@ -114,6 +146,11 @@ pub enum Operation {
     IsAncestor {
         ancestor: String,
         descendant: String,
+    },
+    /// Each head's divergence from `base` and the time of its commit, for the branch list.
+    BranchStatuses {
+        base: String,
+        heads: Vec<String>,
     },
     ResolveCiCommit {
         reference: String,
@@ -225,9 +262,12 @@ impl Operation {
             | Self::BlobById { .. }
             | Self::Commits { .. }
             | Self::CommitPage { .. }
+            | Self::SearchCode { .. }
+            | Self::PathCommits { .. }
             | Self::Commit { .. }
             | Self::CommitDiff { .. }
             | Self::Diff { .. }
+            | Self::CommitsBetween { .. }
             | Self::DiffFile { .. }
             | Self::Refs
             | Self::Info
@@ -237,7 +277,8 @@ impl Operation {
             | Self::Languages { .. }
             | Self::FilePaths { .. }
             | Self::Blame { .. }
-            | Self::Contributors => true,
+            | Self::Contributors
+            | Self::BranchStatuses { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,
             Self::Exists
@@ -408,13 +449,15 @@ mod tests {
             operation,
             Operation::Commits {
                 git_ref,
-                limit: 30
+                limit: 30,
+                ..
             } if git_ref == "main"
         ));
         assert_eq!(
             serde_json::to_value(Operation::Commits {
                 git_ref: "main".into(),
                 limit: 30,
+                filter: Default::default(),
             })
             .unwrap(),
             serde_json::json!({"Commits": {"git_ref": "main", "limit": 30}})
@@ -424,12 +467,28 @@ mod tests {
                 git_ref: "main".into(),
                 offset: 30,
                 limit: 30,
+                filter: Default::default(),
             })
             .unwrap(),
             serde_json::json!({
                 "CommitPage": {"git_ref": "main", "offset": 30, "limit": 30}
             })
         );
+    }
+
+    #[test]
+    fn code_search_is_a_read_that_a_replica_copy_may_answer() {
+        let operation = Operation::SearchCode {
+            git_ref: "main".into(),
+            text: "needle".into(),
+            offset: 0,
+            limit: 5,
+        };
+        assert_eq!(
+            serde_json::to_value(&operation).unwrap(),
+            serde_json::json!({"SearchCode": {"git_ref": "main", "text": "needle", "limit": 5}})
+        );
+        assert!(operation.is_read_only());
     }
 
     #[test]

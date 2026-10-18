@@ -488,7 +488,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn builtin_auth_rejects_legacy_ambiguity_and_rechecks_account_and_key_state() {
+    async fn builtin_auth_rechecks_account_and_key_state() {
         use russh::server::Handler;
         let native = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -498,9 +498,6 @@ mod tests {
         let pool = DbPool::from(native.clone());
         crate::backend::db::run_migrations(&pool).await.unwrap();
         let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
-            .await
-            .unwrap();
-        let other = crate::backend::db::users::accounts::create_user(&pool, "bob", None)
             .await
             .unwrap();
         let public =
@@ -524,27 +521,6 @@ mod tests {
             Auth::Accept
         ));
         assert_eq!(handler.user.as_ref().unwrap().id, owner.id);
-        sqlx::query("INSERT INTO ssh_keys(user_id,name,fingerprint,public_key,key_type) SELECT ?1,'legacy copy',fingerprint,public_key,key_type FROM ssh_keys WHERE id = ?2")
-            .bind(other.id).bind(key.id).execute(&native).await.unwrap();
-        sqlx::query("UPDATE users SET is_banned = TRUE WHERE id = ?1")
-            .bind(other.id)
-            .execute(&native)
-            .await
-            .unwrap();
-        assert!(matches!(
-            handler.auth_publickey("git", &public).await.unwrap(),
-            Auth::Reject { .. }
-        ));
-        assert!(handler.user.is_none() && handler.key_id.is_none());
-        sqlx::query("DELETE FROM ssh_keys WHERE user_id = ?1")
-            .bind(other.id)
-            .execute(&native)
-            .await
-            .unwrap();
-        assert!(matches!(
-            handler.auth_publickey("git", &public).await.unwrap(),
-            Auth::Accept
-        ));
         for column in ["is_banned", "must_change_password"] {
             sqlx::query(&format!("UPDATE users SET {column} = TRUE WHERE id = ?1"))
                 .bind(owner.id)

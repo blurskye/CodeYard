@@ -87,24 +87,33 @@ pub(crate) const COMMENTS_PER_PAGE: usize = 30;
 /// The last discussion page a URL can name.
 pub(crate) const MAX_COMMENT_PAGE: usize = 1_000;
 
-/// The discussion page and anchor of a comment that is already saved. If its position
-/// cannot be read, keep the anchor without turning a successful write into an error that
-/// invites a duplicate retry.
-pub(crate) fn comment_link(base: &str, id: i64, position: anyhow::Result<i64>) -> String {
-    let page = match position {
+/// The discussion page that holds the item at `position`, counted from 1 in the order the
+/// discussion lists it. If the position cannot be read, the first page is named, so a successful
+/// write does not turn into an error that invites a duplicate retry.
+pub(crate) fn discussion_page(position: anyhow::Result<i64>) -> usize {
+    match position {
         Ok(position) => (position as usize)
             .div_ceil(COMMENTS_PER_PAGE)
             .clamp(1, MAX_COMMENT_PAGE),
         Err(error) => {
-            tracing::warn!(%error, "Comment saved but its discussion page is unknown");
+            tracing::warn!(%error, "Saved discussion item has an unknown page");
             1
         }
-    };
-    if page == 1 {
-        format!("{base}#comment-{id}")
-    } else {
-        format!("{base}?page={page}#comment-{id}")
     }
+}
+
+/// The link to `anchor` on discussion `page` of `base`.
+pub(crate) fn discussion_link(base: &str, page: usize, anchor: &str) -> String {
+    if page == 1 {
+        format!("{base}#{anchor}")
+    } else {
+        format!("{base}?page={page}#{anchor}")
+    }
+}
+
+/// The discussion page and anchor of a comment that is already saved.
+pub(crate) fn comment_link(base: &str, id: i64, position: anyhow::Result<i64>) -> String {
+    discussion_link(base, discussion_page(position), &format!("comment-{id}"))
 }
 
 pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
@@ -176,6 +185,10 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
         Some(DiscussionWriteRefusal::InvalidReview) => OperationError::Conflict {
             code: "conflict",
             message: "The pull request no longer accepts this review".into(),
+        },
+        Some(DiscussionWriteRefusal::ReviewFull) => OperationError::Invalid {
+            code: "validation_error",
+            message: "A review holds at most 200 comments.".into(),
         },
         None => OperationError::Unavailable {
             code: "database_error",

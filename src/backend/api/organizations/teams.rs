@@ -2,12 +2,12 @@
 
 use super::organization;
 use super::organization::{invalid, not_found, unavailable, Fields, INVALID_FORM};
-use crate::backend::api::context::PageContext;
+use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::*;
 use crate::webui::app::Page;
-use crate::webui::pages::organizations as view;
+use crate::webui::pages::orgs as view;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -253,10 +253,6 @@ pub(super) async fn detail(
         Err(_) => return Err(unavailable(ctx)),
     }
     .ok_or_else(|| not_found(ctx))?;
-    // Legacy hierarchy is unsupported, not a parent ID to expose or repair.
-    if selected.team.parent_team_id.is_some() {
-        return Err(not_found(ctx));
-    }
     let (members_cursor, member_page) =
         organization::cursor(ctx, "team_members_after").ok_or_else(|| invalid(ctx))?;
     let (repositories_cursor, repo_page) =

@@ -1,6 +1,6 @@
-use crate::backend::api::error::ApiError;
-use crate::backend::api::repos::responses::RepoResponse;
-use crate::backend::api::session::get_optional_user;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_optional_user;
+use crate::backend::api::repos::responses::{repository_topics, RepoResponse};
 use crate::backend::app::AppState;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -32,6 +32,8 @@ pub async fn list_user_repos(
             )),
         ),
     })?;
+    let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
+    let mut topics = repository_topics(&state.pool, &ids).await?;
     let mut responses = Vec::new();
     for repository in repos {
         responses.push(RepoResponse {
@@ -41,6 +43,8 @@ pub async fn list_user_repos(
             name: repository.name.clone(),
             full_name: format!("{}/{}", username, repository.name),
             description: repository.description,
+            website: repository.website,
+            topics: topics.remove(&repository.id).unwrap_or_default(),
             is_private: repository.is_private,
             is_archived: repository.is_archived,
             allow_merge_commit: repository.allow_merge_commit,

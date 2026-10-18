@@ -64,6 +64,7 @@ pub fn DraftTextarea(
     #[props(default)] required: bool,
     #[props(default)] readonly: bool,
     #[props(default)] maxlength: Option<u32>,
+    #[props(default)] placeholder: String,
     // A draft restored in this browser. It replaces the server text once the page
     // hydrates, unless the user typed in the field before hydration. A caller that passes
     // its own draft keeps it itself, so this field then stores nothing.
@@ -91,7 +92,7 @@ pub fn DraftTextarea(
     let mut submit_clear = use_signal(|| None::<draft_text::SubmitClear>);
     let mut value = use_signal(move || initial_value);
     rsx! {
-        textarea { name, id, class, rows, required, readonly, maxlength,
+        textarea { name, id, class, rows, required, readonly, maxlength, placeholder,
             dangerous_inner_html: native_text(),
             value: value(),
             onscroll: move |event| on_scroll.call(event),
@@ -560,6 +561,24 @@ pub fn DraftSelect(
             }
         }
     }
+}
+
+/// Submits the form `id` as if its submit button were pressed. Filters use it to apply a
+/// choice at once once the page hydrates; without scripts the submit button does the job.
+pub fn submit_form(id: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast;
+        let form = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id(id))
+            .and_then(|element| element.dyn_into::<web_sys::HtmlFormElement>().ok());
+        if let Some(form) = form {
+            let _ = form.request_submit();
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = id;
 }
 
 /// Sets the native select `id` to `value` and sends the events a user's choice would.

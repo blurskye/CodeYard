@@ -51,9 +51,8 @@ Cluster mode needs PostgreSQL. SQLite runs a single node, and `codeyard db copy`
 database between the two while the server is stopped. Node roles, below, split web, SSH,
 storage and CI across separate machines.
 
-If an existing installation keeps its `gitserv.db` directly in `/data`, run it with
-`GITSERV_STATE_DIR=/data`. Nothing is moved automatically; an empty default location
-would start a new, empty database.
+`GITSERV_STATE_DIR` chooses where `gitserv.db` and uploads are kept. The container default
+is `/data/state`; set `GITSERV_STATE_DIR=/data` to put `gitserv.db` directly in `/data`.
 
 ## Node roles and CI
 

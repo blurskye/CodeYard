@@ -1,5 +1,6 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{Issue, Repository, User};
+use crate::backend::db::models::{Issue, PullRequest, Repository, User};
+use crate::backend::db::repositories::records::RepositorySort;
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
@@ -65,18 +66,90 @@ impl<'a> RepositorySearch<'a> {
     }
 }
 
+/// The `ORDER BY` terms of a repository search. Each list ends with the id, so a page never
+/// repeats or skips a repository.
+pub fn repository_order_by(sort: RepositorySort) -> &'static str {
+    match sort {
+        RepositorySort::Stars => "r.stars_count DESC, r.updated_at DESC, r.id DESC",
+        RepositorySort::Forks => "r.forks_count DESC, r.updated_at DESC, r.id DESC",
+        RepositorySort::Updated => "r.updated_at DESC, r.id DESC",
+        RepositorySort::Recent => "r.created_at DESC, r.id DESC",
+    }
+}
+
+/// The order of an issue or pull request search. `Updated` is the best-match default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ItemSort {
+    #[default]
+    Updated,
+    Newest,
+    Oldest,
+}
+
+impl ItemSort {
+    /// The `ORDER BY` terms for rows of the table aliased `alias`.
+    pub fn order_by(self, alias: &str) -> String {
+        match self {
+            Self::Updated => format!("{alias}.updated_at DESC, {alias}.id DESC"),
+            Self::Newest => format!("{alias}.created_at DESC, {alias}.id DESC"),
+            Self::Oldest => format!("{alias}.created_at ASC, {alias}.id ASC"),
+        }
+    }
+}
+
+// Each count stops at `cap`, so a count equal to `cap` means at least that many matches.
+// Searches are scoped to what `viewer` can read. `None` is an anonymous search, which sees public
+// repositories only. Each search and its count apply the same condition, so a page and its total
+// agree, and the sort and paging happen in the database over every match.
 native_operation!(crate::backend::db::postgres::repositories::discovery::search_repositories,
     crate::backend::db::sqlite::repositories::discovery::search_repositories,
     fn search_repositories(
     pool: &DbPool,
+    viewer: Option<i64>,
     query: &str,
+    sort: RepositorySort,
+    offset: i64,
     limit: i64,
 ) -> Result<Vec<Repository>>);
 
+native_operation!(crate::backend::db::postgres::repositories::discovery::count_repositories,
+    crate::backend::db::sqlite::repositories::discovery::count_repositories,
+    fn count_repositories(pool: &DbPool, viewer: Option<i64>, query: &str, cap: i64) -> Result<i64>);
+
 native_operation!(crate::backend::db::postgres::repositories::discovery::search_issues,
     crate::backend::db::sqlite::repositories::discovery::search_issues,
-    fn search_issues(pool: &DbPool, query: &str, limit: i64) -> Result<Vec<Issue>>);
+    fn search_issues(
+    pool: &DbPool,
+    viewer: Option<i64>,
+    query: &str,
+    sort: ItemSort,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Issue>>);
+
+native_operation!(crate::backend::db::postgres::repositories::discovery::count_issues,
+    crate::backend::db::sqlite::repositories::discovery::count_issues,
+    fn count_issues(pool: &DbPool, viewer: Option<i64>, query: &str, cap: i64) -> Result<i64>);
+
+native_operation!(crate::backend::db::postgres::repositories::discovery::search_pull_requests,
+    crate::backend::db::sqlite::repositories::discovery::search_pull_requests,
+    fn search_pull_requests(
+    pool: &DbPool,
+    viewer: Option<i64>,
+    query: &str,
+    sort: ItemSort,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<PullRequest>>);
+
+native_operation!(crate::backend::db::postgres::repositories::discovery::count_pull_requests,
+    crate::backend::db::sqlite::repositories::discovery::count_pull_requests,
+    fn count_pull_requests(pool: &DbPool, viewer: Option<i64>, query: &str, cap: i64) -> Result<i64>);
 
 native_operation!(crate::backend::db::postgres::repositories::discovery::search_users,
     crate::backend::db::sqlite::repositories::discovery::search_users,
-    fn search_users(pool: &DbPool, query: &str, limit: i64) -> Result<Vec<User>>);
+    fn search_users(pool: &DbPool, query: &str, offset: i64, limit: i64) -> Result<Vec<User>>);
+
+native_operation!(crate::backend::db::postgres::repositories::discovery::count_users,
+    crate::backend::db::sqlite::repositories::discovery::count_users,
+    fn count_users(pool: &DbPool, query: &str, cap: i64) -> Result<i64>);

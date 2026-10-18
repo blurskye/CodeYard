@@ -34,15 +34,7 @@ pub async fn upsert_branch_protection_rule(
         .await?,
         ProtectionWriteRefusal::Denied
     );
-    // A rule that is already saved keeps its pattern, even the 255-character legacy form.
-    let existing: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM branch_protection_rules WHERE repo_id = ?1 AND pattern = ?2)",
-    )
-    .bind(input.repo_id)
-    .bind(input.pattern)
-    .fetch_one(&mut *tx)
-    .await?;
-    crate::backend::db::repositories::protection::validate_branch_pattern(input.pattern, existing)?;
+    crate::backend::db::repositories::protection::validate_branch_pattern(input.pattern)?;
     let rule = sqlx::query_as::<_, BranchProtectionRule>(
         r#"
         INSERT INTO branch_protection_rules (
@@ -184,19 +176,13 @@ pub async fn list_commit_statuses(
     repo_id: i64,
     sha: &str,
 ) -> Result<Vec<CommitStatus>> {
+    // Writers store lowercase SHAs, so a request for any case is lowercased to match them.
+    let sha = sha.to_ascii_lowercase();
     let statuses = sqlx::query_as::<_, CommitStatus>(
-        r#"SELECT id, repo_id, LOWER(sha) AS sha, context, state, description, target_url,
+        r#"SELECT id, repo_id, sha, context, state, description, target_url,
                   creator_id, created_at, updated_at
-           FROM commit_statuses AS status
-           WHERE repo_id = ?1 AND LOWER(sha) = LOWER(?2)
-             AND NOT EXISTS (
-                 SELECT 1 FROM commit_statuses AS newer
-                 WHERE newer.repo_id = status.repo_id
-                   AND LOWER(newer.sha) = LOWER(status.sha)
-                   AND newer.context = status.context
-                   AND (newer.updated_at > status.updated_at
-                        OR (newer.updated_at = status.updated_at AND newer.id > status.id))
-             )
+           FROM commit_statuses
+           WHERE repo_id = ?1 AND sha = ?2
            ORDER BY context"#,
     )
     .bind(repo_id)

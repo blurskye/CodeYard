@@ -6,7 +6,7 @@ pub mod workflows;
 pub mod ws;
 
 use crate::backend::{
-    api::{csrf, error::ApiError, middleware},
+    api::{http::csrf, http::error::ApiError, http::middleware},
     app::AppState,
     ci::admission::AdmissionError,
 };

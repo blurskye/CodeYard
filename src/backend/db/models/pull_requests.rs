@@ -50,6 +50,8 @@ pub struct PullRequestComment {
     /// Set on a review conversation (a root comment on a file) that someone resolved.
     pub resolved_at: Option<DateTime<Utc>>,
     pub resolved_by_id: Option<i64>,
+    /// The review the comment was filed in; None for a comment posted on its own.
+    pub review_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]

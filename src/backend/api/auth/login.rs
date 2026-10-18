@@ -1,20 +1,24 @@
 use crate::backend::api::auth::errors;
 use crate::backend::api::auth::session::LoginSessionRequest;
 use crate::backend::api::auth::setup::configured_admin_secret;
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::user::responses::{
     api_error, field, optional_field, public_api_message, safe_redirect, within_bounds, ApiFailure,
     AuthResponse, AuthUserResponse as UserResponse, Fields,
 };
-use crate::backend::api::{auth, session};
+use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::identity;
 use crate::backend::identity::credentials::PasswordAccount;
 use crate::backend::identity::login::PasswordCredentials;
 use crate::backend::identity::registration::RegistrationOutcome;
 use crate::backend::identity::setup::SetupInput;
-use crate::webui::pages::identity as view;
+use crate::webui::pages::{
+    account,
+    auth::AuthMode,
+    fields::{preserved_values, FormValues},
+};
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -57,12 +61,12 @@ pub async fn login(
     ))
 }
 
-pub(crate) fn auth_mode(path: &str, mode: Option<&str>) -> view::AuthMode {
+pub(crate) fn auth_mode(path: &str, mode: Option<&str>) -> AuthMode {
     match path {
-        "/setup" => view::AuthMode::Setup,
-        "/register" => view::AuthMode::Register,
-        "/enter" if mode == Some("signup") => view::AuthMode::Register,
-        _ => view::AuthMode::Login,
+        "/setup" => AuthMode::Setup,
+        "/register" => AuthMode::Register,
+        "/enter" if mode == Some("signup") => AuthMode::Register,
+        _ => AuthMode::Login,
     }
 }
 
@@ -103,16 +107,16 @@ pub(crate) async fn auth_get(
         Ok(setup) => setup,
         Err(_) => return api_error(&ctx, auth::errors::database_failure()),
     };
-    if !setup.setup_completed && mode != view::AuthMode::Setup {
+    if !setup.setup_completed && mode != AuthMode::Setup {
         return ctx.redirect("/setup");
     }
-    if setup.setup_completed && mode == view::AuthMode::Setup {
+    if setup.setup_completed && mode == AuthMode::Setup {
         return ctx.error(
             StatusCode::CONFLICT,
             "Node setup is already complete, so sign in with the account created during setup.",
         );
     }
-    if ctx.user.is_some() && mode != view::AuthMode::Setup {
+    if ctx.user.is_some() && mode != AuthMode::Setup {
         return ctx.redirect(&redirect);
     }
     let message = if ctx.query.get("signup").map(String::as_str) == Some("requested") {
@@ -122,11 +126,11 @@ pub(crate) async fn auth_get(
     };
     ctx.page_model(
         mode.title(),
-        crate::webui::app::Page::Identity(view::Page::Auth {
+        crate::webui::app::Page::Identity(account::Page::Auth {
             mode,
             action: uri.path().to_owned(),
             csrf_token: ctx.csrf_token.clone(),
-            values: view::FormValues::default(),
+            values: FormValues::default(),
             private: setup.node_mode == "private",
             providers: auth_providers(),
             redirect,
@@ -136,9 +140,26 @@ pub(crate) async fn auth_get(
     )
 }
 
+/// The page behind "Forgot password?". It says how a password is recovered and changes nothing.
+pub(crate) async fn password_help_get(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let redirect = safe_redirect(ctx.query.get("redirect").map(String::as_str));
+    ctx.page_model(
+        "Forgot your password?",
+        crate::webui::app::Page::Identity(account::Page::PasswordHelp { redirect }),
+    )
+}
+
 pub(crate) async fn auth_failure(
     ctx: &PageContext,
-    mode: view::AuthMode,
+    mode: AuthMode,
     action: &str,
     form: &Fields,
     status: StatusCode,
@@ -152,11 +173,11 @@ pub(crate) async fn auth_failure(
     ctx.page_model_status(
         status,
         mode.title(),
-        crate::webui::app::Page::Identity(view::Page::Auth {
+        crate::webui::app::Page::Identity(account::Page::Auth {
             mode,
             action: action.to_owned(),
             csrf_token: ctx.csrf_token.clone(),
-            values: view::preserved_values(form),
+            values: preserved_values(form),
             private: setup.node_mode == "private",
             providers: auth_providers(),
             redirect,
@@ -202,8 +223,7 @@ pub(crate) async fn auth_post(
         )
         .await;
     }
-    if mode != view::AuthMode::Login && field(&form, "password") != field(&form, "confirm_password")
-    {
+    if mode != AuthMode::Login && field(&form, "password") != field(&form, "confirm_password") {
         return auth_failure(
             &ctx,
             mode,
@@ -225,7 +245,7 @@ pub(crate) async fn auth_post(
         password: field(&form, "password"),
     };
     let result: Result<Option<String>, ApiFailure> = match mode {
-        view::AuthMode::Login => identity::login::password_login(
+        AuthMode::Login => identity::login::password_login(
             &ctx.state.pool,
             PasswordCredentials {
                 identity: account.username,
@@ -236,7 +256,7 @@ pub(crate) async fn auth_post(
         .await
         .map(|authenticated| Some(authenticated.session_id))
         .map_err(auth::errors::login_failure),
-        view::AuthMode::Register => identity::registration::register_password(
+        AuthMode::Register => identity::registration::register_password(
             &ctx.state.pool,
             account,
             session_request.context(),
@@ -247,7 +267,7 @@ pub(crate) async fn auth_post(
             RegistrationOutcome::Requested => None,
         })
         .map_err(auth::errors::registration_failure),
-        view::AuthMode::Setup => {
+        AuthMode::Setup => {
             let supplied_secret = optional_field(&form, "admin_secret");
             let expected_secret = configured_admin_secret();
             identity::setup::complete_setup(
@@ -426,9 +446,10 @@ mod tests {
             created_at: now,
             updated_at: now,
         };
-        let page = view::Page::Profile {
+        let page = account::Page::Profile {
             profile: profile_model(&user),
             repositories: vec![],
+            repository_count: 0,
             csrf_token: "csrf".into(),
             own: false,
             authenticated: false,
@@ -437,6 +458,7 @@ mod tests {
             follows: 0,
             message: None,
             activity: Default::default(),
+            stars: Default::default(),
         };
         let json = serde_json::to_string(&page).expect("safe public profile");
         assert!(json.contains("Public biography"));
@@ -472,11 +494,8 @@ mod tests {
             "username".into(),
             "x".repeat(1025)
         )])));
-        assert_eq!(
-            auth_mode("/enter", Some("signup")),
-            view::AuthMode::Register
-        );
-        assert_eq!(auth_mode("/login", Some("signup")), view::AuthMode::Login);
-        assert_eq!(auth_mode("/setup", None), view::AuthMode::Setup);
+        assert_eq!(auth_mode("/enter", Some("signup")), AuthMode::Register);
+        assert_eq!(auth_mode("/login", Some("signup")), AuthMode::Login);
+        assert_eq!(auth_mode("/setup", None), AuthMode::Setup);
     }
 }

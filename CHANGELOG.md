@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.2
+
+- **New interface:** a header with the page context (Dashboard, or owner / repo with the
+  repository tabs inside it), a "+" menu, Issues, Pull requests, Repositories and Inbox buttons,
+  and a user menu. Actions say what they do with icons and tooltips, in light and dark themes.
+- **Files:** the file view has a Files panel, an icon toolbar, a commit bar with History, a
+  branch switcher, permalinks and an outline menu. Folder pages share the layout, and history
+  can be limited to a path.
+- **Issues and pull requests:** GitHub-style lists with search, filter menus and sorting; a
+  labels page with colours; label, milestone, assignee and reviewer pickers; a pull request
+  Files tab; and a merge box that lists what blocks the merge.
+- **Dashboard and accounts:** work cards for your issues and pull requests, a profile without
+  the About tab, grouped settings, and an admin overview with statistics over 7, 30, 90 or 180
+  days.
+- **Search:** every result type covers the repositories you can read, private and organization
+  ones included, pages through its results and shows totals on its tab, and sorts across all of
+  its matches. Code and commit search walks the most recently updated repositories first. A
+  search that runs out of time or repository size says how far it got, names the repositories it
+  could not read, and `repo:`, `user:` or `org:` narrow it.
+- **Fixed:** a Git push or a web save no longer fails when the branch activity entry cannot be
+  recorded, for example with a very long branch name or a busy database.
+- **Database:** the schema history is one baseline per database. A database created by an
+  earlier build is refused at start-up and is not upgraded in place.
+- **Source layout:** tests are grouped by area, and the API and web page folders now follow the
+  same URL names.
+
 ## 0.1.1 - first public release
 
 Codeyard is a self-hosted Git forge in one Rust application. Pages render on the server

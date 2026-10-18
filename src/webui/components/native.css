@@ -18,6 +18,7 @@
 :root {
   color-scheme: dark;
   --site-header-height: 52px;
+  --repo-tabs-height: 44px;
   --background: #0d1117;
   --foreground: #f0f6fc;
   --card: #161b22;
@@ -368,9 +369,17 @@ body {
   aspect-ratio: 1;
   object-fit: contain;
 }
-.site-brand-name { font-size: 14px; font-weight: 650; letter-spacing: -.01em; }
+.site-context { display: inline-flex; min-width: 0; align-items: center; gap: 6px; color: var(--foreground); font-size: 14px; font-weight: 600; }
+.site-context-link { min-width: 0; overflow: hidden; color: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.site-context-link:hover { text-decoration: underline; }
+.site-context-repo { font-weight: 700; }
+.site-context-slash { color: var(--muted-foreground); font-weight: 400; }
+/* The repository name is the page heading. The reset keeps the text in the crumb's size and weight. */
+.site-context-heading { display: inline-flex; min-width: 0; margin: 0; font: inherit; }
+.site-context-heading > .site-context-link { min-width: 0; }
 .site-header-spacer { flex: 1; min-width: 0; }
 .site-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.site-header-divider { flex-shrink: 0; width: 1px; height: 20px; background: var(--border); }
 .site-icon-button, .site-profile-button {
   display: inline-flex;
   align-items: center;
@@ -380,37 +389,32 @@ body {
   height: 32px;
   min-height: 32px;
   padding: 0;
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: var(--radius);
   background: transparent;
   color: var(--muted-foreground);
   text-decoration: none;
   cursor: pointer;
+  position: relative;
 }
 .site-icon-button:hover, .native-menu[open] > .site-icon-button {
-  border-color: var(--muted-foreground);
   background: var(--accent);
   color: var(--foreground);
 }
 .site-profile-button { border: 0; border-radius: 50%; color: var(--foreground); }
 .site-profile-button:hover, .native-menu[open] > .site-profile-button { background: var(--accent); }
-.site-user-glyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border);
-  border-radius: 50%;
-  background: var(--muted);
-  color: var(--muted-foreground);
-}
-.site-user-glyph svg { width: 16px; height: 16px; }
-.site-search { position: relative; flex: 0 1 360px; min-width: 180px; margin: 0; }
+.site-create-menu > summary { width: auto; gap: 2px; padding: 0 6px; }
+.site-create-menu > summary svg:last-child { width: 12px; height: 12px; }
+.site-icon-button, .site-profile-button { transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
+.site-search { position: relative; flex: 0 1 270px; min-width: 180px; margin: 0; }
 /* The phone search: a button that opens the same form. Hidden on wider screens. */
 .site-search-disclosure { display: none; }
 .site-search-disclosure > summary { list-style: none; }
 .site-search-disclosure > summary::-webkit-details-marker { display: none; }
+/* The summary shows the search icon; while the phone sheet is open it shows the close icon instead. */
+.site-search-close-icon { display: none; }
+.site-nav-open-icon, .site-nav-close-icon { display: inline-flex; }
+.site-nav-close-icon { display: none; }
 .site-search-input {
   display: block;
   width: 100%;
@@ -421,7 +425,9 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-size: 13px;
+  transition: border-color .12s ease;
 }
+.site-search-input:hover { border-color: var(--muted-foreground); }
 .site-search-input::placeholder { color: var(--muted-foreground); }
 .site-search-submit {
   position: absolute;
@@ -439,6 +445,28 @@ body {
   color: var(--muted-foreground);
 }
 .site-search-submit:hover { background: var(--accent); color: var(--foreground); }
+/* The "/" hint sits inside the box until the box is focused or holds text. It fades rather than
+   leaving the layout, so the box keeps its size. */
+.site-search-key {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted-foreground);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  line-height: 1;
+  pointer-events: none;
+  transition: opacity .12s ease;
+}
+.site-search-input:is(:focus, :not(:placeholder-shown)) ~ .site-search-key { opacity: 0; }
 .site-auth-link {
   padding: 5px 8px;
   border-radius: 6px;
@@ -453,11 +481,112 @@ body {
   outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
+/* Icon-only controls name themselves in a tooltip under them, on hover and keyboard focus. The
+   text is the aria-label, so these controls carry no title attribute, which would show a second
+   tooltip. The control must be positioned; the header buttons and the search submit are. The
+   tooltip exists only while it shows, so a hidden one takes no space. */
+@media (hover: hover) {
+  .icon-tooltip:is(:hover, :focus-visible)::after {
+    content: attr(aria-label);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    z-index: 70;
+    width: max-content;
+    max-width: 240px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--popover);
+    color: var(--popover-foreground);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--shadow-color) 25%, transparent);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 16px;
+    text-align: left;
+    pointer-events: none;
+    transform: translateX(-50%);
+    animation: icon-tooltip-in .12s ease-out;
+  }
+  .icon-tooltip-start:is(:hover, :focus-visible)::after { left: 0; transform: none; }
+  .icon-tooltip-end:is(:hover, :focus-visible)::after { left: auto; right: 0; transform: none; }
+  .native-menu[open] > .icon-tooltip::after { content: none; }
+}
+@keyframes icon-tooltip-in {
+  from { opacity: 0; }
+}
+/* Repository tabs share the header band: one background, one bottom border under the tab row.
+   The active underline sits on that border. */
+.site-header .repo-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: -1px;
+  padding: 0 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.site-header .repo-tabs::-webkit-scrollbar { display: none; }
+.repo-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 10px 12px 12px;
+  border-bottom: 2px solid transparent;
+  color: var(--foreground);
+  line-height: 20px;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: border-color .15s ease, background-color .15s ease, color .15s ease;
+}
+.site-header .repo-tab:focus-visible { outline-offset: -2px; }
+.repo-tab .repo-icon { width: 15px; height: 15px; color: var(--muted-foreground); }
+.repo-tab:hover { background: var(--accent); border-bottom-color: var(--border); text-decoration: none !important; }
+.repo-tab-active, .repo-tab-active:hover { border-bottom-color: #fd8c73; font-weight: 600; }
+.repo-tab-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 2em; background: var(--secondary); color: var(--foreground); font-size: 12px; font-weight: 500; line-height: 1; font-variant-numeric: tabular-nums; }
+/* The tabs and the More menu form one strip. Watch, Fork and Star follow it on the same row, and the
+   strip takes the width they leave. Each secondary tab sits in the strip while there is room for it and
+   is listed in the More menu while there is not, so the menu button shows only when a tab is hidden.
+   The widths below are the tab widths plus a margin for longer counts. */
+.site-header .repo-tab-bar { display: flex; flex-wrap: wrap; align-items: center; }
+.repo-tab-strip { display: flex; flex: 1 1 0; min-width: 0; align-items: stretch; container-type: inline-size; }
+.site-header .repo-tab-strip > .repo-tabs { flex: 1 1 auto; min-width: 0; }
+.site-header .repo-tab-bar > .repo-engagement { flex: none; margin: 6px 16px 6px auto; }
+.repo-tabs-secondary { display: contents; }
+.repo-tabs-secondary > .repo-tab { display: none; }
+.repo-tabs-more { display: flex; flex: none; }
+.site-header .repo-tabs-more > .native-menu-panel { position: absolute; top: calc(100% + 8px); right: 0; left: auto; }
+.repo-tabs-more-current, .repo-tabs-more-current:hover { border-bottom-color: #fd8c73; font-weight: 600; }
+@media (max-width: 767px) {
+  .site-header .repo-tab-bar { margin-bottom: -1px; }
+  .site-header .repo-tab-strip > .repo-tabs { margin-bottom: 0; }
+  .site-header .repo-tabs { padding-right: 8px; }
+}
+/* Tab n joins the strip at its width and leaves the menu; the last one also removes the menu button.
+   Without a Settings tab the last tab is Tags and the button goes at its width. */
+@container (min-width: 588px) { .repo-tabs-secondary > .repo-tab:nth-child(1) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(1) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(1)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 700px) { .repo-tabs-secondary > .repo-tab:nth-child(2) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(2) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(2)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 814px) { .repo-tabs-secondary > .repo-tab:nth-child(3) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(3) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(3)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 845px) { .repo-tab-strip:not(:has(.repo-tabs-secondary > :nth-child(5))) .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tab-strip:not(:has(.repo-tabs-secondary > :nth-child(5))) .repo-tabs-more { display: none; } }
+@container (min-width: 897px) { .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(4) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(4)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 950px) { .repo-tabs-secondary > .repo-tab:nth-child(5) { display: inline-flex; } .repo-tabs-more { display: none; } }
+@media (max-width: 640px) {
+  .site-header .repo-tabs { gap: 0; padding-left: 12px; padding-right: 0; }
+  .site-header .repo-tab-bar > .repo-engagement { margin-right: 12px; }
+  .repo-tab { padding-left: 6px; padding-right: 6px; font-size: 13px; }
+  .site-header .repo-tabs .repo-tab > .repo-icon { display: none; }
+}
 
 .native-menu { position: relative; }
 .native-menu > summary { list-style: none; }
 .native-menu > summary::-webkit-details-marker { display: none; }
 .native-menu > summary::marker { content: ""; }
+/* Every part of an open menu after its summary fades and slides in briefly. */
+.native-menu[open] > :not(summary) { animation: native-menu-in .14s ease-out; }
+@keyframes native-menu-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
 .native-menu-panel {
   position: absolute;
   right: 0;
@@ -476,6 +605,8 @@ body {
   box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 30%, transparent);
 }
 .site-navigation > .native-menu-panel { left: 0; right: auto; }
+/* A panel clips its corners, which would also clip a select's list opened inside it. */
+.native-menu-panel:has(.app-select-list) { overflow: visible; }
 .site-menu-heading {
   display: flex;
   flex-direction: column;
@@ -490,7 +621,9 @@ body {
 .site-menu-links { padding: 6px; }
 .site-menu-links > .site-menu-heading { margin: -6px -6px 6px; }
 .site-menu-link {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   padding: 6px 10px;
   border: 0;
@@ -502,10 +635,16 @@ body {
   text-decoration: none;
 }
 .site-menu-link:hover { background: var(--accent); color: var(--foreground); }
+.site-menu-link > svg { flex-shrink: 0; color: var(--muted-foreground); }
+.site-menu-link:hover > svg { color: var(--foreground); }
+.site-menu-divider { height: 1px; margin: 6px -6px; border: 0; background: var(--border); }
 .site-signout-form { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid var(--border); }
 .site-theme-toggle { position: relative; margin: 0; }
 .site-theme-toggle .site-icon-button svg { width: 16px; height: 16px; }
-.site-theme-error:not(:empty) {
+/* Menu rows that only a phone shows: the inbox and the theme button, which the header keeps as
+   icons on wider screens. */
+.site-menu-phone, .site-theme-menu { display: none; }
+.site-theme-toggle:not(.site-theme-menu) > .site-theme-error:not(:empty) {
   position: absolute;
   z-index: 60;
   top: calc(100% + 8px);
@@ -520,6 +659,8 @@ body {
   font-size: 12px;
   box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 30%, transparent);
 }
+/* In the phone menu a failed save is a line inside the panel, which clips anything outside its box. */
+.site-theme-menu > .site-theme-error:not(:empty) { display: block; padding: 4px 10px 8px; color: var(--destructive); font-size: 12px; }
 .copy-button-status:not(:empty) { margin-left: 8px; color: var(--muted-foreground); font-size: 12px; }
 .site-main { min-height: calc(100dvh - 53px); outline: none; }
 /* Route feedback must not move the persistent header or discard the current page. */
@@ -549,7 +690,7 @@ body {
 .markdown-body img { max-width: 100%; height: auto; }
 /* A heading's permalink is an empty link whose "#" glyph CSS draws; the CSP blocks inline images. It shows on hover or focus. */
 .markdown-body :is(h1, h2, h3, h4, h5, h6) { position: relative; }
-.markdown-body .heading-permalink { position: absolute; top: 50%; left: -22px; width: 16px; height: 16px; margin-top: -8px; color: var(--muted-foreground); opacity: 0; }
+.markdown-body .heading-permalink { position: absolute; top: 50%; left: -22px; width: 16px; height: 16px; margin-top: -8px; color: var(--muted-foreground); opacity: 0; transition: opacity .15s ease; }
 .markdown-body :is(h1, h2, h3, h4, h5, h6):hover > .heading-permalink, .markdown-body .heading-permalink:focus-visible { opacity: 1; }
 .markdown-body .heading-permalink:hover { color: var(--foreground); }
 /* Narrow screens have no room left of the text inside the clipping wrappers: the permalink sits at the heading's right end. */
@@ -581,8 +722,15 @@ body {
   .page-shell { padding-inline: 32px; }
 }
 @media (max-width: 900px) {
-  .site-brand-name { display: none; }
-  .site-search { flex-basis: 260px; }
+  .site-context { display: none; }
+  /* A repository page keeps its name in the band on one row. The shortcut icons move into the account
+     and navigation menus, and the search takes the width that is left. */
+  .site-header-row-repo { flex-wrap: nowrap; }
+  .site-header-row-repo .site-context { display: inline-flex; flex: 0 1 auto; min-width: 0; }
+  .site-header-row-repo .site-header-actions { flex: none; margin-left: auto; }
+  .site-header-wide, .site-header-divider { display: none; }
+  .site-menu-phone { display: flex; }
+  .site-search { flex: 1 1 180px; min-width: 120px; }
 }
 @media (max-width: 720px) {
   .settings-layout { grid-template-columns: minmax(0, 1fr); }
@@ -590,13 +738,39 @@ body {
   .app-list-row { padding-inline: 12px; }
 }
 @media (max-width: 640px) {
-  .site-header-row { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+  :root { --site-header-height: 56px; }
+  /* One 56px row: the menu, the logo or the repository crumb, then search, create and the account.
+     Everything else is in the menus. */
+  .site-header-row, .site-header-row-repo { flex-wrap: nowrap; gap: 6px; height: var(--site-header-height); min-height: var(--site-header-height); padding: 0 8px; }
   .site-header-spacer { display: block; }
-  .site-header-actions { gap: 6px; }
+  .site-header-actions, .site-header-row-repo .site-header-actions { flex: none; flex-wrap: nowrap; gap: 6px; margin-left: 0; }
   .site-search-wide { display: none; }
+  .site-header-actions > .site-theme-toggle { display: none; }
+  .site-header-row-repo .site-brand { display: none; }
+  .site-header-row-repo .site-context { flex: 1 1 auto; min-width: 0; }
+  .site-header .site-brand { min-width: 44px; min-height: 44px; justify-content: center; }
+  .site-header .site-icon-button, .site-header .site-profile-button { width: 44px; height: 44px; min-height: 44px; }
+  .site-header .site-create-menu > summary { width: auto; height: 44px; min-height: 44px; padding: 0 6px; }
   .site-search-disclosure { display: block; flex: none; }
-  .site-search-disclosure[open] { flex: 0 0 100%; order: 3; }
-  .site-search-compact { width: 100%; }
+  /* The search sheet covers the screen. Its summary stays at the top left as the close button. */
+  .site-search-disclosure[open] > .site-search-sheet { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; padding: 8px 12px 16px; background: var(--background); overflow-y: auto; }
+  .site-search-disclosure[open] > summary { position: fixed; top: 8px; left: 8px; z-index: 61; }
+  .site-search-disclosure[open] > summary .site-search-open-icon { display: none; }
+  .site-search-disclosure[open] > summary .site-search-close-icon { display: inline-flex; }
+  /* While the sheet is open, the page behind it takes no focus, so Tab stays in the sheet. The
+     sheet itself stays visible inside the hidden header. */
+  body:has(.site-search-disclosure[open]) :is(.skip-link, .site-header, .site-main) { visibility: hidden; }
+  .site-search-disclosure[open] { visibility: visible; }
+  .site-search-sheet-form { display: flex; align-items: center; gap: 8px; margin-left: 48px; }
+  .site-search-sheet-input { flex: 1 1 auto; min-width: 0; height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); color: var(--foreground); font-size: 16px; }
+  .site-search-sheet-input::placeholder { color: var(--muted-foreground); }
+  .site-search-sheet-submit { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: var(--radius); background: transparent; color: var(--muted-foreground); }
+  .site-search-scopes { margin-top: 12px; }
+  .site-search-scopes .site-menu-link { min-height: 44px; font-size: 15px; }
+  .site-search-hint { margin: 12px 0 0 48px; color: var(--muted-foreground); font-size: 14px; line-height: 20px; }
+  .site-search-row-text { display: flex; min-width: 0; flex-direction: column; }
+  .site-search-scope { color: var(--muted-foreground); font-size: 13px; }
+  .site-theme-menu { display: block; }
   .site-header .native-menu-panel {
     position: fixed;
     top: 60px;
@@ -604,9 +778,16 @@ body {
     right: 12px;
     max-width: calc(100vw - 24px);
   }
-  .site-header .site-navigation > .native-menu-panel { left: 12px; right: auto; }
+  /* The phone menu is a sheet under the header: bounded by the viewport, with a backdrop. Its
+     header icon becomes the close button, which stays above the backdrop. */
+  .site-header .site-navigation > .native-menu-panel { top: var(--site-header-height); bottom: 0; left: 0; right: auto; width: min(320px, 86vw); max-width: none; height: auto; overflow-y: auto; border-radius: 0 12px 12px 0; }
+  .site-navigation[open]::before { content: ""; position: fixed; inset: var(--site-header-height) 0 0; z-index: 58; background: color-mix(in srgb, var(--shadow-color) 55%, transparent); }
+  .site-navigation[open] > summary { position: relative; z-index: 62; }
+  .site-navigation[open] > summary .site-nav-open-icon { display: none; }
+  .site-navigation[open] > summary .site-nav-close-icon { display: inline-flex; }
   .site-brand-mark { width: 32px; height: 32px; }
-  .site-auth-link { padding: 5px 6px; font-size: 12px; }
+  .site-header .site-auth-link { display: inline-flex; align-items: center; min-height: 44px; padding: 5px 6px; font-size: 12px; }
+  .site-header .repo-tab-bar > .repo-engagement { display: none; }
   .page-navigation-error { top: 100px; }
   .app-list-actions { width: 100%; flex-wrap: wrap; }
 }
@@ -631,7 +812,10 @@ body {
 .repo-compact-form { display: flex; align-items: center; gap: 8px; }
 .repo-compact-form input { width: 220px; }
 .repo-history-page > * + *, .repo-refs-page > * + *, .repo-editor-page > * + *, .repo-settings-page > * + *, .repo-retry-page > * + * { margin-top: 16px; }
-.repo-commit-list { overflow: hidden; }
+/* The list does not clip, so the copy button's tooltip can show past its last row. The first and last
+   rows take the list's corners, where a hovered row would otherwise square them off. */
+.repo-commit-list > .repo-commit-row:first-child { border-top-left-radius: 5px; border-top-right-radius: 5px; }
+.repo-commit-list > .repo-commit-row:last-child { border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }
 .repo-commit-row {
   position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto;
   align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border);
@@ -662,28 +846,8 @@ body {
 .repo-section-heading h2, .repo-section-heading h3, .repo-section-heading h4 { margin: 0; font-size: 16px; font-weight: 600; }
 .repo-section-heading p { margin-top: 2px; color: var(--muted-foreground); font-size: 12px; }
 .repo-section-heading > span { color: var(--muted-foreground); font-size: 12px; }
-.repo-diff-section > * + * { margin-top: 12px; }
-.repo-diff-file { overflow: hidden; min-width: 0; }
-.repo-diff-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; cursor: pointer; background: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
-.repo-diff-path { flex: 1; min-width: 180px; color: var(--foreground); font-weight: 600; overflow-wrap: anywhere; }
-.repo-diff-additions { color: #3fb950; }
-.repo-diff-deletions { color: var(--destructive); }
-.light .repo-diff-additions { color: #1a7f37; }
-@media (prefers-color-scheme: light) { .system .repo-diff-additions { color: #1a7f37; } }
-.repo-diff-patch { margin: 0; padding: 16px 0; overflow-x: auto; background: var(--background); font-size: 12px; line-height: 1.6; }
 .patch-lines { display: block; width: max-content; min-width: 100%; }
 .patch-line { display: block; padding: 0 16px; }
-/* Line numbers come from data-old and data-new, so selecting and copying a diff skips them. */
-.patch-line[data-old], .patch-line[data-new] { display: grid; grid-template-columns: 5ch 5ch auto; column-gap: 12px; padding-left: 0; }
-.patch-line[data-old]::before, .patch-line[data-new]::before, .patch-line[data-old]::after, .patch-line[data-new]::after { padding: 0 4px; color: var(--muted-foreground); text-align: right; user-select: none; -webkit-user-select: none; }
-.patch-line[data-old]::before, .patch-line[data-new]::before { content: attr(data-old); order: -2; }
-.patch-line[data-old]::after, .patch-line[data-new]::after { content: attr(data-new); order: -1; }
-.patch-lines[data-digits="5"] > .patch-line { grid-template-columns: 6ch 6ch auto; }
-.patch-lines[data-digits="6"] > .patch-line { grid-template-columns: 7ch 7ch auto; }
-.patch-lines[data-digits="7"] > .patch-line { grid-template-columns: 8ch 8ch auto; }
-.patch-lines[data-digits="8"] > .patch-line { grid-template-columns: 9ch 9ch auto; }
-.patch-lines[data-digits="9"] > .patch-line { grid-template-columns: 10ch 10ch auto; }
-.patch-lines[data-digits="10"] > .patch-line { grid-template-columns: 11ch 11ch auto; }
 .patch-addition { background: #3fb95026; }
 .patch-deletion { background: #f8514926; }
 .patch-hunk { color: var(--muted-foreground); background: var(--muted); }
@@ -701,11 +865,17 @@ body {
 .repo-ref-row-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 600; overflow-wrap: anywhere; }
 .repo-ref-row-content > p { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
 .repo-ref-meta { display: flex; align-items: center; gap: 5px; }
-/* The confirmation opens in normal flow, because the list panel clips absolute popovers. */
+.repo-ref-pull { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; }
+.repo-ref-pull .repo-icon { width: 14px; height: 14px; }
+/* The confirmation is a centred dialog over the page. It is fixed, so opening it moves nothing. */
 .repo-delete-menu > summary { list-style: none; text-align: right; }
 .repo-delete-menu > summary::-webkit-details-marker { display: none; }
-.repo-confirm-popover { display: grid; gap: 10px; width: 240px; margin-top: 8px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--popover); box-shadow: 0 8px 24px #0003; }
-.repo-confirm-popover p { color: var(--muted-foreground); font-size: 12px; }
+.repo-confirm-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; animation: repo-confirm-in .15s ease; }
+.repo-confirm-backdrop { position: absolute; inset: 0; background: #000a; cursor: default; }
+.repo-confirm-card { position: relative; display: grid; gap: 12px; width: min(400px, 100%); padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: 0 24px 70px #0009; text-align: left; white-space: normal; }
+.repo-confirm-card p { color: var(--muted-foreground); font-size: 13px; }
+.repo-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+@keyframes repo-confirm-in { from { opacity: 0; } }
 .repo-ref-create { position: sticky; top: 16px; }
 
 .repo-alert { padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }
@@ -714,7 +884,7 @@ body {
 .repo-alert-error { border-color: var(--destructive); background: color-mix(in srgb, var(--destructive) 8%, var(--background)); }
 .repo-alert-success { border-color: var(--success-emphasis); background: color-mix(in srgb, var(--success-emphasis) 8%, var(--background)); }
 .repo-editor-form > * + * { margin-top: 16px; }
-.repo-editor-context { display: grid; grid-template-columns: minmax(180px, .35fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px; }
+.repo-editor-context { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 12px 16px; }
 .repo-editor-path input { width: 100%; }
 .repo-code-editor { overflow: hidden; }
 .repo-code-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--muted); }
@@ -738,7 +908,7 @@ body {
 .repo-field { display: grid; gap: 6px; font-weight: 600; }
 .repo-field > span { font-size: 13px; }
 .repo-field small, .repo-field-help { color: var(--muted-foreground); font-size: 12px; font-weight: 400; }
-.repo-field :is(input, select, textarea) { width: 100%; }
+.repo-field :is(input:not([type="checkbox"], [type="radio"]), select, textarea) { width: 100%; }
 .repo-form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .repo-check-label { display: flex; align-items: flex-start; gap: 8px; color: var(--foreground); font-size: 13px; }
 .repo-check-label input { flex: 0 0 auto; margin-top: 3px; }
@@ -775,13 +945,16 @@ body {
 .repo-option-text small { color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
 
 .repo-settings-layout { display: grid; grid-template-columns: 208px minmax(0, 1fr); align-items: start; gap: 24px; }
-.repo-settings-nav { position: sticky; top: calc(var(--site-header-height) + 16px); display: grid; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+.repo-settings-nav { position: sticky; top: calc(var(--site-header-height) + var(--repo-tabs-height) + 16px); display: grid; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
 .repo-content .repo-settings-nav a { padding: 8px 10px; border-radius: 4px; color: var(--foreground); font-weight: 500; text-decoration: none; }
 .repo-content .repo-settings-nav a:hover { background: var(--muted); }
 .repo-content .repo-settings-nav .repo-settings-danger-link { color: var(--destructive); }
 .repo-settings-content { min-width: 0; }
 .repo-settings-content > * + * { margin-top: 20px; }
-.repo-settings-section { overflow: hidden; scroll-margin-top: calc(var(--site-header-height) + 16px); }
+/* The card does not clip, so a menu opened inside it can show past its edge. Its heading, the only
+   part with a background at the top, takes the card's top corners. */
+.repo-settings-section { scroll-margin-top: calc(var(--site-header-height) + var(--repo-tabs-height) + 16px); }
+.repo-settings-section > .repo-section-heading { border-radius: 5px 5px 0 0; }
 .repo-settings-list { border-bottom: 1px solid var(--border); }
 .repo-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .repo-settings-row:last-child { border-bottom: 0; }
@@ -849,7 +1022,10 @@ body {
 .collaboration-blockers li { position: relative; padding-left: 20px; }
 .collaboration-blockers li::before { content: "\00d7"; position: absolute; top: 0; left: 0; color: var(--destructive); font-weight: 600; }
 .collaboration-option-group { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.collaboration-option-group + .collaboration-option-group { margin-top: 24px; }
 .collaboration-option-group > legend { margin-bottom: 4px; padding: 0; font-weight: 600; }
+.collaboration-option-group > label { transition: border-color 150ms ease, background-color 150ms ease; }
+@media (prefers-reduced-motion: reduce) { .collaboration-option-group > label { transition: none; } }
 .collaboration-option { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; cursor: pointer; }
 .collaboration-option:has(input:checked) { border-color: var(--ring); }
 .collaboration-option:has(input:disabled) { opacity: .6; cursor: not-allowed; }
@@ -877,17 +1053,28 @@ body {
 .repo-content .collaboration-request-row .collaboration-input { flex: 1 1 120px; width: auto; min-width: 0; }
 .collaboration-thread-reply-form > summary { cursor: pointer; color: var(--muted-foreground); }
 
-/* On a pull request diff each numbered line is a row: two gutter cells (links for a signed-in reader) beside the line's text. */
-.patch-row { display: grid; grid-template-columns: 5ch 5ch auto; column-gap: 12px; }
+/* On a pull request diff each numbered line is a row: a "+" cell, then two gutter cells (links for a
+   signed-in reader) beside the line's text. */
+.patch-row { display: grid; grid-template-columns: 20px 5ch 5ch auto; column-gap: 12px; }
 .patch-row > .patch-line { padding-left: 0; }
-.patch-lines[data-digits="5"] > .patch-row { grid-template-columns: 6ch 6ch auto; }
-.patch-lines[data-digits="6"] > .patch-row { grid-template-columns: 7ch 7ch auto; }
-.patch-lines[data-digits="7"] > .patch-row { grid-template-columns: 8ch 8ch auto; }
-.patch-lines[data-digits="8"] > .patch-row { grid-template-columns: 9ch 9ch auto; }
-.patch-lines[data-digits="9"] > .patch-row { grid-template-columns: 10ch 10ch auto; }
-.patch-lines[data-digits="10"] > .patch-row { grid-template-columns: 11ch 11ch auto; }
+.patch-lines[data-digits="5"] > .patch-row { grid-template-columns: 20px 6ch 6ch auto; }
+.patch-lines[data-digits="6"] > .patch-row { grid-template-columns: 20px 7ch 7ch auto; }
+.patch-lines[data-digits="7"] > .patch-row { grid-template-columns: 20px 8ch 8ch auto; }
+.patch-lines[data-digits="8"] > .patch-row { grid-template-columns: 20px 9ch 9ch auto; }
+.patch-lines[data-digits="9"] > .patch-row { grid-template-columns: 20px 10ch 10ch auto; }
+.patch-lines[data-digits="10"] > .patch-row { grid-template-columns: 20px 11ch 11ch auto; }
 .patch-number { padding: 0 4px; color: var(--muted-foreground); text-align: right; user-select: none; -webkit-user-select: none; text-decoration: none; }
 a.patch-number:hover { color: var(--foreground); }
+/* The "+" opens the composer on its line. A pointer shows it while the row is hovered or the "+" has
+   keyboard focus; a touch screen always shows it. The link's tap area reaches 12px past its 20px box,
+   so a tap is easy without making the diff rows taller. */
+.patch-add { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; color: var(--muted-foreground); opacity: 0; }
+a.patch-add { text-decoration: none; }
+a.patch-add::after { content: ""; position: absolute; inset: -12px; }
+a.patch-add:hover { background: var(--accent); color: var(--foreground); }
+a.patch-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.patch-row:hover > .patch-add, .collaboration-split-cell:hover > .patch-add, .patch-add:focus-visible { opacity: 1; }
+@media (hover: none) { .patch-add { opacity: 1; } }
 /* Inline conversations wrap and keep the page font. Inside a file's patch they fill the file card, the
    container, so a long code line scrolls under them and does not widen them. */
 .collaboration-diff-file { container-type: inline-size; }
@@ -908,12 +1095,10 @@ a.patch-number:hover { color: var(--foreground); }
   .repo-page-heading { align-items: stretch; flex-direction: column; }
   .repo-compact-form input { width: 100%; }
   .repo-commit-detail-meta { align-items: flex-start; flex-direction: column; }
-  .repo-diff-path { flex: 1 1 100%; min-width: 0; }
   .repo-settings-layout { grid-template-columns: minmax(0, 1fr); }
   .repo-settings-nav { position: static; display: flex; overflow-x: auto; white-space: nowrap; }
   .repo-add-row, .repo-label-create { grid-template-columns: 1fr; }
   .repo-label-create .repo-field:nth-child(3) { grid-column: auto; }
-  .repo-editor-context { grid-template-columns: minmax(0, 1fr); }
   .collaboration-detail-layout { grid-template-columns: minmax(0, 1fr); }
   .collaboration-timeline { padding-left: 28px; }
 }
@@ -926,7 +1111,6 @@ a.patch-number:hover { color: var(--foreground); }
   .repo-ref-row { grid-template-columns: 22px minmax(0, 1fr); align-items: start; }
   .repo-ref-actions { grid-column: 2; justify-content: flex-start; }
   .repo-delete-menu > summary { text-align: left; }
-  .repo-confirm-popover { width: min(240px, calc(100vw - 64px)); }
   .repo-settings-row { align-items: flex-start; flex-direction: column; }
   .repo-inline-confirm { justify-content: flex-start; }
   .repo-danger-action > summary { align-items: flex-start; flex-direction: column; }
@@ -1030,7 +1214,6 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
    a Raw button in its header. Each changed file has one header row, whose badges name what the
    counts do not: a new, deleted, renamed or mode-changed file. */
 .repo-blob-markdown .repo-readme-header { flex-wrap: wrap; }
-.repo-blob-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .repo-blob-markdown .repo-blob-actions { margin-left: auto; }
 .repo-view-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border, #30363d); border-radius: 6px; background: var(--background, #0d1117); }
 .repo-content .repo-view-option { padding: 2px 10px; border-radius: 4px; color: var(--muted-foreground, #8b949e); font-size: 12px; line-height: 20px; text-decoration: none; }
@@ -1099,12 +1282,28 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 .repo-quick-setup h4 { font-size: 14px; color: var(--muted-foreground); }
 .repo-quick-setup-code { margin: 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); font-family: ui-monospace, monospace; font-size: 13px; line-height: 20px; white-space: pre; overflow-x: auto; }
 
+/* Dashboard summary: the viewer's open issues and pull requests, each linking to its list. */
+.discovery-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.discovery-summary-card { display: grid; gap: 2px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); text-decoration: none; transition: background-color .12s ease, border-color .12s ease; }
+.discovery-summary-card:hover { border-color: var(--muted-foreground); background: var(--accent); text-decoration: none; }
+.discovery-summary-count { font-size: 24px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.discovery-summary-label { color: var(--muted-foreground); font-size: 13px; }
+/* A code search match. The tint works in both themes, and the code keeps its own colours. */
+.search-match { color: inherit; background: color-mix(in srgb, var(--primary) 28%, transparent); border-radius: 2px; }
+/* With nothing trending, the dashboard drops its side column and the work takes the width. */
+@media (min-width: 960px) {
+  .discovery-dashboard.discovery-dashboard-solo { grid-template-columns: minmax(0, 1fr); }
+}
+.discovery-more { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 14px; text-align: center; }
+.discovery-pager { display: flex; justify-content: space-between; gap: 12px; }
+
 /* Error pages: status, heading, one sentence and the way out. */
 .error-page { max-width: 480px; margin: 0 auto; padding: 24px 0; text-align: center; }
 .error-code { margin: 0; font-size: 72px; font-weight: 600; line-height: 1; letter-spacing: -0.02em; color: var(--muted-foreground); }
 .error-page h1, .error-page h2 { margin: 16px 0 8px; font-size: 24px; font-weight: 600; line-height: 32px; }
 .error-message { margin: 0 0 24px; font-size: 16px; color: var(--muted-foreground); }
 .error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.error-search { width: 100%; max-width: 360px; margin: 0 auto 24px; }
 
 /* Pull request composer, file list and Viewed marks. The composer shows only the submit button
    for the chosen review decision: Comment by default, Approve or Request changes when that radio
@@ -1131,7 +1330,7 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 /* The Viewed button in a file header: a checkbox-like button at the end of the header that submits
    its form. The form beside it adds no box. The whole button is the target on a phone. */
 .collaboration-viewed-form { display: contents; }
-.collaboration-viewed { display: inline-flex; align-items: center; gap: 6px; float: right; margin-left: 8px; padding: 2px 10px 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; }
+.collaboration-viewed { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 2px 10px 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: inherit; font: inherit; font-size: 13px; line-height: 20px; cursor: pointer; }
 .collaboration-viewed::before { content: ""; display: inline-flex; flex: none; align-items: center; justify-content: center; width: 14px; height: 14px; box-sizing: border-box; border: 1.5px solid var(--muted-foreground); border-radius: 4px; font-size: 10px; line-height: 1; }
 .collaboration-viewed[aria-checked="true"]::before { content: "✓"; border-color: var(--collaboration-open); background: var(--collaboration-open); color: var(--background); }
 .collaboration-viewed:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
@@ -1198,6 +1397,9 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 .collaboration-assignees { display: grid; gap: 8px; margin: 0 0 12px; padding: 0; list-style: none; }
 .collaboration-assignee { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 .collaboration-assignee .collaboration-author { min-width: 0; overflow-wrap: anywhere; }
+.collaboration-participants { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
+.collaboration-participant { display: inline-flex; border-radius: 50%; }
+.collaboration-participant .avatar { border-radius: 50%; }
 .collaboration-assignee-action,
 .collaboration-state-action { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
 .collaboration-assignee-form,
@@ -1257,15 +1459,12 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .filter-control { display: inline-flex; align-items: center; gap: 6px; height: 32px; min-width: 0; max-width: 100%; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); color: var(--muted-foreground); font-size: 14px; line-height: 20px; white-space: nowrap; cursor: pointer; transition: border-color .12s ease, box-shadow .12s ease; }
 .filter-control:hover { border-color: color-mix(in srgb, var(--muted-foreground) 70%, var(--border)); }
 .filter-control:focus-within { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 20%, transparent); }
+/* Explore filters apply on change once the page hydrates. Without scripts the button stays. */
+[data-hydrated="true"] .explore-apply { display: none; }
 /* The native select and the app dropdown share one width, so the pill does not change size when the page hydrates. */
 .filter-toolbar .filter-control select:not([multiple]):not([size]) { flex: 0 1 auto; width: 16ch; min-width: 0; max-width: 160px; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: var(--foreground); font-size: 14px; line-height: 20px; appearance: none; -webkit-appearance: none; outline: none; cursor: pointer; }
 .filter-control .app-select { flex: 0 1 auto; width: 16ch; max-width: 160px; min-width: 0; }
 .filter-control::after { content: ""; flex: none; width: 0; height: 0; border-top: 5px solid var(--muted-foreground); border-inline: 4px solid transparent; pointer-events: none; }
-.collaboration-filters { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-.collaboration-filter-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
-.collaboration-filter-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; max-width: 100%; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--muted); color: var(--foreground); line-height: 18px; text-decoration: none; overflow-wrap: anywhere; }
-.collaboration-filter-chip:hover { border-color: color-mix(in srgb, var(--muted-foreground) 70%, var(--border)); background: var(--accent); }
-.collaboration-filter-chip-remove { color: var(--muted-foreground); }
 .collaboration-filter-clear { margin-left: 4px; color: var(--link-color); text-decoration: none; }
 .collaboration-filter-clear:hover { text-decoration: underline; }
 @media (max-width: 639px) {
@@ -1299,22 +1498,26 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .collaboration-markdown-tool:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 
 .collaboration-diff-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 16px 0 8px; }
+.collaboration-diff-summary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 16px 0 12px; }
+.collaboration-diff .collaboration-diff-summary > h3 { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.collaboration-file-toggles { display: inline-flex; gap: 4px; }
 .collaboration-view-toggle { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; }
 .collaboration-segment { display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 4px; color: var(--muted-foreground); text-decoration: none; }
 .collaboration-segment:hover { color: var(--foreground); background: var(--accent); }
 .collaboration-segment:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .collaboration-segment:has([aria-current="page"]) { color: var(--foreground); background: var(--accent); }
 
-.collaboration-split { display: block; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; line-height: 20px; }
+.collaboration-split { display: block; border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 20px; }
 .collaboration-split-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .collaboration-split-cell { display: flex; min-width: 0; overflow-x: auto; white-space: pre; }
 .collaboration-split-row > .collaboration-split-cell:first-child { border-right: 1px solid var(--border); }
 .collaboration-split-cell .patch-number { flex: none; width: 48px; padding: 0 8px; text-align: right; color: var(--muted-foreground); user-select: none; }
+.collaboration-split-cell > .patch-add { flex: none; }
 /* The text takes the rest of the half cell, so an added or removed line is tinted across it. */
 .collaboration-split-cell > span { flex: 1 0 auto; }
 .collaboration-split-empty { background: var(--muted, transparent); }
 .collaboration-split-wide { display: block; }
-.collaboration-split-wide > span { display: block; padding: 0 12px; }
+.collaboration-split-wide > span { display: block; padding: 0 12px; white-space: pre; }
 /* On a phone the two sides stack: a removed line, then its added line, reads as the unified diff.
    The mirrored right side of a context line and the blank sides are hidden. */
 @media (max-width: 799px) {
@@ -1336,14 +1539,13 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .collaboration-stack-banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .collaboration-stack-banner p { margin: 0; }
 
-/* Organization pages (pages/organizations): pictures in their frames, member and team rows with
+/* Organization pages (pages/orgs): pictures in their frames, member and team rows with
    their actions aligned right, inline forms, the add-member bar, the two-column create form, the
    read-only facts, the public profile's meta line, and the danger cards. Layout and text for the
    same pages are in organization.css; these rules are the controls and the new pieces. */
 .org-avatar { overflow: hidden; }
 .org-avatar > .avatar { width: 100%; height: 100%; border-radius: 0; }
 .org-avatar.org-avatar-sm { width: 24px; height: 24px; border-radius: 6px; }
-.org-avatar.org-avatar-lg { width: 96px; height: 96px; border-radius: 14px; }
 .org-row-name { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
 .org-row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
 .org-inline-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin: 0; }
@@ -1384,6 +1586,10 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
    read button sits above that cover. Unread rows carry a dot in the primary colour. */
 .notification-row { position: relative; display: flex; gap: 12px; align-items: flex-start; padding: 16px; border-bottom: 1px solid var(--border); }
 .notification-row:last-child { border-bottom: 0; }
+/* The list does not clip, so a row's save and done tooltips can show past its last row. The first and
+   last rows take the list's corners, where a hovered or unread row would otherwise square them off. */
+.notification-row:first-child { border-top-left-radius: 5px; border-top-right-radius: 5px; }
+.notification-row:last-child { border-bottom-left-radius: 5px; border-bottom-right-radius: 5px; }
 .notification-row.is-unread { background: color-mix(in srgb, var(--muted) 35%, transparent); }
 .notification-row:hover { background: var(--accent); }
 .notification-dot { flex: none; width: 8px; height: 8px; margin-top: 7px; border: 1px solid var(--border); border-radius: 50%; }
@@ -1405,7 +1611,6 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 }
 
 /* Account pictures: the profile masthead, and the settings preview beside the upload form. */
-.identity-profile-masthead > .avatar { border: 1px solid var(--border); }
 .identity-avatar-editor > .avatar, .identity-settings-avatar { flex: 0 0 auto; width: 72px; height: 72px; border: 1px solid var(--border); border-radius: 50%; object-fit: cover; }
 .identity-avatar-form input[type="file"]::file-selector-button { min-height: 32px; margin-right: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--secondary); color: var(--foreground); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
 .identity-avatar-form input[type="file"]::file-selector-button:hover { background: var(--accent); }
@@ -1424,8 +1629,6 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 @media (max-width: 640px) { .admin-header { align-items: flex-start; flex-direction: column; } }
 
 /* Actions runs toolbar: the workflow version is a compact field before the run menu. */
-.actions-page .actions-version-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
-.actions-page .actions-version-field { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
 .actions-page .actions-log-marker { display: inline-flex; align-items: center; gap: 6px; }
 .actions-page .actions-log-marker > svg { flex: none; }
 .actions-page .actions-log-timing { color: var(--muted-foreground); }
@@ -1533,6 +1736,11 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
   color: var(--card-foreground);
   box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 20%, transparent);
 }
+/* On a phone a list rises from the bottom as a sheet. A list opened from a select near the right edge
+   of a 375px screen would otherwise run off it. */
+@media (max-width: 767px) {
+  .app-select-list { position: fixed; top: auto; right: 8px; bottom: 8px; left: 8px; min-width: 0; max-width: none; max-height: 60vh; max-height: 60dvh; }
+}
 .app-select-option {
   position: relative;
   display: block;
@@ -1562,7 +1770,102 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .repo-commit-target > legend { padding: 0; margin-bottom: 2px; font-size: 13px; font-weight: 600; }
 .repo-commit-choice { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); cursor: pointer; }
 .repo-commit-choice:has(input:checked) { border-color: var(--success-emphasis); box-shadow: 0 0 0 1px var(--success-emphasis); }
+/* The new branch's name is asked for only when the new-branch choice is selected. */
+.repo-commit-target .repo-commit-branch { display: none; }
+.repo-commit-target:has(input[value="new_branch"]:checked) .repo-commit-branch { display: grid; }
 .repo-commit-choice:has(input:disabled) { cursor: not-allowed; opacity: 0.7; }
 .repo-commit-choice input { flex: 0 0 auto; margin-top: 3px; }
 .repo-commit-choice span { display: grid; gap: 2px; font-size: 14px; }
 .repo-commit-choice small { color: var(--muted-foreground); font-size: 12px; }
+
+/* Notifications page: the tabs (Inbox, Saved, Done), the toolbar with search, the filter menu,
+   and the row actions. The row rules above stay as they are. */
+.notification-tabs { display: flex; gap: 4px; margin-bottom: 12px; padding-bottom: 1px; border-bottom: 1px solid var(--border); overflow-x: auto; }
+.notification-tab { display: inline-flex; align-items: center; gap: 8px; margin-bottom: -1px; padding: 8px 12px; border-bottom: 2px solid transparent; color: var(--muted-foreground); font-size: 14px; font-weight: 500; text-decoration: none; white-space: nowrap; }
+.notification-tab .notification-count { margin-left: 0; }
+.notification-tab:hover { color: var(--foreground); }
+.notification-tab.is-current { border-bottom-color: var(--primary); color: var(--foreground); }
+.notification-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 16px; }
+.notification-search { display: flex; flex: 1 1 280px; gap: 8px; min-width: 0; max-width: 480px; margin: 0; }
+.notification-search-input { flex: 1; min-width: 0; min-height: 36px; padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font: inherit; font-size: 14px; }
+.notification-search-input:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.notification-toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notification-filter-menu > summary { cursor: pointer; }
+/* The list pads itself inside the scrolling panel, so the last choice is never cut at the edge. */
+.notification-filter-panel { max-height: min(60vh, 360px); min-width: 240px; max-width: calc(100vw - 32px); overflow-y: auto; }
+/* The actions sit at the right end of the toolbar, so their panels open leftwards. On a phone they
+   would land wherever the toolbar wrapped, so they open as a sheet. */
+.notification-toolbar-actions { margin-left: auto; }
+.notification-filter-menu > .notification-filter-panel { left: auto; right: 0; }
+@media (max-width: 767px) {
+  .notification-filter-menu > .notification-filter-panel { position: fixed; top: auto; right: 8px; bottom: 8px; left: 8px; width: auto; max-width: none; max-height: 70dvh; }
+}
+.notification-filter-list { display: grid; gap: 2px; padding: 8px; }
+.notification-filter-heading { margin: 8px 8px 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.notification-filter-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--foreground); font-size: 14px; text-decoration: none; }
+.notification-filter-option:hover { background: var(--accent); }
+.notification-filter-option[aria-current="true"] { background: var(--accent); font-weight: 600; }
+.notification-filter-check { display: inline-flex; flex: none; width: 16px; justify-content: center; }
+.notification-filter-check .notification-action-icon { width: 16px; height: 16px; }
+/* The Unstar button of a Stars row: a plain text button that is 44px tall on phones. */
+.stars-unstar-form { flex: none; }
+.stars-unstar { white-space: nowrap; }
+@media (max-width: 639px) { .stars-unstar { min-height: 44px; } }
+.notification-clear { color: var(--muted-foreground); font-size: 14px; }
+.notification-bulk-form { margin: 0; }
+.notification-repo { color: var(--foreground); font-weight: 500; }
+.notification-actions { position: relative; z-index: 1; display: flex; flex: none; align-items: center; gap: 4px; margin-left: auto; }
+.notification-action-form { margin: 0; }
+.notification-action { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; }
+.notification-action:hover { background: var(--accent); color: var(--foreground); }
+.notification-action:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.notification-action[aria-pressed="true"] { color: var(--foreground); }
+.notification-action[aria-pressed="true"] .notification-action-icon { fill: currentColor; }
+.notification-action-icon { display: block; }
+/* A pointer shows the row actions on hover and keyboard focus shows them too. A saved row keeps its
+   bookmark visible. Phones always show them, at touch size. */
+@media (hover: hover) and (min-width: 640px) {
+  .notification-action-form, .notification-read-form { opacity: 0; transition: opacity .12s ease-out; }
+  .notification-row:hover .notification-action-form,
+  .notification-row:hover .notification-read-form,
+  .notification-row:focus-within .notification-action-form,
+  .notification-row:focus-within .notification-read-form,
+  .notification-action-form:has(.notification-action[aria-pressed="true"]) { opacity: 1; }
+}
+@media (max-width: 639px) {
+  .notification-toolbar { align-items: stretch; }
+  .notification-search { max-width: none; }
+  .notification-tab { padding: 12px; }
+  .notification-action, .notification-read-form .btn { min-width: 44px; min-height: 44px; }
+  .notification-action { width: 44px; height: 44px; }
+  .notification-filter-option, .notification-filter-menu > summary { min-height: 44px; }
+}
+
+/* The language bar of the About panel, and the primary-language dot on repository cards. */
+.language-block { display: grid; gap: 10px; min-width: 0; }
+.language-heading { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--foreground); }
+.language-bar { display: flex; height: 8px; overflow: hidden; border-radius: 999px; background: var(--border); }
+.language-bar-segment { flex: 0 0 auto; height: 100%; min-width: 2px; }
+.language-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 12px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+.language-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.language-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.language-percent { margin-left: auto; color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.language-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; }
+.repo-language { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Header notification badges: the unread count on the Inbox icon and on the phone Notifications
+   row, and a dot on the phone menu button. They show only when the page has unread items. */
+.site-count-badge { position: absolute; top: 2px; right: 2px; z-index: 1; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); font-size: 11px; font-weight: 600; line-height: 16px; text-align: center; font-variant-numeric: tabular-nums; box-shadow: 0 0 0 2px var(--background); pointer-events: none; }
+.site-menu-count { position: static; margin-left: auto; box-shadow: none; }
+.site-menu-dot { display: none; }
+@media (max-width: 640px) {
+  .site-menu-dot { display: block; position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 2px var(--background); pointer-events: none; }
+}
+
+/* The empty cluster's setup: numbered steps, each command in its own block with a copy button. */
+.node-setup { padding: 24px; text-align: left; }
+.node-setup h2 { margin: 12px 0 0; }
+.node-setup-steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 16px 0 0; padding-left: 20px; font-size: 14px; }
+.node-setup-steps p { margin: 0; }
+.node-setup-command { display: flex; align-items: center; gap: 8px; margin-top: 8px; min-width: 0; }
+.node-setup-command code { flex: 1 1 auto; min-width: 0; overflow-x: auto; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); font: 13px/1.5 ui-monospace, monospace; white-space: nowrap; }

@@ -1,6 +1,6 @@
 use super::{parse_job_id, CiReadError};
 use crate::backend::{
-    api::{error::ApiError, session::get_current_user},
+    api::{http::error::ApiError, http::session::get_current_user},
     app::AppState,
 };
 use axum::{
@@ -30,7 +30,7 @@ pub async fn cancel_ci_job(
 ) -> Result<Json<CancelCiResponse>, CiReadError> {
     // Current identity-bound, same-origin CSRF; never a GET mutation.
     let context =
-        crate::backend::api::context::PageContext::load(state.clone(), headers.clone(), &uri)
+        crate::backend::api::http::context::PageContext::load(state.clone(), headers.clone(), &uri)
             .await
             .map_err(|_| {
                 (

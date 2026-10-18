@@ -13,12 +13,12 @@ fn back_to_settings(
     tab: &'static str,
 ) -> axum::routing::MethodRouter<std::sync::Arc<crate::backend::app::AppState>> {
     axum::routing::get(move || async move {
-        crate::backend::api::render::redirect_response(&format!("/settings?tab={tab}"))
+        crate::backend::api::http::render::redirect_response(&format!("/settings?tab={tab}"))
     })
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
-    use crate::backend::api::{auth::change_password, csrf, middleware};
+    use crate::backend::api::{auth::change_password, http::csrf, http::middleware};
     use axum::{
         extract::DefaultBodyLimit,
         middleware::from_fn,

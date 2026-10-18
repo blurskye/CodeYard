@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::session::get_current_user,
+    api::http::session::get_current_user,
     app::AppState,
     files::{
         self, AssetDownload, DownloadCapability, DownloadError, DownloadTransport, SignedDownload,
@@ -143,7 +143,7 @@ pub(super) fn asset_response(download: AssetDownload) -> Result<Response, Failur
                     header::CONTENT_SECURITY_POLICY,
                     "default-src 'none'; sandbox",
                 )
-                .body(crate::backend::api::middleware::download_body(stream))
+                .body(crate::backend::api::http::middleware::download_body(stream))
                 .map_err(|_| {
                     failure(
                         StatusCode::INTERNAL_SERVER_ERROR,

@@ -1,7 +1,7 @@
 //! Assignee forms on issue and pull request pages. The database checks the write right and
 //! which users may be assigned, so these handlers only resolve names and show the outcome.
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::pulls::pull::{
     authorize_post, detail_outcome, field, item, kind, repository, unavailable, ApiFailure,
     RepositoryData, ResultPage,
@@ -9,7 +9,8 @@ use crate::backend::api::repos::pulls::pull::{
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
-use crate::webui::pages::collaboration::Kind;
+use crate::backend::notifications::assignments::{notify_assignees, Assignment};
+use crate::webui::pages::repos::issues::Kind;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -95,6 +96,7 @@ pub(crate) async fn native_assign(
     let value = item(&ctx, &repo, kind, number).await?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let username = field(&form, "username");
+    // The assignee, when this request newly assigned them.
     let outcome = match user_id(&ctx, username.trim()).await? {
         Some(assignee) => db::assignees::assign_user(
             &ctx.state.pool,
@@ -104,10 +106,48 @@ pub(crate) async fn native_assign(
             assignee,
         )
         .await
+        .map(|added| added.then_some(assignee))
         .map_err(assignment_error),
         None => Err(assignment_error(AssignmentRefusal::Unassignable.into())),
     };
-    detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
+    if outcome.is_ok() {
+        db::timeline::record_for(
+            &ctx.state.pool,
+            repo.record.id,
+            subject,
+            ctx.require_user()?.id,
+            "assigned",
+            username.trim(),
+        )
+        .await;
+    }
+    if let Ok(Some(assignee)) = &outcome {
+        let link = format!(
+            "/{owner}/{name}/{}/{number}",
+            if kind == Kind::Pull {
+                "pulls"
+            } else {
+                "issues"
+            }
+        );
+        notify_assignees(
+            &ctx.state.pool,
+            &ctx.state.notification_broadcaster,
+            &Assignment {
+                actor: ctx.require_user()?,
+                repository: &repo.record,
+                owner: &owner,
+                repo: &name,
+                number,
+                pull_request: kind == Kind::Pull,
+                title: &value.title,
+                link: &link,
+            },
+            &[*assignee],
+        )
+        .await;
+    }
+    detail_outcome(&ctx, &repo, kind, &value, number, outcome.map(|_| ())).await
 }
 
 pub(crate) async fn native_unassign(
@@ -123,19 +163,26 @@ pub(crate) async fn native_unassign(
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
-    // Removing a name that is no user, or is not assigned, leaves the item as it is.
-    let outcome = match user_id(&ctx, &username).await? {
-        Some(assignee) => db::assignees::unassign_user(
+    // A name that is no user, or is not assigned, leaves the item as it is and records nothing.
+    let outcome = db::assignees::unassign_user(
+        &ctx.state.pool,
+        ctx.require_user()?.id,
+        repo.record.id,
+        subject,
+        &username,
+    )
+    .await
+    .map_err(assignment_error);
+    if let Ok(true) = outcome {
+        db::timeline::record_for(
             &ctx.state.pool,
-            ctx.require_user()?.id,
             repo.record.id,
             subject,
-            assignee,
+            ctx.require_user()?.id,
+            "unassigned",
+            &username,
         )
-        .await
-        .map(|_| ())
-        .map_err(assignment_error),
-        None => Ok(()),
-    };
-    detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
+        .await;
+    }
+    detail_outcome(&ctx, &repo, kind, &value, number, outcome.map(|_| ())).await
 }

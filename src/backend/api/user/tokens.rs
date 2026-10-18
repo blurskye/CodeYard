@@ -1,6 +1,6 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session::{extract_session_id, get_current_user};
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::{extract_session_id, get_current_user};
 use crate::backend::api::user::profile::{load_settings, settings_response, settings_result};
 use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
@@ -8,7 +8,7 @@ use crate::backend::db::models::PersonalAccessToken;
 use crate::backend::db::users::tokens as stored;
 use crate::backend::identity::tokens;
 use crate::backend::identity::tokens::{TokenError, TokenInput};
-use crate::webui::pages::identity as view;
+use crate::webui::pages::account;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -162,7 +162,7 @@ pub(crate) async fn token_add_post(
             model.new_token = Some(created.value);
             ctx.page_model(
                 "Settings",
-                crate::webui::app::Page::Identity(view::Page::Settings {
+                crate::webui::app::Page::Identity(account::Page::Settings {
                     model: Box::new(model),
                     csrf_token: ctx.csrf_token.clone(),
                     message: None,
@@ -193,9 +193,20 @@ pub(crate) async fn token_delete_post(
         .as_ref()
         .expect("mutation guard checked account")
         .id;
-    let result = tokens::delete(&ctx.state.pool, actor, id)
-        .await
-        .map_err(token_failure);
+    // A revoked token stops working at once, so the server refuses a delete that did not confirm.
+    let result = if field(&form, "confirm") == "yes" {
+        tokens::delete(&ctx.state.pool, actor, id)
+            .await
+            .map_err(token_failure)
+    } else {
+        Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiError::new(
+                "confirmation_required",
+                "Confirm the deletion before the token is revoked.",
+            )),
+        ))
+    };
     settings_result(&ctx, "tokens", &form, result, "token-deleted").await
 }
 

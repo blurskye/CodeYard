@@ -1,12 +1,15 @@
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::repos::responses::{repository_owners, RepoResponse};
-use crate::backend::api::session::get_current_user;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::repos::responses::{repository_owners, repository_topics, RepoResponse};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::organizations::{self as orgs, OrganizationOutcome, OrganizationPage};
 use crate::backend::db::repositories::records::RepositorySort;
-use crate::backend::repositories::lifecycle;
+use crate::backend::repositories::{
+    lifecycle::{self, InitialFiles},
+    templates::{self, Template},
+};
 use crate::webui::app::Page as AppPage;
 use crate::webui::pages::discovery::{
     self as view, NewRepositoryForm, RepositoryCreationChoices, RepositoryCreationOrganization,
@@ -39,6 +42,7 @@ pub async fn list_repos(
 
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut owners = repository_owners(&state.pool, &ids).await?;
+    let mut topics = repository_topics(&state.pool, &ids).await?;
     let mut responses = Vec::with_capacity(repos.len());
     for repository in repos {
         let owner = owners.remove(&repository.id).expect("validated owner");
@@ -49,6 +53,8 @@ pub async fn list_repos(
             name: repository.name.clone(),
             full_name: format!("{}/{}", owner, repository.name),
             description: repository.description,
+            website: repository.website,
+            topics: topics.remove(&repository.id).unwrap_or_default(),
             is_private: repository.is_private,
             is_archived: repository.is_archived,
             allow_merge_commit: repository.allow_merge_commit,
@@ -102,7 +108,7 @@ pub async fn create_repo(
         },
     };
     lifecycle::validate_description(req.description.as_deref().unwrap_or(""))
-        .map_err(super::responses::lifecycle_error)?;
+        .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
     let repo = lifecycle::provision(
         (&pool, state.cluster.as_ref()),
         &state.repos_path,
@@ -113,7 +119,7 @@ pub async fn create_repo(
         None,
     )
     .await
-    .map_err(super::responses::lifecycle_error)?;
+    .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
 
     let owner = db::repositories::records::repository_owner_name(&pool, repo.id)
         .await
@@ -144,6 +150,8 @@ pub async fn create_repo(
             name: repo.name.clone(),
             full_name: format!("{}/{}", owner, repo.name),
             description: repo.description,
+            website: repo.website,
+            topics: Vec::new(),
             is_private: repo.is_private,
             is_archived: repo.is_archived,
             allow_merge_commit: repo.allow_merge_commit,
@@ -222,9 +230,24 @@ fn draft_value(form: &HashMap<String, String>, key: &str, max: usize) -> String 
 /// A refused submission: the field to mark, if one field is at fault, and the message.
 type CreationRefusal = (Option<&'static str>, &'static str);
 
+/// The template a select submitted: none for an empty value, otherwise a listed template.
+fn template_choice(
+    raw: &str,
+    find: fn(&str) -> Option<&'static Template>,
+    message: &'static str,
+) -> Result<Option<&'static Template>, CreationRefusal> {
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    find(raw).map(Some).ok_or((None, message))
+}
+
 fn decode_creation(
     form: &HashMap<String, String>,
-) -> (NewRepositoryForm, Result<Option<i64>, CreationRefusal>) {
+) -> (
+    NewRepositoryForm,
+    Result<(Option<i64>, InitialFiles), CreationRefusal>,
+) {
     let values = NewRepositoryForm {
         name: draft_value(form, "name", 256),
         description: draft_value(form, "description", 4096),
@@ -232,6 +255,9 @@ fn decode_creation(
             .get("visibility")
             .is_some_and(|value| value == "private"),
         owner_org_id: draft_value(form, "owner_org_id", 32),
+        readme: form.contains_key("readme"),
+        gitignore: draft_value(form, "gitignore", 64),
+        license: draft_value(form, "license", 64),
     };
     let validity = (|| {
         let target =
@@ -252,7 +278,20 @@ fn decode_creation(
         ) {
             return Err((None, "Choose public or private visibility."));
         }
-        Ok(target)
+        let files = InitialFiles {
+            readme: values.readme,
+            gitignore: template_choice(
+                form.get("gitignore").map(String::as_str).unwrap_or(""),
+                templates::gitignore,
+                "Choose a .gitignore template from the list.",
+            )?,
+            license: template_choice(
+                form.get("license").map(String::as_str).unwrap_or(""),
+                templates::license,
+                "Choose a license from the list.",
+            )?,
+        };
+        Ok((target, files))
     })();
     (values, validity)
 }
@@ -417,8 +456,8 @@ pub(crate) async fn create_repository(
             .await
         }
     };
-    let target = match validity {
-        Ok(target) => target,
+    let (target, files) = match validity {
+        Ok(choice) => choice,
         Err((field, message)) => {
             return creation_error(&ctx, values, page, StatusCode::BAD_REQUEST, field, message)
                 .await
@@ -442,7 +481,7 @@ pub(crate) async fn create_repository(
             None => db::repositories::creation::RepositoryTarget::Personal(user.id),
         },
     };
-    let result = lifecycle::provision(
+    let result = lifecycle::provision_with_initial_files(
         (&ctx.state.pool, ctx.state.cluster.as_ref()),
         &ctx.state.repos_path,
         creation_owner,
@@ -451,7 +490,7 @@ pub(crate) async fn create_repository(
             .filter(|value| !value.is_empty())
             .map(String::as_str),
         values.is_private,
-        None,
+        files,
     )
     .await;
     match result {
@@ -462,7 +501,7 @@ pub(crate) async fn create_repository(
             }
         }
         Err(error) => {
-            let status = super::responses::lifecycle_status(&error);
+            let status = crate::backend::api::repos::responses::lifecycle_status(&error);
 
             // No missing-namespace oracle and never display raw API/driver errors.
             let status = if status == StatusCode::NOT_FOUND {
@@ -492,7 +531,7 @@ mod creation_tests {
             .collect()
     }
     #[test]
-    fn names_and_historical_account_paths_cannot_traverse_directories() {
+    fn names_and_account_paths_cannot_traverse_directories() {
         for invalid in [
             "",
             ".",
@@ -536,7 +575,7 @@ mod creation_tests {
             ("owner", "other"),
             ("owner_user_id", "999"),
         ]));
-        assert_eq!(result, Ok(None));
+        assert_eq!(result.map(|(target, _)| target), Ok(None));
     }
     #[test]
     fn an_empty_name_is_refused_as_a_name_field_error() {
@@ -555,6 +594,38 @@ mod creation_tests {
             Err((None, "Choose public or private visibility."))
         );
     }
+    #[test]
+    fn initial_files_must_be_listed_templates_or_none() {
+        let (_, validity) = decode_creation(&input(&[
+            ("name", "demo"),
+            ("visibility", "public"),
+            ("readme", "on"),
+            ("gitignore", "Rust"),
+            ("license", "MIT"),
+        ]));
+        let Ok((None, files)) = validity else {
+            panic!("listed templates must be accepted");
+        };
+        assert!(files.readme);
+        assert_eq!(files.gitignore.map(|template| template.name), Some("Rust"));
+        assert_eq!(files.license.map(|template| template.name), Some("MIT"));
+        let (_, validity) = decode_creation(&input(&[
+            ("name", "demo"),
+            ("visibility", "public"),
+            ("gitignore", "Haskell"),
+        ]));
+        assert_eq!(
+            validity,
+            Err((None, "Choose a .gitignore template from the list."))
+        );
+        let (_, validity) = decode_creation(&input(&[
+            ("name", "demo"),
+            ("visibility", "public"),
+            ("license", "WTFPL"),
+        ]));
+        assert_eq!(validity, Err((None, "Choose a license from the list.")));
+    }
+
     #[test]
     fn validation_preserves_nonsecret_bounded_drafts_without_accepting_truncation() {
         let (values, validity) = decode_creation(&input(&[

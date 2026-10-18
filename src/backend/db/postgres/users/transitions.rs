@@ -38,7 +38,7 @@ pub(crate) async fn organization_name_exists(
     tx: &mut Transaction<'_, Postgres>,
     username: &str,
 ) -> Result<bool> {
-    // Exact current namespace policy; no case folding or historical repair.
+    // Exact namespace policy: no case folding.
     Ok(
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE name=$1)")
             .bind(username)
@@ -155,8 +155,8 @@ pub async fn complete_setup(
         sqlx::query_as::<_, User>("INSERT INTO users (username,email,password_hash,is_admin) VALUES ($1,$2,$3,TRUE) RETURNING *")
             .bind(username).bind(email).bind(hash).fetch_one(&mut *tx).await?
     } else if let Some((id, expected_hash)) = recovery.filter(|_| count == 1) {
-        // Recover only the historical setup half-commit: the sole active admin,
-        // verified credentials and their exact unchanged stored hash. Never adopt an outsider.
+        // Complete setup for a sole active admin that was provisioned separately: the
+        // verified credentials must match its stored hash exactly. Never adopt an outsider.
         let user = sqlx::query_as::<_, User>("UPDATE users SET password_hash = $3, updated_at = NOW() WHERE id = $1 AND username = $2 AND password_hash = $4 AND is_admin AND NOT is_banned RETURNING *")
             .bind(id).bind(username).bind(hash).bind(expected_hash).fetch_optional(&mut *tx).await?;
         match user {

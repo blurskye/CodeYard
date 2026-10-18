@@ -347,11 +347,13 @@ pub async fn list_admin_account_summaries(pool: &PgPool) -> Result<Vec<AdminAcco
             SELECT COUNT(*)::BIGINT AS pr_comment_total
             FROM pr_comments pc
             WHERE pc.author_id = u.id
+            AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = pc.review_id AND v.state = 'pending')
         ) pr_comments ON TRUE
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::BIGINT AS pr_review_total
             FROM pr_reviews prv
             WHERE prv.author_id = u.id
+            AND prv.state <> 'pending'
         ) pr_reviews ON TRUE
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::BIGINT AS release_total
@@ -414,12 +416,12 @@ pub async fn list_admin_activity_points(
                 UNION ALL
                 SELECT DATE(pc.created_at) AS day, COUNT(*)::BIGINT AS weight
                 FROM pr_comments pc
-                WHERE pc.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                WHERE NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = pc.review_id AND v.state = 'pending') AND pc.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
                 GROUP BY DATE(pc.created_at)
                 UNION ALL
                 SELECT DATE(prv.created_at) AS day, COUNT(*)::BIGINT AS weight
                 FROM pr_reviews prv
-                WHERE prv.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                WHERE prv.state <> 'pending' AND prv.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
                 GROUP BY DATE(prv.created_at)
                 UNION ALL
                 SELECT DATE(rel.created_at) AS day, COUNT(*)::BIGINT AS weight
@@ -524,17 +526,15 @@ pub async fn count_unbanned_admin_users(pool: &PgPool) -> Result<i64> {
     Ok(count)
 }
 
-/// Decode the same safe left-joined author projection for discussion reads.
+/// Decode the author that discussion reads join in. The join is inner: each discussion's
+/// `author_id` is NOT NULL and references `users`, so every row has an author.
 pub(crate) fn author_display(
     row: &sqlx::postgres::PgRow,
-) -> Result<Option<crate::backend::db::users::accounts::AuthorDisplay>, sqlx::Error> {
+) -> Result<crate::backend::db::users::accounts::AuthorDisplay, sqlx::Error> {
     use crate::backend::db::users::accounts::AuthorDisplay;
     use sqlx::Row;
-    let Some(id) = row.try_get::<Option<i64>, _>("display_id")? else {
-        return Ok(None);
-    };
-    Ok(Some(AuthorDisplay {
-        id,
+    Ok(AuthorDisplay {
+        id: row.try_get("display_id")?,
         username: row.try_get("display_username")?,
         avatar_file_id: row.try_get("display_avatar_file_id")?,
         display_name: row.try_get("display_name")?,
@@ -543,7 +543,7 @@ pub(crate) fn author_display(
         website: row.try_get("display_website")?,
         is_admin: row.try_get("display_is_admin")?,
         created_at: row.try_get("display_created_at")?,
-    }))
+    })
 }
 
 pub(crate) const AUTHOR_DISPLAY_COLUMNS: &str = "u.id AS display_id, u.username AS display_username, u.avatar_file_id AS display_avatar_file_id, u.display_name AS display_name, u.bio AS display_bio, u.location AS display_location, u.website AS display_website, u.is_admin AS display_is_admin, u.created_at AS display_created_at";

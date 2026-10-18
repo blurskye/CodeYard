@@ -1,7 +1,7 @@
 use crate::backend::api::admin::signup_requests::load_requests;
-use crate::backend::api::context::PageContext;
-use crate::backend::api::error::ApiError;
-use crate::backend::api::session::get_current_user;
+use crate::backend::api::http::context::PageContext;
+use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::user::responses::{
     field, mutation_guard, public_api_message, require_account, within_bounds, ApiFailure, Fields,
     PublicUserResponse,
@@ -10,7 +10,12 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::identity::profiles;
 use crate::backend::identity::profiles::{ProfileError, ProfileUpdate};
-use crate::webui::pages::identity as view;
+use crate::webui::pages::{
+    account,
+    fields::{preserved_values, FormValues},
+    settings::{settings_tab, Key, Settings, Token},
+    users::Profile,
+};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -55,8 +60,8 @@ pub async fn update_user_profile(
     Ok(Json(PublicUserResponse::from(updated)))
 }
 
-pub(crate) fn profile_model(user: &db::models::User) -> view::Profile {
-    view::Profile {
+pub(crate) fn profile_model(user: &db::models::User) -> Profile {
+    Profile {
         username: user.username.clone(),
         display_name: user.display_name.clone().unwrap_or_default(),
         bio: user.bio.clone().unwrap_or_default(),
@@ -91,7 +96,7 @@ pub(crate) async fn load_settings(
     ctx: &PageContext,
     tab: &str,
     submitted: Option<&Fields>,
-) -> Result<view::Settings, Response> {
+) -> Result<Settings, Response> {
     let user = require_account(ctx, false)?;
     // A temporary password leaves only the password form reachable. Decide this
     // before any other tab loads data, so every caller gets the same restriction.
@@ -115,7 +120,7 @@ pub(crate) async fn load_settings(
                 )
             })?
             .into_iter()
-            .map(|key| view::Key {
+            .map(|key| Key {
                 id: key.id,
                 name: key.name,
                 fingerprint: key.fingerprint,
@@ -136,7 +141,7 @@ pub(crate) async fn load_settings(
                 )
             })?
             .into_iter()
-            .map(|token| view::Token {
+            .map(|token| Token {
                 id: token.id,
                 name: token.name,
                 scope: token.scope,
@@ -157,17 +162,17 @@ pub(crate) async fn load_settings(
     };
     let profile = profile_model(user);
     let values = if let Some(form) = submitted {
-        view::preserved_values(form)
+        preserved_values(form)
     } else {
-        view::FormValues {
+        FormValues {
             display_name: profile.display_name.clone(),
             bio: profile.bio.clone(),
             location: profile.location.clone(),
             website: profile.website.clone(),
-            ..view::FormValues::default()
+            ..FormValues::default()
         }
     };
-    Ok(view::Settings {
+    Ok(Settings {
         theme: ctx.chrome().theme,
         profile,
         email: user.email.clone().unwrap_or_default(),
@@ -194,7 +199,7 @@ pub(crate) async fn settings_response(
         Ok(model) => ctx.page_model_status(
             status,
             "Settings",
-            crate::webui::app::Page::Identity(view::Page::Settings {
+            crate::webui::app::Page::Identity(account::Page::Settings {
                 model: Box::new(model),
                 csrf_token: ctx.csrf_token.clone(),
                 message: message.map(str::to_owned),
@@ -214,7 +219,7 @@ pub(crate) async fn settings_get(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let tab = view::settings_tab(ctx.query.get("tab").map(String::as_str));
+    let tab = settings_tab(ctx.query.get("tab").map(String::as_str));
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("profile") => Some("Profile updated."),
         Some("avatar") => Some("Profile picture updated."),

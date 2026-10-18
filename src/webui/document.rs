@@ -43,14 +43,21 @@ pub struct Chrome {
     pub csrf_token: String,
     pub return_to: String,
     pub theme: Theme,
+    /// Unread inbox notifications for the header badge. None where no count was read.
+    pub unread_notifications: Option<i64>,
 }
 
 /// Explicit native/error fallback. Normal product GETs use render_model so the
 /// browser receives the exact tree and owned data used by server rendering.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn render(title: &str, chrome: Chrome, body: Element) -> String {
+pub fn render(
+    title: &str,
+    chrome: Chrome,
+    repo: Option<crate::webui::pages::repos::chrome::RepoChrome>,
+    body: Element,
+) -> String {
     let theme = chrome.theme;
-    document(title, theme, super::components::shell(chrome, body))
+    document(title, theme, super::components::shell(chrome, repo, body))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -124,12 +131,13 @@ mod tests {
         let html = render(
             "<private>",
             Chrome::default(),
+            None,
             rsx! { h1 { "<script>alert(1)</script>" } },
         );
         assert!(html.starts_with("<!DOCTYPE html><html"));
         assert!(html.contains("&#60;private&#62;"));
         assert!(html.contains("&#60;script&#62;"));
-        assert!(html.contains("src=\"/assets/favicon.png\""));
+        assert!(html.contains("class=\"site-brand-mark\""));
         assert!(html.contains("rel=\"icon\" type=\"image/png\" href=\"/assets/favicon.png\""));
         assert!(!html.contains("src=\"/assets/logo.svg\""));
         assert!(html.ends_with("</html>"));
@@ -143,12 +151,18 @@ mod tests {
                 theme: Theme::Light,
                 ..Default::default()
             },
+            None,
             rsx! { p { "Light page" } },
         );
         assert!(light.contains("name=\"theme-color\" content=\"#f6f8fa\""));
         assert!(!light.contains("prefers-color-scheme"));
 
-        let system = render("System", Chrome::default(), rsx! { p { "System page" } });
+        let system = render(
+            "System",
+            Chrome::default(),
+            None,
+            rsx! { p { "System page" } },
+        );
         assert_eq!(system.matches("name=\"theme-color\"").count(), 2);
         assert!(system.contains("media=\"(prefers-color-scheme: dark)\""));
         assert!(system.contains("media=\"(prefers-color-scheme: light)\""));
@@ -164,6 +178,7 @@ mod tests {
                 return_to: "/".into(),
                 ..Default::default()
             },
+            None,
             rsx! { p { "Hello Alice" } },
         );
         assert!(html.contains("action=\"/logout\""));
