@@ -25,6 +25,7 @@ pub struct BranchProtectionRuleResponse {
     pub require_up_to_date_branch: bool,
     pub require_linear_history: bool,
     pub require_conversation_resolution: bool,
+    pub require_code_owner_reviews: bool,
     pub enforce_admins: bool,
     pub allow_force_pushes: bool,
     pub allow_deletions: bool,
@@ -62,6 +63,8 @@ pub struct UpsertBranchProtectionRuleRequest {
     pub require_linear_history: bool,
     #[serde(default)]
     pub require_conversation_resolution: bool,
+    #[serde(default)]
+    pub require_code_owner_reviews: bool,
     #[serde(default = "yes")]
     pub enforce_admins: bool,
     #[serde(default)]
@@ -80,9 +83,6 @@ pub struct UpsertBranchProtectionRuleRequest {
     /// Not enforceable here. Accepted only as false.
     #[serde(default)]
     pub require_signed_commits: bool,
-    /// Not enforceable here. Accepted only as false.
-    #[serde(default)]
-    pub require_code_owner_reviews: bool,
 }
 
 pub(in crate::backend::api::repos) async fn rule_response(
@@ -101,6 +101,7 @@ pub(in crate::backend::api::repos) async fn rule_response(
         require_up_to_date_branch: rule.require_up_to_date_branch,
         require_linear_history: rule.require_linear_history,
         require_conversation_resolution: rule.require_conversation_resolution,
+        require_code_owner_reviews: rule.require_code_owner_review,
         enforce_admins: rule.enforce_admins,
         allow_force_pushes: !rule.block_force_pushes,
         allow_deletions: !rule.block_deletions,
@@ -277,12 +278,12 @@ pub(in crate::backend::api::repos) async fn save_rule(
         ));
     }
 
-    if req.require_signed_commits || req.require_code_owner_reviews {
+    if req.require_signed_commits {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "unsupported_protection",
-                "Signed-commit and code-owner enforcement are not available",
+                "Signed-commit enforcement is not available",
             )),
         ));
     }
@@ -317,6 +318,7 @@ pub(in crate::backend::api::repos) async fn save_rule(
             force_push_allowances,
             enforce_admins: req.enforce_admins,
             require_conversation_resolution: req.require_conversation_resolution,
+            require_code_owner_review: req.require_code_owner_reviews,
         },
     )
     .await

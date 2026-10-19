@@ -1,4 +1,4 @@
-//! Admin page contracts: the timeframe control, the account table, the ban confirmation, and the chart.
+//! Admin page contracts: the timeframe control, the overview's account summary, the users page and the chart.
 use super::page::{activity_totals, columns, date_tick_indices, timeframe_control};
 use super::*;
 use crate::webui::pages::fields::FormValues;
@@ -28,26 +28,30 @@ fn chart_labels_the_first_last_and_evenly_spaced_days() {
     assert_eq!(date_tick_indices(180), vec![0, 44, 89, 134, 179]);
 }
 
-#[test]
-fn ban_confirmation_uses_a_modal_with_a_native_page_fallback() {
-    let account = Account {
-        id: 42,
-        username: "bob".into(),
-        email: "bob@example.test".into(),
-        admin: false,
-        banned: false,
+fn account(id: i64, username: &str, admin: bool, banned: bool) -> Account {
+    Account {
+        id,
+        username: username.into(),
+        email: format!("{username}@example.test"),
+        admin,
+        banned,
         must_change_password: false,
+        two_factor: false,
         files: 0,
         bytes: 0,
         commits: 0,
         pushes: 0,
         contributions: 0,
         created: "today".into(),
-    };
+    }
+}
+
+#[test]
+fn overview_links_to_the_users_page_instead_of_listing_every_action() {
     let model = Admin {
         current_user_id: 1,
         ai_crawlers: "block".into(),
-        accounts: vec![account],
+        accounts: vec![account(42, "bob", false, false)],
         activity: vec![],
         days: 30,
         manage_access: false,
@@ -55,17 +59,71 @@ fn ban_confirmation_uses_a_modal_with_a_native_page_fallback() {
         values: FormValues::default(),
     };
     let output = html(admin_page(model, "csrf-marker", None, false));
-    assert!(output.contains("0 commits · 0 push workflow runs"));
-    assert!(output.contains("href=\"/admin/accounts/42/ban?days=30\""));
-    assert!(output.contains("<dialog"));
-    assert!(output.contains("Ban bob?"));
-    assert!(!output.contains("type=\"checkbox\""));
-    let fallback = html(ban_confirmation_page("bob", 42, "csrf-marker", 30));
-    assert!(fallback.contains("action=\"/admin/accounts/42/ban\""));
-    assert!(fallback.contains("name=\"confirm_delete\""));
-    assert!(fallback.contains("href=\"/admin?days=30\""));
-    assert!(fallback.contains("Accounts</a> / bob"));
-    assert!(fallback.contains("class=\"btn btn-destructive\""));
+    assert!(output.contains("href=\"/admin/users\""));
+    assert!(output.contains("Manage users"));
+    assert!(!output.contains("/admin/accounts/42/ban"));
+}
+
+fn users_model(accounts: Vec<Account>, search: &str, page: usize, pages: usize) -> AdminUsers {
+    AdminUsers {
+        current_user_id: 1,
+        accounts,
+        search: search.into(),
+        page,
+        pages,
+        total: 30,
+        values: FormValues::default(),
+    }
+}
+
+#[test]
+fn users_page_actions_confirm_bans_and_role_changes_in_dialogs() {
+    let model = users_model(
+        vec![
+            account(42, "bob", false, false),
+            account(43, "carol", true, false),
+        ],
+        "",
+        1,
+        1,
+    );
+    let output = html(admin_users_page(model, "csrf-marker", None, false));
+    // The member gets a ban dialog and a make-admin dialog; the administrator gets remove-admin.
+    assert!(output.contains("id=\"ban-account-42\""));
+    assert!(output.contains("action=\"/admin/accounts/42/ban\""));
+    assert!(output.contains("name=\"confirm_delete\" value=\"yes\""));
+    assert!(output.contains("id=\"role-account-42\""));
+    assert!(output.contains("action=\"/admin/accounts/42/role\""));
+    assert!(output.contains("Make administrator"));
+    assert!(output.contains("Remove administrator"));
+    assert!(output.contains("action=\"/admin/accounts/43/role\""));
+    assert!(output.contains("name=\"admin\" value=\"false\""));
+    assert!(output.contains("name=\"csrf_token\" value=\"csrf-marker\""));
+}
+
+#[test]
+fn users_page_keeps_search_and_page_on_row_actions_and_offers_the_create_form() {
+    let model = users_model(vec![account(42, "bob", false, true)], "bo", 2, 3);
+    let output = html(admin_users_page(model, "csrf-marker", None, false));
+    assert!(output.contains("name=\"q\" value=\"bo\""));
+    assert!(output.contains("name=\"page\" value=\"2\""));
+    assert!(output.contains("/admin/users?q=bo"));
+    assert!(output.contains("page=3"));
+    assert!(output.contains("href=\"/admin/users?q=bo\""));
+    // A banned account is restored by a form that needs no confirmation.
+    assert!(output.contains("name=\"banned\" value=\"false\""));
+    assert!(!output.contains("id=\"ban-account-42\""));
+    assert!(output.contains("action=\"/admin/access/users\""));
+    assert!(output.contains("name=\"is_admin\""));
+    assert!(output.contains("Page 2 of 3"));
+}
+
+#[test]
+fn users_page_without_matches_says_so() {
+    let model = users_model(vec![], "zzz", 1, 1);
+    let output = html(admin_users_page(model, "csrf-marker", None, false));
+    assert!(output.contains("No accounts match"));
+    assert!(!output.contains("Page 1 of"));
 }
 
 #[test]

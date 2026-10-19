@@ -32,12 +32,11 @@ pub fn path_matches(path: &str, query: &str) -> bool {
 pub fn find(repo: &RepoChrome, page: &FindPage) -> Element {
     let base = repo.base();
     // A new query or revision is a new page, so the box starts from the server's value.
-    let key = format!("{}?{}", page.reference, page.query);
     chrome(
         repo,
         rsx! {
             section { class: "repo-find min-w-0", "aria-label": "Go to file",
-                div { key: "{key}", class: "space-y-4",
+                div { key: "{page.reference}?{page.query}", class: "space-y-4",
                     header { class: "repo-page-heading",
                         div { h2 { "Go to file on " NavLink { href: file_url(&base, "tree", &page.reference, ""), {icon("branches")} "{page.reference}" } } }
                     }

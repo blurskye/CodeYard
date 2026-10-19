@@ -125,7 +125,7 @@
 .repo-file-message span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .repo-file-table .repo-file-date { width: 120px; padding-right: 16px; text-align: right; color: var(--muted-foreground, #8b949e); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .repo-parent-row td { padding-left: 16px; font-weight: 600; }
-.repo-readme { background: var(--background, #0d1117); scroll-margin-top: 80px; }
+.repo-readme { background: var(--background, #0d1117); scroll-margin-top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px) + 16px); }
 .repo-readme-header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border, #30363d); border-radius: 5px 5px 0 0; background: var(--muted, #161b22); font-size: 14px; font-weight: 600; }
 .repo-readme-title { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 600; }
 .repo-readme-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
@@ -206,6 +206,7 @@
 .repo-blob-stats { color: var(--muted-foreground, #8b949e); font-family: ui-monospace, monospace; font-size: 12px; }
 .repo-blob-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
 .repo-file-actions:empty { display: none; }
+.repo-menu-phone { display: none; }
 .repo-blob-actions .btn { min-height: 28px; padding: 2px 10px; font-size: 12px; }
 .repo-blob-actions [role=status]:empty { display: none; }
 .repo-binary { padding: 32px; text-align: center; }
@@ -329,7 +330,11 @@
 .collaboration-branch-select select { max-width: 240px; font-weight: 400; }
 /* The one column may shrink to the form, so a wide Markdown toolbar scrolls inside its box. */
 .collaboration-form-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 16px; }
-.collaboration-form-fields > label { font-weight: 600; }
+.collaboration-form-fields > label, .collaboration-form-field > label { font-weight: 600; }
+.collaboration-form-field { display: grid; gap: 6px; min-width: 0; }
+.collaboration-field-hint { margin: 0; font-size: 13px; }
+.collaboration-form-text { margin: 0; }
+.collaboration-form-checks { display: grid; gap: 6px; }
 .repo-content .collaboration-input, .repo-content .collaboration-textarea { display: block; width: 100%; background-color: var(--background); color: var(--foreground); border-color: var(--border); }
 .collaboration-editor-tabs { display: flex; border-bottom: 1px solid var(--border); }
 .collaboration-editor-tab { display: inline-flex; padding: 8px 12px; color: var(--muted-foreground); font-size: 13px; }
@@ -395,7 +400,7 @@
 .collaboration-detail-tabs-more > summary::-webkit-details-marker { display: none; }
 .repo-content .collaboration-detail-tab { flex-shrink: 0; padding: 10px 12px; border-bottom: 2px solid transparent; color: var(--muted-foreground); white-space: nowrap; }
 .repo-content .collaboration-detail-tab-active { border-bottom-color: #fd8c73; color: var(--foreground); font-weight: 600; }
-.collaboration-comment { scroll-margin-top: 80px; }
+.collaboration-comment { scroll-margin-top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px) + 16px); }
 .collaboration-comment-location { padding: 12px 16px 0; font-family: ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .collaboration-labels { display: flex; flex-wrap: wrap; gap: 6px; }
 .collaboration-label-remove { display: inline-flex; margin: -2px -5px -2px 2px; }
@@ -500,6 +505,11 @@
 .repo-commit-row-content { flex: 1 1 auto; min-width: 0; }
 .repo-commit-row-actions { display: flex; flex: none; align-items: center; gap: 8px; }
 .repo-commit-row-actions .btn { min-height: 26px; padding: 2px 8px; font-size: 12px; }
+@media (max-width: 639px) {
+  /* The SHA and the two icons take their own row under the message, so the author and the date keep one line. */
+  .repo-commit-row { flex-wrap: wrap; align-items: flex-start; row-gap: 8px; }
+  .repo-commit-row-actions { flex: 0 0 100%; padding-left: 40px; }
+}
 .repo-full-sha-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .repo-compare-empty { margin: 16px 0 0; padding: 16px; }
 .repo-editor-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: 0; z-index: 5; padding: 8px 0; background: var(--background, #0d1117); }
@@ -566,7 +576,7 @@
 .repo-files-list a span, .repo-files-folder > summary span { overflow: hidden; text-overflow: ellipsis; }
 .repo-files-folder > summary { list-style: none; }
 .repo-files-folder > summary::-webkit-details-marker { display: none; }
-/* A folder's chevron points down while the folder is open. A link to a folder that is not loaded keeps it pointing right. */
+/* A folder's chevron points down while the folder is open. A link to a folder that is not opened yet keeps it pointing right. */
 .repo-files-chevron { display: inline-flex; flex: none; width: 16px; height: 16px; color: var(--muted-foreground, #8b949e); transform: rotate(-90deg); transition: transform .12s ease; }
 .repo-files-chevron .repo-icon { width: 16px; height: 16px; }
 .repo-files-folder[open] > summary > .repo-files-chevron { transform: none; }
@@ -645,14 +655,35 @@
   .repo-home-actions { flex: none; flex-wrap: nowrap; gap: 8px; }
   .repo-home-actions > :is(.repo-goto-phone, .repo-menu:not(.repo-code-menu)) { display: none; }
   .repo-goto-phone { display: inline-flex; }
-  .repo-blob-toolbar { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
-  .repo-blob-path { min-width: 0; }
-  .repo-blob-path .repo-breadcrumbs a { overflow-wrap: anywhere; }
-  .repo-file-actions { flex-wrap: nowrap; justify-content: flex-end; gap: 8px; margin-left: 0; }
+  /* The path and the actions share one row. The path ends in an ellipsis and Copy path holds all of it.
+     Finding a file and adding one are in the header search and the "+" menu. */
+  .repo-blob-toolbar { flex-wrap: nowrap; gap: 8px; }
+  .repo-blob-path { flex: 1 1 auto; flex-wrap: nowrap; gap: 8px; }
+  .repo-files-open > span { display: none; }
+  .repo-blob-path .repo-breadcrumbs { flex: 1 1 0; flex-wrap: nowrap; min-width: 0; gap: 4px; }
+  .repo-blob-path .repo-breadcrumbs > a, .repo-breadcrumb-part > :not(.repo-path-separator) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .repo-breadcrumb-part { display: flex; min-width: 0; gap: 4px; }
+  .repo-file-actions { flex: none; flex-wrap: nowrap; gap: 8px; margin-left: 0; }
+  .repo-file-actions > :is(.repo-ref-link, .repo-goto-phone, .repo-add-menu) { display: none; }
+  /* A file's header is one row: the view switch and the icons. Raw and Download are in the "..." menu,
+     and a Markdown file's outline takes the place of the copy button. */
+  .repo-blob-header { flex-wrap: nowrap; }
+  .repo-blob-heading { flex: 1 1 auto; flex-wrap: nowrap; gap: 8px; }
+  .repo-blob-heading .repo-view-option { padding: 2px 7px; }
+  .repo-blob-stats { display: none; }
+  .repo-blob-actions { flex: none; flex-wrap: nowrap; }
+  .repo-downloads > .repo-download-extra { display: none; }
+  .repo-blob-actions:has(.repo-outline-menu) .repo-downloads { display: none; }
+  .repo-menu-phone { display: flex; }
   .repo-home-toolbar :is(.btn, .repo-icon-button), .repo-file-actions :is(.btn, .repo-icon-button), .repo-blob-actions :is(.btn, .repo-icon-button) { height: 44px; min-height: 44px; }
   .repo-home-toolbar .repo-icon-button, .repo-file-actions .repo-icon-button, .repo-blob-actions .repo-icon-button { width: 44px; }
   .repo-add-label { display: none; }
   .repo-code-menu > summary { gap: 6px; }
+}
+@media (max-width: 420px) {
+  /* The view switch and the three file icons share one row, so the icons are narrower here. */
+  .repo-blob-actions { gap: 4px; }
+  .repo-blob-actions .repo-icon-button { width: 36px; }
 }
 /* One row below 768px: avatar, author and the message, which truncates; then the time and History. */
 @media (max-width: 767px) {
@@ -663,6 +694,7 @@
 }
 /* On a phone the name needs the room, so the visibility badge is its icon alone. */
 @media (max-width: 640px) {
+  .collaboration-filter-rest { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .repo-visibility { padding: 0 6px; }
   .repo-visibility-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 }
@@ -811,7 +843,7 @@ li.collaboration-picker-hidden { display: none; }
 .collaboration-review-menu > summary::-webkit-details-marker { display: none; }
 /* The review form is a dialog inside the viewport, not a menu under its button. Its body scrolls and
    the footer stays in view. On a phone it rises as a sheet. */
-.collaboration-review-menu > .collaboration-review-panel { position: fixed; top: calc(var(--site-header-height) + 8px); right: 16px; width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - var(--site-header-height) - 24px); max-height: calc(100dvh - var(--site-header-height) - 24px); display: flex; flex-direction: column; padding: 0; }
+.collaboration-review-menu > .collaboration-review-panel { position: fixed; top: calc(var(--site-header-height) + var(--repo-tabs-height) + 8px); right: 16px; width: min(440px, calc(100vw - 32px)); max-height: calc(100vh - var(--site-header-height) - var(--repo-tabs-height) - 24px); max-height: calc(100dvh - var(--site-header-height) - var(--repo-tabs-height) - 24px); display: flex; flex-direction: column; padding: 0; }
 .collaboration-review-panel > .collaboration-review-form { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0; min-height: 0; padding: 0; }
 .collaboration-review-body { display: grid; flex: 1 1 auto; gap: 10px; min-height: 0; overflow-y: auto; padding: 12px; }
 .collaboration-review-panel > .collaboration-review-form > .collaboration-card-footer { flex: none; }
@@ -831,11 +863,11 @@ li.collaboration-picker-hidden { display: none; }
 /* Files changed: a file tree on the left, the file cards on the right. The tree stays in view, and
    the header above it hides the tree. On a phone the tree waits behind the Files button. */
 .collaboration-diff-layout { display: grid; grid-template-columns: 256px minmax(0, 1fr); gap: 24px; align-items: start; }
-.collaboration-diff-tree-column { position: sticky; top: calc(var(--site-header-height, 52px) + 16px); min-width: 0; max-height: calc(100vh - var(--site-header-height, 52px) - 32px); overflow-y: auto; }
+.collaboration-diff-tree-column { position: sticky; top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px) + 16px); min-width: 0; max-height: calc(100vh - var(--site-header-height, 52px) - var(--repo-tabs-height, 44px) - 32px); overflow-y: auto; }
 .collaboration-diff-tree-toggle > summary { margin-bottom: 8px; padding: 4px 0; color: var(--muted-foreground); font-size: 13px; font-weight: 600; }
 .collaboration-diff-tree > .collaboration-file-list { margin: 0; padding: 0; border: 0; }
 .collaboration-diff-files { min-width: 0; }
-.collaboration-diff-file { scroll-margin-top: calc(var(--site-header-height, 52px) + 16px); }
+.collaboration-diff-file { scroll-margin-top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px) + 16px); }
 @media (min-width: 768px) {
   .collaboration-diff-tree-toggle:not([open]) ~ .collaboration-diff-tree { display: none; }
   .collaboration-diff-layout:has(> .collaboration-diff-tree-column > .collaboration-diff-tree-toggle:not([open])) { grid-template-columns: minmax(0, 1fr); }
@@ -919,3 +951,148 @@ span.collaboration-reaction { cursor: default; }
 .collaboration-event del { color: var(--muted-foreground); }
 .collaboration-event ins { background: none; color: var(--foreground); text-decoration: none; font-weight: 600; }
 .collaboration-event-chip { display: inline-block; padding: 0 7px; border: 1px solid var(--border); border-radius: 2em; color: var(--foreground); font-size: 12px; line-height: 18px; }
+
+/* Edit and delete controls under a comment the viewer may change. */
+.collaboration-comment-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0 16px 12px;
+}
+
+.collaboration-comment-edit {
+  width: 100%;
+}
+
+.collaboration-comment-edit-form {
+  margin-top: 0.5rem;
+}
+
+.collaboration-edited {
+  font-size: 0.85em;
+}
+
+/* The notice above every page of an archived repository. */
+.repo-archived-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--muted);
+  color: var(--foreground);
+  font-size: 0.875rem;
+}
+/* Releases: the list, a release page and the release form. */
+.releases-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.releases-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; }
+.releases-row { padding: 16px; border-top: 1px solid var(--border); min-width: 0; }
+.releases-row:first-child { border-top: 0; }
+.releases-row-main { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.releases-row-title { font-weight: 600; font-size: 16px; overflow-wrap: anywhere; }
+.releases-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.releases-pager { display: flex; align-items: center; justify-content: center; gap: 12px; }
+.releases-empty { padding: 24px 0; }
+.releases-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.release-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 0 8px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; color: var(--muted-foreground); }
+.release-badge-latest { color: var(--success-emphasis); border-color: var(--success-emphasis); }
+.release-badge-draft { color: var(--destructive); border-color: var(--destructive); }
+.releases-notes { padding: 16px 0; min-width: 0; overflow-wrap: anywhere; }
+.releases-assets { display: flex; flex-direction: column; gap: 8px; }
+.releases-assets h3 { margin: 0; font-size: 16px; }
+.releases-asset-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 8px; }
+.releases-asset { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border-top: 1px solid var(--border); font-size: 13px; }
+.releases-asset:first-child { border-top: 0; }
+.releases-asset-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.releases-page .repo-page-heading h2 { display: flex; align-items: center; gap: 8px; }
+.releases-form { display: flex; flex-direction: column; gap: 16px; }
+.releases-form .collaboration-form-fields { padding: 0; }
+.releases-flags { display: flex; flex-wrap: wrap; gap: 16px; }
+.releases-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.releases-tag-fixed { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.releases-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.repo-about-releases { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.repo-about-releases .repo-about-heading { display: flex; align-items: center; gap: 6px; }
+.repo-about-heading-link { display: inline-flex; align-items: center; gap: 6px; color: inherit; text-decoration: none; }
+.repo-about-heading-link:hover { text-decoration: underline; }
+.repo-about-release-latest { font-weight: 600; overflow-wrap: anywhere; }
+.repo-about-release-count { color: var(--muted-foreground); }
+
+/* Task list boxes in issue and pull request bodies and comments. Each box is a button that submits
+   its form; it is drawn as a checkbox and keeps a 24px target. */
+.collaboration-markdown .task-box { display: inline-block; flex: none; width: 16px; height: 16px; margin: 0 6px 0 0; vertical-align: -2px; border: 1px solid var(--muted-foreground); border-radius: 4px; background: var(--background); cursor: pointer; }
+.collaboration-markdown .task-box:hover { border-color: var(--foreground); }
+.collaboration-markdown .task-box:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.collaboration-markdown .task-box-done { border-color: var(--primary); background: var(--primary) no-repeat center / 10px 8px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 8'%3E%3Cpath d='M1 4l3 3 5-6' fill='none' stroke='white' stroke-width='1.8'/%3E%3C/svg%3E"); }
+.collaboration-task-count { margin-left: 8px; font-size: 12px; white-space: nowrap; }
+.collaboration-template-list { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
+.collaboration-template-card { display: flex; flex-direction: column; gap: 4px; min-height: 44px; padding: 12px 16px; color: var(--foreground); text-decoration: none; }
+.collaboration-template-card:hover { background: var(--muted); }
+.collaboration-template-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.collaboration-markdown li:has(> .task-box) { list-style: none; }
+
+/* Wiki: pages, the sidebar and footer pages, revision lists and the compare diff. */
+.wiki-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.wiki-nav { display: flex; flex-wrap: wrap; gap: 8px; }
+.wiki-layout { display: grid; grid-template-columns: minmax(0, 1fr) 240px; gap: 24px; align-items: start; }
+.wiki-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.wiki-sidebar { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 0; }
+.wiki-footer { border-top: 1px solid var(--border); padding-top: 12px; font-size: 13px; }
+.wiki-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.wiki-meta { font-size: 13px; }
+.wiki-body { min-width: 0; overflow-wrap: anywhere; }
+.wiki-empty, .wiki-old-banner { padding: 12px 0; }
+.wiki-search { display: flex; flex-wrap: wrap; gap: 8px; }
+.wiki-search .collaboration-input { flex: 1 1 220px; min-width: 0; }
+.wiki-page-list, .wiki-revisions { list-style: none; margin: 0; padding: 0; }
+.wiki-page-row, .wiki-revision-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 0; border-top: 1px solid var(--border); min-width: 0; }
+.wiki-page-row:first-child, .wiki-revision-row:first-child { border-top: 0; }
+.wiki-revision-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.wiki-page-title { font-weight: 600; overflow-wrap: anywhere; }
+.wiki-diff { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; }
+.wiki-diff-line { display: flex; white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 12px; }
+.wiki-diff-sign { flex: 0 0 1.25em; user-select: none; }
+.wiki-diff-text { min-width: 0; }
+.wiki-diff-add { background: var(--success-emphasis, transparent); }
+.wiki-diff-del { background: color-mix(in srgb, var(--destructive) 15%, transparent); }
+@media (max-width: 899px) {
+    .wiki-layout { grid-template-columns: minmax(0, 1fr); }
+}
+/* Repository Insights. The section nav reuses the settings layout classes. */
+.repo-insights-periods { display: flex; flex-wrap: wrap; gap: 8px; }
+.repo-insights-period { display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--foreground); text-decoration: none; }
+.repo-insights-period:hover { background: var(--muted); }
+.repo-insights-period[aria-current="page"] { background: var(--accent); font-weight: 600; }
+.repo-insights-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+.repo-insights-stat { display: grid; gap: 4px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); }
+.repo-insights-stat span { color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
+.repo-insights-stat strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.repo-insights-note { color: var(--muted-foreground); font-size: 13px; }
+.repo-insights-list { margin: 0; padding: 0; list-style: none; }
+.repo-insights-list li { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-width: 0; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.repo-insights-list li:last-child { border-bottom: 0; }
+.repo-insights-list a { min-width: 0; overflow-wrap: anywhere; }
+.repo-insights-date { flex-shrink: 0; color: var(--muted-foreground); font-size: 12px; white-space: nowrap; }
+.repo-insights-bar-track { display: inline-block; width: 40%; max-width: 160px; height: 8px; margin-right: 8px; overflow: hidden; border-radius: 4px; background: var(--muted); vertical-align: middle; }
+.repo-insights-bar { display: block; height: 100%; background: var(--chart-1); }
+.repo-insights-count { font-variant-numeric: tabular-nums; }
+.repo-insights-spark { display: block; width: 100%; min-width: 80px; max-width: 200px; height: 16px; }
+.repo-insights-bar-fill { fill: var(--chart-1); }
+.repo-insights-chart-scroll { margin: 8px 16px 0; }
+.repo-insights-chart { display: block; width: 100%; height: auto; }
+.repo-insights-axis { display: flex; justify-content: space-between; color: var(--muted-foreground); font-size: 11px; }
+.repo-insights-baseline { stroke: var(--border); stroke-width: 1; }
+.repo-insights-additions { fill: var(--success); }
+.repo-insights-deletions { fill: var(--destructive); }
+.repo-insights-punch { padding: 12px 16px 16px; }
+.repo-insights-punch-hours,
+.repo-insights-punch-row { display: grid; grid-template-columns: 2.5rem repeat(24, minmax(0, 1fr)); gap: 2px; align-items: center; }
+.repo-insights-punch-hours span { color: var(--muted-foreground); font-size: 10px; white-space: nowrap; }
+.repo-insights-punch-row + .repo-insights-punch-row { margin-top: 2px; }
+.repo-insights-punch-day { color: var(--muted-foreground); font-size: 11px; }
+.repo-insights-cell { display: block; aspect-ratio: 1; border-radius: 2px; background: var(--chart-1); }
+.repo-insights-details { margin: 0 16px 16px; }
+.repo-insights-details > summary { display: inline-flex; align-items: center; min-height: 44px; color: var(--primary); font-size: 14px; font-weight: 600; cursor: pointer; }

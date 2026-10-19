@@ -110,43 +110,15 @@ fn commit_link(model: &ActionsPage, sha: &str) -> Element {
     }
 }
 
-/// Cancels a queued or running run through the CI job API, which takes JSON, so there is no plain
-/// form for it. The button is drawn only after the page hydrates: a page without scripting offers
-/// no cancel control.
-#[component]
-fn CancelRunButton(run_id: String, csrf_token: String) -> Element {
-    let ready = use_signal(|| false);
-    #[cfg(target_arch = "wasm32")]
-    use_effect(move || {
-        let mut ready = ready;
-        ready.set(true);
-    });
+/// A button that posts an action on this run through its own native form. The form carries the
+/// CSRF token and works without scripting; the server checks write access again.
+fn run_form(model: &ActionsPage, run_id: &str, action: &str, label: &str) -> Element {
     rsx! {
-        if ready() {
-            button { r#type: "button", class: "actions-button",
-                onclick: move |_| {
-                    #[cfg(target_arch = "wasm32")]
-                    spawn(cancel_run(run_id.clone(), csrf_token.clone()));
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let _ = (&run_id, &csrf_token);
-                },
-                "Cancel run"
-            }
+        form { method: "post", action: format!("{}/runs/{run_id}/{action}", model.base_path), class: "actions-run-form",
+            {crate::webui::pages::repos::issues::csrf(&model.csrf_token)}
+            button { r#type: "submit", class: "actions-button", "{label}" }
         }
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-async fn cancel_run(run_id: String, csrf_token: String) {
-    let body = serde_json::json!({ "csrf_token": csrf_token });
-    let request = gloo_net::http::Request::post(&format!("/api/ci/jobs/{run_id}/cancel"))
-        .credentials(web_sys::RequestCredentials::SameOrigin)
-        .json(&body);
-    if let Ok(request) = request {
-        // The page then shows the status the server records, so a refused cancel changes nothing.
-        let _ = request.send().await;
-    }
-    crate::webui::navigation::refresh_page();
 }
 
 pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Element {
@@ -174,7 +146,8 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
                     span { class: "actions-sr-only", "Run ID {run.id}" }
                 }
                 div { class: "actions-run-heading-actions",
-                    if cancellable { CancelRunButton { run_id: run.id.clone(), csrf_token: model.csrf_token.clone() } }
+                    if model.can_dispatch && cancellable { {run_form(model, &run.id, "cancel", "Cancel run")} }
+                    if model.can_dispatch && !cancellable && run.head_sha.is_some() && run.event != "pull_request" { {run_form(model, &run.id, "rerun", "Re-run")} }
                     RefreshLink { href: model.url(&[]) }
                 }
             }

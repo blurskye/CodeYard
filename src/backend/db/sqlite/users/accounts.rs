@@ -210,7 +210,7 @@ pub async fn list_admin_account_summaries(pool: &SqlitePool) -> Result<Vec<Admin
     // Independent correlated aggregates avoid multiplying storage/counts by the
     // cardinality of other joins. No PostgreSQL LATERAL or float quota arithmetic.
     Ok(sqlx::query_as(r#"WITH totals AS (
-        SELECT u.id,u.username,u.email,u.is_admin,u.is_banned,u.must_change_password,u.created_at,
+        SELECT u.id,u.username,u.email,u.is_admin,u.is_banned,u.must_change_password,u.two_factor_enabled,u.created_at,
             (SELECT COUNT(*) FROM files f WHERE f.user_id=u.id AND f.is_active) AS total_files,
             COALESCE((SELECT SUM(bytes) FROM (
                 SELECT f.file_size AS bytes FROM files f WHERE f.user_id=u.id AND f.is_active
@@ -226,7 +226,7 @@ pub async fn list_admin_account_summaries(pool: &SqlitePool) -> Result<Vec<Admin
                 + (SELECT COUNT(*) FROM releases r WHERE r.author_id=u.id)
                 + (SELECT COUNT(*) FROM repositories r WHERE r.owner_kind='user' AND r.owner_user_id=u.id) AS other_contributions
         FROM users u)
-        SELECT id,username,email,is_admin,is_banned,must_change_password,created_at,total_files,total_bytes,
+        SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at,total_files,total_bytes,
             commits_total,pushes_total,commits_total+pushes_total+other_contributions AS contributions_total
         FROM totals ORDER BY contributions_total DESC,created_at ASC,id ASC"#)
         .fetch_all(pool).await?)

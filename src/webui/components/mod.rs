@@ -1,6 +1,8 @@
 mod avatar;
 pub mod code;
+mod confirm;
 mod copy;
+pub mod deploy_keys;
 mod forms;
 pub mod languages;
 mod markdown;
@@ -10,9 +12,12 @@ mod markdown_toolbar;
 pub mod menu;
 pub mod references;
 mod shell;
+pub mod task_lists;
 mod theme;
+pub mod webhooks;
 
 pub use avatar::Avatar;
+pub use confirm::confirm_dialog;
 pub use copy::CopyButton;
 pub use forms::{
     draft_text, submit_form, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, FieldError,

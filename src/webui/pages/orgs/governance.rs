@@ -1,7 +1,8 @@
 use super::{
-    fields::{choice, controls_as, field_value, input, select},
+    fields::{choice, controls_as, field_value, hidden_controls, input, select},
     Organization, Page,
 };
+use crate::webui::components::confirm_dialog;
 use dioxus::prelude::*;
 
 pub(super) fn suspension(org: &Organization) -> Element {
@@ -13,7 +14,8 @@ pub(super) fn suspension(org: &Organization) -> Element {
     } }
 }
 
-/// The owner's delete card. It names the repositories deleting the organization also deletes.
+/// The owner's delete card. It names the repositories deleting the organization also deletes. Its
+/// dialog opens by its fragment, since organization pages have no disclosure widgets.
 pub(super) fn deletion(page: &Page, target: &str) -> Element {
     let count = page.owned_repositories;
     let noun = if count == 1 {
@@ -21,6 +23,10 @@ pub(super) fn deletion(page: &Page, target: &str) -> Element {
     } else {
         "repositories"
     };
+    let refused = page
+        .draft
+        .get("action")
+        .is_some_and(|v| v == "delete-organization");
     rsx! {
         section { class: "org-danger", aria_labelledby: "organization-delete-title",
             div { class: "org-danger-header",
@@ -30,9 +36,23 @@ pub(super) fn deletion(page: &Page, target: &str) -> Element {
                     p { strong { "It also permanently deletes its {count} {noun} and everything in them." } }
                 }
             }
-            form { method: "post", action: target.to_owned(), class: "org-form org-danger-form",
-                {input(page, "delete-organization", "confirm", "Type the organization name to confirm")}
-                {controls_as(page, "delete-organization", "Delete organization", "btn btn-destructive")}
+            div { class: "org-danger-action",
+                if refused {
+                    if let Some(message) = &page.message {
+                        div { role: "alert", class: "repo-alert repo-alert-error", p { "{message}" } }
+                    }
+                }
+                a { class: "btn btn-destructive", href: "#organization-delete-dialog", "Delete organization" }
+                {confirm_dialog(Some("organization-delete-dialog"), "Delete this organization", target, target, rsx! {
+                    div { class: "org-form",
+                        strong { "Delete this organization?" }
+                        if count > 0 {
+                            p { "It also permanently deletes its {count} {noun} and everything in them." }
+                        }
+                        {input(page, "delete-organization", "confirm", "Type the organization name to confirm")}
+                        {hidden_controls(page, "delete-organization")}
+                    }
+                }, "Delete organization")}
             }
         }
     }

@@ -52,6 +52,7 @@ pub(crate) fn can_change_member(
 
 pub mod access;
 pub mod deletion;
+pub mod invitations;
 pub mod membership;
 pub mod profiles;
 pub mod recovery;
@@ -59,6 +60,7 @@ pub mod teams;
 
 pub use access::*;
 pub use deletion::*;
+pub use invitations::*;
 pub use membership::*;
 pub use profiles::*;
 pub use recovery::*;

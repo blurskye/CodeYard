@@ -531,10 +531,14 @@ struct Emitter<'r> {
     /// Set when the emitter only collects the references a page could link, see
     /// `collect_candidates`.
     found: Option<&'r mut Candidates>,
+    /// The form that task boxes submit. Without it, boxes are read-only checkboxes.
+    task_form: Option<&'r str>,
+    /// Task list items written so far; the item number is the box's value.
+    tasks: usize,
 }
 
 impl<'r> Emitter<'r> {
-    fn new(document: bool, references: &'r References) -> Self {
+    fn new(document: bool, references: &'r References, task_form: Option<&'r str>) -> Self {
         Self {
             out: String::new(),
             document,
@@ -553,6 +557,8 @@ impl<'r> Emitter<'r> {
             references,
             reference_links: 0,
             found: None,
+            task_form,
+            tasks: 0,
         }
     }
 
@@ -763,10 +769,28 @@ impl<'r> Emitter<'r> {
                     "<sup class=\"footnote-reference\"><a href=\"#user-content-fn:{number}\">{number}</a></sup>"
                 ))
             }
-            Event::TaskListMarker(checked) => self.write(&format!(
-                "<input type=\"checkbox\" disabled{} class=\"mr-2\">",
-                if checked { " checked" } else { "" }
-            )),
+            Event::TaskListMarker(checked) => {
+                let index = self.tasks;
+                self.tasks += 1;
+                match self.task_form {
+                    Some(form) => {
+                        let label = if checked {
+                            "Mark as not done"
+                        } else {
+                            "Mark as done"
+                        };
+                        self.write(&format!(
+                            "<button type=\"submit\" form=\"{}\" name=\"task\" value=\"{index}\" class=\"task-box{}\" aria-label=\"{label}\" title=\"{label}\"></button>",
+                            escape_html(form),
+                            if checked { " task-box-done" } else { "" }
+                        ))
+                    }
+                    None => self.write(&format!(
+                        "<input type=\"checkbox\" disabled{} class=\"mr-2\">",
+                        if checked { " checked" } else { "" }
+                    )),
+                }
+            }
         }
     }
 
@@ -1275,12 +1299,19 @@ pub fn parse_markdown(text: &str, references: &References) -> String {
     bounded_markdown(text, false, references).unwrap_or_else(|| plain_text_preview(text))
 }
 
+/// Markdown whose task boxes are buttons. Each button submits the form `task_form` with its
+/// item number in `task`; the form must sit on the same page.
+pub fn parse_markdown_with_tasks(text: &str, references: &References, task_form: &str) -> String {
+    render_markdown(text, false, references, Some(task_form))
+        .unwrap_or_else(|| plain_text_preview(text))
+}
+
 /// Markdown for a file in a repository: lines of a paragraph join, footnotes work.
 fn parse_document(text: &str, references: &References) -> String {
     bounded_markdown(text, true, references).unwrap_or_else(|| plain_text_preview(text))
 }
 
-fn markdown_options(document: bool) -> Options {
+pub(super) fn markdown_options(document: bool) -> Options {
     let mut options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -1293,13 +1324,22 @@ fn markdown_options(document: bool) -> Options {
 
 /// `None` when the source or its output is over budget, or nests deeper than `MAX_NESTING`.
 fn bounded_markdown(text: &str, document: bool, references: &References) -> Option<String> {
+    render_markdown(text, document, references, None)
+}
+
+fn render_markdown(
+    text: &str,
+    document: bool,
+    references: &References,
+    task_form: Option<&str>,
+) -> Option<String> {
     if text.len() > MAX_SOURCE_BYTES {
         return None;
     }
     if text.trim().is_empty() {
         return Some(String::new());
     }
-    let mut emitter = Emitter::new(document, references);
+    let mut emitter = Emitter::new(document, references, task_form);
     let events = Parser::new_ext(text, markdown_options(document)).into_offset_iter();
     let mut events = TextRuns::new(text, events);
     while let Some(event) = events.next() {
@@ -1322,7 +1362,7 @@ pub(super) fn collect_candidates(source: &str, document: bool, found: &mut Candi
         return;
     }
     let none = References::default();
-    let mut emitter = Emitter::new(document, &none);
+    let mut emitter = Emitter::new(document, &none, None);
     emitter.found = Some(found);
     let events = Parser::new_ext(source, markdown_options(document)).into_offset_iter();
     let mut events = TextRuns::new(source, events);
@@ -1429,8 +1469,16 @@ fn reference_anchor(link: &Link) -> String {
 /// Port of `MarkdownRenderer.svelte`. The references name what the page may link; the default
 /// value links nothing.
 #[component]
-pub fn Markdown(content: String, #[props(default)] references: References) -> Element {
-    let html = parse_markdown(&content, &references);
+pub fn Markdown(
+    content: String,
+    #[props(default)] references: References,
+    // The form the task boxes submit, when the viewer may tick them.
+    #[props(default)] task_form: Option<String>,
+) -> Element {
+    let html = match &task_form {
+        Some(form) => parse_markdown_with_tasks(&content, &references, form),
+        None => parse_markdown(&content, &references),
+    };
 
     rsx! {
         div { class: "markdown-body leading-relaxed text-foreground", dangerous_inner_html: "{html}" }

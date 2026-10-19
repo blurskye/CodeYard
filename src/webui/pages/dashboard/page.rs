@@ -157,7 +157,11 @@ pub fn render(list: WorkList) -> Element {
                         NavLink { href: list_href(kind, value, list.open), mark_current: false,
                             class: if value == list.tab { "collaboration-filter-link collaboration-filter-active" } else { "collaboration-filter-link" },
                             aria_current: if value == list.tab { Some("page".to_owned()) } else { None },
-                            "{title}"
+                            // A phone shows the first word, so the four tabs stay on one row.
+                            {
+                                let (first, rest) = title.split_once(' ').unwrap_or((title, ""));
+                                rsx! { "{first}" if !rest.is_empty() { span { class: "collaboration-filter-rest", " {rest}" } } }
+                            }
                         }
                     }
                 }
@@ -264,7 +268,10 @@ mod tests {
         assert!(html.contains("&#60;b&#62;Broken"), "{html}");
         assert!(html.contains("href=\"/alice/project\""), "{html}");
         assert!(html.contains("2 weeks ago"), "{html}");
-        assert!(html.contains("Created by me"), "{html}");
+        assert!(
+            html.contains("Created") && html.contains(" by me"),
+            "{html}"
+        );
         assert!(html.contains("aria-current=\"page\""), "{html}");
         assert!(html.contains("tab=created"), "{html}");
         assert!(html.contains("state=open"), "{html}");
@@ -290,7 +297,10 @@ mod tests {
             html.contains("No open pull requests waiting for your review"),
             "{html}"
         );
-        assert!(html.contains("Review requests"), "{html}");
+        assert!(
+            html.contains("Review") && html.contains(" requests"),
+            "{html}"
+        );
         assert!(html.contains("state=closed"), "{html}");
     }
 
@@ -307,7 +317,7 @@ mod tests {
             items: vec![],
         };
         let html = dioxus_ssr::render_element(render(list));
-        assert!(html.contains("Involving me"), "{html}");
+        assert!(html.contains("Involving") && html.contains(" me"), "{html}");
         assert!(html.contains("tab=involved"), "{html}");
         assert!(
             html.contains("No open pull requests involving you"),

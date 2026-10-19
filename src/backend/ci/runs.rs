@@ -73,6 +73,12 @@ pub struct CiRuns {
 }
 
 impl CiRuns {
+    /// The broadcaster that carries notifications to live sockets. Pull request paths that send
+    /// notifications outside a request reach it through the CI handle they already hold.
+    pub fn notifications(&self) -> &NotificationBroadcaster {
+        &self.notifications
+    }
+
     pub fn new(
         pool: DbPool,
         config: Arc<CiConfig>,

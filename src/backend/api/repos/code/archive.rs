@@ -4,6 +4,7 @@ use crate::backend::api::repos::chrome::{load_refs_from_repo, repository_default
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::git::ArchiveFormat;
 use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -70,11 +71,16 @@ pub async fn download_archive(
             )
         })?;
     let archive_bytes = repo_store(&repository, state.cluster.as_ref())
-        .archive_zip(&git_ref, &archive_prefix)
+        .archive(&git_ref, &archive_prefix, ArchiveFormat::Zip)
         .await
         .map_err(archive_error)?;
 
-    Ok(archive_response(archive_bytes, &filename, permit))
+    Ok(archive_response(
+        archive_bytes,
+        &filename,
+        ArchiveFormat::Zip,
+        permit,
+    ))
 }
 
 /// Refs that Git cannot resolve stay a 400 `invalid_ref`. Unreachable storage is a service
@@ -104,6 +110,7 @@ fn archive_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
 fn archive_response(
     archive_bytes: Vec<u8>,
     filename: &str,
+    format: ArchiveFormat,
     permit: tokio::sync::OwnedSemaphorePermit,
 ) -> axum::response::Response {
     let length = archive_bytes.len();
@@ -114,7 +121,10 @@ fn archive_response(
     response_headers.insert(header::CONTENT_LENGTH, length.to_string().parse().unwrap());
     response_headers.insert(
         header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static("application/zip"),
+        axum::http::HeaderValue::from_static(match format {
+            ArchiveFormat::Zip => "application/zip",
+            ArchiveFormat::TarGz => "application/gzip",
+        }),
     );
     response_headers.insert(
         header::CACHE_CONTROL,
@@ -137,10 +147,11 @@ fn archive_response(
     response
 }
 
+/// `/:owner/:repo/archive/{ref}.zip` or `{ref}.tar.gz`: the tree at a branch, tag or commit.
+/// The ref may contain slashes, so the extension is the last part of the path.
 pub(in crate::backend::api::repos) async fn page(
     axum::extract::State(state): axum::extract::State<Arc<AppState>>,
-    axum::extract::Path((owner, name)): axum::extract::Path<(String, String)>,
-    axum::extract::Query(query): axum::extract::Query<ArchiveQuery>,
+    axum::extract::Path((owner, name, archive)): axum::extract::Path<(String, String, String)>,
     headers: HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
 ) -> axum::response::Response {
@@ -149,6 +160,9 @@ pub(in crate::backend::api::repos) async fn page(
             Ok(ctx) => ctx,
             Err(response) => return response,
         };
+    let Some((reference, format)) = parse_archive_name(&archive) else {
+        return ctx.error(StatusCode::NOT_FOUND, "Archive format not found.");
+    };
     let repository =
         match db::repositories::records::get_repository(&ctx.state.pool, &owner, &name).await {
             Ok(Some(repository)) => repository,
@@ -165,16 +179,6 @@ pub(in crate::backend::api::repos) async fn page(
     {
         return ctx.error(status, "Unable to download this repository archive.");
     }
-    let store = repo_store(&repository, ctx.state.cluster.as_ref());
-    let reference = match query.git_ref {
-        Some(reference) => reference,
-        None => match store.info().await {
-            Ok(info) => info.default_branch,
-            Err(error) => {
-                return crate::backend::api::repos::chrome::store_error(&ctx, None, error)
-            }
-        },
-    };
     let prefix = format!("{}-{}", name, reference.replace('/', "-"));
     let Ok(permit) = ctx.state.repository_downloads.clone().try_acquire_owned() else {
         return ctx.error(
@@ -182,16 +186,36 @@ pub(in crate::backend::api::repos) async fn page(
             "Repository downloads busy.",
         );
     };
-    match store.archive_zip(&reference, &prefix).await {
-        Ok(bytes) => ctx.with_cookie(crate::backend::api::http::render::secure_html_headers(
-            archive_response(bytes, &format!("{prefix}.zip"), permit),
-        )),
+    let store = repo_store(&repository, ctx.state.cluster.as_ref());
+    match store.archive(reference, &prefix, format).await {
+        Ok(bytes) => {
+            let extension = match format {
+                ArchiveFormat::Zip => "zip",
+                ArchiveFormat::TarGz => "tar.gz",
+            };
+            ctx.with_cookie(crate::backend::api::http::render::secure_html_headers(
+                archive_response(bytes, &format!("{prefix}.{extension}"), format, permit),
+            ))
+        }
         Err(error) if error.is_response_too_large() => ctx.error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "Repository archives are limited to 32 MiB.",
         ),
+        Err(error) if error.kind == ErrorKind::Invalid => ctx.error(
+            StatusCode::NOT_FOUND,
+            "No branch, tag or commit with this name.",
+        ),
         Err(error) => crate::backend::api::repos::chrome::store_error(&ctx, None, error),
     }
+}
+
+/// The ref and format named by `{ref}.zip` or `{ref}.tar.gz`. An empty ref has no archive.
+fn parse_archive_name(name: &str) -> Option<(&str, ArchiveFormat)> {
+    let (reference, format) = match name.strip_suffix(".tar.gz") {
+        Some(reference) => (reference, ArchiveFormat::TarGz),
+        None => (name.strip_suffix(".zip")?, ArchiveFormat::Zip),
+    };
+    (!reference.is_empty()).then_some((reference, format))
 }
 
 #[cfg(test)]

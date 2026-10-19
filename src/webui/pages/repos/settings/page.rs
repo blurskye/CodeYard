@@ -1,6 +1,12 @@
 use crate::webui::pages::repos::chrome::{chrome, csrf, icon, repository_id, RepoChrome};
 use crate::webui::{
-    components::{Avatar, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, SelectOption},
+    components::{
+        confirm_dialog,
+        deploy_keys::{DeployKeyPanel, DeployKeySection},
+        webhooks::WebhookPanel,
+        webhooks::WebhookSection,
+        Avatar, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, SelectOption,
+    },
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -24,6 +30,7 @@ pub struct BranchRule {
     pub require_up_to_date_branch: bool,
     pub require_linear_history: bool,
     pub require_conversation_resolution: bool,
+    pub require_code_owner_review: bool,
     pub enforce_admins: bool,
     pub allow_force_pushes: bool,
     pub allow_deletions: bool,
@@ -44,6 +51,7 @@ impl Default for BranchRule {
             require_up_to_date_branch: false,
             require_linear_history: false,
             require_conversation_resolution: false,
+            require_code_owner_review: false,
             enforce_admins: true,
             allow_force_pushes: false,
             allow_deletions: false,
@@ -68,6 +76,9 @@ pub struct Settings {
     /// Other users with write access, offered as the rest of that list.
     pub force_push_suggestions: Vec<Collaborator>,
     pub collaborators: Vec<Collaborator>,
+    /// Every branch, for the default-branch picker, and the branch the repository opens on.
+    pub branches: Vec<String>,
+    pub default_branch: String,
     pub allow_merge_commit: bool,
     pub allow_squash_merge: bool,
     pub allow_rebase_merge: bool,
@@ -76,6 +87,10 @@ pub struct Settings {
     pub error: Option<String>,
     /// The General save succeeded. Its redirect carries `saved=general`.
     pub saved: bool,
+    /// The webhooks section, on the webhooks tab only. Boxed: it is large, and most pages lack it.
+    pub webhooks: Option<Box<WebhookPanel>>,
+    /// The deploy keys section, on the deploy-keys tab only.
+    pub deploy_keys: Option<Box<DeployKeyPanel>>,
 }
 
 pub fn settings(repo: &RepoChrome, settings: &Settings) -> Element {
@@ -88,6 +103,8 @@ pub fn settings_tab(name: &str, can_manage_collaborators: bool) -> &'static str 
     match name {
         "merging" => "merging",
         "branches" => "branches",
+        "webhooks" => "webhooks",
+        "deploy-keys" => "deploy-keys",
         "collaborators" if can_manage_collaborators => "collaborators",
         "danger" => "danger",
         _ => "general",
@@ -98,11 +115,13 @@ pub fn settings_tab(name: &str, can_manage_collaborators: bool) -> &'static str 
 /// Other repository forms return to their own pages, so they have no section.
 pub fn settings_section(action: &str) -> Option<&'static str> {
     Some(match action {
-        "settings" | "rename" => "general",
+        "settings" | "rename" | "default-branch" => "general",
         "merge-methods" => "merging",
         "protection-save" | "protection-delete" => "branches",
+        "webhook-save" | "webhook-delete" | "webhook-ping" | "webhook-redeliver" => "webhooks",
+        "deploy-key-add" | "deploy-key-delete" => "deploy-keys",
         "collaborator" | "remove-collaborator" => "collaborators",
-        "delete" => "danger",
+        "archive" | "unarchive" | "delete" => "danger",
         _ => return None,
     })
 }
@@ -116,6 +135,41 @@ fn section_link(repo: &RepoChrome, section: &str, current: &str, label: &str) ->
     };
     let current = (section == current).then(|| "page".to_owned());
     rsx! { NavLink { href: format!("{}/settings?tab={section}", repo.base()), class: class.to_owned(), aria_current: current, "{label}" } }
+}
+
+/// The sections as one menu, for a phone: the tab row has no room there, and a wrapped row looks broken.
+fn section_picker(repo: &RepoChrome, current: &str) -> Element {
+    let mut sections = vec![
+        ("general", "General"),
+        ("merging", "Merging"),
+        ("branches", "Branch protection"),
+        ("webhooks", "Webhooks"),
+        ("deploy-keys", "Deploy keys"),
+    ];
+    if repo.can_manage_collaborators {
+        sections.push(("collaborators", "Collaborators"));
+    }
+    sections.push(("labels", "Labels"));
+    sections.push(("danger", "Danger zone"));
+    let label = sections
+        .iter()
+        .find(|(id, _)| *id == current)
+        .map_or("Settings", |(_, label)| *label);
+    rsx! {
+        details { class: "native-menu repo-menu repo-settings-picker",
+            summary { class: "btn btn-secondary", aria_label: "Settings sections", span { "{label}" } {icon("chevron")} }
+            div { class: "repo-menu-panel",
+                for (id, text) in sections {
+                    NavLink {
+                        class: "repo-menu-item".to_owned(),
+                        href: if id == "labels" { format!("{}/labels", repo.base()) } else { format!("{}/settings?tab={id}", repo.base()) },
+                        aria_current: (id == current).then(|| "page".to_owned()),
+                        "{text}"
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[component]
@@ -132,13 +186,22 @@ fn SettingsView(repo: RepoChrome, settings: Settings) -> Element {
                         {section_link(&repo, "general", tab, "General")}
                         {section_link(&repo, "merging", tab, "Merging")}
                         {section_link(&repo, "branches", tab, "Branch protection")}
+                        {section_link(&repo, "webhooks", tab, "Webhooks")}
+                        {section_link(&repo, "deploy-keys", tab, "Deploy keys")}
                         if repo.can_manage_collaborators { {section_link(&repo, "collaborators", tab, "Collaborators")} }
                         NavLink { href: format!("{}/labels", repo.base()), "Labels" }
                         {section_link(&repo, "danger", tab, "Danger zone")}
                     }
+                    {section_picker(&repo, tab)}
                     div { class: "repo-settings-content",
                         // A refused save shows here, above the section whose form it came from.
                         if let Some(error) = &settings.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { "Settings were not saved" } p { "{error}" } } }
+                        if tab == "webhooks" {
+                            if let Some(panel) = &settings.webhooks { WebhookSection { panel: panel.as_ref().clone() } }
+                        }
+                        if tab == "deploy-keys" {
+                            if let Some(panel) = &settings.deploy_keys { DeployKeySection { panel: panel.as_ref().clone() } }
+                        }
                         if tab == "general" {
                         form { class: if repo.is_private { "repo-settings-section panel repo-visibility-private" } else { "repo-settings-section panel repo-visibility-public" }, method: "post", action: repo.action("settings"),
                             {csrf(&repo.csrf_token)}
@@ -162,6 +225,31 @@ fn SettingsView(repo: RepoChrome, settings: Settings) -> Element {
                                 // block a description-only save.
                                 label { class: "repo-check-label repo-visibility-confirm", input { r#type: "checkbox", name: "confirm", value: "yes" } span { "I understand that changing visibility affects who can view this repository." } }
                                 div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", "Save changes" } }
+                            }
+                        }
+                        }
+                        if tab == "general" {
+                        section { class: "repo-settings-section panel",
+                            header { class: "repo-section-heading", div { h3 { "Default branch" } p { "Repository pages and new clones open on this branch." } } }
+                            if settings.branches.is_empty() {
+                                p { class: "repo-list-empty", "The repository has no branches yet. Push one to choose a default." }
+                            } else {
+                                form { method: "post", action: repo.action("default-branch"), class: "repo-form-body",
+                                    {csrf(&repo.csrf_token)}
+                                    {repository_id(repo.id)}
+                                    label { class: "repo-field", span { "Default branch" } DraftSelect { name: "branch", initial_value: settings.default_branch.clone(), options: settings.branches.iter().map(|branch| SelectOption { value: branch.clone(), label: branch.clone() }).collect::<Vec<_>>() } }
+                                    div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", "Save default branch" } }
+                                }
+                            }
+                        }
+                        }
+                        if tab == "general" {
+                        section { class: "repo-settings-section panel",
+                            header { class: "repo-section-heading", div { h3 { "Wiki" } p { if repo.wiki_enabled { "The wiki is on. Turning it off hides its pages; they are kept." } else { "The wiki is off. Turning it on shows its pages again." } } } }
+                            form { method: "post", action: format!("{}/wiki/_settings", repo.base()), class: "repo-form-body",
+                                {csrf(&repo.csrf_token)}
+                                input { r#type: "hidden", name: "enabled", value: if repo.wiki_enabled { "0" } else { "1" } }
+                                div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", if repo.wiki_enabled { "Turn wiki off" } else { "Turn wiki on" } } }
                             }
                         }
                         }
@@ -204,12 +292,15 @@ fn SettingsView(repo: RepoChrome, settings: Settings) -> Element {
                                     for collaborator in &settings.collaborators {
                                         div { key: "{collaborator.username}", class: "repo-settings-row",
                                             div { class: "repo-settings-row-main", Avatar { name: collaborator.username.clone(), size: 32 } div { strong { "{collaborator.username}" } p { "{collaborator.access} access" } } }
-                                            form { method: "post", action: repo.action("remove-collaborator"), class: "repo-inline-confirm",
-                                                {csrf(&repo.csrf_token)}
-                                                {repository_id(repo.id)}
-                                                input { r#type: "hidden", name: "username", value: collaborator.username.clone() }
-                                                label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } span { "Confirm" } }
-                                                button { r#type: "submit", class: "btn btn-secondary", "Remove" }
+                                            details { class: "native-menu repo-delete-menu",
+                                                summary { class: "btn btn-secondary", "Remove" span { class: "repo-sr-only", " {collaborator.username}" } }
+                                                {confirm_dialog(None, &format!("Remove {} from this repository", collaborator.username), &format!("{}/settings?tab=collaborators", repo.base()), &repo.action("remove-collaborator"), rsx! {
+                                                    {csrf(&repo.csrf_token)}
+                                                    {repository_id(repo.id)}
+                                                    input { r#type: "hidden", name: "username", value: collaborator.username.clone() }
+                                                    strong { "Remove {collaborator.username}?" }
+                                                    label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " They lose access to this repository." }
+                                                }, "Remove")}
                                             }
                                         }
                                     }
@@ -230,25 +321,56 @@ fn SettingsView(repo: RepoChrome, settings: Settings) -> Element {
                         if tab == "danger" {
                         section { class: "repo-settings-section repo-danger-zone panel",
                             header { class: "repo-section-heading", div { h3 { "Danger zone" } p { "Destructive actions require confirmation." } } }
-                            details { class: "repo-danger-action",
-                                summary { div { strong { "Transfer ownership" } p { "Move this repository to another account or organization you can create repositories for." } } span { class: "btn btn-destructive", "Transfer ownership" } }
-                                form { method: "post", action: repo.action("transfer"), class: "repo-form-body",
-                                    {csrf(&repo.csrf_token)}
-                                    {repository_id(repo.id)}
-                                    label { class: "repo-field", span { "New owner" } DraftInput { name: "new_owner", required: true, initial_value: String::new(), placeholder: "Username or organization" } }
-                                    p { "Type " strong { "{repo.name}" } " to continue." }
-                                    label { class: "repo-field", span { "Repository name" } DraftInput { name: "confirmation", required: true, initial_value: String::new() } }
-                                    button { r#type: "submit", class: "btn btn-destructive", "Transfer repository" }
+                            div { class: "repo-danger-action",
+                                if repo.is_archived {
+                                    div { strong { "Unarchive this repository" } p { "Accept pushes, issues, pull requests and comments again." } }
+                                    details { class: "native-menu repo-delete-menu",
+                                        summary { class: "btn btn-secondary", "Unarchive" }
+                                        {confirm_dialog(None, "Unarchive this repository", &format!("{}/settings?tab=danger", repo.base()), &repo.action("unarchive"), rsx! {
+                                            {csrf(&repo.csrf_token)}
+                                            {repository_id(repo.id)}
+                                            strong { "Unarchive this repository?" }
+                                            label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " Allow changes to this repository again" }
+                                        }, "Unarchive repository")}
+                                    }
+                                } else {
+                                    div { strong { "Archive this repository" } p { "Make it read-only for everyone. Pushes, issues, pull requests and comments are refused until it is unarchived." } }
+                                    details { class: "native-menu repo-delete-menu",
+                                        summary { class: "btn btn-secondary", "Archive" }
+                                        {confirm_dialog(None, "Archive this repository", &format!("{}/settings?tab=danger", repo.base()), &repo.action("archive"), rsx! {
+                                            {csrf(&repo.csrf_token)}
+                                            {repository_id(repo.id)}
+                                            strong { "Archive this repository?" }
+                                            label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " Nobody can change this repository until it is unarchived" }
+                                        }, "Archive repository")}
+                                    }
                                 }
                             }
-                            details { class: "repo-danger-action",
-                                summary { div { strong { "Delete this repository" } p { "Permanently remove the repository and its data." } } span { class: "btn btn-destructive", "Delete repository" } }
-                                form { method: "post", action: repo.action("delete"), class: "repo-form-body",
-                                    {csrf(&repo.csrf_token)}
-                                    {repository_id(repo.id)}
-                                    p { "This action cannot be undone. Type " strong { "{repo.owner}/{repo.name}" } " to continue." }
-                                    label { class: "repo-field", span { "Repository name" } DraftInput { name: "confirmation", required: true, initial_value: String::new() } }
-                                    button { r#type: "submit", class: "btn btn-destructive", "Permanently delete repository" }
+                            div { class: "repo-danger-action",
+                                div { strong { "Transfer ownership" } p { "Move this repository to another account or organization you can create repositories for." } }
+                                details { class: "native-menu repo-delete-menu",
+                                    summary { class: "btn btn-destructive", "Transfer ownership" }
+                                    {confirm_dialog(None, "Transfer this repository", &format!("{}/settings?tab=danger", repo.base()), &repo.action("transfer"), rsx! {
+                                        {csrf(&repo.csrf_token)}
+                                        {repository_id(repo.id)}
+                                        strong { "Transfer this repository?" }
+                                        label { class: "repo-field", span { "New owner" } DraftInput { name: "new_owner", required: true, initial_value: String::new(), placeholder: "Username or organization" } }
+                                        p { "Type " strong { "{repo.name}" } " to continue." }
+                                        label { class: "repo-field", span { "Repository name" } DraftInput { name: "confirmation", required: true, initial_value: String::new() } }
+                                    }, "Transfer repository")}
+                                }
+                            }
+                            div { class: "repo-danger-action",
+                                div { strong { "Delete this repository" } p { "Permanently remove the repository and its data." } }
+                                details { class: "native-menu repo-delete-menu",
+                                    summary { class: "btn btn-destructive", "Delete repository" }
+                                    {confirm_dialog(None, "Delete this repository", &format!("{}/settings?tab=danger", repo.base()), &repo.action("delete"), rsx! {
+                                        {csrf(&repo.csrf_token)}
+                                        {repository_id(repo.id)}
+                                        strong { "Delete this repository?" }
+                                        p { "This action cannot be undone. Type " strong { "{repo.owner}/{repo.name}" } " to continue." }
+                                        label { class: "repo-field", span { "Repository name" } DraftInput { name: "confirmation", required: true, initial_value: String::new() } }
+                                    }, "Permanently delete repository")}
                                 }
                             }
                         }
@@ -356,12 +478,15 @@ fn BranchRuleRow(
                 BranchRuleForm { repo: repo.clone(), rule: shown, editing: true, message, viewer, suggestions }
                 div { class: "repo-rule-danger",
                     div { strong { "Delete this rule" } p { "Matching branches stop following this rule." } }
-                    form { method: "post", action: repo.action("protection-delete"), class: "repo-inline-confirm",
-                        {csrf(&repo.csrf_token)}
-                        {repository_id(repo.id)}
-                        input { r#type: "hidden", name: "pattern", value: rule.pattern.clone() }
-                        label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } span { "Confirm" } }
-                        button { r#type: "submit", class: "btn btn-destructive", "Delete rule" }
+                    details { class: "native-menu repo-delete-menu",
+                        summary { class: "btn btn-destructive", "Delete rule" }
+                        {confirm_dialog(None, &format!("Delete rule {}", rule.pattern), &format!("{}/settings?tab=branches", repo.base()), &repo.action("protection-delete"), rsx! {
+                            {csrf(&repo.csrf_token)}
+                            {repository_id(repo.id)}
+                            input { r#type: "hidden", name: "pattern", value: rule.pattern.clone() }
+                            strong { "Delete rule {rule.pattern}?" }
+                            label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " I understand" }
+                        }, "Delete rule")}
                     }
                 }
             }
@@ -410,6 +535,9 @@ fn BranchRuleForm(
                     }
                     label { class: "repo-option", DraftCheckbox { name: "require_conversation_resolution", initial_checked: rule.require_conversation_resolution }
                         span { class: "repo-option-text", "Require conversation resolution before merging" small { "A merge is refused while a conversation on a file is unresolved." } }
+                    }
+                    label { class: "repo-option", DraftCheckbox { name: "require_code_owner_review", initial_checked: rule.require_code_owner_review }
+                        span { class: "repo-option-text", "Require review from Code Owners" small { "A merge waits for an approval from an owner of each changed file that has owners in CODEOWNERS." } }
                     }
                 }
             }
@@ -606,6 +734,9 @@ fn rule_summary(rule: &BranchRule) -> Vec<String> {
     }
     if rule.require_conversation_resolution {
         parts.push("Conversations resolved before merging".to_owned());
+    }
+    if rule.require_code_owner_review {
+        parts.push("Code owner review before merging".to_owned());
     }
     if rule.require_linear_history {
         parts.push("Linear history".to_owned());

@@ -1,4 +1,5 @@
 mod assignment_notifications;
+mod comment_changes;
 mod inputs;
 mod list_views;
 mod mention_notifications;
@@ -11,3 +12,4 @@ mod references;
 mod sidebar;
 #[path = "../support/mod.rs"]
 mod support;
+mod templates;

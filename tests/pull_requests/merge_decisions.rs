@@ -793,7 +793,7 @@ async fn protection_contract(pg: bool) {
     );
 
     // Fields the forge cannot enforce are refused when they are written.
-    for field in ["require_signed_commits", "require_code_owner_reviews"] {
+    for field in ["require_signed_commits"] {
         let error = alice
             .expect(
                 "PUT",

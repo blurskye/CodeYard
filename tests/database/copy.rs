@@ -139,7 +139,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
         .execute(raw)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO two_factor_auth (user_id, totp_secret_encrypted, backup_codes_encrypted) VALUES (?1, randomblob(1048576), NULL)")
+    sqlx::query("INSERT INTO two_factor_auth (user_id, totp_secret_encrypted, totp_nonce) VALUES (?1, randomblob(1048576), randomblob(12))")
         .bind(alice.id)
         .execute(raw)
         .await

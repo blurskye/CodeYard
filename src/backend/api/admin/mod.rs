@@ -52,11 +52,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .layer(from_fn(middleware::private_api_response));
     let pages = Router::new()
         .route("/admin", get(accounts::admin_get))
-        // The account list is on the overview; this is the address people try first.
-        .route(
-            "/admin/users",
-            get(|| async { crate::backend::api::http::render::redirect_response("/admin") }),
-        )
+        .route("/admin/users", get(users::users_get))
         .route("/admin/access/users", post(users::managed_user_post))
         .route("/admin/ai-crawlers", post(ai_crawlers::ai_crawlers_post))
         .route(
@@ -69,9 +65,11 @@ pub fn router() -> Router<Arc<AppState>> {
             "/settings/access/requests/:request_id/resolve",
             post(signup_requests::signup_post),
         )
+        .route("/admin/accounts/:user_id/ban", post(users::ban_post))
+        .route("/admin/accounts/:user_id/role", post(users::role_post))
         .route(
-            "/admin/accounts/:user_id/ban",
-            get(accounts::ban_get).post(accounts::ban_post),
+            "/admin/accounts/:user_id/two-factor/reset",
+            post(users::two_factor_reset_post),
         )
         .layer(DefaultBodyLimit::max(16 * 1024));
     api.merge(pages)

@@ -51,17 +51,19 @@ pub fn authorize_operation(
         Operation::ChangedPaths { .. } => ("ChangedPaths", false),
         Operation::DiffFrom { .. } => ("DiffFrom", false),
         Operation::Tags => ("Tags", false),
-        Operation::ArchiveZip { .. } => ("ArchiveZip", false),
+        Operation::Archive { .. } => ("Archive", false),
         Operation::Languages { .. } => ("Languages", false),
         Operation::FilePaths { .. } => ("FilePaths", false),
         Operation::Blame { .. } => ("Blame", false),
         Operation::Contributors => ("Contributors", false),
+        Operation::CommitActivity { .. } => ("CommitActivity", false),
         Operation::IsAncestor { .. } => ("IsAncestor", false),
         Operation::BranchStatuses { .. } => ("BranchStatuses", false),
         Operation::ResolveCiCommit { .. } => ("ResolveCiCommit", false),
         Operation::CiWorkflowFile { .. } => ("CiWorkflowFile", false),
         Operation::CreateBranch { .. } => ("CreateBranch", false),
         Operation::DeleteBranch { .. } => ("DeleteBranch", false),
+        Operation::SetDefaultBranch { .. } => ("SetDefaultBranch", false),
         Operation::CreateTag { .. } => ("CreateTag", false),
         Operation::DeleteTag { .. } => ("DeleteTag", false),
         Operation::PrepareFile { .. } => ("PrepareFile", false),
@@ -108,6 +110,7 @@ fn requires_actor(operation: &Operation) -> bool {
         } | Operation::FetchPullHead { .. }
             | Operation::CreateBranch { .. }
             | Operation::DeleteBranch { .. }
+            | Operation::SetDefaultBranch { .. }
             | Operation::CreateTag { .. }
             | Operation::DeleteTag { .. }
             | Operation::PublishFile { .. }
@@ -454,14 +457,19 @@ impl RpcHandler {
                 json!(store.diff_from(&source, &base_ref, &head_ref))
             }
             Operation::Tags => json!(store.tags()),
-            Operation::ArchiveZip { git_ref, prefix } => {
-                output = store.archive_zip(&git_ref, &prefix).await?;
+            Operation::Archive {
+                git_ref,
+                prefix,
+                format,
+            } => {
+                output = store.archive(&git_ref, &prefix, format).await?;
                 Value::Null
             }
             Operation::Languages { git_ref } => json!(store.languages(&git_ref)),
             Operation::FilePaths { git_ref, limit } => json!(store.file_paths(&git_ref, limit)),
             Operation::Blame { git_ref, path } => json!(store.blame(&git_ref, &path)),
             Operation::Contributors => json!(store.contributors()),
+            Operation::CommitActivity { git_ref } => json!(store.commit_activity(&git_ref)),
             Operation::IsAncestor {
                 ancestor,
                 descendant,
@@ -483,6 +491,12 @@ impl RpcHandler {
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
                 &name,
                 &sha
+            )),
+            Operation::SetDefaultBranch { name } => json!(store.set_default_branch_as(
+                pool,
+                repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                &name
             )),
             Operation::DeleteBranch { name } => json!(store.delete_branch_as(
                 pool,

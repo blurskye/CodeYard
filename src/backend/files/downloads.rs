@@ -127,6 +127,12 @@ pub async fn open_asset_download(
     file_id: Uuid,
 ) -> Result<AssetDownload, DownloadError> {
     let file = authorize(pool, actor, file_id).await?;
+    open_file(store, file).await
+}
+
+/// Opens a file the caller has already authorized for this reader. A release asset uses this
+/// after it checked the repository the release belongs to.
+pub async fn open_file(store: &ObjectStore, file: File) -> Result<AssetDownload, DownloadError> {
     let inline_type = inline_type(&file).map(str::to_owned);
     let io_guard = store
         .try_acquire_download()

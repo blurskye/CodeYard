@@ -222,22 +222,48 @@ pub(crate) fn resolve_archive_revision(repo_path: &Path, git_ref: &str) -> Resul
     Ok(oid)
 }
 
-pub(crate) async fn archive_zip(
+/// The archive formats a tree can be downloaded as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArchiveFormat {
+    Zip,
+    TarGz,
+}
+
+/// The tree at `revision` as an archive whose entries sit under `prefix/`. The tar.gz form is
+/// gzipped here from Git's tar output, so both formats share the same size limit on the tree.
+pub(crate) async fn archive(
     repo_path: &Path,
     revision: git2::Oid,
     prefix: &str,
+    format: ArchiveFormat,
     limit: usize,
 ) -> Result<Vec<u8>> {
     // Only a resolved object ID can reach Git, never an option from user input.
     let revision = revision.to_string();
     let prefix_arg = format!("--prefix={}/", prefix);
+    let git_format = match format {
+        ArchiveFormat::Zip => "--format=zip",
+        ArchiveFormat::TarGz => "--format=tar",
+    };
     let mut command = process::git_command()?;
     command
-        .args(["archive", "--format=zip", &prefix_arg, &revision])
+        .args(["archive", git_format, &prefix_arg, &revision])
         .current_dir(repo_path);
     let (status, output) = process::buffered(command, b"", limit, process::RPC_TIMEOUT).await?;
     anyhow::ensure!(status.success(), "Git archive failed");
-    Ok(output)
+    match format {
+        ArchiveFormat::Zip => Ok(output),
+        ArchiveFormat::TarGz => {
+            tokio::task::spawn_blocking(move || {
+                use std::io::Write;
+                let mut encoder =
+                    flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+                encoder.write_all(&output)?;
+                Ok(encoder.finish()?)
+            })
+            .await?
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2610,10 +2636,14 @@ mod read_limit_tests {
         assert_eq!(error.code(), git2::ErrorCode::NotFound);
         assert_eq!(error.class(), git2::ErrorClass::Tree);
         let revision = resolve_archive_revision(path, "main").unwrap();
-        let archive = archive_zip(path, revision, "demo", 1024 * 1024)
+        let zip = archive(path, revision, "demo", ArchiveFormat::Zip, 1024 * 1024)
             .await
             .unwrap();
-        assert!(archive.starts_with(b"PK"));
+        assert!(zip.starts_with(b"PK"));
+        let targz = archive(path, revision, "demo", ArchiveFormat::TarGz, 1024 * 1024)
+            .await
+            .unwrap();
+        assert!(targz.starts_with(&[0x1f, 0x8b]));
 
         assert_too_large(list_tree(path, "refs/heads/huge", "").await);
         assert_too_large(get_commit_diff(path, "huge-tag").await);

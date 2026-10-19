@@ -89,7 +89,7 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
                 }
                 div { class: "repo-blob-actions",
                     {file_downloads(&raw, name, Some((page.content.as_str(), "Copy code")))}
-                    {more_menu(&page.path, &page.permalink, delete_link)}
+                    {more_menu(&page.path, &page.permalink, delete_link, Some((raw.as_str(), name)))}
                 }
             }
             div { class: "repo-blame-scroll",

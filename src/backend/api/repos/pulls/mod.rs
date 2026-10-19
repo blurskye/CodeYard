@@ -106,12 +106,24 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
             post(issues::issue::native_change_state),
         )
         .route(
+            "/:owner/:repo/pulls/:number/tasks",
+            post(issues::tasks::native_toggle_task),
+        )
+        .route(
             "/:owner/:repo/pulls/:number/comments",
             post(review_forms::native_pull_comment),
         )
         .route(
             "/:owner/:repo/pulls/:number/react",
             post(issues::reactions::native_react),
+        )
+        .route(
+            "/:owner/:repo/pulls/:number/comments/:comment_id/edit",
+            post(review_forms::native_edit_conversation_comment),
+        )
+        .route(
+            "/:owner/:repo/pulls/:number/comments/:comment_id/delete",
+            post(review_forms::native_delete_conversation_comment),
         )
         .route(
             "/:owner/:repo/pulls/:number/comments/:comment_id/resolve",

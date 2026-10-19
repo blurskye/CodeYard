@@ -468,3 +468,35 @@ pub async fn keep_newest_anonymous_sessions(pool: &PgPool, cap: i64) -> Result<u
     }
     Ok(removed as u64)
 }
+
+pub async fn list_user_sessions(pool: &PgPool, user_id: i64) -> Result<Vec<Session>> {
+    Ok(sqlx::query_as(
+        "SELECT id,user_id,user_agent,ip_address,expires_at,created_at FROM sessions WHERE user_id=$1 AND expires_at>NOW() ORDER BY created_at DESC, id",
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn revoke_user_session(pool: &PgPool, user_id: i64, session_id: &str) -> Result<bool> {
+    Ok(
+        sqlx::query("DELETE FROM sessions WHERE user_id=$1 AND id=$2")
+            .bind(user_id)
+            .bind(session_id)
+            .execute(pool)
+            .await?
+            .rows_affected()
+            > 0,
+    )
+}
+
+pub async fn revoke_other_user_sessions(pool: &PgPool, user_id: i64, keep: &str) -> Result<u64> {
+    Ok(
+        sqlx::query("DELETE FROM sessions WHERE user_id=$1 AND id<>$2")
+            .bind(user_id)
+            .bind(keep)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+    )
+}

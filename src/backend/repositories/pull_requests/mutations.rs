@@ -8,6 +8,7 @@ use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, Watch
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
 use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -273,7 +274,7 @@ pub async fn create_pull_request(
             repository: &repository,
             owner: &owner,
             repo: &repo,
-            number: pull_request.number,
+            number: Some(pull_request.number),
             title: &pull_request.title,
             link: &link,
             notified: &owner_ids,
@@ -302,6 +303,30 @@ pub async fn create_pull_request(
     if !pull_request.is_draft {
         let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id).await;
     }
+    super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
+        .await;
+
+    let (pull_for_hook, repository_for_hook) = (pull_request.clone(), repository.clone());
+    let (author_id, sender_id) = (pull_request.author_id, user.id);
+    webhooks::emit(
+        pool,
+        &repository,
+        events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            payloads::pull_request(
+                "opened",
+                &pull_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+            )
+        },
+    );
 
     Ok(pull_request)
 }
@@ -506,6 +531,35 @@ pub async fn update_pull_request(
         )
         .await;
     }
+
+    let action = if pull_request.state == existing.state {
+        "edited"
+    } else if pull_request.state == "closed" {
+        "closed"
+    } else {
+        "reopened"
+    };
+    let (pull_for_hook, repository_for_hook) = (pull_request.clone(), repository.clone());
+    let (author_id, sender_id) = (pull_request.author_id, user.id);
+    webhooks::emit(
+        pool,
+        &repository,
+        events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            payloads::pull_request(
+                action,
+                &pull_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+            )
+        },
+    );
 
     Ok(pull_request)
 }
@@ -808,6 +862,30 @@ pub async fn mark_pull_request_ready(
         .map_err(|_| OperationError::Updated { number })?
         .ok_or(OperationError::Updated { number })?;
     let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id).await;
+    super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
+        .await;
+
+    let (pull_for_hook, repository_for_hook) = (pull_request.clone(), repository.clone());
+    let (author_id, sender_id) = (pull_request.author_id, user.id);
+    webhooks::emit(
+        pool,
+        &repository,
+        events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            payloads::pull_request(
+                "ready_for_review",
+                &pull_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+            )
+        },
+    );
 
     Ok(pull_request)
 }

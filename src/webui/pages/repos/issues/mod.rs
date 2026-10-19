@@ -18,10 +18,11 @@ pub(crate) use detail::{item_icon, state_class};
 pub use list::list;
 pub(in crate::webui::pages::repos) use list::rows;
 pub(in crate::webui::pages::repos) use new::branch_select;
-pub use new::{new, BranchChoices, IssueChoices, NewDraft};
+pub use new::{new, BranchChoices, FieldKind, FormField, IssueChoices, NewDraft, TemplateCard};
 pub use page::{
     label_hex, label_style, merge_method_available, preselected_merge_method, render, repo_url,
-    Comment, CommentPage, Comparison, Event, Item, Kind, Label, ListCounts, ListFilters, Milestone,
-    MilestoneDraft, Page, Reaction, Repository, StackLayer, StackMap, MERGE_COMMIT_REFUSED,
+    Comment, CommentEdit, CommentPage, Comparison, Event, Item, Kind, Label, ListCounts,
+    ListFilters, Milestone, MilestoneDraft, Page, Reaction, Repository, StackLayer, StackMap,
+    MERGE_COMMIT_REFUSED,
 };
 pub use search::{parse_search, MilestoneFilter};

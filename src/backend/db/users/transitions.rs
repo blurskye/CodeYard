@@ -20,6 +20,22 @@ pub enum BanChange {
 }
 
 #[derive(Debug)]
+pub enum EmailChange {
+    Updated(Box<User>),
+    /// Another account already uses this address.
+    Taken,
+    Missing,
+}
+
+#[derive(Debug)]
+pub enum RoleChange {
+    Updated(Box<User>),
+    Denied,
+    SelfChange,
+    Missing,
+}
+
+#[derive(Debug)]
 pub enum AccountAdmission {
     User(Box<User>),
     Requested,
@@ -52,6 +68,14 @@ native_operation!(crate::backend::db::postgres::users::transitions::bootstrap_ad
 native_operation!(crate::backend::db::postgres::users::transitions::change_ban,
     crate::backend::db::sqlite::users::transitions::change_ban,
     fn change_ban(pool: &DbPool, actor: i64, target: i64, banned: bool) -> Result<BanChange>);
+
+native_operation!(crate::backend::db::postgres::users::transitions::change_email,
+    crate::backend::db::sqlite::users::transitions::change_email,
+    fn change_email(pool: &DbPool, user_id: i64, email: &str) -> Result<EmailChange>);
+
+native_operation!(crate::backend::db::postgres::users::transitions::change_admin_role,
+    crate::backend::db::sqlite::users::transitions::change_admin_role,
+    fn change_admin_role(pool: &DbPool, actor: i64, target: i64, admin: bool) -> Result<RoleChange>);
 
 native_operation!(crate::backend::db::postgres::users::transitions::register_password,
     crate::backend::db::sqlite::users::transitions::register_password,

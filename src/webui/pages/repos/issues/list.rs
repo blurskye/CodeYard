@@ -120,6 +120,7 @@ pub(in crate::webui::pages::repos) fn rows(url: &str, kind: Kind, items: &[Item]
                     div { class: "collaboration-row-title",
                         NavLink { class: "collaboration-title-link", href: format!("{url}/{}", item.number), "{item.title}" }
                         {labels(&item.labels)}
+                        if item.tasks.total > 0 { span { class: "collaboration-muted collaboration-task-count", "{item.tasks.done} of {item.tasks.total} tasks" } }
                         if row_state(kind, item) == "draft" { span { class: "collaboration-badge", "Draft" } }
                         if item.stacked { span { class: "collaboration-badge", "Stack" } }
                     }

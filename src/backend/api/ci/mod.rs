@@ -1,6 +1,7 @@
 //! JSON and browser CI resources retain their distinct authentication and response layers.
 pub mod jobs;
 pub mod responses;
+pub mod run_forms;
 pub mod trigger;
 pub mod workflows;
 pub mod ws;
@@ -43,6 +44,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/:owner/:repo/actions/dispatch",
             post(trigger::repository_dispatch),
+        )
+        .route(
+            "/:owner/:repo/actions/runs/:run_id/cancel",
+            post(run_forms::cancel_run),
+        )
+        .route(
+            "/:owner/:repo/actions/runs/:run_id/rerun",
+            post(run_forms::rerun_run),
         )
 }
 

@@ -179,7 +179,7 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
                         NavLink { class: "repo-icon-button icon-tooltip".to_owned(), href: edit, aria_label: Some("Edit file".to_owned()), {icon("edit")} }
                     }
                     if outline.len() > 1 { {outline_menu(&outline)} }
-                    {more_menu(&page.path, &page.permalink, delete_link)}
+                    {more_menu(&page.path, &page.permalink, delete_link, Some((raw.as_str(), name)))}
                 }
             }
             {body}
@@ -426,19 +426,26 @@ pub(in crate::webui::pages::repos) fn title_row(
 }
 
 /// The "…" menu of a file or folder. It copies the path and the permalink and, when there is one,
-/// offers the delete link below a divider. Without a permalink or a delete link it draws nothing.
+/// offers the delete link below a divider. A file also lists its Raw and Download links, which
+/// show only on a phone. Without any of these it draws nothing.
 pub(in crate::webui::pages::repos) fn more_menu(
     path: &str,
     permalink: &str,
     delete: Option<String>,
+    file: Option<(&str, &str)>,
 ) -> Element {
-    if permalink.is_empty() && delete.is_none() {
+    if permalink.is_empty() && delete.is_none() && file.is_none() {
         return rsx! {};
     }
     rsx! {
         details { class: "native-menu repo-menu repo-more-menu",
             summary { class: "repo-icon-button icon-tooltip", "aria-label": "More actions", {icon("more")} }
             div { class: "repo-menu-panel",
+                // A phone has no room for these beside the view switch.
+                if let Some((raw, name)) = file {
+                    a { class: "repo-menu-item repo-menu-phone", href: raw.to_owned(), {icon("file")} "Raw" }
+                    a { class: "repo-menu-item repo-menu-phone", href: raw.to_owned(), download: name.to_owned(), {icon("download")} "Download" }
+                }
                 if !path.is_empty() {
                     CopyButton { text: path.to_owned(), label: "Copy path".to_owned(), menu_item: true }
                 }
@@ -520,12 +527,12 @@ pub(in crate::webui::pages::repos) fn file_downloads(
     copy: Option<(&str, &str)>,
 ) -> Element {
     rsx! {
-        div { class: "repo-button-group",
-            a { class: "btn btn-secondary", href: raw.to_owned(), "Raw" }
+        div { class: "repo-button-group repo-downloads",
+            a { class: "btn btn-secondary repo-download-extra", href: raw.to_owned(), "Raw" }
             if let Some((text, label)) = copy {
                 CopyButton { text: text.to_owned(), label: label.to_owned(), icon_only: true }
             }
-            a { class: "repo-icon-button icon-tooltip", href: raw.to_owned(), download: name.to_owned(), "aria-label": "Download", {icon("download")} }
+            a { class: "repo-icon-button icon-tooltip repo-download-extra", href: raw.to_owned(), download: name.to_owned(), "aria-label": "Download", {icon("download")} }
         }
     }
 }

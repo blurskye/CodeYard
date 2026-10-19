@@ -7,6 +7,7 @@ use crate::backend::api::repos::pulls::review_forms;
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::repositories::code_owners::load_rules;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::{DiffFileInfo, DiffInfo};
 use crate::webui::pages::repos::{
@@ -173,6 +174,7 @@ pub(crate) fn diff_model(diff: DiffInfo, viewed: Option<pulls::Viewed>) -> pulls
                 additions: file.additions,
                 deletions: file.deletions,
                 patch: file.patch,
+                owners: Vec::new(),
             })
             .collect(),
         viewed,
@@ -255,7 +257,14 @@ pub(crate) async fn render_diff(
         }
         None => None,
     };
-    let diff = diff_model(diff, viewed);
+    let mut diff = diff_model(diff, viewed);
+    // A CODEOWNERS file that cannot be read leaves the owner chips out; the page still shows.
+    let rules = load_rules(&repo.record, ctx.state.cluster.as_ref(), &pull.base_sha)
+        .await
+        .unwrap_or_default();
+    for file in &mut diff.files {
+        file.owners = rules.owners_for(&file.filename).to_vec();
+    }
     Ok(with_status(
         ctx.page_model(
             "Pull request diff",

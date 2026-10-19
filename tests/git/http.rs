@@ -572,13 +572,16 @@ async fn archive_tag_budgets(client: &Client, base: &str, disk_path: &str) {
         let reference = format!("refs/tags/{name}");
         repo.reference(&reference, target, false, "fixture")
             .unwrap();
-        for path in [
-            "/api/repos/http_owner/open/archive",
-            "/http_owner/open/archive",
+        for (path, query) in [
+            (
+                "/api/repos/http_owner/open/archive".to_owned(),
+                vec![("ref", name)],
+            ),
+            (format!("/http_owner/open/archive/{name}.zip"), vec![]),
         ] {
             let response = client
                 .get(format!("{base}{path}"))
-                .query(&[("ref", name)])
+                .query(&query)
                 .send()
                 .await
                 .unwrap();

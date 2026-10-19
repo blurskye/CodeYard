@@ -49,6 +49,26 @@ impl OrgRole {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct OrgInvitation {
+    pub id: i64,
+    pub org_id: i64,
+    pub user_id: i64,
+    pub role: String,
+    pub invited_by_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A pending invitation as its invitee sees it, with the organization's name.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct ReceivedInvitation {
+    pub org_id: i64,
+    pub org_name: String,
+    pub org_display_name: Option<String>,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct OrgMembership {
     pub id: i64,
     pub org_id: i64,

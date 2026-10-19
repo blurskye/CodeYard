@@ -1,6 +1,7 @@
 use crate::backend::db;
 use crate::backend::repositories::access;
 pub mod branches;
+pub mod code_owners;
 pub mod comments;
 pub mod merge;
 pub mod mutations;

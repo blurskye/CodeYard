@@ -1,4 +1,5 @@
 //! Creating repositories: the authorized database row, then its Git storage.
+use crate::backend::webhooks::{self, events, payloads};
 use crate::backend::{
     cluster::{placement, NodeContext},
     db::{self, models::Repository, repositories::creation as repo_lifecycle},
@@ -522,6 +523,24 @@ pub async fn fork(
             user_id: recipient, actor_id: Some(actor), repo_id: Some(source.id), kind: "repository_forked", title: &title, body: Some(&body), link: Some(&link), metadata: serde_json::json!({"source_owner": owner, "source_repo": source.name, "subject": format!("{owner}/{}", source.name), "fork_owner": user.username, "fork_repo": fork.name}),
         }).await;
     }
+    let (fork_for_hook, source_for_hook) = (fork.clone(), source.clone());
+    webhooks::emit(
+        pool,
+        &source,
+        events::FORK,
+        vec![actor],
+        move |source_owner, people| {
+            let forker = people.get(actor);
+            let forkee_owner = forker.login.clone();
+            payloads::fork(
+                &fork_for_hook,
+                &forker,
+                &source_for_hook,
+                source_owner,
+                &forkee_owner,
+            )
+        },
+    );
     Ok(fork)
 }
 

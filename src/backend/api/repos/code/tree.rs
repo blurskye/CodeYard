@@ -10,6 +10,7 @@ use crate::backend::api::repos::responses::CommitResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::languages as repo_languages;
+use crate::backend::repositories::releases;
 use crate::backend::repositories::store::{repo_store, RepoStore, TreeEntry};
 use crate::webui::components::languages::LanguageShare;
 use crate::webui::pages::repos as view;
@@ -170,6 +171,7 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         entries: Vec::new(),
         folders: Vec::new(),
         languages: Vec::new(),
+        releases: None,
         readme: None,
         latest_commit: None,
         permalink: String::new(),
@@ -263,6 +265,14 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         if resolved.path.is_empty() {
             page.languages =
                 about_languages(&ctx.state, loaded, &store, &default_ref(loaded)).await;
+            let viewer = ctx.user.as_ref().map(|user| user.id);
+            page.releases = releases::summary(&ctx.state.pool, viewer, &loaded.repository)
+                .await
+                .ok()
+                .map(|summary| view::releases::ReleasesSummary {
+                    count: summary.count,
+                    latest_tag: summary.latest.map(|release| release.tag_name),
+                });
         }
         page.readme = readme
             .filter(|blob| !blob.is_binary)

@@ -81,13 +81,14 @@ pub(crate) struct PostReceiveFailed;
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub enum ReceiveCredential {
     SshKey(i64),
+    DeployKey(i64),
     Token(i64),
 }
 
 impl ReceiveCredential {
     pub(crate) fn id(self) -> i64 {
         match self {
-            Self::SshKey(id) | Self::Token(id) => id,
+            Self::SshKey(id) | Self::DeployKey(id) | Self::Token(id) => id,
         }
     }
 }

@@ -9,6 +9,7 @@ pub mod oauth;
 pub mod register;
 pub mod session;
 pub mod setup;
+pub(crate) mod two_factor;
 
 pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
     use crate::backend::api::{http::csrf, http::middleware};
@@ -44,6 +45,10 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
             Router::new()
                 .route("/enter", get(login::auth_get).post(login::auth_post))
                 .route("/login", get(login::auth_get).post(login::auth_post))
+                .route(
+                    "/login/two-factor",
+                    get(two_factor::sign_in_get).post(two_factor::sign_in_post),
+                )
                 .route("/register", get(login::auth_get).post(login::auth_post))
                 .route("/setup", get(login::auth_get).post(login::auth_post))
                 .route("/forgot-password", get(login::password_help_get))

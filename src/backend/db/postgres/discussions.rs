@@ -85,6 +85,19 @@ pub(crate) async fn lock_exclusive_write_authority(
     )
 }
 
+/// Moderation of other people's comments: repository maintainers and site administrators.
+pub(crate) async fn lock_maintain_authority(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    Ok(
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
+            .await?
+            .is_some_and(|a| a.access.can_maintain() || a.personal_override),
+    )
+}
+
 /// Repository policy mutation; reuse the locked current authority snapshot.
 pub(crate) async fn lock_admin_authority(
     tx: &mut Transaction<'_, Postgres>,

@@ -45,6 +45,7 @@ pub struct AdminAccountSummary {
     pub is_admin: bool,
     pub is_banned: bool,
     pub must_change_password: bool,
+    pub two_factor_enabled: bool,
     pub created_at: DateTime<Utc>,
     pub total_files: i64,
     pub total_bytes: i64,

@@ -29,12 +29,20 @@ fn form_with_message<'a>(page: &'a str, action: &str, message: &str) -> &'a str 
 fn current_tab(page: &str) -> &str {
     let link = page
         .split("<a ")
-        .find(|link| link.contains("aria-current=\"page\""))
+        .find(|link| {
+            let tag = link.split('>').next().unwrap_or_default();
+            tag.contains("aria-current=\"page\"") && tag.contains("tab=")
+        })
         .expect("a settings tab marked as current");
     link.split("tab=")
         .nth(1)
         .and_then(|rest| rest.split('"').next())
-        .expect("the current tab's name")
+        .unwrap_or_else(|| {
+            panic!(
+                "the current tab's name in {:?}",
+                &link[..link.len().min(300)]
+            )
+        })
 }
 
 /// The value the rendered text input `name` carries. Only the quote escape is undone, which is the

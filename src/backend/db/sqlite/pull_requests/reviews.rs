@@ -771,3 +771,96 @@ impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for PullRequestReviewEntry {
         })
     }
 }
+
+/// The author's conversation comment on the pull request, as the author and repository still allow
+/// it. Comments filed in a review are not conversation comments and are not changed here.
+async fn conversation_comment_author(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    repo_id: i64,
+    pr_id: i64,
+    comment_id: i64,
+) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT c.author_id FROM pr_comments c JOIN pull_requests p ON p.id = c.pull_request_id
+         WHERE c.id = ?1 AND c.pull_request_id = ?2 AND p.repo_id = ?3 AND c.review_id IS NULL",
+    )
+    .bind(comment_id)
+    .bind(pr_id)
+    .bind(repo_id)
+    .fetch_optional(&mut **tx)
+    .await?)
+}
+
+/// Changes the body of a conversation comment the actor wrote. None when the change is refused.
+pub async fn edit_pull_request_comment(
+    pool: &SqlitePool,
+    actor_id: i64,
+    repo_id: i64,
+    pr_id: i64,
+    comment_id: i64,
+    body: &str,
+) -> Result<Option<PullRequestComment>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let author = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?;
+    if author != Some(actor_id)
+        || !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
+    {
+        return Ok(None);
+    }
+    let comment = sqlx::query_as::<_, PullRequestComment>(
+        "UPDATE pr_comments SET body = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
+         WHERE id = ?1 RETURNING *",
+    )
+    .bind(comment_id)
+    .bind(body)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(comment)
+}
+
+/// Deletes a conversation comment with the notifications that link to it. The author may delete
+/// their own comment; a repository maintainer may delete anyone's.
+pub async fn delete_pull_request_comment(
+    pool: &SqlitePool,
+    actor_id: i64,
+    repo_id: i64,
+    pr_id: i64,
+    comment_id: i64,
+) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let Some(author) = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?
+    else {
+        return Ok(false);
+    };
+    let allowed = if author == actor_id {
+        discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
+    } else {
+        discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
+    };
+    // Replies are removed with their parent, so a comment with replies stays.
+    let has_replies: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM pr_comments WHERE in_reply_to_comment_id = ?1)",
+    )
+    .bind(comment_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !allowed || has_replies {
+        return Ok(false);
+    }
+    sqlx::query(
+        "DELETE FROM notifications WHERE repo_id = ?1
+         AND kind IN ('pull_request_comment', 'pull_request_comment_reply')
+         AND json_extract(metadata, '$.comment_id') = ?2",
+    )
+    .bind(repo_id)
+    .bind(comment_id)
+    .execute(&mut *tx)
+    .await?;
+    let removed = sqlx::query("DELETE FROM pr_comments WHERE id = ?1")
+        .bind(comment_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(removed.rows_affected() == 1)
+}

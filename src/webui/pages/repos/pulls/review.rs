@@ -12,7 +12,8 @@ use crate::webui::pages::repos::issues::{
 };
 use crate::webui::{
     components::{
-        count_label, references::References, Avatar, DraftInput, DraftTextarea, Markdown,
+        confirm_dialog, count_label, references::References, Avatar, DraftInput, DraftTextarea,
+        Markdown,
     },
     encode_component,
     navigation::NavLink,
@@ -71,6 +72,9 @@ pub struct Reviewer {
     pub stale: bool,
     /// A review request is open. A reviewer who already decided can have one again.
     pub pending: bool,
+    /// The reviewer is named as an owner of a changed file in CODEOWNERS.
+    #[serde(default)]
+    pub code_owner: bool,
 }
 
 /// The state of a review conversation: a root comment on a file.
@@ -233,7 +237,6 @@ pub(in crate::webui::pages::repos) fn review_changes(
     } else {
         ""
     };
-    let key = format!("{url}:review:{choice}:{body}:{preview}");
     let pending_text = count_label(pending_comments, "pending comment", "pending comments");
     rsx! {
         details { class: "native-menu collaboration-review-menu", open: draft.is_some(),
@@ -276,7 +279,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
                             if !reason.is_empty() { p { class: "collaboration-muted collaboration-review-reason", "{reason}" } }
                             // The header already names the box, so the label is for screen readers only.
                             label { r#for: "review-body", class: "repo-sr-only", "Summary (Markdown)" }
-                            MarkdownEditor { key: "{key}", id: "review-body", initial: body, rows: 6, required: false, initial_preview: preview, references: references.clone() }
+                            MarkdownEditor { key: "{url}:review:{choice}:{body}:{preview}", id: "review-body", initial: body, rows: 6, required: false, initial_preview: preview, references: references.clone() }
                         }
                         div { class: "collaboration-card-footer",
                             button { r#type: "submit", name: "intent", value: "submit", class: "btn btn-primary collaboration-submit-review", "Submit review" }
@@ -286,21 +289,13 @@ pub(in crate::webui::pages::repos) fn review_changes(
                 if pending_comments > 0 {
                     details { class: "native-menu collaboration-review-discard",
                         summary { class: "btn btn-secondary", "Discard review" }
-                        // The centred dialog of the other destructive confirmations. Cancel reloads the
-                        // Files changed page, which closes the dialog without JavaScript.
-                        div { class: "repo-confirm-modal", role: "dialog", aria_label: "Discard review",
-                            a { class: "repo-confirm-backdrop", href: format!("{url}/diff"), aria_label: "Cancel", tabindex: "-1" }
-                            form { method: "post", action: format!("{url}/reviews/pending/discard"), class: "repo-confirm-card",
-                                {csrf(&repo.csrf)}
-                                strong { "Discard your review?" }
-                                p { "This deletes {pending_text}. This cannot be undone." }
-                                label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " I understand" }
-                                div { class: "repo-confirm-actions",
-                                    a { class: "btn btn-secondary", href: format!("{url}/diff"), "Cancel" }
-                                    button { class: "btn btn-danger", r#type: "submit", "Discard review" }
-                                }
-                            }
-                        }
+                        // Cancel reloads the Files changed page, which closes the dialog without JavaScript.
+                        {confirm_dialog(None, "Discard review", &format!("{url}/diff"), &format!("{url}/reviews/pending/discard"), rsx! {
+                            {csrf(&repo.csrf)}
+                            strong { "Discard your review?" }
+                            p { "This deletes {pending_text}. This cannot be undone." }
+                            label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " I understand" }
+                        }, "Discard review")}
                     }
                 }
             }
@@ -418,6 +413,7 @@ pub(in crate::webui::pages::repos) fn reviewers_panel(
                         span { class: "collaboration-muted", "{reviewer_status(reviewer.status)}" }
                         if reviewer.stale { span { class: "collaboration-badge", "Stale" } }
                         if reviewer.pending && reviewer.status != ReviewerStatus::Requested { span { class: "collaboration-badge", "Review requested" } }
+                        if reviewer.code_owner { span { class: "collaboration-badge", title: "Owns a file this pull request changes", "Code owner" } }
                         if manage {
                             if reviewer.pending {
                                 form { method: "post", action: format!("{requests}/{}/remove", encode_component(&reviewer.username)), class: "collaboration-actions",

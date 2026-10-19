@@ -4,7 +4,8 @@ use crate::backend::db::repositories::{access::get_user_repo_access, records::ge
 use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
 use crate::backend::db::DbPool;
 use crate::backend::git::repository::process as git_process;
-use crate::backend::repositories::git_sessions::{validation, GitTasks};
+use crate::backend::repositories::deploy_keys;
+use crate::backend::repositories::git_sessions::{validation, GitTasks, ReceiveCredential};
 use crate::backend::repositories::store::{repo_store, GitService, GitSession, GitStreams};
 use crate::backend::ssh::rate_limit::RateLimiter;
 use anyhow::Result;
@@ -28,6 +29,8 @@ pub struct GitSshHandler {
     pool: DbPool,
     user: Option<User>,
     key_id: Option<i64>,
+    // Set instead of `user` when a deploy key authenticated.
+    deploy_key: Option<i64>,
     // Channel IDs are local to this connection, not server-global. Own the map
     // directly: an Arc here would permit cross-connection state sharing.
     channels: HashMap<u32, ChannelState>,
@@ -48,6 +51,7 @@ impl GitSshHandler {
             pool,
             user: None,
             key_id: None,
+            deploy_key: None,
             channels: HashMap::new(),
             rate_limiter,
             client_ip: None,
@@ -96,6 +100,15 @@ impl GitSshHandler {
             }
         }
         Ok(Auth::reject())
+    }
+
+    /// The same message for a repository that is missing and one the key cannot reach, so a deploy
+    /// key learns nothing about other repositories.
+    fn deploy_key_denial_message(is_write: bool) -> String {
+        format!(
+            "Permission denied: this deploy key cannot {} this repository\n",
+            if is_write { "push to" } else { "read" }
+        )
     }
 
     fn repository_denial_message(
@@ -165,6 +178,7 @@ impl russh::server::Handler for GitSshHandler {
     ) -> Result<Auth, Self::Error> {
         self.user = None;
         self.key_id = None;
+        self.deploy_key = None;
         if let Some(ip) = self.client_ip {
             if self.rate_limiter.is_blocked(ip).await {
                 warn!("Blocked IP {} attempted connection", ip);
@@ -210,8 +224,29 @@ impl russh::server::Handler for GitSshHandler {
                 Ok(Auth::Accept)
             }
             Ok(None) => {
-                warn!("No user found for key fingerprint: {}", fingerprint_str);
-                self.reject_key().await
+                match crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(
+                    &self.pool,
+                    &fingerprint_str,
+                )
+                .await
+                {
+                    Ok(Some(key)) => {
+                        info!("Authenticated deploy key '{}' (id={})", key.title, key.id);
+                        self.deploy_key = Some(key.id);
+                        if let Some(signal) = self.authenticated.take() {
+                            let _ = signal.send(());
+                        }
+                        Ok(Auth::Accept)
+                    }
+                    Ok(None) => {
+                        warn!("No user found for key fingerprint: {}", fingerprint_str);
+                        self.reject_key().await
+                    }
+                    Err(e) => {
+                        error!("Database error during auth: {}", e);
+                        Err(e)
+                    }
+                }
             }
             // A database failure is not a rejected key, so it does not count against the client.
             Err(e) => {
@@ -252,15 +287,12 @@ impl russh::server::Handler for GitSshHandler {
     ) -> Result<(), Self::Error> {
         let command = String::from_utf8_lossy(data).trim().to_owned();
 
-        let user = match &self.user {
-            Some(u) => u.clone(),
-            None => {
-                let msg = "Not authenticated\n";
-                let _ = session.data(channel, Bytes::from(msg.to_string()));
-                let _ = session.channel_failure(channel);
-                return Ok(());
-            }
-        };
+        if self.user.is_none() && self.deploy_key.is_none() {
+            let msg = "Not authenticated\n";
+            let _ = session.data(channel, Bytes::from(msg.to_string()));
+            let _ = session.channel_failure(channel);
+            return Ok(());
+        }
 
         if self
             .channels
@@ -294,44 +326,74 @@ impl russh::server::Handler for GitSshHandler {
         let repo = match get_repository(&self.pool, &git_cmd.owner, &git_cmd.repo).await? {
             Some(r) => r,
             None => {
-                let msg = Self::repository_denial_message(None, git_cmd.write);
+                // A deploy key cannot tell a missing repository from one it cannot reach.
+                let msg = if self.deploy_key.is_some() {
+                    Self::deploy_key_denial_message(git_cmd.write)
+                } else {
+                    Self::repository_denial_message(None, git_cmd.write)
+                };
                 let _ = session.data(channel, Bytes::from(msg));
                 let _ = session.channel_failure(channel);
                 return Ok(());
             }
         };
 
-        // Check permissions
-        let access = get_user_repo_access(&self.pool, user.id, repo.id).await?;
-        let required_access = if git_cmd.write {
-            AccessLevel::Write
+        // A deploy key reaches only its own repository, with the access its checks grant.
+        let credential = if let Some(key_id) = self.deploy_key {
+            match deploy_keys::authorize(&self.pool, key_id, &repo, git_cmd.write).await {
+                Ok(_) => {
+                    deploy_keys::record_use(&self.pool, key_id).await;
+                    info!(
+                        "Access granted: deploy key {} for {}/{}",
+                        key_id, git_cmd.owner, git_cmd.repo
+                    );
+                    ReceiveCredential::DeployKey(key_id)
+                }
+                Err(_) => {
+                    let msg = Self::deploy_key_denial_message(git_cmd.write);
+                    let _ = session.data(channel, Bytes::from(msg));
+                    let _ = session.channel_failure(channel);
+                    return Ok(());
+                }
+            }
         } else {
-            AccessLevel::Read
+            let Some(user) = self.user.clone() else {
+                let _ = session.channel_failure(channel);
+                return Ok(());
+            };
+            // Check permissions
+            let access = get_user_repo_access(&self.pool, user.id, repo.id).await?;
+            let required_access = if git_cmd.write {
+                AccessLevel::Write
+            } else {
+                AccessLevel::Read
+            };
+
+            let key_id = self
+                .key_id
+                .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?;
+            let current_key =
+                crate::backend::db::users::ssh_keys::get_user_by_ssh_key_id(&self.pool, key_id)
+                    .await?;
+            let current = current_key.is_some_and(|identity| {
+                identity.user.id == user.id
+                    && !identity.user.is_banned
+                    && !identity.user.must_change_password
+            });
+            if !current || access < required_access || (git_cmd.write && repo.is_archived) {
+                let msg =
+                    Self::repository_denial_message(Some((repo.is_private, access)), git_cmd.write);
+                let _ = session.data(channel, Bytes::from(msg));
+                let _ = session.channel_failure(channel);
+                return Ok(());
+            }
+
+            info!(
+                "Access granted: user {} has {:?} access to {}/{}",
+                user.username, access, git_cmd.owner, git_cmd.repo
+            );
+            ReceiveCredential::SshKey(key_id)
         };
-
-        let current_key = crate::backend::db::users::ssh_keys::get_user_by_ssh_key_id(
-            &self.pool,
-            self.key_id
-                .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?,
-        )
-        .await?;
-        let current = current_key.is_some_and(|identity| {
-            identity.user.id == user.id
-                && !identity.user.is_banned
-                && !identity.user.must_change_password
-        });
-        if !current || access < required_access || (git_cmd.write && repo.is_archived) {
-            let msg =
-                Self::repository_denial_message(Some((repo.is_private, access)), git_cmd.write);
-            let _ = session.data(channel, Bytes::from(msg));
-            let _ = session.channel_failure(channel);
-            return Ok(());
-        }
-
-        info!(
-            "Access granted: user {} has {:?} access to {}/{}",
-            user.username, access, git_cmd.owner, git_cmd.repo
-        );
 
         let permit = match git_process::session_permit() {
             Ok(permit) => permit,
@@ -357,9 +419,7 @@ impl russh::server::Handler for GitSshHandler {
             },
             false,
         );
-        options.credential = self
-            .key_id
-            .map(crate::backend::repositories::git_sessions::ReceiveCredential::SshKey);
+        options.credential = Some(credential);
         options.owner = git_cmd.owner;
         let receive = git_cmd
             .write

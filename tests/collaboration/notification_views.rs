@@ -342,7 +342,7 @@ async fn filters_narrow_each_tab(pg: bool) {
     assert_eq!(model["notifications"].as_array().unwrap().len(), 1);
     assert_eq!(model["notifications"][0]["repository"], "alice/docs");
     assert_eq!(model["reason"], "comment");
-    assert_eq!(model["reasons"].as_array().unwrap().len(), 10);
+    assert_eq!(model["reasons"].as_array().unwrap().len(), 11);
     let names: Vec<&str> = model["repositories"]
         .as_array()
         .unwrap()

@@ -20,6 +20,8 @@ pub enum ProfileError {
     Invalid,
     #[error("Profile fields must not contain NUL characters")]
     Nul,
+    #[error("Website must be a web address starting with http:// or https://")]
+    Website,
     #[error("Profile storage is temporarily unavailable")]
     Unavailable,
 }
@@ -36,6 +38,11 @@ pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
         }
         if value.is_some_and(|value| value.len() > bound) {
             return Err(ProfileError::Invalid);
+        }
+    }
+    if let Some(website) = input.website {
+        if crate::backend::db::repositories::topics::parse_website(website).is_err() {
+            return Err(ProfileError::Website);
         }
     }
     Ok(())

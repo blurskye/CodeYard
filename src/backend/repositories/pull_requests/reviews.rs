@@ -8,6 +8,7 @@ use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::{repo_store, ErrorKind};
+use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
 use serde_json::json;
 #[derive(Deserialize)]
@@ -280,6 +281,38 @@ pub async fn create_pull_request_review(
         .await;
     }
 
+    if review.state != "pending" {
+        let (review_for_hook, pull_for_hook, repository_for_hook) =
+            (review.clone(), pull_request.clone(), repository.clone());
+        let (pull_author_id, reviewer_id, sender_id) =
+            (pull_request.author_id, review.author_id, user.id);
+        webhooks::emit(
+            pool,
+            &repository,
+            events::PULL_REQUEST_REVIEW,
+            vec![pull_author_id, reviewer_id, sender_id],
+            move |owner, people| {
+                let (pull_author, reviewer, sender) = (
+                    people.get(pull_author_id),
+                    people.get(reviewer_id),
+                    people.get(sender_id),
+                );
+                payloads::pull_request_review(
+                    "submitted",
+                    &review_for_hook,
+                    &pull_for_hook,
+                    &pull_author,
+                    &reviewer,
+                    Scope {
+                        repo: &repository_for_hook,
+                        owner,
+                        sender: &sender,
+                    },
+                )
+            },
+        );
+    }
+
     Ok(review)
 }
 
@@ -377,6 +410,36 @@ pub async fn dismiss_pull_request_review(
     .await
     .map_err(super::write_error)?;
 
+    let (review_for_hook, pull_for_hook, repository_for_hook) =
+        (dismissed.clone(), pull_request.clone(), repository.clone());
+    let (pull_author_id, reviewer_id, sender_id) =
+        (pull_request.author_id, dismissed.author_id, actor.id);
+    webhooks::emit(
+        pool,
+        &repository,
+        events::PULL_REQUEST_REVIEW,
+        vec![pull_author_id, reviewer_id, sender_id],
+        move |owner, people| {
+            let (pull_author, reviewer, sender) = (
+                people.get(pull_author_id),
+                people.get(reviewer_id),
+                people.get(sender_id),
+            );
+            payloads::pull_request_review(
+                "dismissed",
+                &review_for_hook,
+                &pull_for_hook,
+                &pull_author,
+                &reviewer,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+            )
+        },
+    );
+
     Ok(dismissed)
 }
 
@@ -431,6 +494,31 @@ pub async fn request_reviewer(
     }
 
     let requester = super::actor(pool, actor_id).await?;
+    let created = add_review_request(
+        pool,
+        broadcaster,
+        &requester,
+        &owner,
+        &repository,
+        &pull_request,
+        &target,
+    )
+    .await?;
+
+    Ok(RequestReviewerResult { target, created })
+}
+
+/// Records that `target` is asked to review `pull`, and tells them unless they asked themselves.
+/// Returns whether the request is new. Shared by people's requests and by code owner requests.
+pub(super) async fn add_review_request(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    requester: &db::models::User,
+    owner: &str,
+    repository: &db::models::Repository,
+    pull_request: &db::models::PullRequest,
+    target: &db::models::User,
+) -> Result<bool, OperationError> {
     let created = db::pull_requests::reviews::request_pull_request_reviewer(
         pool,
         pull_request.id,
@@ -445,7 +533,10 @@ pub async fn request_reviewer(
             "{} requested your review on pull request #{}",
             requester.username, pull_request.number
         );
-        let link = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
+        let link = format!(
+            "/{}/{}/pulls/{}",
+            owner, repository.name, pull_request.number
+        );
         let _ = create_and_broadcast_notification(
             pool,
             broadcaster,
@@ -459,7 +550,7 @@ pub async fn request_reviewer(
                 link: Some(&link),
                 metadata: json!({
                     "repo_owner": owner,
-                    "repo_name": repo,
+                    "repo_name": repository.name,
                     "pull_number": pull_request.number,
                     "subject": pull_request.title,
                 }),
@@ -467,8 +558,7 @@ pub async fn request_reviewer(
         )
         .await;
     }
-
-    Ok(RequestReviewerResult { target, created })
+    Ok(created)
 }
 
 pub async fn remove_requested_reviewer(

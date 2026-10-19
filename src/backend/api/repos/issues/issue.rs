@@ -252,19 +252,58 @@ pub(crate) async fn native_edit(
     if draft.preview {
         return render_detail(&ctx, &repo, kind, &value, &draft, None, StatusCode::OK).await;
     }
-    let result = match kind {
+    let result = save_entry_text(
+        &ctx,
+        kind,
+        ctx.require_user()?.id,
+        (owner, name, number),
+        EntryText {
+            title,
+            body,
+            expected_state: field(&form, "expected_state"),
+            expected_updated: field(&form, "expected_updated"),
+        },
+    )
+    .await;
+    match result {
+        Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_detail(&ctx, &repo, kind, &value, &draft, Some(&message), status).await
+        }
+    }
+}
+
+/// The text an edit saves: the title and body, with the revision they were read at. The update
+/// rules check the writer and the revision.
+pub(crate) struct EntryText {
+    pub title: String,
+    pub body: String,
+    pub expected_state: String,
+    pub expected_updated: String,
+}
+
+/// Saves the text of an issue or pull request through the same update the edit form uses.
+pub(crate) async fn save_entry_text(
+    ctx: &PageContext,
+    kind: Kind,
+    actor_id: i64,
+    (owner, name, number): (String, String, i32),
+    text: EntryText,
+) -> Result<(), ApiFailure> {
+    match kind {
         Kind::Issue => crate::backend::issues::mutations::update_issue(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
-            ctx.require_user()?.id,
+            actor_id,
             owner,
             name,
             number,
             crate::backend::issues::mutations::UpdateIssueRequest {
-                expected_state: field(&form, "expected_state"),
-                expected_updated: field(&form, "expected_updated"),
-                title: Some(title),
-                body: Some(body),
+                expected_state: text.expected_state,
+                expected_updated: text.expected_updated,
+                title: Some(text.title),
+                body: Some(text.body),
                 state: None,
             },
         )
@@ -275,13 +314,13 @@ pub(crate) async fn native_edit(
             &ctx.state.pool,
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
-            ctx.require_user()?.id,
+            actor_id,
             (owner, name, number),
             crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
-                expected_state: field(&form, "expected_state"),
-                expected_updated: field(&form, "expected_updated"),
-                title: Some(title),
-                body: Some(body),
+                expected_state: text.expected_state,
+                expected_updated: text.expected_updated,
+                title: Some(text.title),
+                body: Some(text.body),
                 state: None,
                 base: None,
             },
@@ -289,13 +328,6 @@ pub(crate) async fn native_edit(
         .await
         .map_err(crate::backend::api::repos::pulls::operation_error)
         .map(|_| ()),
-    };
-    match result {
-        Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
-        Err(failure) => {
-            let (status, message) = safe_api_error(&failure);
-            render_detail(&ctx, &repo, kind, &value, &draft, Some(&message), status).await
-        }
     }
 }
 
@@ -408,6 +440,8 @@ mod tests {
             labels: vec![],
             comparison: None,
             comment_count: 0,
+            can_tick: false,
+            tasks: Default::default(),
             commit_count: None,
             file_count: None,
             check_count: 0,

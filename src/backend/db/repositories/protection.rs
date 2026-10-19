@@ -34,6 +34,7 @@ pub struct BranchProtectionRuleUpsert<'a> {
     pub force_push_allowances: Vec<i64>,
     pub enforce_admins: bool,
     pub require_conversation_resolution: bool,
+    pub require_code_owner_review: bool,
 }
 
 impl Default for BranchProtectionRuleUpsert<'_> {
@@ -56,6 +57,7 @@ impl Default for BranchProtectionRuleUpsert<'_> {
             force_push_allowances: Vec::new(),
             enforce_admins: true,
             require_conversation_resolution: false,
+            require_code_owner_review: false,
         }
     }
 }

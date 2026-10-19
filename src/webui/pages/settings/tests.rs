@@ -27,12 +27,14 @@ fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys
         assert!(values.get("new_password").is_empty());
         let output = html(settings_page(
             Settings {
+                two_factor: Default::default(),
                 theme: crate::webui::document::Theme::System,
                 profile: Profile::default(),
                 email: String::new(),
                 tab: "profile".into(),
                 keys: vec![],
                 tokens: vec![],
+                sessions: vec![],
                 new_token: None,
                 password_supported: true,
                 must_change_password: false,
@@ -58,6 +60,7 @@ fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys
 fn settings_primary_actions_share_one_class_and_deletes_are_outlined() {
     crate::webui::tests::in_scope(|| {
         let settings_for = |tab: &str, keys: Vec<Key>| Settings {
+            two_factor: Default::default(),
             theme: crate::webui::document::Theme::System,
             profile: Profile {
                 username: "alice".into(),
@@ -67,6 +70,7 @@ fn settings_primary_actions_share_one_class_and_deletes_are_outlined() {
             tab: tab.into(),
             keys,
             tokens: vec![],
+            sessions: vec![],
             new_token: None,
             password_supported: true,
             must_change_password: false,
@@ -103,10 +107,74 @@ fn settings_primary_actions_share_one_class_and_deletes_are_outlined() {
 }
 
 #[test]
+fn ssh_key_and_token_deletion_ask_in_a_centred_dialog() {
+    crate::webui::tests::in_scope(|| {
+        let settings_for = |tab: &str| Settings {
+            two_factor: Default::default(),
+            theme: crate::webui::document::Theme::System,
+            profile: Profile {
+                username: "alice".into(),
+                ..Profile::default()
+            },
+            email: "alice@example.test".into(),
+            tab: tab.into(),
+            keys: vec![Key {
+                id: 7,
+                name: "Laptop".into(),
+                fingerprint: "SHA256:public".into(),
+                kind: "ed25519".into(),
+                created: "2026-10-02".into(),
+            }],
+            tokens: vec![Token {
+                id: 4,
+                name: "ci".into(),
+                scope: "read".into(),
+                expires: "2027-01-01".into(),
+                created: "2026-10-02".into(),
+            }],
+            sessions: vec![],
+            new_token: None,
+            password_supported: true,
+            must_change_password: false,
+            manage_access: false,
+            requests: vec![],
+            values: preserved_values(&HashMap::new()),
+        };
+        let keys = html(settings_page(settings_for("keys"), "token", None, false));
+        assert!(
+            keys.contains("aria-label=\"Delete SSH key Laptop\""),
+            "{keys}"
+        );
+        assert!(
+            keys.contains("action=\"/settings/keys/7/delete\""),
+            "{keys}"
+        );
+        assert!(keys.contains("href=\"/settings?tab=keys\""), "{keys}");
+        assert!(keys.contains(">Cancel</a>"), "{keys}");
+        assert!(!keys.contains("class=\"collaboration-checkbox\""), "{keys}");
+        let tokens = html(settings_page(settings_for("tokens"), "token", None, false));
+        assert!(
+            tokens.contains("aria-label=\"Delete token ci\""),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("action=\"/settings/tokens/4/delete\""),
+            "{tokens}"
+        );
+        assert!(tokens.contains("href=\"/settings?tab=tokens\""), "{tokens}");
+        assert!(
+            !tokens.contains("class=\"collaboration-checkbox\""),
+            "{tokens}"
+        );
+    });
+}
+
+#[test]
 fn settings_use_a_current_left_nav_and_keep_native_credential_forms() {
     crate::webui::tests::in_scope(|| {
         let output = html(settings_page(
             Settings {
+                two_factor: Default::default(),
                 theme: crate::webui::document::Theme::System,
                 profile: Profile {
                     username: "alice".into(),
@@ -116,6 +184,7 @@ fn settings_use_a_current_left_nav_and_keep_native_credential_forms() {
                 tab: "keys".into(),
                 keys: vec![],
                 tokens: vec![],
+                sessions: vec![],
                 new_token: None,
                 password_supported: true,
                 must_change_password: false,
@@ -142,12 +211,14 @@ fn prerendered_bio_and_public_key_keep_native_escaped_text() {
         let source = "\n</textarea><script>bad</script>&";
         for (tab, name) in [("profile", "bio"), ("keys", "public_key")] {
             let model = Settings {
+                two_factor: Default::default(),
                 theme: crate::webui::document::Theme::System,
                 profile: Profile::default(),
                 email: String::new(),
                 tab: tab.into(),
                 keys: vec![],
                 tokens: vec![],
+                sessions: vec![],
                 new_token: None,
                 password_supported: false,
                 must_change_password: false,
@@ -198,6 +269,7 @@ fn token_expiry_defaults_to_thirty_days_and_takes_a_calendar_day() {
         let tokens_page = |values: FormValues| {
             html(settings_page(
                 Settings {
+                    two_factor: Default::default(),
                     theme: crate::webui::document::Theme::System,
                     profile: Profile {
                         username: "alice".into(),
@@ -207,6 +279,7 @@ fn token_expiry_defaults_to_thirty_days_and_takes_a_calendar_day() {
                     tab: "tokens".into(),
                     keys: vec![],
                     tokens: vec![],
+                    sessions: vec![],
                     new_token: None,
                     password_supported: true,
                     must_change_password: false,
@@ -257,6 +330,7 @@ fn appearance_tab_sits_after_the_profile_and_marks_the_saved_theme() {
         let page = |theme: crate::webui::document::Theme| {
             html(settings_page(
                 Settings {
+                    two_factor: Default::default(),
                     profile: Profile {
                         username: "alice".into(),
                         ..Profile::default()
@@ -265,6 +339,7 @@ fn appearance_tab_sits_after_the_profile_and_marks_the_saved_theme() {
                     tab: "appearance".into(),
                     keys: vec![],
                     tokens: vec![],
+                    sessions: vec![],
                     new_token: None,
                     password_supported: true,
                     must_change_password: false,
@@ -319,6 +394,7 @@ fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels()
         let page = |avatar_url: Option<&str>| {
             html(settings_page(
                 Settings {
+                    two_factor: Default::default(),
                     profile: Profile {
                         username: "alice".into(),
                         avatar_url: avatar_url.map(str::to_owned),
@@ -328,6 +404,7 @@ fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels()
                     tab: "profile".into(),
                     keys: vec![],
                     tokens: vec![],
+                    sessions: vec![],
                     new_token: None,
                     password_supported: true,
                     must_change_password: false,
@@ -348,5 +425,98 @@ fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels()
         let uploaded = page(Some("/api/files/7/download"));
         assert!(uploaded.contains("src=\"/api/files/7/download\""));
         assert!(uploaded.contains("class=\"identity-settings-avatar\""));
+    });
+}
+
+fn settings_for(tab: &str, sessions: Vec<AccountSession>) -> Settings {
+    Settings {
+        two_factor: Default::default(),
+        theme: crate::webui::document::Theme::System,
+        profile: Profile::default(),
+        email: "alice@example.test".into(),
+        tab: tab.into(),
+        keys: vec![],
+        tokens: vec![],
+        sessions,
+        new_token: None,
+        password_supported: true,
+        must_change_password: false,
+        manage_access: false,
+        requests: vec![],
+        values: FormValues::default(),
+    }
+}
+
+#[test]
+fn email_tab_asks_for_the_current_password_and_posts_to_the_email_route() {
+    crate::webui::tests::in_scope(|| {
+        let output = html(settings_page(
+            settings_for("email", vec![]),
+            "token",
+            None,
+            false,
+        ));
+        assert!(output.contains("action=\"/settings/email\""));
+        assert!(output.contains("name=\"current_password\""));
+        assert!(output.contains("value=\"alice@example.test\""));
+        assert!(!output.contains("name=\"new_password\""));
+        assert!(output.contains("href=\"/settings?tab=email\""));
+    });
+}
+
+#[test]
+fn sessions_tab_marks_this_session_and_never_shows_a_session_secret() {
+    crate::webui::tests::in_scope(|| {
+        let sessions = vec![
+            AccountSession {
+                key: "digest-current".into(),
+                current: true,
+                created: "Oct 1, 2026 10:00 UTC".into(),
+                expires: "Oct 8, 2026".into(),
+                user_agent: "Firefox on Linux".into(),
+                ip_address: "203.0.113.4".into(),
+            },
+            AccountSession {
+                key: "digest-other".into(),
+                current: false,
+                created: "Oct 2, 2026 09:00 UTC".into(),
+                expires: "Oct 9, 2026".into(),
+                user_agent: String::new(),
+                ip_address: String::new(),
+            },
+        ];
+        let output = html(settings_page(
+            settings_for("sessions", sessions),
+            "token",
+            None,
+            false,
+        ));
+        assert!(output.contains("This session"));
+        assert!(output.contains("name=\"session\" value=\"digest-other\""));
+        assert!(output.contains("action=\"/settings/sessions/revoke\""));
+        assert!(output.contains("action=\"/settings/sessions/revoke-others\""));
+        assert!(output.contains("Unknown browser"));
+        assert!(output.contains("IP unknown"));
+    });
+}
+
+#[test]
+fn sessions_tab_hides_sign_out_everywhere_else_when_no_other_session_exists() {
+    crate::webui::tests::in_scope(|| {
+        let sessions = vec![AccountSession {
+            key: "digest-current".into(),
+            current: true,
+            created: "Oct 1, 2026 10:00 UTC".into(),
+            expires: "Oct 8, 2026".into(),
+            user_agent: String::new(),
+            ip_address: String::new(),
+        }];
+        let output = html(settings_page(
+            settings_for("sessions", sessions),
+            "token",
+            None,
+            false,
+        ));
+        assert!(!output.contains("/settings/sessions/revoke-others"));
     });
 }

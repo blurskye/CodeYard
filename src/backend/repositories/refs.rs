@@ -143,6 +143,24 @@ pub async fn create_branch(
     Ok(sha)
 }
 
+/// Makes an existing branch the repository's default. The caller checks that the actor administers
+/// the repository. Clones made afterwards get this branch.
+pub async fn set_default_branch(
+    pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
+    actor: i64,
+    repository: &db::models::Repository,
+    branch: &str,
+) -> Result<(), RefError> {
+    if git::branch_ref(branch).is_none() {
+        return Err(invalid_ref("branch"));
+    }
+    repo_store(repository, cluster)
+        .set_default_branch_as(pool, repository.id, actor, branch)
+        .await
+        .map_err(publication_error)
+}
+
 pub async fn delete_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,

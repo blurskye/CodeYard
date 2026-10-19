@@ -180,6 +180,14 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_merge
     update: MergeMethodUpdate,
 ) -> Result<()>);
 
+native_operation!(crate::backend::db::postgres::repositories::records::set_repository_default_branch,
+    crate::backend::db::sqlite::repositories::records::set_repository_default_branch,
+    fn set_repository_default_branch(pool: &DbPool, repo_id: i64, branch: &str) -> Result<bool>);
+
+native_operation!(crate::backend::db::postgres::repositories::records::set_repository_archived,
+    crate::backend::db::sqlite::repositories::records::set_repository_archived,
+    fn set_repository_archived(pool: &DbPool, repo_id: i64, archived: bool) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_default_branch_and_size,
     crate::backend::db::sqlite::repositories::records::update_repo_default_branch_and_size,
     fn update_repo_default_branch_and_size(

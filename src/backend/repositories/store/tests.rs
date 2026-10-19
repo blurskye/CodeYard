@@ -647,7 +647,11 @@ async fn reads_return_owned_values_that_survive_json() {
     assert_eq!(tags[0].name, "v1");
     assert!(tags[0].message.as_deref().unwrap().contains("release one"));
 
-    let archive = f.store.archive_zip("main", "demo").await.unwrap();
+    let archive = f
+        .store
+        .archive("main", "demo", crate::backend::git::ArchiveFormat::Zip)
+        .await
+        .unwrap();
     assert!(archive.starts_with(b"PK"));
     let languages = round_trip(&f.store.languages("main").await.unwrap());
     let names: Vec<_> = languages.iter().map(|l| l.language.as_str()).collect();
@@ -702,7 +706,11 @@ async fn archives_resolve_revisions_before_spawning_git() {
     let path = std::path::Path::new(f.store.location());
     let head = std::fs::read(path.join("HEAD")).unwrap();
     for revision in ["--output=HEAD", "--output=unexpected.zip", "-oHEAD"] {
-        assert!(f.store.archive_zip(revision, "demo").await.is_err());
+        assert!(f
+            .store
+            .archive(revision, "demo", crate::backend::git::ArchiveFormat::Zip)
+            .await
+            .is_err());
         assert_eq!(std::fs::read(path.join("HEAD")).unwrap(), head);
         assert!(!path.join("unexpected.zip").exists());
     }
@@ -713,13 +721,17 @@ async fn archives_resolve_revisions_before_spawning_git() {
     for revision in ["main", "v1", &f.second.to_string()] {
         assert!(f
             .store
-            .archive_zip(revision, "demo")
+            .archive(revision, "demo", crate::backend::git::ArchiveFormat::Zip)
             .await
             .unwrap()
             .starts_with(b"PK"));
     }
     // An expression is not a ref or an object ID, so it is refused even for a directory.
-    assert!(f.store.archive_zip("main:src", "demo").await.is_err());
+    assert!(f
+        .store
+        .archive("main:src", "demo", crate::backend::git::ArchiveFormat::Zip)
+        .await
+        .is_err());
     assert_eq!(std::fs::read(path.join("HEAD")).unwrap(), head);
 }
 

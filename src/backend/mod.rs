@@ -19,3 +19,4 @@ pub mod notifications;
 pub mod repositories;
 pub mod ssh;
 pub mod storage;
+pub mod webhooks;

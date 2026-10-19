@@ -385,6 +385,12 @@
 .identity-settings-alert p { margin: 2px 0 0; color: var(--muted-foreground); }
 .identity-settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 32px; align-items: start; }
 .identity-settings-nav { display: flex; flex-direction: column; gap: 2px; }
+.identity-settings-picker { display: none; position: relative; }
+.identity-settings-picker > summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 44px; padding: 0 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--secondary); color: var(--foreground); font-weight: 600; cursor: pointer; list-style: none; }
+.identity-settings-picker > summary::-webkit-details-marker { display: none; }
+.identity-settings-picker-panel { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 40; display: grid; padding: 4px 0; border: 1px solid var(--border); border-radius: 6px; background: var(--popover, var(--card)); box-shadow: 0 8px 24px var(--shadow-color, #0006); }
+.identity-settings-picker-panel > a { padding: 11px 16px; color: var(--foreground); text-decoration: none; }
+.identity-settings-picker-panel > a:hover { background: var(--accent); }
 .identity-settings-nav-title { margin: 0 8px 6px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .identity-settings-nav-section { margin-top: 18px; }
 .identity-settings-nav-link {
@@ -445,9 +451,12 @@
 @media (max-width: 760px) {
   .identity-settings { padding-top: 20px; padding-bottom: 36px; }
   .identity-settings-layout { grid-template-columns: minmax(0, 1fr); gap: 24px; }
-  .identity-settings-nav { flex-direction: row; flex-wrap: wrap; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
-  .identity-settings-nav-title { display: none; }
-  .identity-settings-nav-link { flex: 0 0 auto; white-space: nowrap; }
+  .identity-settings-nav:not(.org-settings-nav) { display: none; }
+  .identity-settings-picker { display: block; }
+  /* An organization has three sections, which fit one row. */
+  .org-settings-nav { flex-direction: row; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+  .org-settings-nav .identity-settings-nav-title { display: none; }
+  .org-settings-nav .identity-settings-nav-link { flex: 0 0 auto; white-space: nowrap; }
   .identity-access-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) {
@@ -468,6 +477,19 @@
 .identity-table th { padding: 9px 12px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .identity-table td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .identity-table tbody tr:last-child td { border-bottom: 0; }
+/* On a phone each account is a card of labelled lines, so no column is cut off. */
+@media (max-width: 720px) {
+  .identity-account-table { min-width: 0; }
+  .identity-account-table thead { display: none; }
+  .identity-account-table, .identity-account-table tbody, .identity-account-table tr { display: block; }
+  .identity-account-table tr { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .identity-account-table tbody tr:last-child { border-bottom: 0; }
+  .identity-account-table td { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 4px 0; border: 0; text-align: right; }
+  .identity-account-table td::before { flex: none; content: attr(data-label); color: var(--muted-foreground); font-size: 11px; font-weight: 600; text-align: left; text-transform: uppercase; }
+  .identity-account-table td:first-child { display: block; text-align: left; }
+  .identity-account-table td:first-child::before, .identity-account-table td.identity-table-action::before { content: none; }
+  .identity-account-table td.identity-table-action { justify-content: flex-end; }
+}
 .identity-table td p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 11px; }
 .identity-table-action { text-align: right; white-space: nowrap; }
 .identity-row-menu { display: inline-block; text-align: right; }
@@ -517,3 +539,25 @@
 @media (prefers-reduced-motion: reduce) {
   .identity-profile-repository-row, .identity-settings-nav-link, .identity-admin-period-link { transition: none; }
 }
+.identity-admin-search { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.identity-admin-search-input { flex: 1 1 220px; min-height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font: inherit; }
+.identity-admin-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; }
+.identity-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; }
+.identity-row-menu-action { display: block; min-height: 44px; padding: 0; border: 0; background: none; color: var(--foreground); font: inherit; font-size: 13px; text-align: right; cursor: pointer; }
+
+.identity-recovery-codes {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.identity-copy-box {
+  border: 1px solid var(--border, currentColor);
+  border-radius: 0.5rem;
+  overflow-wrap: anywhere;
+  padding: 0.5rem 0.75rem;
+}
+.identity-copy-box + .identity-form { margin-top: 16px; }

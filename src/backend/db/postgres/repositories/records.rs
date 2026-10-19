@@ -503,3 +503,31 @@ pub(crate) async fn repository_owner_names(
     query.push(")");
     Ok(query.build_query_as().fetch_all(pool).await?)
 }
+
+/// Archives or unarchives the repository. Its callers check that the actor may administer it.
+pub async fn set_repository_archived(pool: &PgPool, repo_id: i64, archived: bool) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE repositories SET is_archived = $1, updated_at = NOW() WHERE id = $2 AND is_archived <> $1",
+    )
+    .bind(archived)
+    .bind(repo_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Stores the default branch. An archived repository keeps its branch; the result says whether it changed.
+pub async fn set_repository_default_branch(
+    pool: &PgPool,
+    repo_id: i64,
+    branch: &str,
+) -> Result<bool> {
+    let result = sqlx::query(
+        "UPDATE repositories SET default_branch = $1, updated_at = NOW() WHERE id = $2 AND NOT is_archived",
+    )
+    .bind(branch)
+    .bind(repo_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}

@@ -53,9 +53,10 @@ pub async fn upsert_branch_protection_rule(
             push_allowances,
             enforce_admins,
             require_conversation_resolution,
-            force_push_allowances
+            force_push_allowances,
+            require_code_owner_review
         )
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
         ON CONFLICT (repo_id, pattern)
         DO UPDATE SET
             require_pull_request = EXCLUDED.require_pull_request,
@@ -72,6 +73,7 @@ pub async fn upsert_branch_protection_rule(
             enforce_admins = EXCLUDED.enforce_admins,
             require_conversation_resolution = EXCLUDED.require_conversation_resolution,
             force_push_allowances = EXCLUDED.force_push_allowances,
+            require_code_owner_review = EXCLUDED.require_code_owner_review,
             updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
         RETURNING *
         "#,
@@ -92,6 +94,7 @@ pub async fn upsert_branch_protection_rule(
     .bind(input.enforce_admins)
     .bind(input.require_conversation_resolution)
     .bind(serde_json::to_string(&input.force_push_allowances)?)
+    .bind(input.require_code_owner_review)
     .fetch_one(&mut *tx)
     .await?;
     tx.commit().await?;

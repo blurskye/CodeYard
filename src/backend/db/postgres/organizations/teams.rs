@@ -366,3 +366,17 @@ pub async fn list_public_team_repositories(
     tx.commit().await?;
     Ok(Some(rows))
 }
+
+/// Users on a team who are current members of its organization. Code owner names such as
+/// `@org/team` resolve through this.
+pub async fn team_member_user_ids(
+    pool: &PgPool,
+    org_name: &str,
+    team_slug: &str,
+) -> Result<Vec<i64>> {
+    Ok(sqlx::query_scalar("SELECT tm.user_id FROM team_memberships tm JOIN teams t ON t.id=tm.team_id JOIN organizations o ON o.id=t.org_id JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=o.id JOIN users u ON u.id=tm.user_id WHERE o.name=$1 AND t.slug=$2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.user_id")
+        .bind(org_name)
+        .bind(team_slug)
+        .fetch_all(pool)
+        .await?)
+}

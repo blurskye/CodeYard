@@ -316,7 +316,7 @@ async fn assigned_reason_filters_the_list(pg: bool) {
     assert_eq!(kinds, vec!["assigned"]);
     let model = notifications_model(&w.bob, "/notifications?reason=assigned").await;
     let reasons = model["reasons"].as_array().unwrap();
-    assert_eq!(reasons.len(), 10);
+    assert_eq!(reasons.len(), 11);
     assert!(reasons
         .iter()
         .any(|reason| reason["slug"] == "assigned" && reason["label"] == "Assigned"));

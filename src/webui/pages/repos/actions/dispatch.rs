@@ -3,7 +3,7 @@ use super::{
     ActionsPage,
 };
 use crate::webui::{
-    components::{DraftSelect, SelectOption},
+    components::{DraftSelect, DraftTextarea, SelectOption},
     navigation::NavLink,
     pages::repos::chrome::RepoChrome,
 };
@@ -252,7 +252,7 @@ pub(super) fn manual_dispatch_form(
                 label { "Commit SHA (optional)" input { name: "head_sha", "value": draft.head_sha.clone(), maxlength: "40" } }
                 label { "Environment (optional)" input { name: "environment", "value": draft.environment.clone(), maxlength: "100" } }
                 label { "Inputs (optional)"
-                    textarea { name: "inputs", aria_label: "Workflow inputs", "{draft.inputs_text}" }
+                    DraftTextarea { name: "inputs", initial_value: draft.inputs_text.clone(), rows: 4 }
                 }
                 p { class: "actions-dispatch-note", "For a workflow that declares inputs: one name=value per line. The server checks names, choices and types, and reports any missing required input." }
                 button { r#type: "submit", class: "actions-button actions-dispatch-submit", {icon("play")} "Run workflow" }

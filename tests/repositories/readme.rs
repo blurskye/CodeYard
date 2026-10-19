@@ -223,7 +223,7 @@ async fn contract(pg: bool) {
             .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, "branch notes");
-        let (status, body) = client.page("/readme_owner/preview/archive?ref=main").await;
+        let (status, body) = client.page("/readme_owner/preview/archive/main.zip").await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("preview-main/notes.txt"));
         bare.tag_delete("main").unwrap();

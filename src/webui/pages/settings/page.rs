@@ -1,6 +1,6 @@
 //! Account settings presentation.
 use crate::webui::components::{
-    compact_date, current_time, Avatar, DraftSelect, DraftTextarea, SelectOption,
+    compact_date, confirm_dialog, current_time, Avatar, DraftSelect, DraftTextarea, SelectOption,
 };
 use crate::webui::document::Theme;
 use crate::webui::navigation::NavLink;
@@ -30,6 +30,7 @@ pub struct Settings {
     pub tab: String,
     pub keys: Vec<Key>,
     pub tokens: Vec<Token>,
+    pub sessions: Vec<AccountSession>,
     pub new_token: Option<String>,
     pub password_supported: bool,
     pub must_change_password: bool,
@@ -38,6 +39,36 @@ pub struct Settings {
     pub values: FormValues,
     /// The theme saved on this device, read from the same cookie as the header toggle.
     pub theme: Theme,
+    pub two_factor: TwoFactor,
+}
+
+/// Two-factor sign-in on this account. `setup` is set while a new secret waits for its confirming
+/// code; `recovery_codes` is set only in the one response that shows them.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TwoFactor {
+    pub enabled: bool,
+    pub setup: Option<TwoFactorSetup>,
+    pub recovery_codes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TwoFactorSetup {
+    /// The base32 secret, typed into an app that cannot scan a code.
+    pub secret: String,
+    pub uri: String,
+    /// Sealed by the server; the confirming form sends it back unchanged.
+    pub token: String,
+}
+
+/// One signed-in session of the account. `key` is a digest of the session id, which stays secret.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AccountSession {
+    pub key: String,
+    pub current: bool,
+    pub created: String,
+    pub expires: String,
+    pub user_agent: String,
+    pub ip_address: String,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -83,15 +114,57 @@ fn token_expiry_day(submitted: String) -> String {
 /// The account settings navigation, in three groups. Organization pages share it; `current` is
 /// the tab or page being shown.
 pub fn settings_nav(current: &str, manage_access: bool) -> Element {
+    let mut tabs = vec![
+        ("/settings?tab=profile", "Public profile", "profile"),
+        ("/settings?tab=appearance", "Appearance", "appearance"),
+        ("/settings?tab=email", "Email address", "email"),
+        ("/settings?tab=password", "Password", "password"),
+        (
+            "/settings?tab=two-factor",
+            "Two-factor authentication",
+            "two-factor",
+        ),
+        ("/settings?tab=keys", "SSH keys", "keys"),
+        ("/settings?tab=tokens", "Access tokens", "tokens"),
+        ("/settings?tab=sessions", "Sessions", "sessions"),
+        ("/settings/organizations", "Organizations", "organizations"),
+    ];
+    if manage_access {
+        tabs.push(("/settings?tab=access", "Account access", "access"));
+    }
+    let label = tabs
+        .iter()
+        .find(|tab| tab.2 == current)
+        .map_or("Settings", |tab| tab.1);
     rsx! {
+        // A phone has no room for the tab column, so the same links are one menu there.
+        details { class: "identity-settings-picker",
+            summary { aria_label: "Account settings sections",
+                span { "{label}" }
+                svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true", path { d: "m6 9 6 6 6-6" } }
+            }
+            div { class: "identity-settings-picker-panel",
+                for (href, text, id) in tabs {
+                    NavLink {
+                        href: href.to_owned(),
+                        class: if id == current { "identity-settings-nav-current".to_owned() } else { String::new() },
+                        aria_current: (id == current).then(|| "page".to_owned()),
+                        "{text}"
+                    }
+                }
+            }
+        }
         nav { class: "identity-settings-nav", aria_label: "Account settings",
             p { class: "identity-settings-nav-title", "Account" }
             {nav_link("/settings?tab=profile".to_owned(), "Public profile", ProfileIcon::User, current == "profile")}
             {nav_link("/settings?tab=appearance".to_owned(), "Appearance", ProfileIcon::Appearance, current == "appearance")}
+            {nav_link("/settings?tab=email".to_owned(), "Email address", ProfileIcon::User, current == "email")}
             {nav_link("/settings?tab=password".to_owned(), "Password", ProfileIcon::Lock, current == "password")}
+            {nav_link("/settings?tab=two-factor".to_owned(), "Two-factor authentication", ProfileIcon::Shield, current == "two-factor")}
             p { class: "identity-settings-nav-title identity-settings-nav-section", "Access" }
             {nav_link("/settings?tab=keys".to_owned(), "SSH keys", ProfileIcon::Terminal, current == "keys")}
             {nav_link("/settings?tab=tokens".to_owned(), "Access tokens", ProfileIcon::Key, current == "tokens")}
+            {nav_link("/settings?tab=sessions".to_owned(), "Sessions", ProfileIcon::Layers, current == "sessions")}
             {nav_link("/settings/organizations".to_owned(), "Organizations", ProfileIcon::Building, current == "organizations")}
             if manage_access {
                 p { class: "identity-settings-nav-title identity-settings-nav-section", "Administration" }
@@ -188,8 +261,13 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                             code { "{key.fingerprint}" }
                                             p { "{key.kind} · Added {compact_date(&key.created)}" }
                                         }
-                                        form { method: "post", action: format!("/settings/keys/{}/delete", key.id),
-                                            {csrf(token)} button { r#type: "submit", class: "btn btn-danger btn-sm", "Delete" }
+                                        details { class: "native-menu repo-delete-menu",
+                                            summary { class: "btn btn-danger btn-sm", "Delete" span { class: "site-sr-only", " {key.name}" } }
+                                            {confirm_dialog(None, &format!("Delete SSH key {}", key.name), "/settings?tab=keys", &format!("/settings/keys/{}/delete", key.id), rsx! {
+                                                {csrf(token)}
+                                                strong { "Delete SSH key {key.name}?" }
+                                                label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " Git over SSH with this key stops working." }
+                                            }, "Delete key")}
                                         }
                                     }
                                 }
@@ -231,13 +309,13 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                             h3 { "{access.name}" }
                                             p { "{access.scope} access · Added {compact_date(&access.created)} · Expires {compact_date(&access.expires)}" }
                                         }
-                                        details { class: "collaboration-edit",
-                                            summary { class: "btn btn-danger", "Delete" span { class: "repo-sr-only", " {access.name}" } }
-                                            form { method: "post", action: format!("/settings/tokens/{}/delete", access.id), class: "collaboration-form-fields",
+                                        details { class: "collaboration-edit native-menu repo-delete-menu",
+                                            summary { class: "btn btn-danger", "Delete" span { class: "site-sr-only", " {access.name}" } }
+                                            {confirm_dialog(None, &format!("Delete token {}", access.name), "/settings?tab=tokens", &format!("/settings/tokens/{}/delete", access.id), rsx! {
                                                 {csrf(token)}
-                                                label { class: "collaboration-checkbox", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Revoke this token. Anything that uses it stops working." }
-                                                div { class: "collaboration-actions", button { r#type: "submit", class: "btn btn-danger", "Delete token" } }
-                                            }
+                                                strong { "Delete token {access.name}?" }
+                                                label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Revoke this token. Anything that uses it stops working." }
+                                            }, "Delete token")}
                                         }
                                     }
                                 }
@@ -316,6 +394,60 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 div { class: "identity-empty", h3 { "Password changes aren't available" } p { "This account uses OAuth and does not support password changes." } }
                             }
                         }
+                    } else if model.tab == "email" {
+                        section { class: "identity-settings-section", aria_labelledby: "settings-email-title",
+                            header { class: "identity-section-header",
+                                h2 { id: "settings-email-title", "Email address" }
+                                p { "Your sign-in and account notices go to this address. Changing it needs your current password." }
+                            }
+                            form { method: "post", action: "/settings/email", class: "identity-form",
+                                {csrf(token)}
+                                {text_field("email", "New email address", if values.get("email").is_empty() { model.email.clone() } else { values.get("email") }, "email", true, 255)}
+                                {password_field("current_password", "Current password", false)}
+                                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Update email" } }
+                            }
+                        }
+                    } else if model.tab == "sessions" {
+                        section { class: "identity-settings-section", aria_labelledby: "settings-sessions-title",
+                            header { class: "identity-section-header",
+                                h2 { id: "settings-sessions-title", "Signed-in sessions" }
+                                p { "Each browser or device you are signed in on. Revoking one signs it out at once." }
+                            }
+                            div { class: "identity-row-list",
+                                for session in &model.sessions {
+                                    article { class: "identity-row", key: "{session.key}",
+                                        div { class: "identity-row-main",
+                                            h3 {
+                                                if session.user_agent.is_empty() { "Unknown browser" } else { "{session.user_agent}" }
+                                                if session.current { span { class: "identity-status identity-status-success", " This session" } }
+                                            }
+                                            p { "Signed in {session.created} · Expires {session.expires} · " if session.ip_address.is_empty() { "IP unknown" } else { "IP {session.ip_address}" } }
+                                        }
+                                        details { class: "collaboration-edit native-menu repo-delete-menu",
+                                            summary { class: "btn", "Revoke" }
+                                            {confirm_dialog(None, "Revoke this session", "/settings?tab=sessions", "/settings/sessions/revoke", rsx! {
+                                                {csrf(token)}
+                                                input { r#type: "hidden", name: "session", value: session.key.clone() }
+                                                strong { if session.current { "Revoke this session? You will be signed out here." } else { "Revoke this session?" } }
+                                                p { class: "text-sm", "The browser or device using it is signed out immediately." }
+                                            }, "Revoke session")}
+                                        }
+                                    }
+                                }
+                            }
+                            if model.sessions.iter().any(|session| !session.current) {
+                                details { class: "collaboration-edit native-menu repo-delete-menu identity-sessions-everywhere",
+                                    summary { class: "btn btn-danger", "Sign out everywhere else" }
+                                    {confirm_dialog(None, "Sign out everywhere else", "/settings?tab=sessions", "/settings/sessions/revoke-others", rsx! {
+                                        {csrf(token)}
+                                        strong { "Sign out every other session?" }
+                                        p { class: "text-sm", "Other browsers and devices are signed out. This one stays signed in." }
+                                    }, "Sign out everywhere else")}
+                                }
+                            }
+                        }
+                    } else if model.tab == "two-factor" {
+                        {two_factor_section(&model.two_factor, token)}
                     } else if model.tab == "access" && model.manage_access {
                         section { class: "identity-settings-section identity-access-section", {access_forms(&model.requests, token, values, "/settings/access")} }
                     }
@@ -340,7 +472,75 @@ pub fn settings_tab(raw: Option<&str>) -> &'static str {
         Some("keys") => "keys",
         Some("tokens") => "tokens",
         Some("password") => "password",
+        Some("two-factor") => "two-factor",
+        Some("email") => "email",
+        Some("sessions") => "sessions",
         Some("access") => "access",
         _ => "profile",
+    }
+}
+
+/// Two-factor sign-in: the state, the one-time recovery codes, and the forms that change it. Each
+/// change asks for the current password, except the setup confirmation, which asks for a code.
+fn two_factor_section(two_factor: &TwoFactor, token: &str) -> Element {
+    rsx! {
+        section { class: "identity-settings-section", aria_labelledby: "settings-two-factor-title",
+            header { class: "identity-section-header",
+                h2 { id: "settings-two-factor-title", "Two-factor authentication" }
+                p { "Also ask for a code from an authenticator app when you sign in with your password." }
+            }
+            if !two_factor.recovery_codes.is_empty() {
+                div { class: "identity-settings-alert", role: "status",
+                    div {
+                        strong { "Save these recovery codes" }
+                        p { "Each code signs you in once if you lose your device. They are not shown again." }
+                    }
+                    ul { class: "identity-recovery-codes",
+                        for code in &two_factor.recovery_codes {
+                            li { key: "{code}", code { "{code}" } }
+                        }
+                    }
+                }
+            }
+            if two_factor.enabled {
+                p { class: "identity-status identity-status-success", "On. Sign-in asks for a code from your app." }
+                form { method: "post", action: "/settings/two-factor/recovery-codes", class: "identity-form",
+                    {csrf(token)}
+                    {password_field("current_password", "Current password", false)}
+                    div { class: "identity-form-actions",
+                        button { r#type: "submit", class: SUBMIT, "Regenerate recovery codes" }
+                    }
+                }
+                details { class: "collaboration-edit native-menu repo-delete-menu",
+                    summary { class: "btn btn-danger", "Turn off two-factor authentication" }
+                    {confirm_dialog(None, "Turn off two-factor authentication", "/settings?tab=two-factor", "/settings/two-factor/disable", rsx! {
+                        {csrf(token)}
+                        strong { "Turn off two-factor authentication?" }
+                        p { class: "text-sm", "Your password alone will sign you in, and every recovery code stops working." }
+                        {password_field("current_password", "Current password", false)}
+                    }, "Turn off")}
+                }
+            } else if let Some(setup) = &two_factor.setup {
+                p { "In your authenticator app, add an account with this key, or open the setup link on a phone that has the app." }
+                p { class: "identity-form-hint", "Key" }
+                div { class: "identity-copy-box", code { "{setup.secret}" } }
+                p { class: "identity-form-hint", "Setup link" }
+                div { class: "identity-copy-box", code { "{setup.uri}" } }
+                form { method: "post", action: "/settings/two-factor/enable", class: "identity-form",
+                    {csrf(token)}
+                    input { r#type: "hidden", name: "setup", value: setup.token.clone() }
+                    {text_field("code", "Code from your app", String::new(), "text", true, 16)}
+                    div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Turn on" } }
+                }
+            } else {
+                form { method: "post", action: "/settings/two-factor/setup", class: "identity-form",
+                    {csrf(token)}
+                    p { "You need an authenticator app, such as one that supports TOTP codes." }
+                    div { class: "identity-form-actions",
+                        button { r#type: "submit", class: SUBMIT, "Set up two-factor authentication" }
+                    }
+                }
+            }
+        }
     }
 }

@@ -10,6 +10,7 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::pull_requests::reviews::{PullRequestCommentEntry, PullRequestReviewEntry};
 use crate::backend::issues::{comment_link, discussion_link, discussion_page};
+use crate::backend::repositories::code_owners::load_rules;
 use crate::backend::repositories::pull_requests::comments as comment_rules;
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 use crate::backend::repositories::pull_requests::reviews as review_rules;
@@ -65,6 +66,10 @@ pub(crate) fn comment_view(
         location,
         conversation,
         reactions: Vec::new(),
+        can_edit: false,
+        can_delete: false,
+        edited: None,
+        edit: None,
     }
 }
 
@@ -199,6 +204,23 @@ pub(crate) async fn reviewers(
         db::pull_requests::reviews::list_pull_request_reviewers(&ctx.state.pool, pull.id)
             .await
             .map_err(|_| unavailable(ctx))?;
+    // The owners the changed files name. A reviewer named there gets the Code owner badge.
+    let rules = load_rules(&repo.record, ctx.state.cluster.as_ref(), &pull.base_sha)
+        .await
+        .unwrap_or_default();
+    let changed = if rules.is_empty() {
+        Vec::new()
+    } else {
+        repo_store(&repo.record, ctx.state.cluster.as_ref())
+            .changed_paths(&pull.base_sha, &pull.head_sha)
+            .await
+            .unwrap_or_default()
+    };
+    let owned = rules.owned_paths(&changed);
+    let owners: HashSet<&str> = owned
+        .iter()
+        .flat_map(|(_, names)| names.iter().map(String::as_str))
+        .collect();
     let mut reviewers: Vec<pulls::Reviewer> = decisions
         .into_iter()
         .filter_map(|decision| {
@@ -208,12 +230,14 @@ pub(crate) async fn reviewers(
                 "dismissed" => pulls::ReviewerStatus::Dismissed,
                 _ => return None,
             };
+            let code_owner = owners.contains(format!("@{}", decision.username).as_str());
             Some(pulls::Reviewer {
                 username: decision.username,
                 status,
                 stale: status != pulls::ReviewerStatus::Dismissed
                     && decision.commit_sha.as_deref() != Some(head),
                 pending: requested.iter().any(|user| user.id == decision.author_id),
+                code_owner,
             })
         })
         .collect();
@@ -222,11 +246,13 @@ pub(crate) async fn reviewers(
             .iter()
             .any(|reviewer| reviewer.username == user.username)
         {
+            let code_owner = owners.contains(format!("@{}", user.username).as_str());
             reviewers.push(pulls::Reviewer {
                 username: user.username,
                 status: pulls::ReviewerStatus::Requested,
                 stale: false,
                 pending: true,
+                code_owner,
             });
         }
     }
@@ -796,6 +822,116 @@ async fn set_resolution(
                 )
                 .await
             }
+        }
+    }
+}
+
+/// Changes the author's conversation comment from the Conversation tab. A preview shows the page
+/// again with the text.
+pub(crate) async fn native_edit_conversation_comment(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, i64)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    authorize_post(&ctx, &form)?;
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = item(&ctx, &repo, Kind::Pull, number).await?;
+    let mut draft = submitted_detail(&form, "comment");
+    draft.editing = Some(comment_id);
+    if draft.preview {
+        return render_detail(
+            &ctx,
+            &repo,
+            Kind::Pull,
+            &value,
+            &draft,
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    }
+    let result = comment_rules::edit_pull_request_comment(
+        &ctx.state.pool,
+        &ctx.state.notification_broadcaster,
+        ctx.require_user()?.id,
+        crate::backend::issues::comments::CommentTarget {
+            owner,
+            repo: name,
+            number,
+            comment_id,
+        },
+        draft.comment.clone(),
+    )
+    .await
+    .map_err(operation_error);
+    match result {
+        Ok(comment) => {
+            let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+            let position = db::pull_requests::reviews::count_discussion_items_through(
+                &ctx.state.pool,
+                comment.pull_request_id,
+                db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
+            )
+            .await;
+            Ok(ctx.redirect(&comment_link(&base, comment.id, position)))
+        }
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_detail(
+                &ctx,
+                &repo,
+                Kind::Pull,
+                &value,
+                &draft,
+                Some(&message),
+                status,
+            )
+            .await
+        }
+    }
+}
+
+/// Deletes a conversation comment from the Conversation tab, after the confirmation dialog.
+pub(crate) async fn native_delete_conversation_comment(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, i64)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    authorize_post(&ctx, &form)?;
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = item(&ctx, &repo, Kind::Pull, number).await?;
+    let result = comment_rules::delete_pull_request_comment(
+        &ctx.state.pool,
+        ctx.require_user()?.id,
+        crate::backend::issues::comments::CommentTarget {
+            owner,
+            repo: name,
+            number,
+            comment_id,
+        },
+    )
+    .await
+    .map_err(operation_error);
+    match result {
+        Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(Kind::Pull), number))),
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_detail(
+                &ctx,
+                &repo,
+                Kind::Pull,
+                &value,
+                &DetailDraft::default(),
+                Some(&message),
+                status,
+            )
+            .await
         }
     }
 }

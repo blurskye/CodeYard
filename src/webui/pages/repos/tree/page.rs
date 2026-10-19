@@ -45,6 +45,9 @@ pub struct TreePage {
     /// The default branch's languages, for the About panel. Empty when there are none.
     #[serde(default)]
     pub languages: Vec<LanguageShare>,
+    /// The release count and latest tag, for the About panel. Only the repository root has it.
+    #[serde(default)]
+    pub releases: Option<crate::webui::pages::repos::releases::ReleasesSummary>,
     pub readme: Option<String>,
     pub latest_commit: Option<Commit>,
     /// This folder at the head commit, so the link keeps showing it. Empty when there is none.
@@ -92,7 +95,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
             {goto_file_icon(repo, page)}
             {add_file(repo, page)}
             {code_menu(repo, page)}
-            {more_menu(&page.path, &page.permalink, None)}
+            {more_menu(&page.path, &page.permalink, None, None)}
         };
         title_row(repo, &page.reference, &page.path, !page.empty, actions)
     };
@@ -244,7 +247,8 @@ fn code_menu(repo: &RepoChrome, page: &TreePage) -> Element {
                 }
                 p { class: "repo-clone-help", "Copy a URL to clone this repository." }
                 if !page.empty {
-                    a { class: "repo-menu-item repo-download", href: format!("/api/repos{base}/archive?ref={}", crate::webui::encode_component(&page.reference)), {icon("download")} "Download ZIP" }
+                    a { class: "repo-menu-item repo-download", href: format!("{base}/archive/{}.zip", crate::webui::encode_component(&page.reference)), {icon("download")} "Download ZIP" }
+                    a { class: "repo-menu-item repo-download", href: format!("{base}/archive/{}.tar.gz", crate::webui::encode_component(&page.reference)), {icon("download")} "Download tar.gz" }
                 }
             }
         }
@@ -315,6 +319,7 @@ fn about_column(repo: &RepoChrome, page: &TreePage) -> Element {
                 if page.readme.is_some() { li { {icon("readme")} a { href: "#readme", "Readme" } } }
                 if let Some(entry) = license { li { {icon("file")} NavLink { href: file_url(&base, "blob", &page.reference, &entry.path), "License" } } }
             }
+            if let Some(summary) = &page.releases { {crate::webui::pages::repos::releases::sidebar(repo, summary)} }
             {language_bar(&page.languages)}
         }
     }

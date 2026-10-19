@@ -510,7 +510,7 @@ pub(crate) async fn create_repository(
                 status
             };
             let message = match status {
-                StatusCode::CONFLICT => "The repository name is reserved or the owner is unavailable. Review the owner and name before retrying.",
+                StatusCode::CONFLICT => "That owner already has a repository with this name, or the name is reserved. Choose another name.",
                 StatusCode::BAD_REQUEST => "The repository details are invalid. Please review them.",
                 StatusCode::UNAUTHORIZED => "Your session expired. Log in before creating a repository.",
                 StatusCode::FORBIDDEN => "You do not have permission to create this repository for the selected owner.",

@@ -18,6 +18,7 @@ use codeyard::backend::{
         registration::{RegistrationError, RegistrationOutcome},
         sessions::{AccountAuthorityError, InitiatingSession, SessionContext, SessionIssueError},
         setup::{SetupError, SetupInput},
+        AuthenticatedAccount,
     },
 };
 use sha2::{Digest, Sha256};
@@ -27,6 +28,16 @@ use sqlx::{
 };
 use std::{str::FromStr, time::Duration as StdDuration};
 use uuid::Uuid;
+
+/// The password step of a sign-in that has no second factor. Two-factor accounts are not used here.
+fn signed_in(
+    first: Result<identity::login::FirstFactor, identity::login::LoginError>,
+) -> Result<AuthenticatedAccount, identity::login::LoginError> {
+    match first? {
+        identity::login::FirstFactor::Authenticated(account) => Ok(*account),
+        identity::login::FirstFactor::SecondFactor { .. } => panic!("unexpected second factor"),
+    }
+}
 
 #[test]
 fn shared_identity_inputs_keep_key_profile_token_and_oauth_bounds() {
@@ -96,7 +107,7 @@ fn shared_identity_inputs_keep_key_profile_token_and_oauth_bounds() {
 const PHC: &str = "$argon2id$v=19$m=19456,t=2,p=1$cHJvZHVjdGlvbi1kdW1teQ$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 // Normal cryptographic fixtures must not consume each other's production KDF
 // permits under an arbitrarily parallel test runner. Busy itself has an owner test.
-static PASSWORD_FIXTURE_WORK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+use crate::support::PASSWORD_WORK as PASSWORD_FIXTURE_WORK;
 fn random_id() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
@@ -1598,15 +1609,18 @@ async fn identity_login_owns_alias_admission_and_anonymous_csrf_rotation() {
         .await
         .unwrap()
         .unwrap();
-    let authenticated = identity::login::password_login(
-        &fixture.pool,
-        PasswordCredentials {
-            identity: "alias@example.test",
-            password: "alias-password",
-        },
-        session_context(&fresh, Some(&old)),
+    let authenticated = signed_in(
+        identity::login::password_login(
+            &fixture.pool,
+            None,
+            PasswordCredentials {
+                identity: "alias@example.test",
+                password: "alias-password",
+            },
+            session_context(&fresh, Some(&old)),
+        )
+        .await,
     )
-    .await
     .unwrap();
     assert_eq!(authenticated.user.id, user.id);
     assert_eq!(authenticated.session_id, fresh);
@@ -1630,15 +1644,18 @@ async fn identity_login_owns_alias_admission_and_anonymous_csrf_rotation() {
     assert_eq!(attempts, 1);
     let other = random_id();
     assert!(matches!(
-        identity::login::password_login(
-            &fixture.pool,
-            PasswordCredentials {
-                identity: "alias",
-                password: "alias-password"
-            },
-            session_context(&other, Some(&fresh)),
-        )
-        .await,
+        signed_in(
+            identity::login::password_login(
+                &fixture.pool,
+                None,
+                PasswordCredentials {
+                    identity: "alias",
+                    password: "alias-password"
+                },
+                session_context(&other, Some(&fresh)),
+            )
+            .await
+        ),
         Err(identity::login::LoginError::Session(
             SessionIssueError::Denied
         ))
@@ -1738,15 +1755,18 @@ async fn identity_setup_and_registration_session_outages_leave_committed_account
     ] {
         let fresh = random_id();
         assert_eq!(
-            identity::login::password_login(
-                &fixture.pool,
-                PasswordCredentials {
-                    identity: name,
-                    password
-                },
-                session_context(&fresh, None),
+            signed_in(
+                identity::login::password_login(
+                    &fixture.pool,
+                    None,
+                    PasswordCredentials {
+                        identity: name,
+                        password
+                    },
+                    session_context(&fresh, None),
+                )
+                .await
             )
-            .await
             .unwrap()
             .user
             .username,
@@ -1834,20 +1854,24 @@ async fn identity_private_registration_managed_password_change_and_review_share_
             email: None,
             password: "temporary-password",
         },
+        false,
     )
     .await
     .unwrap();
     assert!(temporary.must_change_password && !temporary.is_admin);
     let temporary_session = random_id();
-    identity::login::password_login(
-        &fixture.pool,
-        PasswordCredentials {
-            identity: "temporary",
-            password: "temporary-password",
-        },
-        session_context(&temporary_session, None),
+    signed_in(
+        identity::login::password_login(
+            &fixture.pool,
+            None,
+            PasswordCredentials {
+                identity: "temporary",
+                password: "temporary-password",
+            },
+            session_context(&temporary_session, None),
+        )
+        .await,
     )
-    .await
     .unwrap();
     assert!(stored::get_session_user(&fixture.pool, &temporary_session)
         .await
@@ -1872,6 +1896,7 @@ async fn identity_private_registration_managed_password_change_and_review_share_
                 email: None,
                 password: "denied-password"
             },
+            false,
         )
         .await,
         Err(ManagedAccountError::Authority(
@@ -1934,15 +1959,18 @@ async fn identity_private_registration_managed_password_change_and_review_share_
     );
     let banned_session = random_id();
     assert!(matches!(
-        identity::login::password_login(
-            &fixture.pool,
-            PasswordCredentials {
-                identity: "temporary",
-                password: "replacement-password"
-            },
-            session_context(&banned_session, None),
-        )
-        .await,
+        signed_in(
+            identity::login::password_login(
+                &fixture.pool,
+                None,
+                PasswordCredentials {
+                    identity: "temporary",
+                    password: "replacement-password"
+                },
+                session_context(&banned_session, None),
+            )
+            .await
+        ),
         Err(identity::login::LoginError::Banned)
     ));
 }

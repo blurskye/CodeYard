@@ -76,7 +76,7 @@ pub async fn get_download_url(
     Ok(download_response(download))
 }
 
-pub(super) fn asset_response(download: AssetDownload) -> Result<Response, Failure> {
+pub(crate) fn asset_response(download: AssetDownload) -> Result<Response, Failure> {
     match download.transport {
         DownloadTransport::RemoteUrl(url) => Ok(private_response(Redirect::temporary(&url))),
         DownloadTransport::ApplicationStream {

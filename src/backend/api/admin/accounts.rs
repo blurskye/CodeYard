@@ -3,12 +3,12 @@ use crate::backend::api::auth::errors;
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session;
 use crate::backend::api::user::profile::{private_access, settings_result};
 use crate::backend::api::user::responses::{
-    field, mutation_guard, public_api_message, require_account, ApiFailure, AuthResponse,
+    public_api_message, require_account, ApiFailure, AuthResponse,
     AuthUserResponse as UserResponse, Fields,
 };
-use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::{db, identity};
 use crate::webui::pages::{
@@ -16,7 +16,7 @@ use crate::webui::pages::{
     admin::{normalize_days, Account, Activity, Admin},
     fields::preserved_values,
 };
-use axum::extract::{Form, Path, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
@@ -111,6 +111,25 @@ pub(crate) async fn require_admin_user(
     Ok(user)
 }
 
+/// The account as the admin pages show it.
+pub(crate) fn account_row(account: db::models::AdminAccountSummary) -> Account {
+    Account {
+        id: account.id,
+        username: account.username,
+        email: account.email.unwrap_or_default(),
+        admin: account.is_admin,
+        banned: account.is_banned,
+        must_change_password: account.must_change_password,
+        two_factor: account.two_factor_enabled,
+        files: account.total_files,
+        bytes: account.total_bytes,
+        commits: account.commits_total,
+        pushes: account.pushes_total,
+        contributions: account.contributions_total,
+        created: account.created_at.format("%b %e, %Y").to_string(),
+    }
+}
+
 pub(crate) async fn load_admin(
     ctx: &PageContext,
     days: i32,
@@ -128,20 +147,7 @@ pub(crate) async fn load_admin(
             )
         })?
         .into_iter()
-        .map(|account| Account {
-            id: account.id,
-            username: account.username,
-            email: account.email.unwrap_or_default(),
-            admin: account.is_admin,
-            banned: account.is_banned,
-            must_change_password: account.must_change_password,
-            files: account.total_files,
-            bytes: account.total_bytes,
-            commits: account.commits_total,
-            pushes: account.pushes_total,
-            contributions: account.contributions_total,
-            created: account.created_at.format("%b %e, %Y").to_string(),
-        })
+        .map(account_row)
         .collect();
     let activity = db::users::accounts::list_admin_activity_points(&ctx.state.pool, days)
         .await
@@ -224,8 +230,6 @@ pub(crate) async fn admin_get(
     };
     let days = normalize_days(ctx.query.get("days").map(String::as_str));
     let message = match ctx.query.get("saved").map(String::as_str) {
-        Some("ban") => Some("Account ban status updated."),
-        Some("account") => Some("Managed account created. Share the temporary password securely."),
         Some("request") => Some("Signup request decision recorded."),
         Some("crawlers") => Some("AI crawler setting saved."),
         _ => None,
@@ -257,88 +261,5 @@ pub(crate) async fn access_result<T>(
         }
     } else {
         settings_result(ctx, "access", form, result, saved).await
-    }
-}
-
-pub(crate) async fn ban_get(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Path(id): Path<i64>,
-) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
-    let admin = match require_account(&ctx, true) {
-        Ok(user) => user,
-        Err(response) => return response,
-    };
-    let target = match db::users::accounts::get_user_by_id(&ctx.state.pool, id).await {
-        Ok(Some(user)) if user.id != admin.id && !user.is_banned => user,
-        Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Account not found."),
-        Err(_) => {
-            return ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load this account.",
-            )
-        }
-    };
-    ctx.page_model(
-        "Confirm account ban",
-        crate::webui::app::Page::Identity(account::Page::BanConfirmation {
-            username: target.username,
-            user_id: id,
-            csrf_token: ctx.csrf_token.clone(),
-            days: normalize_days(ctx.query.get("days").map(String::as_str)),
-        }),
-    )
-}
-
-pub(crate) async fn ban_post(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Path(id): Path<i64>,
-    Form(form): Form<Fields>,
-) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
-    if let Err(response) = mutation_guard(&ctx, &form, true) {
-        return response;
-    }
-    let days = normalize_days(form.get("days").map(String::as_str));
-    let banned = match field(&form, "banned") {
-        "true" if field(&form, "confirm_delete") == "yes" => true,
-        "false" => false,
-        _ => {
-            return admin_response(
-                &ctx,
-                days,
-                Some(&form),
-                StatusCode::BAD_REQUEST,
-                Some("Confirm deletion of the account's owned repositories before banning."),
-            )
-            .await
-        }
-    };
-    let session_id = session::extract_session_id(&ctx.headers);
-    let result = identity::accounts::set_ban(&ctx.state.pool, session_id.as_deref(), id, banned)
-        .await
-        .map_err(auth::errors::ban_failure);
-    match result {
-        Ok(_) => ctx.redirect(&format!("/admin?days={days}&saved=ban")),
-        Err(error) => {
-            admin_response(
-                &ctx,
-                days,
-                Some(&form),
-                error.0,
-                Some(public_api_message(&error.1 .0)),
-            )
-            .await
-        }
     }
 }

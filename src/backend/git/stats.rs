@@ -182,7 +182,7 @@ fn parse_language_stats(output: &[u8]) -> Result<Vec<LanguageStat>> {
     Ok(stats)
 }
 
-fn is_not_found(error: &anyhow::Error) -> bool {
+pub(crate) fn is_not_found(error: &anyhow::Error) -> bool {
     error
         .downcast_ref::<git2::Error>()
         .is_some_and(|error| error.code() == git2::ErrorCode::NotFound)

@@ -39,11 +39,19 @@ pub fn refusal_text(message: &str) -> Option<&'static str> {
 pub const ANY_TIP: &str = "any-tip";
 
 /// How a branch write arrives. A merge has met the pull request rules by being one; the
-/// rest of its gates are the merge policy's.
+/// rest of its gates are the merge policy's. A deploy key pushes directly, but never counts
+/// as a repository administrator, so rules that exempt administrators still apply to it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum WriteVia {
     Direct,
+    DeployKey,
     Merge,
+}
+
+impl WriteVia {
+    fn is_direct(self) -> bool {
+        self != WriteVia::Merge
+    }
 }
 
 /// One branch move. Creating a branch has no `old` and deleting one has no `new`.
@@ -184,7 +192,8 @@ pub async fn check_branch_write_with(
     // Decided before the loop below takes the rules: a force push is refused for everyone the
     // rules do not allow, administrators included.
     let force_push_blocked = blocks_force_push(&matching, actor.id);
-    let is_admin = matching.iter().any(|rule| !rule.enforce_admins)
+    let is_admin = write.via != WriteVia::DeployKey
+        && matching.iter().any(|rule| !rule.enforce_admins)
         && access::can_admin(pool, actor, repository)
             .await
             .map_err(|_| Refusal::Unavailable)?;
@@ -204,7 +213,7 @@ pub async fn check_branch_write_with(
     // last, only when a rule that is still enforced asks for it. A merge is never a force
     // push, but its result can still add merge commits.
     if let Some(new) = write.new {
-        if write.via == WriteVia::Direct {
+        if write.via.is_direct() {
             if let Some(old) = write.old {
                 if force_push_blocked
                     && !history
@@ -243,13 +252,14 @@ fn refusal(
     actor_id: i64,
     write: &BranchWrite<'_>,
 ) -> Option<&'static str> {
-    if write.via == WriteVia::Direct {
+    if write.via.is_direct() {
         // Reviews, checks and resolved conversations only exist on a pull request, so a rule
         // that asks for any of them leaves no direct path.
         if rule.require_pull_request
             || rule.required_approving_reviews > 0
             || rule.require_status_checks
             || rule.require_conversation_resolution
+            || rule.require_code_owner_review
         {
             return Some(PULL_REQUEST_REQUIRED);
         }
@@ -286,6 +296,7 @@ mod tests {
             force_push_allowances: vec![],
             enforce_admins: true,
             require_conversation_resolution: false,
+            require_code_owner_review: false,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         }
@@ -315,9 +326,11 @@ mod tests {
         checks.require_status_checks = true;
         let mut conversations = rule();
         conversations.require_conversation_resolution = true;
+        let mut code_owners = rule();
+        code_owners.require_code_owner_review = true;
         let mut pull_request = rule();
         pull_request.require_pull_request = true;
-        for rule in [approvals, checks, conversations, pull_request] {
+        for rule in [approvals, checks, conversations, code_owners, pull_request] {
             assert_eq!(
                 refusal(&rule, 1, &write(OLD, NEW, WriteVia::Direct)),
                 Some(PULL_REQUEST_REQUIRED)

@@ -3,11 +3,48 @@ use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-const MIGRATIONS: &[(i64, &str, &str)] = &[(
-    1,
-    "schema",
-    include_str!("../../../../schema/sqlite/0001.schema.sql"),
-)];
+const MIGRATIONS: &[(i64, &str, &str)] = &[
+    (
+        1,
+        "schema",
+        include_str!("../../../../schema/sqlite/0001.schema.sql"),
+    ),
+    (
+        2,
+        "account_invitations",
+        include_str!("../../../../schema/sqlite/0002.account_invitations.sql"),
+    ),
+    (
+        3,
+        "releases",
+        include_str!("../../../../schema/sqlite/0003.releases.sql"),
+    ),
+    (
+        4,
+        "webhooks",
+        include_str!("../../../../schema/sqlite/0004.webhooks.sql"),
+    ),
+    (
+        5,
+        "two_factor",
+        include_str!("../../../../schema/sqlite/0005.two_factor.sql"),
+    ),
+    (
+        6,
+        "deploy_keys",
+        include_str!("../../../../schema/sqlite/0006.deploy_keys.sql"),
+    ),
+    (
+        7,
+        "wiki",
+        include_str!("../../../../schema/sqlite/0007.wiki.sql"),
+    ),
+    (
+        8,
+        "codeowners_rule",
+        include_str!("../../../../schema/sqlite/0008.codeowners_rule.sql"),
+    ),
+];
 
 pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

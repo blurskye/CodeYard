@@ -78,11 +78,17 @@ pub(super) fn removal_confirm(username: &str) -> Element {
 pub(super) fn controls(page: &Page, action: &str, label: &str) -> Element {
     controls_as(page, action, label, "btn btn-primary")
 }
-/// As `controls`, with the button in another button class (for example a row action).
-pub(super) fn controls_as(page: &Page, action: &str, label: &str, class: &str) -> Element {
+/// The hidden CSRF and action fields that an organization form posts with its button.
+pub(super) fn hidden_controls(page: &Page, action: &str) -> Element {
     rsx! {
         input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
         input { r#type: "hidden", name: "action", value: action.to_owned() }
+    }
+}
+/// As `controls`, with the button in another button class (for example a row action).
+pub(super) fn controls_as(page: &Page, action: &str, label: &str, class: &str) -> Element {
+    rsx! {
+        {hidden_controls(page, action)}
         button { r#type: "submit", class: class.to_owned(), "{label}" }
     }
 }

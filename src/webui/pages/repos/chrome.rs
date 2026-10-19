@@ -17,6 +17,8 @@ pub struct RepoChrome {
     pub topics: Vec<String>,
     pub is_private: bool,
     pub is_archived: bool,
+    /// Off makes the wiki pages answer 404.
+    pub wiki_enabled: bool,
     pub can_write: bool,
     pub can_admin: bool,
     pub is_owner: bool,
@@ -70,6 +72,9 @@ pub fn chrome(repo: &RepoChrome, body: Element) -> Element {
             if let (Some(name), Some(url)) = (&repo.parent_name, &repo.parent_url) {
                 p { class: "repo-fork-notice", "forked from " NavLink { href: url.clone(), "{name}" } }
             }
+            if repo.is_archived {
+                p { class: "repo-archived-banner", role: "status", {icon("archive")} span { "This repository is archived and read-only." } }
+            }
             {body}
         }
     }
@@ -103,9 +108,11 @@ pub fn repo_tabs(repo: &RepoChrome) -> Element {
     let more_current = secondary
         .iter()
         .any(|(_, _, suffix)| active_tab(&base, &repo.current_path, suffix));
+    // Counts of three digits or more need room the tab widths do not leave.
+    let wide_counts = repo.open_issues >= 100 || repo.open_pulls >= 100;
     rsx! {
         div { class: "repo-tab-bar",
-            div { class: "repo-tab-strip",
+            div { class: if wide_counts { "repo-tab-strip repo-tab-strip-wide" } else { "repo-tab-strip" },
                 nav { class: "repo-tabs", "aria-label": "Repository",
                     for (id, label, suffix) in PRIMARY_TABS {
                         {repo_tab(repo, &base, id, label, suffix)}
@@ -203,13 +210,19 @@ fn center_active_tab(strip: &str) {
     let _ = strip;
 }
 
-/// The open count shown on a tab, for the tabs that have one.
-fn tab_count(repo: &RepoChrome, id: &str) -> Option<i64> {
-    match id {
-        "issues" => Some(repo.open_issues),
-        "pulls" => Some(repo.open_pulls),
-        _ => None,
-    }
+/// The open count shown on a tab, for the tabs that have one. A thousand or more reads "999+",
+/// so a count never makes the tab wider than the strip allows for.
+fn tab_count(repo: &RepoChrome, id: &str) -> Option<String> {
+    let count = match id {
+        "issues" => repo.open_issues,
+        "pulls" => repo.open_pulls,
+        _ => return None,
+    };
+    Some(if count >= 1000 {
+        "999+".to_owned()
+    } else {
+        count.to_string()
+    })
 }
 
 pub fn active_tab(base: &str, path: &str, suffix: &str) -> bool {
@@ -323,11 +336,15 @@ fn watch_menu(repo: &RepoChrome) -> Element {
     let wants = |name: &str| repo.watch_events.split(',').any(|event| event == name);
     // The tooltip names the events a custom level picked, since the closed button only says Custom.
     let tooltip = if level == "custom" {
-        let chosen: Vec<&str> = [("issues", "Issues"), ("pulls", "Pull requests")]
-            .into_iter()
-            .filter(|&(id, _)| wants(id))
-            .map(|(_, name)| name)
-            .collect();
+        let chosen: Vec<&str> = [
+            ("issues", "Issues"),
+            ("pulls", "Pull requests"),
+            ("releases", "Releases"),
+        ]
+        .into_iter()
+        .filter(|&(id, _)| wants(id))
+        .map(|(_, name)| name)
+        .collect();
         if chosen.is_empty() {
             "Custom: no activity chosen".to_owned()
         } else {
@@ -345,7 +362,7 @@ fn watch_menu(repo: &RepoChrome) -> Element {
         (
             "watching",
             "All activity",
-            "Every new issue and pull request.",
+            "Every new issue, pull request and release.",
         ),
         ("custom", "Custom", "Only the kinds of activity you pick."),
         (
@@ -373,6 +390,7 @@ fn watch_menu(repo: &RepoChrome) -> Element {
                             div { class: "repo-watch-events",
                                 label { class: "repo-check-label", input { r#type: "checkbox", name: "events_issues", checked: wants("issues") } " Issues" }
                                 label { class: "repo-check-label", input { r#type: "checkbox", name: "events_pulls", checked: wants("pulls") } " Pull requests" }
+                                label { class: "repo-check-label", input { r#type: "checkbox", name: "events_releases", checked: wants("releases") } " Releases" }
                             }
                         }
                     }
@@ -421,6 +439,8 @@ pub(crate) fn icon(kind: &str) -> Element {
                 "commits" => rsx! { path { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2" } },
                 "branches" => rsx! { path { d: "M6 3v12M18 9a9 9 0 0 1-9 9" } circle { cx: "18", cy: "6", r: "3" } circle { cx: "6", cy: "18", r: "3" } },
                 "smile" => rsx! { circle { cx: "12", cy: "12", r: "10" } path { d: "M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" } },
+                "releases" => rsx! { path { d: "m7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" } path { d: "m3.3 7 8.7 5 8.7-5M12 22V12" } },
+                "wiki" => rsx! { path { d: "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" } },
                 "tags" => rsx! { path { d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" } circle { cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor" } },
                 "watch" => rsx! { path { d: "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" } circle { cx: "12", cy: "12", r: "3" } },
                 "fork" => rsx! { circle { cx: "12", cy: "18", r: "3" } circle { cx: "6", cy: "6", r: "3" } circle { cx: "18", cy: "6", r: "3" } path { d: "M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" } },

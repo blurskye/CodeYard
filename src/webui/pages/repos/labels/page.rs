@@ -1,5 +1,5 @@
 use crate::webui::{
-    components::{count_label, DraftInput},
+    components::{confirm_dialog, count_label, DraftInput},
     encode_component,
     pages::repos::{
         self,
@@ -68,17 +68,18 @@ fn edit_label(repo: &Repository, label: &Label) -> Element {
     }
 }
 
-/// The delete form of one label, under its Delete button. It needs the confirm box to be ticked.
+/// The delete button of one label. It opens a confirmation that needs its box ticked.
 fn delete_label(repo: &Repository, label: &Label) -> Element {
+    let list_url = format!("{}/labels", repo.url());
     rsx! {
-        details { class: "collaboration-edit",
+        details { class: "collaboration-edit native-menu repo-delete-menu",
             summary { class: "btn btn-danger btn-sm", "Delete" span { class: "repo-sr-only", " {label.name}" } }
-            form { method: "post", action: repo.chrome.action("delete-label"), class: "collaboration-form-fields",
+            {confirm_dialog(None, &format!("Delete label {}", label.name), &list_url, &repo.chrome.action("delete-label"), rsx! {
                 {csrf(&repo.csrf)}
                 input { r#type: "hidden", name: "label_id", value: label.id.to_string() }
-                label { class: "collaboration-checkbox", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Remove this label from every issue and pull request" }
-                div { class: "collaboration-actions", button { r#type: "submit", class: "btn btn-danger", "Delete label" } }
-            }
+                strong { "Delete label {label.name}?" }
+                label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Remove this label from every issue and pull request" }
+            }, "Delete label")}
         }
     }
 }

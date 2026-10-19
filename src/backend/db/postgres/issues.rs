@@ -312,3 +312,95 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for IssueCommentEntry {
         })
     }
 }
+
+/// Changes the body of a comment the actor wrote. Refused (None) when the actor is not the author,
+/// the thread is locked, or the actor no longer may take part in the repository.
+pub async fn edit_issue_comment(
+    pool: &PgPool,
+    actor_id: i64,
+    repo_id: i64,
+    issue_id: i64,
+    comment_id: i64,
+    body: &str,
+) -> Result<Option<IssueComment>> {
+    let mut tx = pool.begin().await?;
+    let author: Option<i64> = sqlx::query_scalar(
+        "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
+         WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF c",
+    )
+    .bind(comment_id)
+    .bind(issue_id)
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if author != Some(actor_id)
+        || !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
+    {
+        return Ok(None);
+    }
+    let comment = sqlx::query_as::<_, IssueComment>(
+        "UPDATE issue_comments SET body = $2, updated_at = clock_timestamp()
+         WHERE id = $1 RETURNING *",
+    )
+    .bind(comment_id)
+    .bind(body)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(comment)
+}
+
+/// Deletes a comment with the notifications that link to it. The author may delete their own
+/// comment; a repository maintainer may delete anyone's. Returns false when the delete is refused.
+pub async fn delete_issue_comment(
+    pool: &PgPool,
+    actor_id: i64,
+    repo_id: i64,
+    issue_id: i64,
+    comment_id: i64,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let author: Option<i64> = sqlx::query_scalar(
+        "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
+         WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF c",
+    )
+    .bind(comment_id)
+    .bind(issue_id)
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(author) = author else {
+        return Ok(false);
+    };
+    let allowed = if author == actor_id {
+        super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
+    } else {
+        super::discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
+    };
+    if !allowed {
+        return Ok(false);
+    }
+    sqlx::query(
+        "DELETE FROM notifications WHERE repo_id = $1 AND kind = 'issue_comment'
+         AND metadata->>'comment_id' = $2::text",
+    )
+    .bind(repo_id)
+    .bind(comment_id)
+    .execute(&mut *tx)
+    .await?;
+    let removed = sqlx::query("DELETE FROM issue_comments WHERE id = $1")
+        .bind(comment_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(removed.rows_affected() == 1)
+}
+
+pub async fn get_issue_comment(pool: &PgPool, comment_id: i64) -> Result<Option<IssueComment>> {
+    Ok(
+        sqlx::query_as::<_, IssueComment>("SELECT * FROM issue_comments WHERE id = $1")
+            .bind(comment_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}

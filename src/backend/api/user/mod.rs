@@ -2,10 +2,13 @@
 
 mod appearance;
 pub mod avatar;
+pub mod email;
 pub mod keys;
 pub mod profile;
 pub mod responses;
+pub mod sessions;
 pub mod tokens;
+pub mod two_factor;
 
 /// A rejected settings form is shown at its POST-only URL. A GET there, from a reload, a
 /// copied address or a typed one, goes to the settings tab the form belongs to.
@@ -63,6 +66,34 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                 .route(
                     "/settings/password",
                     back_to_settings("password").post(change_password::password_post),
+                )
+                .route(
+                    "/settings/email",
+                    back_to_settings("email").post(email::email_post),
+                )
+                .route(
+                    "/settings/sessions/revoke",
+                    back_to_settings("sessions").post(sessions::revoke_post),
+                )
+                .route(
+                    "/settings/sessions/revoke-others",
+                    back_to_settings("sessions").post(sessions::revoke_others_post),
+                )
+                .route(
+                    "/settings/two-factor/setup",
+                    back_to_settings("two-factor").post(two_factor::setup_post),
+                )
+                .route(
+                    "/settings/two-factor/enable",
+                    back_to_settings("two-factor").post(two_factor::enable_post),
+                )
+                .route(
+                    "/settings/two-factor/recovery-codes",
+                    back_to_settings("two-factor").post(two_factor::recovery_codes_post),
+                )
+                .route(
+                    "/settings/two-factor/disable",
+                    back_to_settings("two-factor").post(two_factor::disable_post),
                 )
                 .route(
                     "/settings/keys",

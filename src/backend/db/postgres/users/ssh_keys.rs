@@ -57,7 +57,7 @@ async fn insert_ssh_key(
         .execute(&mut *tx)
         .await?;
     let used: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = $1)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = $1) OR EXISTS(SELECT 1 FROM deploy_keys WHERE fingerprint = $1)")
             .bind(&fingerprint)
             .fetch_one(&mut *tx)
             .await?;

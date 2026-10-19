@@ -5,6 +5,9 @@ use super::chrome::{active_tab, chrome, repo_engagement, repo_tabs, RepoChrome};
 use super::commits::{commit_detail, commits, Commit, HistoryFilter};
 use super::editor::{delete_file, editor, upload_page, DeleteFile, Editor, UploadForm};
 use super::find::{find, FindPage};
+use super::insights::{
+    insights, CommitPattern, HistoryNote, InsightsPage, InsightsView, ListedItem, Pulse, WeekCount,
+};
 use super::issues;
 use super::page::{render, Page};
 use super::pulls::{Diff, DiffFile, PullSummary};
@@ -88,6 +91,7 @@ fn fixtures() -> Vec<Page> {
             repo: repo.clone(),
             page: TreePage {
                 languages: Vec::new(),
+                releases: None,
                 reference: "feature/x".into(),
                 path: "docs".into(),
                 branches: vec!["feature/x".into()],
@@ -120,6 +124,31 @@ fn fixtures() -> Vec<Page> {
                 content: String::new(),
                 editable: false,
                 ..blob
+            },
+        },
+        Page::Insights {
+            repo: repo.clone(),
+            page: InsightsPage {
+                section: "pulse".into(),
+                view: InsightsView::Pulse(Pulse {
+                    period: "1w".into(),
+                    merged_pulls: 2,
+                    opened_pulls: 3,
+                    closed_issues: 1,
+                    opened_issues: 4,
+                    merged: vec![ListedItem {
+                        number: 7,
+                        title: "Fix <b>escaping</b>".into(),
+                        date: "2026-10-18".into(),
+                    }],
+                    issues: Vec::new(),
+                    commits: 5,
+                    authors: 2,
+                    files: 6,
+                    additions: 40,
+                    deletions: 12,
+                    history: HistoryNote::Capped { commits: 5000 },
+                }),
             },
         },
         Page::Find {
@@ -180,6 +209,7 @@ fn fixtures() -> Vec<Page> {
                     additions: 1,
                     deletions: 1,
                     patch: "-old\n+<script>alert(1)</script>".into(),
+                    owners: Vec::new(),
                 }],
                 additions: 1,
                 deletions: 1,
@@ -247,7 +277,11 @@ fn fixtures() -> Vec<Page> {
         Page::Settings {
             repo: repo.clone(),
             settings: Settings {
+                webhooks: None,
+                deploy_keys: None,
                 tab: "general".into(),
+                branches: Vec::new(),
+                default_branch: String::new(),
                 collaborators: vec![Collaborator {
                     username: "bob".into(),
                     access: "write".into(),
@@ -274,6 +308,54 @@ fn fixtures() -> Vec<Page> {
                     "</textarea><script>alert(1)</script>".into(),
                 ),
             ]),
+        },
+        Page::Wiki {
+            repo: RepoChrome {
+                owner: "alice".into(),
+                name: "project".into(),
+                wiki_enabled: true,
+                ..Default::default()
+            },
+            page: crate::webui::pages::repos::wiki::Page::Show {
+                page: crate::webui::pages::repos::wiki::PageItem {
+                    slug: "home".into(),
+                    title: "Home </h1><script>alert(1)</script>".into(),
+                    body: "See [[Install Guide]]".into(),
+                    revision: 2,
+                    author: "alice".into(),
+                    saved_at: "2026-10-01T00:00:00Z".into(),
+                    message: String::new(),
+                },
+                sidebar: None,
+                footer: None,
+                known: vec!["home".into()],
+                can_write: true,
+                can_admin: true,
+            },
+        },
+        Page::Releases {
+            repo: RepoChrome {
+                owner: "alice".into(),
+                name: "project".into(),
+                ..Default::default()
+            },
+            page: crate::webui::pages::repos::releases::Page::Detail {
+                release: crate::webui::pages::repos::releases::ReleaseItem {
+                    id: 1,
+                    tag: "v1.0".into(),
+                    title: "Version </h1><script>alert(1)</script>".into(),
+                    body: "Notes".into(),
+                    author: "alice".into(),
+                    target: "main".into(),
+                    created_at: "2026-10-01T00:00:00Z".into(),
+                    published_at: Some("2026-10-02T00:00:00Z".into()),
+                    draft: false,
+                    prerelease: false,
+                    latest: true,
+                },
+                assets: Vec::new(),
+                can_write: false,
+            },
         },
     ]
 }
@@ -314,6 +396,85 @@ fn every_page_variant_roundtrips_only_presentation_data() {
 }
 
 #[test]
+fn insights_sections_render_figures_notes_and_the_section_nav() {
+    crate::webui::tests::in_scope(|| {
+        let repo = RepoChrome {
+            owner: "alice".into(),
+            name: "project".into(),
+            current_path: "/alice/project/insights".into(),
+            ..Default::default()
+        };
+        let page = InsightsPage {
+            section: "commits".into(),
+            view: InsightsView::Commits(CommitPattern {
+                weeks: (0..52)
+                    .map(|week| WeekCount {
+                        start: format!("2026-01-{:02}", week % 28 + 1),
+                        count: week,
+                    })
+                    .collect(),
+                punch: vec![vec![1; 24]; 7],
+                commits: 168,
+                history: HistoryNote::TooLarge,
+            }),
+        };
+        let html = dioxus_ssr::render_element(insights(&repo, &page));
+        // Every section is one link in the nav, and the current one is marked.
+        for (key, _) in super::insights::SECTIONS {
+            assert!(
+                html.contains(&format!("/alice/project/insights?section={key}\"")),
+                "{key}"
+            );
+        }
+        assert!(html.contains("aria-current=\"page\""));
+        assert!(html.contains("repo-settings-picker"));
+        // The charts are inline SVG with labels, and the punch card has one cell per hour.
+        assert!(html.contains("<svg"));
+        assert!(html.contains("Commits per week"));
+        assert_eq!(html.matches("class=\"repo-insights-cell\"").count(), 7 * 24);
+        assert!(html.contains("too large to summarize"));
+        assert!(
+            !html.contains("<script"),
+            "{}",
+            html.find("<script")
+                .map(|at| &html[at.saturating_sub(100)..(at + 200).min(html.len())])
+                .unwrap_or("")
+        );
+
+        let pulse = dioxus_ssr::render_element(insights(
+            &repo,
+            &InsightsPage {
+                section: "pulse".into(),
+                view: InsightsView::Pulse(Pulse {
+                    period: "1d".into(),
+                    merged_pulls: 0,
+                    opened_pulls: 0,
+                    closed_issues: 0,
+                    opened_issues: 0,
+                    merged: vec![ListedItem {
+                        number: 3,
+                        title: "<script>x</script>".into(),
+                        date: "2026-10-18".into(),
+                    }],
+                    issues: Vec::new(),
+                    commits: 0,
+                    authors: 0,
+                    files: 0,
+                    additions: 0,
+                    deletions: 0,
+                    history: HistoryNote::Complete,
+                }),
+            },
+        ));
+        assert!(pulse.contains("href=\"/alice/project/pulls/3\""));
+        assert!(!pulse.contains("<script>x"));
+        assert!(pulse.contains("No issues were opened in this period."));
+        assert!(!pulse.contains("too large"));
+        assert!(!pulse.contains("most recent"));
+    });
+}
+
+#[test]
 fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
     crate::webui::tests::in_scope(|| {
         for page in fixtures() {
@@ -322,6 +483,7 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
                 Page::Blob { repo, page } => blob(repo, page),
                 Page::Blame { repo, page } => blame(repo, page),
                 Page::Find { repo, page } => find(repo, page),
+                Page::Insights { repo, page } => insights(repo, page),
                 Page::Commits {
                     repo,
                     rows,
@@ -368,6 +530,12 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
                     message,
                     values,
                 } => rejected_form(repo, action, message, values),
+                Page::Releases { repo, page } => {
+                    crate::webui::pages::repos::releases::render(repo, page.clone())
+                }
+                Page::Wiki { repo, page } => {
+                    crate::webui::pages::repos::wiki::render(repo, page.clone())
+                }
             };
             let expected = dioxus_ssr::render_element(expected);
             let decoded: Page =
@@ -393,7 +561,7 @@ fn copy_controls_and_navigation_keep_native_protocol_fallbacks() {
     assert!(tree_html.contains("Copy SSH"));
     assert!(!tree_html.contains("href=\"/alice/project/tree/feature/x/docs/ReadMe.md\""));
     assert!(tree_html.contains("href=\"/alice/project/blob/feature/x/docs/ReadMe.md\""));
-    assert!(tree_html.contains("/api/repos/alice/project/archive?ref=feature%2Fx"));
+    assert!(tree_html.contains("/alice/project/archive/feature%2Fx.zip"));
     let blob_html = dioxus_ssr::render_element(render(pages[1].clone()));
     assert!(blob_html.contains("Copy preview"));
     assert!(blob_html.contains("href=\"/alice/project/raw/feature/x/a%20%23%3F.rs\""));
@@ -877,12 +1045,78 @@ fn rendered_settings_and_ref_deletion_require_confirmation() {
     assert!(refs_html.contains("repo-ref-create"));
 }
 
+#[test]
+fn settings_destructive_actions_ask_in_centred_dialogs() {
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        csrf_token: "csrf-fixture".into(),
+        signed_in: true,
+        is_owner: true,
+        can_manage_collaborators: true,
+        can_write: true,
+        can_admin: true,
+        ..Default::default()
+    };
+    let collaborators = dioxus_ssr::render_element(settings(
+        &repo,
+        &Settings {
+            tab: "collaborators".into(),
+            branches: Vec::new(),
+            default_branch: String::new(),
+            collaborators: vec![Collaborator {
+                username: "bob".into(),
+                access: "write".into(),
+            }],
+            ..Settings::default()
+        },
+    ));
+    assert!(collaborators.contains("aria-label=\"Remove bob from this repository\""));
+    assert!(collaborators.contains("action=\"/alice/project/_forms/remove-collaborator\""));
+    assert!(collaborators.contains("href=\"/alice/project/settings?tab=collaborators\""));
+    assert!(!collaborators.contains("class=\"repo-inline-confirm\""));
+
+    let danger = settings_tab_html(&repo, "danger");
+    for (title, action) in [
+        ("Transfer this repository", "/alice/project/_forms/transfer"),
+        ("Delete this repository", "/alice/project/_forms/delete"),
+    ] {
+        assert!(
+            danger.contains(&format!("aria-label=\"{title}\"")),
+            "{danger}"
+        );
+        assert!(danger.contains(&format!("action=\"{action}\"")), "{danger}");
+    }
+    assert!(danger.contains("href=\"/alice/project/settings?tab=danger\""));
+    assert!(!danger.contains("class=\"repo-inline-confirm\""));
+
+    let branches = dioxus_ssr::render_element(settings(
+        &repo,
+        &Settings {
+            tab: "branches".into(),
+            branches: Vec::new(),
+            default_branch: String::new(),
+            branch_rules: vec![BranchRule {
+                pattern: "release/**".into(),
+                ..BranchRule::default()
+            }],
+            ..Settings::default()
+        },
+    ));
+    assert!(branches.contains("aria-label=\"Delete rule release/**\""));
+    assert!(branches.contains("action=\"/alice/project/_forms/protection-delete\""));
+    assert!(branches.contains("href=\"/alice/project/settings?tab=branches\""));
+    assert!(!branches.contains("class=\"repo-inline-confirm\""));
+}
+
 /// The settings page as it renders on one section.
 fn settings_tab_html(repo: &RepoChrome, tab: &str) -> String {
     dioxus_ssr::render_element(settings(
         repo,
         &Settings {
             tab: tab.into(),
+            branches: Vec::new(),
+            default_branch: String::new(),
             ..Settings::default()
         },
     ))
@@ -1109,6 +1343,45 @@ fn branch_rows_compare_with_the_default_branch_and_tags_do_not() {
     let tags =
         dioxus_ssr::render_element(refs(&repo, &[row("v1", false)], true, &branches, "", "", 0));
     assert!(!tags.contains("/compare/"));
+}
+
+#[test]
+fn releases_are_reachable_from_the_tags_page_and_the_about_column() {
+    use crate::webui::pages::repos::releases::{sidebar, ReleasesSummary};
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        csrf_token: "csrf-fixture".into(),
+        signed_in: true,
+        can_write: true,
+        ..Default::default()
+    };
+    let row = RefRow {
+        name: "v1".into(),
+        sha: "abc".into(),
+        message: None,
+        is_default: false,
+        ahead_behind: None,
+        updated: None,
+        pull: None,
+    };
+    let tags = dioxus_ssr::render_element(refs(&repo, &[row], true, &[], "", "", 0));
+    assert!(tags.contains("href=\"/alice/project/releases\""), "{tags}");
+    let empty = dioxus_ssr::render_element(sidebar(
+        &repo,
+        &ReleasesSummary {
+            count: 0,
+            latest_tag: None,
+        },
+    ));
+    assert!(
+        empty.contains("href=\"/alice/project/releases\""),
+        "{empty}"
+    );
+    assert!(
+        empty.contains("href=\"/alice/project/releases/new\""),
+        "{empty}"
+    );
 }
 #[test]
 fn ref_counts_sit_beside_headings_and_deletes_are_outlined() {
@@ -1385,10 +1658,7 @@ fn tag_rows_show_their_date_in_a_column() {
     assert!(html.contains("datetime=\"2026-10-02T00:00:00Z\""), "{html}");
     assert!(html.contains(">Oct 2, 2026</time>"), "{html}");
     // Each tag downloads as a ZIP of its files.
-    assert!(
-        html.contains("/api/repos/alice/project/archive?ref=v1"),
-        "{html}"
-    );
+    assert!(html.contains("/alice/project/archive/v1.zip"), "{html}");
 }
 
 #[test]
@@ -1800,6 +2070,7 @@ fn protocol_links_use_existing_archive_and_slash_ref_raw_adapter() {
     };
     let page = TreePage {
         languages: Vec::new(),
+        releases: None,
         reference: "feature/x".into(),
         path: String::new(),
         branches: vec![],
@@ -1815,13 +2086,14 @@ fn protocol_links_use_existing_archive_and_slash_ref_raw_adapter() {
         references: Default::default(),
     };
     let html = dioxus_ssr::render_element(tree(&repo, &page));
-    assert!(html.contains("/api/repos/alice/project/archive?ref=feature%2Fx"));
-    assert!(!html.contains("href=\"/alice/project/archive"));
+    assert!(html.contains("href=\"/alice/project/archive/feature%2Fx.zip\""));
+    assert!(html.contains("href=\"/alice/project/archive/feature%2Fx.tar.gz\""));
 }
 #[test]
 fn empty_repository_quick_setup_is_shown_only_to_writers() {
     let page = TreePage {
         languages: Vec::new(),
+        releases: None,
         reference: "main".into(),
         path: String::new(),
         branches: vec![],
@@ -1863,7 +2135,7 @@ fn empty_repository_quick_setup_is_shown_only_to_writers() {
     assert!(html.contains("git remote add origin https://git.example.invalid/alice/project.git"));
     assert!(html.contains("git push -u origin main"));
     // The body already offers the two choices, so the repository toolbar has no Add file menu.
-    assert!(!html.contains("repo-add-menu"));
+    assert!(!html.contains("class=\"native-menu repo-menu repo-add-menu\""));
 
     let reader =
         crate::webui::tests::in_scope(|| dioxus_ssr::render_element(tree(&chrome(false), &page)));
@@ -2335,10 +2607,16 @@ fn readme_outline_appears_only_with_two_or_more_headings() {
         page.readme = Some("# demo\n\nOne heading only.\n".into());
         let html = dioxus_ssr::render_element(tree(&repo, &page));
         assert!(html.contains("id=\"readme\""), "{html}");
-        assert!(!html.contains("repo-outline-menu"), "{html}");
+        assert!(
+            !html.contains("class=\"native-menu repo-menu repo-outline-menu\""),
+            "{html}"
+        );
         page.readme = Some("# demo\n\n## Setup\n\nSteps.\n".into());
         let html = dioxus_ssr::render_element(tree(&repo, &page));
-        assert!(html.contains("repo-outline-menu"), "{html}");
+        assert!(
+            html.contains("class=\"native-menu repo-menu repo-outline-menu\""),
+            "{html}"
+        );
     });
 }
 
@@ -2668,6 +2946,7 @@ fn commit_file_header_names_a_new_file_and_hides_git_header_lines() {
             additions: 1,
             deletions: 0,
             patch: "diff --git a/notes.txt b/notes.txt\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/notes.txt\n@@ -0,0 +1 @@\n+hello\n".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 0,
@@ -2691,6 +2970,44 @@ fn commit_file_header_names_a_new_file_and_hides_git_header_lines() {
     assert!(!html.contains("diff --git"));
     assert!(!html.contains("new file mode"));
     assert!(!html.contains("--- /dev/null"));
+}
+
+#[test]
+fn file_header_names_the_code_owners_of_a_changed_file() {
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        ..Default::default()
+    };
+    let commit = Commit {
+        sha: "d".repeat(40),
+        message: "Touch docs".into(),
+        author: "Alice".into(),
+        author_date: "2026-10-02T00:00:00Z".into(),
+        committer: "Alice".into(),
+        committer_date: "2026-10-02T00:00:00Z".into(),
+        parents: Vec::new(),
+    };
+    let file = |name: &str, owners: Vec<String>| DiffFile {
+        filename: name.into(),
+        status: "modified".into(),
+        additions: 1,
+        deletions: 1,
+        patch: "-old\n+new\n".into(),
+        owners,
+    };
+    let diff = Diff {
+        files: vec![
+            file("docs/guide.md", vec!["@alice".into(), "@org/docs".into()]),
+            file("README.md", Vec::new()),
+        ],
+        additions: 2,
+        deletions: 2,
+        viewed: None,
+    };
+    let html = dioxus_ssr::render_element(commit_detail(&repo, &commit, &diff, &[], &[], false));
+    assert!(html.contains("Owned by @alice, @org/docs"), "{html}");
+    assert_eq!(html.matches("Owned by").count(), 1, "{html}");
 }
 
 #[test]
@@ -2951,6 +3268,7 @@ fn upload_links_are_offered_to_writers_only() {
     };
     let directory = TreePage {
         languages: Vec::new(),
+        releases: None,
         reference: "main".into(),
         path: "docs".into(),
         branches: vec![],
@@ -3069,6 +3387,7 @@ fn repository_root_bar_counts_refs_and_opens_go_to_file() {
     };
     let page = TreePage {
         languages: Vec::new(),
+        releases: None,
         reference: "main".into(),
         path: String::new(),
         branches: vec!["main".into(), "dev".into()],
@@ -3094,7 +3413,7 @@ fn repository_root_bar_counts_refs_and_opens_go_to_file() {
         ..page
     };
     let html = dioxus_ssr::render_element(tree(&repo, &empty));
-    assert!(!html.contains("Go to file"));
+    assert!(!html.contains("aria-label=\"Go to file\""));
 }
 
 #[test]
@@ -3167,8 +3486,9 @@ fn file_menu_copies_the_path_and_permalink_and_puts_delete_below_a_divider() {
         "{menu}"
     );
     assert!(divider < delete, "{menu}");
-    // Every item draws its icon: the two copy items, the delete link and the "…" summary.
-    assert_eq!(menu.matches("<svg").count(), 4, "{menu}");
+    // Every item draws its icon: Raw and Download (phone only), the two copy items, the delete
+    // link and the "…" summary.
+    assert_eq!(menu.matches("<svg").count(), 6, "{menu}");
 }
 
 #[test]

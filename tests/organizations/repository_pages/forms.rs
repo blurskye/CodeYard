@@ -532,7 +532,8 @@ pub async fn stale_settings_forms(f: &Fixture) {
         assert_eq!(page.status, StatusCode::OK, "{tab}: {}", page.body);
         shown += page.body.matches(hidden.as_str()).count();
     }
-    assert_eq!(shown, 8);
+    // The danger zone also carries the archive form.
+    assert_eq!(shown, 9);
     let rename = [
         ("repository_id", id.as_str()),
         ("name", "settings_new"),

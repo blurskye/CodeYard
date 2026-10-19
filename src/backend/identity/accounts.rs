@@ -13,7 +13,7 @@ use crate::backend::db::{
     models::User,
     users::{
         signup_requests::ReviewError,
-        transitions::{self, AccountAdmission, BanChange},
+        transitions::{self, AccountAdmission, BanChange, EmailChange, RoleChange},
     },
     DbPool,
 };
@@ -75,6 +75,55 @@ pub async fn change_password(
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum EmailChangeError {
+    Authority(AccountAuthorityError),
+    InvalidEmail,
+    Admission(AdmissionError),
+    Password(PasswordError),
+    InvalidCredentials,
+    Taken,
+    AccountUnavailable,
+}
+
+/// Changes the account's address after the current password is checked. The new address
+/// is trimmed and must look like `name@host`; the password check shares the login limiter.
+pub async fn change_email(
+    pool: &DbPool,
+    session_id: Option<&str>,
+    current_password: &str,
+    email: &str,
+) -> Result<User, EmailChangeError> {
+    let user = sessions::password_change_account(pool, session_id)
+        .await
+        .map_err(EmailChangeError::Authority)?;
+    let email = email.trim();
+    let well_formed = email.split_once('@').is_some_and(|(name, host)| {
+        !name.is_empty() && host.contains('.') && !email.contains(char::is_whitespace)
+    });
+    if !well_formed || email.len() > 255 {
+        return Err(EmailChangeError::InvalidEmail);
+    }
+    admission::admit_login(pool, Some(user.id), &user.username)
+        .await
+        .map_err(EmailChangeError::Admission)?;
+    if !passwords::verify_password(current_password, user.password_hash.as_deref())
+        .await
+        .map_err(EmailChangeError::Password)?
+        .valid
+    {
+        return Err(EmailChangeError::InvalidCredentials);
+    }
+    match transitions::change_email(pool, user.id, email)
+        .await
+        .map_err(|_| EmailChangeError::AccountUnavailable)?
+    {
+        EmailChange::Updated(user) => Ok(*user),
+        EmailChange::Taken => Err(EmailChangeError::Taken),
+        EmailChange::Missing => Err(EmailChangeError::AccountUnavailable),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum ManagedAccountError {
     Authority(AccountAuthorityError),
     PrivateNodeRequired,
@@ -86,10 +135,13 @@ pub enum ManagedAccountError {
     Denied,
 }
 
+/// Creates an account with a temporary password. `make_admin` grants the administrator role
+/// right after creation, in its own transaction; if that grant fails the account still exists.
 pub async fn create_managed_account(
     pool: &DbPool,
     administrator_session: Option<&str>,
     input: PasswordAccount<'_>,
+    make_admin: bool,
 ) -> Result<User, ManagedAccountError> {
     let administrator_session = administrator_session.ok_or(ManagedAccountError::Authority(
         AccountAuthorityError::NotAuthenticated,
@@ -113,7 +165,7 @@ pub async fn create_managed_account(
         .map_err(ManagedAccountError::Password)?;
     // The transaction revalidates the actor, original session and private mode,
     // and sets the temporary credential's must-change flag.
-    match transitions::register_password(
+    let user = match transitions::register_password(
         pool,
         input.username,
         input.email,
@@ -123,10 +175,16 @@ pub async fn create_managed_account(
     .await
     .map_err(|_| ManagedAccountError::AccountUnavailable)?
     {
-        AccountAdmission::User(user) => Ok(*user),
-        AccountAdmission::Conflict => Err(ManagedAccountError::Conflict),
-        _ => Err(ManagedAccountError::Denied),
+        AccountAdmission::User(user) => *user,
+        AccountAdmission::Conflict => return Err(ManagedAccountError::Conflict),
+        _ => return Err(ManagedAccountError::Denied),
+    };
+    if make_admin {
+        set_admin_role(pool, Some(administrator_session), user.id, true)
+            .await
+            .map_err(|_| ManagedAccountError::AccountUnavailable)?;
     }
+    Ok(user)
 }
 
 pub enum SignupDecision {
@@ -220,5 +278,34 @@ pub async fn set_ban(
         BanChange::Missing => Err(BanError::Missing),
         BanChange::SelfBan => Err(BanError::SelfBan),
         BanChange::LastAdmin => Err(BanError::LastAdmin),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RoleError {
+    Authority(AccountAuthorityError),
+    AccountUnavailable,
+    Denied,
+    Missing,
+    SelfChange,
+}
+
+pub async fn set_admin_role(
+    pool: &DbPool,
+    administrator_session: Option<&str>,
+    target: i64,
+    admin: bool,
+) -> Result<User, RoleError> {
+    let actor = sessions::administrator(pool, administrator_session)
+        .await
+        .map_err(RoleError::Authority)?;
+    match transitions::change_admin_role(pool, actor.id, target, admin)
+        .await
+        .map_err(|_| RoleError::AccountUnavailable)?
+    {
+        RoleChange::Updated(user) => Ok(*user),
+        RoleChange::Denied => Err(RoleError::Denied),
+        RoleChange::Missing => Err(RoleError::Missing),
+        RoleChange::SelfChange => Err(RoleError::SelfChange),
     }
 }

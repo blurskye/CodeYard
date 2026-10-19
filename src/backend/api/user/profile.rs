@@ -1,19 +1,19 @@
 use crate::backend::api::admin::signup_requests::load_requests;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::http::session::{self, get_current_user};
 use crate::backend::api::user::responses::{
     field, mutation_guard, public_api_message, require_account, within_bounds, ApiFailure, Fields,
     PublicUserResponse,
 };
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::backend::identity::profiles;
 use crate::backend::identity::profiles::{ProfileError, ProfileUpdate};
+use crate::backend::identity::{self, profiles};
 use crate::webui::pages::{
     account,
     fields::{preserved_values, FormValues},
-    settings::{settings_tab, Key, Settings, Token},
+    settings::{settings_tab, Key, Settings, Token, TwoFactor},
     users::Profile,
 };
 use axum::extract::{Form, State};
@@ -33,7 +33,9 @@ pub struct UpdateUserRequest {
 
 pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError>) {
     let (status, code) = match error {
-        ProfileError::Invalid | ProfileError::Nul => (StatusCode::BAD_REQUEST, "validation_error"),
+        ProfileError::Invalid | ProfileError::Nul | ProfileError::Website => {
+            (StatusCode::BAD_REQUEST, "validation_error")
+        }
         ProfileError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
     };
     (status, Json(ApiError::new(code, &error.to_string())))
@@ -155,6 +157,22 @@ pub(crate) async fn load_settings(
     } else {
         Vec::new()
     };
+    let sessions = if tab == "sessions" {
+        super::sessions::load_sessions(
+            &ctx.state.pool,
+            user.id,
+            session::extract_session_id(&ctx.headers).as_deref(),
+        )
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load your sessions.",
+            )
+        })?
+    } else {
+        Vec::new()
+    };
     let requests = if tab == "access" {
         load_requests(ctx).await?
     } else {
@@ -179,12 +197,25 @@ pub(crate) async fn load_settings(
         tab: tab.to_owned(),
         keys,
         tokens,
+        sessions,
         new_token: None,
         password_supported: user.password_hash.is_some(),
         must_change_password: user.must_change_password,
         manage_access,
         requests,
         values,
+        two_factor: TwoFactor {
+            enabled: identity::two_factor::is_enabled(&ctx.state.pool, user.id)
+                .await
+                .map_err(|_| {
+                    ctx.error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Unable to load your two-factor settings.",
+                    )
+                })?,
+            setup: None,
+            recovery_codes: Vec::new(),
+        },
     })
 }
 
@@ -225,9 +256,12 @@ pub(crate) async fn settings_get(
         Some("avatar") => Some("Profile picture updated."),
         Some("avatar-removed") => Some("Profile picture removed."),
         Some("password") => Some("Password updated."),
+        Some("two-factor-off") => Some("Two-factor authentication is off."),
         Some("key") => Some("SSH key added."),
         Some("deleted") => Some("SSH key deleted."),
         Some("token-deleted") => Some("Access token deleted."),
+        Some("email") => Some("Email address updated."),
+        Some("sessions-revoked") => Some("Session signed out."),
         Some("account") => Some("Managed account created. Share the temporary password securely."),
         Some("request") => Some("Signup request decision recorded."),
         _ => None,

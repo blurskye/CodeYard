@@ -843,7 +843,8 @@ async fn help_contract(pg: bool) {
         assert!(html.contains("Report a problem"), "{who}: {html}");
         assert_eq!(
             html.matches("href=\"/help\"").count(),
-            if signed_in { 2 } else { 1 },
+            // The navigation menu and the footer each link to it, and the account menu adds one.
+            if signed_in { 3 } else { 2 },
             "{who}: {html}"
         );
         assert_eq!(

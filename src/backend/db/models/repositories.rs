@@ -45,6 +45,7 @@ pub struct Repository {
     pub website: Option<String>,
     pub is_private: bool,
     pub is_archived: bool,
+    pub wiki_enabled: bool,
     pub is_fork: bool,
     pub forked_from_id: Option<i64>,
     pub default_branch: String,
@@ -133,6 +134,8 @@ pub struct BranchProtectionRule {
     /// When false, administrators skip this rule's direct-write and merge checks.
     pub enforce_admins: bool,
     pub require_conversation_resolution: bool,
+    /// Each changed file with code owners needs an approval from one of its owners.
+    pub require_code_owner_review: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -8,6 +8,7 @@ use crate::backend::db::{
     DbPool,
 };
 use crate::backend::git::repository::process as git_process;
+use crate::backend::repositories::deploy_keys;
 use crate::backend::repositories::store::{
     repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
 };
@@ -483,6 +484,10 @@ impl Gateway {
     ) -> Result<(User, AccessLevel)> {
         let identity = match credential {
             ReceiveCredential::SshKey(id) => self.live_key(id).await?.user,
+            // A deploy key carries its own repository and write checks.
+            ReceiveCredential::DeployKey(id) => {
+                return deploy_keys::authorize(&self.pool, id, repo, write).await
+            }
             ReceiveCredential::Token(id) => db::users::tokens::token_user(&self.pool, id, write)
                 .await?
                 .context("token unavailable")?,

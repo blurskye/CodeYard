@@ -1,7 +1,9 @@
 //! Receive authorization and follow-up after Git accepts immutable updates.
 use super::broker::{Gateway, Operation};
 use super::validation::{self, RefUpdate, ZERO_SHA};
+use super::ReceiveCredential;
 use crate::backend::ci::workflows::{parse_push_workflow, WorkflowMatchBudget};
+use crate::backend::webhooks::ref_changes::{self, RefMove};
 use crate::backend::{
     ci::{self, CiRunRequest},
     db::{
@@ -86,7 +88,11 @@ impl Gateway {
                         branch,
                         old: (update.old != ZERO_SHA).then_some(update.old.as_str()),
                         new: (update.new != ZERO_SHA).then_some(update.new.as_str()),
-                        via: WriteVia::Direct,
+                        via: if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
+                            WriteVia::DeployKey
+                        } else {
+                            WriteVia::Direct
+                        },
                     };
                     check_branch_write_with(
                         &self.pool,
@@ -175,6 +181,18 @@ impl Gateway {
             failed = true;
         }
         crate::backend::git::maintenance::after_push(repo.id, path.clone());
+        // Webhooks follow the refs Git has just accepted. They never fail the push.
+        let moves: Vec<RefMove> = updates
+            .iter()
+            .map(|update| {
+                (
+                    update.reference.clone(),
+                    update.old.clone(),
+                    update.new.clone(),
+                )
+            })
+            .collect();
+        ref_changes::emit_ref_moves(&self.pool, &repo, identity.id, &path, &moves);
         // Open pull requests follow the branches this push created, moved or deleted.
         let branches: Vec<&str> = updates
             .iter()

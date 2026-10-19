@@ -126,6 +126,29 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::set_pull
     resolver_id: i64,
 ) -> Result<Option<PullRequestComment>>);
 
+// Changes the body of the author's conversation comment. None when the change is refused.
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_pull_request_comment,
+    crate::backend::db::sqlite::pull_requests::reviews::edit_pull_request_comment,
+    fn edit_pull_request_comment(
+    pool: &DbPool,
+    actor_id: i64,
+    repo_id: i64,
+    pr_id: i64,
+    comment_id: i64,
+    body: &str,
+) -> Result<Option<PullRequestComment>>);
+
+// Deletes a conversation comment: its author, or a maintainer. False when refused.
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pull_request_comment,
+    crate::backend::db::sqlite::pull_requests::reviews::delete_pull_request_comment,
+    fn delete_pull_request_comment(
+    pool: &DbPool,
+    actor_id: i64,
+    repo_id: i64,
+    pr_id: i64,
+    comment_id: i64,
+) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_review,
     fn add_pull_request_review(

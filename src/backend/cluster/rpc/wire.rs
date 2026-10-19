@@ -127,9 +127,10 @@ pub enum Operation {
         head_ref: String,
     },
     Tags,
-    ArchiveZip {
+    Archive {
         git_ref: String,
         prefix: String,
+        format: crate::backend::git::ArchiveFormat,
     },
     Languages {
         git_ref: String,
@@ -143,6 +144,9 @@ pub enum Operation {
         path: String,
     },
     Contributors,
+    CommitActivity {
+        git_ref: String,
+    },
     IsAncestor {
         ancestor: String,
         descendant: String,
@@ -166,6 +170,9 @@ pub enum Operation {
         sha: String,
     },
     DeleteBranch {
+        name: String,
+    },
+    SetDefaultBranch {
         name: String,
     },
     CreateTag {
@@ -273,11 +280,12 @@ impl Operation {
             | Self::Info
             | Self::CommitCount
             | Self::Tags
-            | Self::ArchiveZip { .. }
+            | Self::Archive { .. }
             | Self::Languages { .. }
             | Self::FilePaths { .. }
             | Self::Blame { .. }
             | Self::Contributors
+            | Self::CommitActivity { .. }
             | Self::BranchStatuses { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,
@@ -306,6 +314,7 @@ impl Operation {
             | Self::PublishRestack { .. }
             | Self::CreateBranch { .. }
             | Self::DeleteBranch { .. }
+            | Self::SetDefaultBranch { .. }
             | Self::CreateTag { .. }
             | Self::DeleteTag { .. }
             | Self::ReplicaPack { .. } => false,

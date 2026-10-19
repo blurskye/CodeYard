@@ -106,6 +106,32 @@ pub(in crate::webui::pages) fn text_field(
             required, maxlength: max.to_string(), class: FIELD }
     } }
 }
+/// The form that creates an account with a temporary password. `with_admin` adds the
+/// administrator checkbox; the new account is then made an administrator right after it is created.
+pub(in crate::webui::pages) fn managed_account_form(
+    token: &str,
+    values: &FormValues,
+    action: &str,
+    with_admin: bool,
+) -> Element {
+    rsx! {
+        form { method: "post", action: action.to_owned(), class: "identity-form",
+            {csrf(token)}
+            {text_field("username", "Username", values.get("username"), "text", true, 255)}
+            {text_field("email", "Email (optional)", values.get("email"), "email", false, 320)}
+            {password_field("password", "Temporary password", true)}
+            if with_admin {
+                label { class: "identity-check",
+                    input { r#type: "checkbox", name: "is_admin" }
+                    " Make administrator"
+                }
+            }
+            p { class: "identity-form-hint", "The new user will be asked to change this password when they sign in." }
+            div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Create account" } }
+        }
+    }
+}
+
 pub(in crate::webui::pages) fn access_forms(
     requests: &[Signup],
     token: &str,
@@ -120,15 +146,7 @@ pub(in crate::webui::pages) fn access_forms(
         div { class: "identity-access-grid",
             section { class: "identity-access-form", aria_labelledby: "managed-account-title",
                 h3 { id: "managed-account-title", "Create managed account" }
-                form { method: "post", action: format!("{prefix}/users"), class: "identity-form",
-                    {csrf(token)}
-                    if prefix.starts_with("/admin/") { input { r#type: "hidden", name: "days", value: values.get("days") } }
-                    {text_field("username", "Username", values.get("username"), "text", true, 255)}
-                    {text_field("email", "Email (optional)", values.get("email"), "email", false, 320)}
-                    {password_field("password", "Temporary password", true)}
-                    p { class: "identity-form-hint", "The new user will be asked to change this password when they sign in." }
-                    div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Create account" } }
-                }
+                {managed_account_form(token, values, &format!("{prefix}/users"), false)}
             }
             section { class: "identity-access-requests", aria_labelledby: "signup-requests-title",
                 h3 { id: "signup-requests-title", "Pending signup requests" }

@@ -24,9 +24,10 @@ use std::{collections::HashMap, fmt, path::Path, time::Instant};
 
 pub(crate) use crate::backend::git::validate_merge_revision;
 pub use crate::backend::git::{
-    BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource, CommitFilter,
-    CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame, FileList, LanguageStat,
-    RepoInfo, TagInfo, TreeEntry, MAX_CI_CHANGED_PATHS, MAX_CI_CHANGED_PATH_BYTES,
+    BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource,
+    CommitActivity, CommitActivityLog, CommitFilter, CommitInfo, ContributorInfo, DiffFileInfo,
+    DiffInfo, FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry,
+    MAX_ACTIVITY_COMMITS, MAX_CI_CHANGED_PATHS, MAX_CI_CHANGED_PATH_BYTES,
     MAX_CI_CHANGED_PATH_TOTAL_BYTES, MAX_CI_WORKFLOW_BYTES, MAX_CONTRIBUTORS, MAX_DIFF_FILES,
     MAX_DIFF_FILE_PATCH_BYTES, MAX_DIFF_TOTAL_PATCH_BYTES, MAX_LANGUAGE_FILES, MAX_REPOSITORY_REFS,
     MAX_TREE_ENTRIES, MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
@@ -1157,16 +1158,22 @@ impl RepoStore {
         }
     }
 
-    /// The tree at `git_ref` as a zip file whose entries sit under `prefix/`.
-    pub async fn archive_zip(&self, git_ref: &str, prefix: &str) -> Result<Vec<u8>, RepoError> {
+    /// The tree at `git_ref` as an archive in `format`, whose entries sit under `prefix/`.
+    pub async fn archive(
+        &self,
+        git_ref: &str,
+        prefix: &str,
+        format: git::ArchiveFormat,
+    ) -> Result<Vec<u8>, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.archive_zip(git_ref, prefix).await,
+            Backend::Local(local) => local.archive(git_ref, prefix, format).await,
             Backend::Remote(remote) => {
                 remote
                     .bytes_with_limit(
-                        Operation::ArchiveZip {
+                        Operation::Archive {
                             git_ref: git_ref.into(),
                             prefix: prefix.into(),
+                            format,
                         },
                         b"",
                         MAX_ARCHIVE_RESPONSE_BYTES,
@@ -1216,6 +1223,23 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.contributors().await,
             Backend::Remote(remote) => remote.call(Operation::Contributors, b"").await,
+        }
+    }
+
+    /// The newest commits of `git_ref` with the lines each one changed. Insights reads it.
+    pub async fn commit_activity(&self, git_ref: &str) -> Result<CommitActivityLog, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.commit_activity(git_ref).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::CommitActivity {
+                            git_ref: git_ref.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -1379,6 +1403,31 @@ impl RepoStore {
                             name: name.into(),
                             sha: sha.into(),
                         },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// Makes `name` the default branch: HEAD follows it, so clones made afterwards get it too.
+    pub async fn set_default_branch_as(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        name: &str,
+    ) -> Result<(), RepoError> {
+        if git::branch_ref(name).is_none() {
+            return Err(invalid_ref("branch"));
+        }
+        match &self.0 {
+            Backend::Local(local) => local.set_default_branch(pool, repo_id, name).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        actor,
+                        Operation::SetDefaultBranch { name: name.into() },
                         b"",
                     )
                     .await

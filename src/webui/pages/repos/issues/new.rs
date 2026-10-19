@@ -6,7 +6,10 @@ use super::{
     Kind, Label, Milestone, Repository,
 };
 use crate::webui::{
-    components::{references::References, DraftCheckbox, DraftInput, DraftSelect, SelectOption},
+    components::{
+        references::References, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, SelectOption,
+    },
+    encode_component,
     navigation::NavLink,
     pages::{
         repos,
@@ -30,6 +33,39 @@ pub struct NewDraft {
     pub labels: Vec<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub milestone: String,
+    /// The path of the issue form this issue is written with, and the form's fields. A form
+    /// replaces the description: its answers become the body when the issue is created.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub template: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub form: Vec<FormField>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FieldKind {
+    Markdown,
+    #[default]
+    Input,
+    Textarea,
+    Dropdown,
+    Checkboxes,
+}
+
+/// One field of an issue form with the answer given so far.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FormField {
+    pub kind: FieldKind,
+    pub label: String,
+    pub description: String,
+    pub placeholder: String,
+    /// The text of a Markdown element.
+    pub text: String,
+    /// The labels of a choice's options.
+    pub options: Vec<String>,
+    pub multiple: bool,
+    pub required: bool,
+    /// The answer: the typed text, or the labels of the chosen options.
+    pub values: Vec<String>,
 }
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BranchChoices {
@@ -48,6 +84,41 @@ pub struct IssueChoices {
 /// The form that holds the new entry's fields. The issue sidebar sits beside it, so its inputs
 /// name the form instead of sitting inside it.
 const NEW_FORM: &str = "new-entry-form";
+
+/// One issue template in the chooser. `path` names it in the link that opens the form.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct TemplateCard {
+    pub path: String,
+    pub name: String,
+    pub about: String,
+}
+
+/// The template chooser a new issue opens on when the repository has issue templates.
+pub fn chooser(repo: &Repository, templates: &[TemplateCard], blank_allowed: bool) -> Element {
+    let url = format!("{}/new", repo.family_url(Kind::Issue));
+    repos::chrome::chrome(
+        &repo.chrome,
+        rsx! {
+            section { class: "collaboration-page collaboration-new collaboration-template-chooser",
+                header { class: "collaboration-page-heading", h2 { "New issue" } }
+                p { class: "collaboration-muted", "Choose a template to start from." }
+                ul { class: "collaboration-template-list",
+                    for template in templates {
+                        li {
+                            NavLink { class: "collaboration-template-card collaboration-panel", href: format!("{url}?template={}", encode_component(&template.path)),
+                                strong { "{template.name}" }
+                                if !template.about.is_empty() { span { class: "collaboration-muted", "{template.about}" } }
+                            }
+                        }
+                    }
+                }
+                if blank_allowed {
+                    NavLink { class: "btn btn-secondary", href: format!("{url}?template="), "Open a blank issue" }
+                }
+            }
+        },
+    )
+}
 
 #[expect(
     clippy::too_many_arguments,
@@ -109,8 +180,17 @@ pub fn new(
                             div { class: "collaboration-form-fields",
                                 label { r#for: "new-title", "Title " span { class: "collaboration-required", "Required" } }
                                 DraftInput { id: "new-title", name: "title", required: true, maxlength: Some(255), placeholder: title_hint, initial_value: draft.title.clone(), class: "collaboration-input" }
-                                label { r#for: "new-body", "Description (Markdown)" }
-                                MarkdownEditor { key: "{repo.url()}:new:{draft.body}:{preview}", id: "new-body", initial: draft.body.clone(), rows: 12, required: false, initial_preview: preview, placeholder: body_hint, references: references.clone() }
+                                if draft.form.is_empty() {
+                                    div { key: "{repo.url()}:new:{draft.body}:{preview}", class: "collaboration-form-field",
+                                        label { r#for: "new-body", "Description (Markdown)" }
+                                        MarkdownEditor { id: "new-body", initial: draft.body.clone(), rows: 12, required: false, initial_preview: preview, placeholder: body_hint, references: references.clone() }
+                                    }
+                                } else {
+                                    input { r#type: "hidden", name: "template", value: draft.template.clone() }
+                                    for (index, field) in draft.form.iter().enumerate() {
+                                        {form_field(index, field)}
+                                    }
+                                }
                                 if kind == Kind::Pull {
                                     label { class: "collaboration-checkbox", DraftCheckbox { name: "draft", initial_checked: draft.draft } " Create as draft" }
                                 }
@@ -133,6 +213,46 @@ pub fn new(
         },
     )
 }
+/// One field of an issue form. Its answers are posted as `form_<index>`, in the order of the
+/// file, so the server can write them into the issue body.
+fn form_field(index: usize, field: &FormField) -> Element {
+    let name = format!("form_{index}");
+    let id = format!("form-field-{index}");
+    let first = field.values.first().cloned().unwrap_or_default();
+    if field.kind == FieldKind::Markdown {
+        return rsx! { p { class: "collaboration-muted collaboration-form-text", "{field.text}" } };
+    }
+    rsx! {
+        div { class: "collaboration-form-field",
+            label { r#for: id.clone(), "{field.label}"
+                if field.required { " " span { class: "collaboration-required", "Required" } }
+            }
+            if !field.description.is_empty() { p { class: "collaboration-muted collaboration-field-hint", "{field.description}" } }
+            match field.kind {
+                FieldKind::Input => rsx! {
+                    DraftInput { id: id.clone(), name, required: field.required, maxlength: Some(255), placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
+                },
+                FieldKind::Textarea => rsx! {
+                    DraftTextarea { id: id.clone(), name, required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
+                },
+                FieldKind::Dropdown if !field.multiple => rsx! {
+                    DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone())).collect::<Vec<_>>() }
+                },
+                _ => rsx! {
+                    div { class: "collaboration-form-checks", id: id.clone(),
+                        for option in field.options.iter() {
+                            label { key: "{option}", class: "collaboration-checkbox",
+                                DraftCheckbox { name: name.clone(), initial_checked: field.values.contains(option), submission_value: option.clone() }
+                                " {option}"
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+}
+
 /// The assignee, label and milestone pickers of a new issue. Each menu names the form beside this
 /// sidebar, so the picks are sent with the title and body when the issue is created. Writers only.
 fn issue_pickers(

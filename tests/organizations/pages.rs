@@ -46,6 +46,8 @@ async fn postgres_actual_router_and_native_forms() {
 
 async fn membership_contracts(database: Database) {
     let mut fixture = Fixture::new(database).await;
+    // The invitation contract runs first: the member contract ends with its owner leaving.
+    members::invitations(&fixture).await;
     members::contracts(&fixture).await;
     fixture.database.finish().await;
 }

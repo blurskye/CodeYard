@@ -195,6 +195,8 @@ fn collaboration_chrome_refresh_preserves_controlled_values_and_complete_edit_sn
             labels: vec![],
             comparison: None,
             comment_count: 0,
+            can_tick: false,
+            tasks: Default::default(),
             commit_count: None,
             file_count: None,
             check_count: 0,

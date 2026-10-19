@@ -16,6 +16,7 @@ pub mod registration;
 pub mod sessions;
 pub mod setup;
 pub mod tokens;
+pub mod two_factor;
 
 use crate::backend::db::models::User;
 

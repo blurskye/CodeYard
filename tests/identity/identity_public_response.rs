@@ -45,7 +45,7 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
         let client = requests::Client::login(&router, pool, user.id).await;
         let valid = json!({
             "display_name": "é".repeat(50), "bio": "é".repeat(2000),
-            "location": "é".repeat(100), "website": "x".repeat(255),
+            "location": "é".repeat(100), "website": format!("https://example.com/{}", "x".repeat(235)),
         });
         let original = client
             .expect("PATCH", "/api/user", valid.clone(), StatusCode::OK)
@@ -64,6 +64,14 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
             let (status, page) = client.form("/settings/profile", &[(field, "a\0b")]).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
             assert!(page.contains("Profile fields must not contain NUL characters"));
+            // A website that is not a web address is refused with a message that says so.
+            let (status, page) = client
+                .form("/settings/profile", &[("website", "not a url")])
+                .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{page}");
+            assert!(
+                page.contains("Website must be a web address starting with http:// or https://")
+            );
             // /api/user accepts only PATCH; the public profile carries the same four fields.
             let stored = client
                 .expect(

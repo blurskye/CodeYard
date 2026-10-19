@@ -19,6 +19,7 @@ use crate::backend::api::repos::settings::branch_protection;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::lifecycle;
+use crate::backend::webhooks::{panel, settings::HookError};
 use crate::webui::pages::repos as view;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -388,7 +389,7 @@ fn access_label(level: db::models::AccessLevel) -> &'static str {
     }
 }
 
-async fn settings_model(
+pub(super) async fn settings_model(
     ctx: &PageContext,
     loaded: &Loaded,
     tab: &str,
@@ -397,8 +398,17 @@ async fn settings_model(
     if !loaded.chrome.can_admin {
         return Err(ctx.repo_error(&loaded.chrome, StatusCode::FORBIDDEN, REPO_ADMIN_REQUIRED));
     }
+    // The branches the default-branch picker offers, and the one the repository opens on.
+    let mut branches: Vec<String> = loaded
+        .refs
+        .keys()
+        .filter_map(|name| name.strip_prefix("refs/heads/").map(str::to_owned))
+        .collect();
+    branches.sort();
     let mut settings = view::settings::Settings {
         tab: tab.to_owned(),
+        branches,
+        default_branch: loaded.chrome.default_branch.clone(),
         allow_merge_commit: loaded.repository.allow_merge_commit,
         allow_squash_merge: loaded.repository.allow_squash_merge,
         allow_rebase_merge: loaded.repository.allow_rebase_merge,
@@ -439,7 +449,31 @@ async fn settings_model(
         }
     }
     settings.branch_rules = branch_rules(ctx, loaded).await?;
+    if tab == "deploy-keys" {
+        settings.deploy_keys =
+            Some(super::deploy_keys::settings_section(ctx, loaded, viewer).await?);
+    }
+    if tab == "webhooks" {
+        let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
+        let action_base = format!("{}/_forms", loaded.chrome.base());
+        let place = panel::Place {
+            owner: db::webhooks::HookOwner::Repository(loaded.repository.id),
+            base: &base,
+            action_base: &action_base,
+            csrf_token: &loaded.chrome.csrf_token,
+            repository_id: Some(loaded.repository.id),
+        };
+        let built = panel::build(&ctx.state.pool, viewer, &place, &ctx.query)
+            .await
+            .map_err(|error| webhook_page_error(ctx, loaded, error))?;
+        settings.webhooks = Some(Box::new(built));
+    }
     Ok(settings)
+}
+
+fn webhook_page_error(ctx: &PageContext, loaded: &Loaded, error: HookError) -> Response {
+    let (status, message) = panel::refusal(&error);
+    ctx.repo_error(&loaded.chrome, status, message)
 }
 
 async fn settings_page(ctx: &PageContext, loaded: &Loaded) -> Result<Response, Response> {
@@ -461,7 +495,7 @@ fn settings_section_url(base: &str, action: &str) -> String {
     )
 }
 
-fn settings_response(
+pub(super) fn settings_response(
     ctx: &PageContext,
     loaded: &Loaded,
     settings: view::settings::Settings,
@@ -521,6 +555,7 @@ async fn branch_rules(
             require_up_to_date_branch: rule.require_up_to_date_branch,
             require_linear_history: rule.require_linear_history,
             require_conversation_resolution: rule.require_conversation_resolution,
+            require_code_owner_review: rule.require_code_owner_reviews,
             enforce_admins: rule.enforce_admins,
             allow_force_pushes: rule.allow_force_pushes,
             allow_deletions: rule.allow_deletions,
@@ -573,6 +608,7 @@ fn submitted_rule(
         require_up_to_date_branch: checkbox(form, "require_up_to_date_branch"),
         require_linear_history: checkbox(form, "require_linear_history"),
         require_conversation_resolution: checkbox(form, "require_conversation_resolution"),
+        require_code_owner_review: checkbox(form, "require_code_owner_review"),
         enforce_admins: checkbox(form, "enforce_admins"),
         // The form asks to block these; the rule stores what they allow.
         allow_force_pushes: !checkbox(form, "block_force_pushes"),
@@ -612,15 +648,15 @@ fn rule_request(
         require_up_to_date_branch: rule.require_up_to_date_branch,
         require_linear_history: rule.require_linear_history,
         require_conversation_resolution: rule.require_conversation_resolution,
+        require_code_owner_reviews: rule.require_code_owner_review,
         enforce_admins: rule.enforce_admins,
         allow_force_pushes: rule.allow_force_pushes,
         allow_deletions: rule.allow_deletions,
         restrict_pushes: rule.restrict_pushes,
         push_allowances: rule.push_allowances.clone(),
         force_push_allowances: rule.force_push_allowances.clone(),
-        // The form never offers these two, so a submitted rule asks for neither.
+        // The form never offers signed commits, so a submitted rule asks for none.
         require_signed_commits: false,
-        require_code_owner_reviews: false,
     })
 }
 
@@ -688,6 +724,58 @@ async fn protection_form(
     }
 }
 
+/// The webhook section's forms. A saved or changed hook returns to the section's list with a
+/// notice. A refused save shows the section again with the submitted hook still in its form.
+async fn webhook_form(
+    ctx: &PageContext,
+    loaded: &Loaded,
+    action: &str,
+    form: &HashMap<String, String>,
+    pairs: &[(String, String)],
+) -> Response {
+    let actor = match ctx.require_user() {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let pool = &ctx.state.pool;
+    let owner = db::webhooks::HookOwner::Repository(loaded.repository.id);
+    let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
+    let outcome = panel::apply(
+        pool,
+        ctx.state.secret_encryptor.as_deref(),
+        actor,
+        owner,
+        action,
+        form,
+        pairs,
+    )
+    .await;
+    match outcome {
+        Ok(notice) => ctx.redirect(&format!("{base}&notice={notice}")),
+        Err((error, draft)) => {
+            let (status, message) = panel::refusal(&error);
+            let mut settings = match settings_model(ctx, loaded, "webhooks").await {
+                Ok(settings) => settings,
+                Err(response) => return response,
+            };
+            if let (Some(panel), Some(mut draft)) = (settings.webhooks.as_mut(), draft) {
+                if let Some(id) = draft.id {
+                    draft.has_secret = db::webhooks::get_webhook(pool, owner, id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some_and(|hook| hook.encrypted_secret.is_some());
+                }
+                panel.editing = Some(draft);
+            }
+            if let Some(panel) = settings.webhooks.as_mut() {
+                panel.error = Some(message.to_owned());
+            }
+            settings_response(ctx, loaded, settings, status)
+        }
+    }
+}
+
 pub(super) fn field(form: &HashMap<String, String>, name: &str) -> String {
     form.get(name).cloned().unwrap_or_default()
 }
@@ -711,7 +799,7 @@ fn stars_return(form: &HashMap<String, String>) -> Option<String> {
         .cloned()
 }
 
-fn checkbox(form: &HashMap<String, String>, name: &str) -> bool {
+pub(super) fn checkbox(form: &HashMap<String, String>, name: &str) -> bool {
     matches!(form.get(name).map(String::as_str), Some("on" | "true"))
 }
 
@@ -753,6 +841,7 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         "transfer" => &["new_owner"],
         "about" => &["description", "website", "topics"],
         "settings" => &["description", "visibility"],
+        "default-branch" => &["branch"],
         "collaborator" => &["username", "access"],
         "remove-collaborator" => &["username"],
         "label" => &["name", "color", "description"],
@@ -803,6 +892,9 @@ fn form_page_suffix(action: &str) -> &'static str {
         | "rename"
         | "transfer"
         | "delete"
+        | "archive"
+        | "unarchive"
+        | "default-branch"
         | "collaborator"
         | "remove-collaborator"
         | "protection-save"
@@ -935,6 +1027,15 @@ pub(super) async fn post_form(
         "delete-file",
         "protection-save",
         "protection-delete",
+        "archive",
+        "unarchive",
+        "default-branch",
+        "webhook-save",
+        "webhook-delete",
+        "webhook-ping",
+        "webhook-redeliver",
+        "deploy-key-add",
+        "deploy-key-delete",
     ]
     .contains(&action.as_str())
     {
@@ -959,6 +1060,15 @@ pub(super) async fn post_form(
         "protection-save",
         "protection-delete",
         "delete-file",
+        "archive",
+        "unarchive",
+        "default-branch",
+        "webhook-save",
+        "webhook-delete",
+        "webhook-ping",
+        "webhook-redeliver",
+        "deploy-key-add",
+        "deploy-key-delete",
     ]
     .contains(&action.as_str())
         && field(&form, "repository_id") != repository_id
@@ -976,6 +1086,7 @@ pub(super) async fn post_form(
     let needs_git = [
         "create-branch",
         "delete-branch",
+        "default-branch",
         "create-tag",
         "delete-tag",
         "write-file",
@@ -998,6 +1109,9 @@ pub(super) async fn post_form(
         "rename",
         "remove-collaborator",
         "delete-label",
+        "archive",
+        "unarchive",
+        "deploy-key-delete",
     ];
     // Only a visibility change needs the confirmation. A description-only save does not.
     let changes_visibility = action == "settings"
@@ -1047,12 +1161,27 @@ pub(super) async fn post_form(
         "remove-collaborator",
         "protection-save",
         "protection-delete",
+        "archive",
+        "unarchive",
+        "default-branch",
+        "webhook-save",
+        "webhook-delete",
+        "webhook-ping",
+        "webhook-redeliver",
+        "deploy-key-add",
+        "deploy-key-delete",
     ];
     if administration.contains(&action.as_str()) && !loaded.chrome.can_admin {
         return ctx.repo_error(&loaded.chrome, StatusCode::FORBIDDEN, REPO_ADMIN_REQUIRED);
     }
     if action.starts_with("protection-") {
         return protection_form(&ctx, &loaded, action, &form, &pairs).await;
+    }
+    if action.starts_with("webhook-") {
+        return webhook_form(&ctx, &loaded, action, &form, &pairs).await;
+    }
+    if action.starts_with("deploy-key-") {
+        return super::deploy_keys::form(&ctx, &loaded, action, &form).await;
     }
     if [
         "create-branch",
@@ -1196,7 +1325,7 @@ async fn mutate(
             Ok(stars_return(form).unwrap_or(base))
         }
         "watch-level" => {
-            let events: Vec<&str> = ["issues", "pulls"]
+            let events: Vec<&str> = ["issues", "pulls", "releases"]
                 .into_iter()
                 .filter(|name| checkbox(form, &format!("events_{name}")))
                 .collect();
@@ -1243,6 +1372,21 @@ async fn mutate(
             .await
             .map_err(crate::backend::api::repos::responses::ref_error)?;
             Ok(format!("{base}/branches"))
+        }
+        "default-branch" => {
+            crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
+                .await
+                .map_err(crate::backend::api::repos::access::access_error)?;
+            crate::backend::repositories::refs::set_default_branch(
+                pool,
+                cluster,
+                actor.id,
+                repository,
+                &field(form, "branch"),
+            )
+            .await
+            .map_err(crate::backend::api::repos::responses::ref_error)?;
+            Ok(settings_section_url(&base, action))
         }
         "delete-branch" => {
             crate::backend::repositories::refs::delete_branch(
@@ -1393,6 +1537,20 @@ async fn mutate(
                 crate::webui::encode_component(&new_owner),
                 crate::webui::encode_component(&updated.name)
             ))
+        }
+        "archive" | "unarchive" => {
+            crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
+                .await
+                .map_err(crate::backend::api::repos::access::access_error)?;
+            // Archiving an archived repository, or the reverse, changes nothing and is not an error.
+            db::repositories::records::set_repository_archived(
+                pool,
+                repository.id,
+                action == "archive",
+            )
+            .await
+            .map_err(repository_settings_error)?;
+            Ok(settings_section_url(&base, action))
         }
         "delete" => {
             lifecycle::delete(pool, cluster, actor.id, repository.id)

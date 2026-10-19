@@ -228,8 +228,8 @@ pub async fn get_watch_level(
     .await?)
 }
 
-/// Up to `limit` users after `after_user_id`, in user order, who want a new `event` ("issues" or
-/// "pulls"): "All activity" watchers and custom watchers who picked it. Ignoring users are left
+/// Up to `limit` users after `after_user_id`, in user order, who want a new `event` ("issues",
+/// "pulls" or "releases"): "All activity" watchers and custom watchers who picked it. Ignoring users are left
 /// out, and so are banned or restricted accounts and accounts that cannot read the repository.
 pub async fn list_event_watchers(
     pool: &PgPool,

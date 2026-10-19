@@ -26,6 +26,23 @@ pub fn shell_at(chrome: Chrome, repo: Option<RepoChrome>, located: bool, body: E
         SiteHeader { chrome, repo, located }
         // Keep the prebuilt keyed PageBody intact: shell presentation must not remount drafts.
         main { id: "main", class: "site-main", tabindex: "-1", {body} }
+        SiteFooter {}
+    }
+}
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// The slim footer every page shows, signed in or out: help, explore and the running version.
+#[component]
+fn SiteFooter() -> Element {
+    rsx! {
+        footer { class: "site-footer", aria_label: "Site footer",
+            nav { class: "site-footer-links", aria_label: "Footer links",
+                NavLink { href: "/help".to_string(), "Help" }
+                NavLink { href: "/explore".to_string(), "Explore" }
+            }
+            span { class: "site-footer-version", "Codeyard v{VERSION}" }
+        }
     }
 }
 
@@ -936,7 +953,7 @@ mod shell_tests {
         assert!(!html.contains("href=\"/admin\""));
         assert!(!html.contains("avatar_url"));
         assert!(html.contains("site-context"));
-        assert!(!html.contains("site-footer"));
+        assert!(html.contains("class=\"site-footer\""));
 
         let anonymous = dioxus_ssr::render_element(shell(
             Chrome::default(),
@@ -955,6 +972,28 @@ mod shell_tests {
         assert!(!anonymous.contains("href=\"/new\""));
         assert!(!anonymous.contains("action=\"/logout\""));
         assert!(!anonymous.contains("action=\"/_forms/theme\""));
+    }
+
+    #[test]
+    fn every_page_has_a_footer_with_help_explore_and_the_version() {
+        for chrome in [
+            Chrome::default(),
+            Chrome {
+                username: Some("alice".into()),
+                csrf_token: "token".into(),
+                ..Default::default()
+            },
+        ] {
+            let html = dioxus_ssr::render_element(shell(chrome, None, rsx! { p { "Body" } }));
+            let footer = html
+                .split("<footer")
+                .nth(1)
+                .and_then(|rest| rest.split("</footer>").next())
+                .expect("the shell renders a footer");
+            assert!(footer.contains("href=\"/help\""));
+            assert!(footer.contains("href=\"/explore\""));
+            assert!(footer.contains("Codeyard v"));
+        }
     }
 
     #[test]

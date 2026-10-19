@@ -17,7 +17,13 @@ use crate::backend::db::discussions::{ListFilter, ListSort, Pick};
 use crate::backend::issues::mutations::CreateIssueRequest;
 use crate::backend::notifications::assignments::{notify_assignees, Assignment};
 use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::repositories::issue_templates::{
+    compose_form_body, first_missing_answer, issue_templates, pull_request_template, FormElement,
+    FormKind, IssueTemplate, IssueTemplates,
+};
+use crate::backend::repositories::store::repo_store;
 use crate::webui::components::references::References;
+use crate::webui::components::task_lists::count_tasks;
 use crate::webui::pages::repos::issues as view;
 use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
@@ -466,6 +472,7 @@ pub(crate) async fn native_index(
     // The list shows titles, labels and assignees, not bodies. Bodies stay on the detail page
     // and in JSON.
     for item in &mut items {
+        item.tasks = count_tasks(&item.body);
         item.body.clear();
     }
     Ok(ctx.page_model(
@@ -661,6 +668,105 @@ async fn apply_issue_choices(
     Ok(())
 }
 
+/// The repository's issue templates on its default branch.
+async fn repository_issue_templates(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+) -> ResultPage<IssueTemplates> {
+    let store = repo_store(&repo.record, ctx.state.cluster.as_ref());
+    issue_templates(&store, &repo.record.default_branch)
+        .await
+        .map_err(|_| unavailable(ctx))
+}
+
+/// The fields of an issue form for the page, each with its answers when there are any.
+fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormField> {
+    form.iter()
+        .enumerate()
+        .map(|(index, element)| {
+            let given = answers.get(index).cloned().unwrap_or_default();
+            let values = match element.kind {
+                // A text field starts with the file's text. A choice starts on its default option.
+                FormKind::Input | FormKind::Textarea if given.is_empty() => {
+                    vec![element.value.clone()]
+                }
+                FormKind::Dropdown if given.is_empty() && !element.multiple => element
+                    .options
+                    .get(element.default)
+                    .map(|option| vec![option.label.clone()])
+                    .unwrap_or_default(),
+                _ => given,
+            };
+            view::FormField {
+                kind: match element.kind {
+                    FormKind::Markdown => view::FieldKind::Markdown,
+                    FormKind::Input => view::FieldKind::Input,
+                    FormKind::Textarea => view::FieldKind::Textarea,
+                    FormKind::Dropdown => view::FieldKind::Dropdown,
+                    FormKind::Checkboxes => view::FieldKind::Checkboxes,
+                },
+                label: element.label.clone(),
+                description: element.description.clone(),
+                placeholder: element.placeholder.clone(),
+                text: if element.kind == FormKind::Markdown {
+                    element.value.clone()
+                } else {
+                    String::new()
+                },
+                options: element
+                    .options
+                    .iter()
+                    .map(|option| option.label.clone())
+                    .collect(),
+                multiple: element.multiple,
+                required: element.required || element.options.iter().any(|option| option.required),
+                values,
+            }
+        })
+        .collect()
+}
+
+/// Fills a new issue's draft from its template. Text the draft already has stays. Assignees and
+/// labels are taken only when the writer may pick them, by username and by label name.
+fn apply_issue_template(
+    draft: &mut view::NewDraft,
+    template: &IssueTemplate,
+    choices: &view::IssueChoices,
+) {
+    if draft.title.is_empty() {
+        draft.title = template.title.clone();
+    }
+    if draft.body.is_empty() {
+        draft.body = template.body.clone();
+    }
+    if !template.form.is_empty() {
+        draft.template = template.path.clone();
+        draft.form = form_fields(&template.form, &[]);
+    }
+    if draft.assignees.is_empty() {
+        draft.assignees = template
+            .assignees
+            .iter()
+            .filter(|name| choices.assignable.contains(name))
+            .take(db::assignees::MAX_ASSIGNEES as usize)
+            .cloned()
+            .collect();
+    }
+    if draft.labels.is_empty() {
+        draft.labels = template
+            .labels
+            .iter()
+            .filter_map(|name| {
+                choices
+                    .labels
+                    .iter()
+                    .find(|label| label.name.eq_ignore_ascii_case(name))
+            })
+            .map(|label| label.id.to_string())
+            .collect();
+    }
+}
+
 const SAME_BRANCHES: &str = "Select two different, existing branches.";
 
 pub(crate) async fn native_new_page(
@@ -674,8 +780,54 @@ pub(crate) async fn native_new_page(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let mut draft = submitted_new(&ctx.query);
-    let references = body_references(&ctx, &repo, &draft.body).await;
     let choices = issue_choices(&ctx, &repo, kind).await?;
+    if kind == Kind::Issue {
+        let found = repository_issue_templates(&ctx, &repo).await?;
+        let picked = ctx.query.get("template").map(String::as_str);
+        // Without a template choice, the chooser comes first. `template=` is the blank issue, and
+        // it is refused when the repository's config turns blank issues off.
+        let show_chooser = match picked {
+            None => !found.templates.is_empty(),
+            Some("") => !found.blank_allowed,
+            Some(path) => found.templates.iter().all(|template| template.path != path),
+        };
+        if show_chooser && !found.templates.is_empty() {
+            let templates = found
+                .templates
+                .iter()
+                .map(|template| view::TemplateCard {
+                    path: template.path.clone(),
+                    name: template.name.clone(),
+                    about: template.about.clone(),
+                })
+                .collect();
+            return Ok(ctx.page_model(
+                "New issue",
+                page(view::Page::Choose {
+                    repository: repo.view,
+                    templates,
+                    blank_allowed: found.blank_allowed,
+                }),
+            ));
+        }
+        if let Some(template) = picked.and_then(|path| {
+            found
+                .templates
+                .iter()
+                .find(|template| template.path == path)
+        }) {
+            apply_issue_template(&mut draft, template, &choices);
+        }
+    } else if draft.body.is_empty() {
+        let store = repo_store(&repo.record, ctx.state.cluster.as_ref());
+        if let Some(text) = pull_request_template(&store, &repo.record.default_branch)
+            .await
+            .map_err(|_| unavailable(&ctx))?
+        {
+            draft.body = text;
+        }
+    }
+    let references = body_references(&ctx, &repo, &draft.body).await;
     let (branches, diff, error) = if kind == Kind::Pull {
         let (branches, head_repo, refs) = head_choices(&ctx, &repo, &mut draft).await?;
         if draft.base.is_empty() {
@@ -742,6 +894,25 @@ pub(crate) async fn native_create(
     draft.labels = repeated(&pairs, "labels");
     draft.milestone = field(&form, "milestone");
     let choices = issue_choices(&ctx, &repo, kind).await?;
+    // An issue form writes its answers into the body.
+    let mut missing_answer = None;
+    let form_path = field(&form, "template");
+    if kind == Kind::Issue && !form_path.is_empty() {
+        let found = repository_issue_templates(&ctx, &repo).await?;
+        if let Some(template) = found
+            .templates
+            .iter()
+            .find(|template| template.path == form_path && !template.form.is_empty())
+        {
+            let answers: Vec<Vec<String>> = (0..template.form.len())
+                .map(|index| repeated(&pairs, &format!("form_{index}")))
+                .collect();
+            missing_answer = first_missing_answer(&template.form, &answers).map(str::to_owned);
+            draft.body = compose_form_body(&template.form, &answers);
+            draft.form = form_fields(&template.form, &answers);
+            draft.template = form_path;
+        }
+    }
     let references = body_references(&ctx, &repo, &draft.body).await;
     let (branches, head_repo, refs) = if kind == Kind::Pull {
         head_choices(&ctx, &repo, &mut draft).await?
@@ -776,6 +947,11 @@ pub(crate) async fn native_create(
         } else {
             Ok(())
         }
+    })
+    .map_err(str::to_owned)
+    .and_then(|()| match &missing_answer {
+        Some(label) if intent == "create" => Err(format!("{label} is required.")),
+        _ => Ok(()),
     });
     let preview = field(&form, "intent") == "preview";
     if let Err(message) = validation {

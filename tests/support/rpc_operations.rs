@@ -146,9 +146,10 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             false,
         ),
         (
-            Operation::ArchiveZip {
+            Operation::Archive {
                 git_ref: "main".into(),
                 prefix: "project".into(),
+                format: codeyard::backend::git::ArchiveFormat::Zip,
             },
             false,
         ),

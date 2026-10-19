@@ -3,6 +3,7 @@ use crate::backend::db;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct CreateIssueRequest {
@@ -66,7 +67,7 @@ pub async fn create_issue(
             repository: &repository,
             owner: &owner,
             repo: &repo,
-            number: issue.number,
+            number: Some(issue.number),
             title: &issue.title,
             link: &link,
             notified: &[],
@@ -91,6 +92,28 @@ pub async fn create_issue(
     )
     .await;
 
+    let (author_id, sender_id) = (issue.author_id, user.id);
+    let issue_for_hook = issue.clone();
+    let repository_for_hook = repository.clone();
+    webhooks::emit(
+        pool,
+        &repository,
+        events::ISSUES,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            payloads::issues(
+                "opened",
+                &issue_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+            )
+        },
+    );
     Ok(issue)
 }
 
@@ -243,5 +266,32 @@ pub async fn update_issue(
         .await;
     }
 
+    let action = match (issue.state == existing.state, issue.state.as_str()) {
+        (true, _) => "edited",
+        (false, "closed") => "closed",
+        (false, _) => "reopened",
+    };
+    let (author_id, sender_id) = (issue.author_id, user.id);
+    let issue_for_hook = issue.clone();
+    let repository_for_hook = repository.clone();
+    webhooks::emit(
+        pool,
+        &repository,
+        events::ISSUES,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            payloads::issues(
+                action,
+                &issue_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+            )
+        },
+    );
     Ok(issue)
 }

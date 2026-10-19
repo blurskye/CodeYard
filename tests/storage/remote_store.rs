@@ -171,8 +171,22 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
     );
     equal(remote.tags().await.unwrap(), local.tags().await.unwrap());
     equal(
-        remote.archive_zip("main", "project").await.unwrap(),
-        local.archive_zip("main", "project").await.unwrap(),
+        remote
+            .archive(
+                "main",
+                "project",
+                codeyard::backend::git::ArchiveFormat::Zip,
+            )
+            .await
+            .unwrap(),
+        local
+            .archive(
+                "main",
+                "project",
+                codeyard::backend::git::ArchiveFormat::Zip,
+            )
+            .await
+            .unwrap(),
     );
     equal(
         remote.languages("main").await.unwrap(),
@@ -974,7 +988,7 @@ async fn unread_repository_downloads_are_bounded(router: &axum::Router) {
         "/api/repos/rpc_owner/project/raw/download-budget/download.bin",
         "/api/repos/rpc_owner/project/archive?ref=download-budget",
         "/rpc_owner/project/raw/download-budget/download.bin",
-        "/rpc_owner/project/archive?ref=download-budget",
+        "/rpc_owner/project/archive/download-budget.zip",
     ];
     let request = |path: &str| {
         Request::builder()
@@ -994,7 +1008,7 @@ async fn unread_repository_downloads_are_bounded(router: &axum::Router) {
         "/api/repos/rpc_owner/project/raw/download-budget/missing.bin",
         "/api/repos/rpc_owner/project/archive?ref=missing",
         "/rpc_owner/project/raw/download-budget/missing.bin",
-        "/rpc_owner/project/archive?ref=missing",
+        "/rpc_owner/project/archive/missing.zip",
     ] {
         let response = router.clone().oneshot(request(path)).await.unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
@@ -1290,9 +1304,20 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         .unwrap_err();
     assert!(local_error.is_range_not_satisfiable());
     equal(&remote_error, &local_error);
-    let local_error = local.archive_zip("oversized", "project").await.unwrap_err();
+    let local_error = local
+        .archive(
+            "oversized",
+            "project",
+            codeyard::backend::git::ArchiveFormat::Zip,
+        )
+        .await
+        .unwrap_err();
     let remote_error = remote
-        .archive_zip("oversized", "project")
+        .archive(
+            "oversized",
+            "project",
+            codeyard::backend::git::ArchiveFormat::Zip,
+        )
         .await
         .unwrap_err();
     assert!(local_error.is_response_too_large());

@@ -1,6 +1,7 @@
 //! Safe organization presentation models shared by SSR and normal hydration.
 use super::fields::{controls, input};
 use super::{avatar, governance, membership, teams};
+use crate::webui::components::webhooks::{WebhookPanel, WebhookSection};
 use crate::webui::{
     components::count_label,
     navigation::NavLink,
@@ -100,8 +101,10 @@ pub struct Page {
     pub viewer_id: i64,
     /// Shows the Administration section of the account settings navigation.
     pub manage_access: bool,
-    /// The section the URL names: `overview`, `members` or `teams`. The others render hidden.
+    /// The section the URL names: `overview`, `members`, `teams` or `webhooks`. The others render hidden.
     pub tab: String,
+    /// The webhooks section, built only on the webhooks tab of an owner. Boxed: most pages lack it.
+    pub webhooks: Option<Box<WebhookPanel>>,
     pub members: Vec<Member>,
     pub teams: Vec<Team>,
     /// Repositories a team can be granted; a grant form can only name one of these.
@@ -130,6 +133,19 @@ pub struct Page {
     pub teams_cursor: i64,
     pub message: Option<String>,
     pub draft: HashMap<String, String>,
+    /// Organizations this viewer has been invited to join. The organizations list shows them.
+    pub invitations: Vec<Invitation>,
+    /// Invitations this organization has sent and nobody has answered. Owners and admins see them.
+    pub pending_invitations: Vec<Member>,
+}
+
+/// An invitation the signed-in viewer can accept or decline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Invitation {
+    pub org_id: i64,
+    pub name: String,
+    pub display_name: Option<String>,
+    pub role: String,
 }
 
 pub fn render(page: Page) -> Element {
@@ -157,12 +173,18 @@ pub fn render(page: Page) -> Element {
                         p { class: "identity-settings-nav-title identity-settings-nav-section", "People" }
                         {section_tab(org, &page.tab, "members", "Members", ProfileIcon::People)}
                         {section_tab(org, &page.tab, "teams", "Teams", ProfileIcon::Layers)}
+                        if page.is_owner { {section_tab(org, &page.tab, "webhooks", "Webhooks", ProfileIcon::Link)} }
                     }
                     div { class: "identity-settings-content",
                         {governance::suspension(org)}
                         {overview(&page, org, &target)}
                         {membership::panel(&page, &target)}
                         {teams::panel(&page, &target)}
+                        if page.tab == "webhooks" {
+                            section { id: "organization-webhooks", class: "org-section", aria_labelledby: "webhooks-title",
+                                if let Some(panel) = &page.webhooks { WebhookSection { panel: panel.as_ref().clone() } }
+                            }
+                        }
                     }
                 }
             } else {
@@ -294,6 +316,31 @@ fn facts(org: &Organization) -> Element {
 fn index(page: &Page) -> Element {
     rsx! {
         if let Some(notice) = &page.notice { div { role: "status", class: "repo-alert repo-alert-success org-notice", p { "{notice}" } } }
+        if !page.invitations.is_empty() {
+            section { class: "org-panel org-invitations", aria_labelledby: "organization-invitations-title",
+                header { class: "org-panel-header", h2 { id: "organization-invitations-title", "Invitations" } p { "You join an organization only after you accept." } }
+                ul { class: "org-list",
+                    for invite in &page.invitations {
+                        li { key: "{invite.org_id}", class: "org-row",
+                            div { class: "org-row-main",
+                                h3 { "{invite.display_name.as_deref().unwrap_or(&invite.name)}" }
+                                p { "@{invite.name} · joins as {invite.role}" }
+                            }
+                            div { class: "org-row-actions",
+                                form { method: "post", action: format!("/settings/organizations/invitations/{}/accept", invite.org_id), class: "org-inline-form",
+                                    input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                                    button { r#type: "submit", class: "btn btn-primary", "Accept" }
+                                }
+                                form { method: "post", action: format!("/settings/organizations/invitations/{}/decline", invite.org_id), class: "org-inline-form",
+                                    input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                                    button { r#type: "submit", class: "btn", "Decline" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         header { class: "org-index-header",
             div {
                 div { class: "title-with-count", h2 { "Organizations" } span { class: "count-badge", {count_label(page.organizations.len(), "organization", "organizations")} } }

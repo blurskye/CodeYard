@@ -52,6 +52,18 @@ pub async fn contracts(f: &Fixture) {
         "Keep this conflict draft"
     );
     duplicate.secure();
+    let bad_name = f
+        .form(
+            &f.owner,
+            INDEX,
+            &[("action", "create"), ("slug", "Bad Org!")],
+        )
+        .await;
+    assert_eq!(bad_name.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        bad_name.organization().message.as_deref(),
+        Some("Organization name must be 3-255 characters: letters, numbers, hyphens or underscores. Reserved names cannot be used.")
+    );
 
     let missing = format!("{INDEX}/9223372036854775807");
     for method in ["GET", "POST"] {
@@ -138,7 +150,13 @@ pub async fn contracts(f: &Fixture) {
 /// ADDED, NOT RUN: detail visibility, scoped grants and native edit/delete PRG.
 /// Only the open section's tab carries aria-current, whatever the URL says.
 pub async fn section_tabs(f: &Fixture) {
-    for query in ["", "?tab=overview", "?tab=members", "?tab=teams"] {
+    for query in [
+        "",
+        "?tab=overview",
+        "?tab=members",
+        "?tab=teams",
+        "?tab=webhooks",
+    ] {
         let reply = f
             .request(
                 &f.owner,
@@ -152,8 +170,9 @@ pub async fn section_tabs(f: &Fixture) {
         assert_eq!(reply.status, StatusCode::OK);
         let open = query.strip_prefix("?tab=").unwrap_or("overview");
         let tabs = tab_links(&reply.body);
-        assert_eq!(tabs.len(), 3, "{query}");
-        for tab in ["overview", "members", "teams"] {
+        // Owners also see the webhooks tab.
+        assert_eq!(tabs.len(), 4, "{query}");
+        for tab in ["overview", "members", "teams", "webhooks"] {
             let link = tabs
                 .iter()
                 .find(|link| link.contains(&format!("tab={tab}\"")))

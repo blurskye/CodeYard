@@ -5,7 +5,10 @@ use crate::webui::pages::repos::{
     ref_path::{compare_url, file_url},
 };
 use crate::webui::{
-    components::{compact_date, count_label, DraftInput, DraftSelect, DraftTextarea, SelectOption},
+    components::{
+        compact_date, confirm_dialog, count_label, DraftInput, DraftSelect, DraftTextarea,
+        SelectOption,
+    },
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -60,6 +63,9 @@ pub fn refs(
                         div { class: "title-with-count", h2 { "{title}" } span { class: "count-badge", {count_label(rows.len(), kind, plural)} } }
                         p { if tags { "Mark important points in this repository's history." } else { "View and manage lines of development." } }
                     }
+                }
+                if tags {
+                    {super::super::releases::releases_tags_nav(repo, false)}
                 }
                 if !tags {
                     nav { class: "repo-ref-tabs", aria_label: "Branch filter",
@@ -122,7 +128,7 @@ pub fn refs(
                                         span { class: "repo-ref-date", {ref_date(updated)} }
                                     }
                                     if tags {
-                                        a { class: "repo-icon-button", href: format!("/api/repos{base}/archive?ref={}", crate::webui::encode_component(&row.name)), title: "Download ZIP", "aria-label": "Download {row.name} as ZIP", {icon("download")} }
+                                        a { class: "repo-icon-button", href: format!("{base}/archive/{}.zip", crate::webui::encode_component(&row.name)), title: "Download ZIP", "aria-label": "Download {row.name} as ZIP", {icon("download")} }
                                     }
                                     if let Some(default) = default_branch.as_deref().filter(|_| !row.is_default) {
                                         NavLink { class: "btn btn-secondary btn-sm", href: compare_url(&base, default, &row.name), "Compare" }
@@ -132,20 +138,13 @@ pub fn refs(
                                             summary { class: "repo-icon-button repo-icon-danger", title: "Delete {kind}", "aria-label": "Delete {kind}", {icon("trash")} }
                                             // A centred dialog over the page, so opening it moves nothing. Cancel and
                                             // the backdrop reload the list, which closes it without JavaScript.
-                                            div { class: "repo-confirm-modal", role: "dialog", "aria-label": "Delete {kind} {row.name}",
-                                                a { class: "repo-confirm-backdrop", href: list_url.clone(), "aria-label": "Cancel", tabindex: "-1" }
-                                                form { method: "post", action: repo.action(&format!("delete-{kind}")), class: "repo-confirm-card",
-                                                    {csrf(&repo.csrf_token)}
-                                                    input { r#type: "hidden", name: "name", value: row.name.clone() }
-                                                    strong { "Delete {kind} {row.name}?" }
-                                                    p { "This cannot be undone." }
-                                                    label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " I understand" }
-                                                    div { class: "repo-confirm-actions",
-                                                        a { class: "btn btn-secondary", href: list_url.clone(), "Cancel" }
-                                                        button { class: "btn btn-danger", r#type: "submit", "Delete {kind}" }
-                                                    }
-                                                }
-                                            }
+                                            {confirm_dialog(None, &format!("Delete {kind} {}", row.name), &list_url, &repo.action(&format!("delete-{kind}")), rsx! {
+                                                {csrf(&repo.csrf_token)}
+                                                input { r#type: "hidden", name: "name", value: row.name.clone() }
+                                                strong { "Delete {kind} {row.name}?" }
+                                                p { "This cannot be undone." }
+                                                label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " I understand" }
+                                            }, &format!("Delete {kind}"))}
                                         }
                                     }
                                 }

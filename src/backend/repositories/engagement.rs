@@ -1,4 +1,5 @@
 //! Repository star/watch changes and explicit best-effort notices.
+use crate::backend::webhooks::{self, events, payloads};
 use crate::backend::{
     db,
     notifications::{
@@ -42,7 +43,7 @@ pub async fn set_level(
             db::repositories::engagement::set_watch_level(pool, actor, repo_id, level, "").await
         }
         "custom" => {
-            let events: Vec<&str> = ["issues", "pulls"]
+            let events: Vec<&str> = ["issues", "pulls", "releases"]
                 .into_iter()
                 .filter(|name| events.contains(name))
                 .collect();
@@ -102,6 +103,20 @@ pub async fn change(
             "is now watching",
         ),
     };
+    if changed && matches!(kind, Engagement::Star) {
+        let action = if enabled { "created" } else { "deleted" };
+        let repository_for_hook = updated.clone();
+        webhooks::emit(
+            pool,
+            &updated,
+            events::STAR,
+            vec![actor],
+            move |owner, people| {
+                let starrer = people.get(actor);
+                payloads::star(action, &starrer, &repository_for_hook, owner)
+            },
+        );
+    }
     // A repeated star request still notifies; a watch notifies only when the watch changed.
     if let Some(recipient) = repository
         .personal_owner_id()

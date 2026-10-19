@@ -17,6 +17,9 @@ native_operation!(crate::backend::db::postgres::organizations::teams::list_organ
 // Teams a reader may see, counted the same way the public team list shows them.
 native_operation!(crate::backend::db::postgres::organizations::teams::count_organization_teams, crate::backend::db::sqlite::organizations::teams::count_organization_teams,
     fn count_organization_teams(pool: &DbPool, actor: i64, org: i64) -> Result<OrganizationOutcome<i64>>);
+// Code owner names such as `@org/team` resolve to these users; no actor, since a merge judges them.
+native_operation!(crate::backend::db::postgres::organizations::teams::team_member_user_ids, crate::backend::db::sqlite::organizations::teams::team_member_user_ids,
+    fn team_member_user_ids(pool: &DbPool, org_name: &str, team_slug: &str) -> Result<Vec<i64>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::list_organization_team_members, crate::backend::db::sqlite::organizations::teams::list_organization_team_members,
     fn list_organization_team_members(pool: &DbPool, actor: i64, org: i64, team: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<TeamMembership>>>);
 native_operation!(crate::backend::db::postgres::organizations::teams::add_organization_team_member, crate::backend::db::sqlite::organizations::teams::add_organization_team_member,

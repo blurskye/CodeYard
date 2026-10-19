@@ -51,6 +51,8 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         can_recover: false,
         ownerless_organizations: vec![],
         owned_repositories: 0,
+        invitations: vec![],
+        pending_invitations: vec![],
         notice: None,
         can_manage: true,
         is_owner: true,
@@ -65,6 +67,7 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         members_cursor: 0,
         teams_cursor: 0,
         tab: "overview".into(),
+        webhooks: None,
         message: None,
         draft,
     }
@@ -812,7 +815,7 @@ fn members_get_a_read_only_organization() {
         "Save profile",
         "Organization picture",
         "Upload a new picture",
-        "Add member",
+        "Send invitation",
         "Create a team",
         "Save team",
         "Add team member",
@@ -840,7 +843,7 @@ fn owners_get_inline_member_controls_and_a_danger_card_for_delete() {
     for shown in [
         "Save profile",
         "Organization picture",
-        "Add member",
+        "Send invitation",
         "Create a team",
         "Edit team",
         "Add a team member",
@@ -901,6 +904,76 @@ fn only_owners_see_the_delete_card() {
 }
 
 #[test]
+fn organization_delete_is_a_centred_dialog_that_names_its_repositories() {
+    let mut page = sample_page(HashMap::new(), vec![]);
+    page.owned_repositories = 2;
+    let output = html(page);
+    // The button opens the dialog by its fragment. Cancel reloads the page, which closes it.
+    assert!(output.contains("href=\"#organization-delete-dialog\""));
+    assert!(output.contains("id=\"organization-delete-dialog\""));
+    assert!(output.contains("aria-label=\"Delete this organization\""));
+    assert!(
+        output.contains("It also permanently deletes its 2 repositories and everything in them.")
+    );
+    // The typed name is still the confirmation.
+    assert!(output.contains("Type the organization name to confirm"));
+    assert!(output.contains(">Cancel</a>"));
+}
+
+#[test]
+fn a_refused_organization_delete_shows_its_message_by_the_button() {
+    let draft = HashMap::from([
+        ("action".to_owned(), "delete-organization".to_owned()),
+        ("confirm".to_owned(), "wrong".to_owned()),
+    ]);
+    let mut page = sample_page(draft, vec![]);
+    page.message = Some("Type the organization name to confirm deletion.".into());
+    let output = html(page);
+    assert!(output.contains("Type the organization name to confirm deletion."));
+    assert!(output.contains("value=\"wrong\""));
+}
+
+#[test]
+fn team_delete_is_a_centred_dialog_that_asks_for_the_team_id() {
+    let output = html(sample_page(HashMap::new(), vec![]));
+    assert!(output.contains("href=\"#team-delete-dialog\""));
+    assert!(output.contains("id=\"team-delete-dialog\""));
+    assert!(output.contains("aria-label=\"Delete team Writers\""));
+    assert!(output.contains("Type the team ID to confirm"));
+    assert!(output.contains("value=\"team-delete\""));
+    assert!(output.contains("Delete team and its grants"));
+}
+
+#[test]
+fn team_member_removal_asks_for_the_username_in_a_centred_dialog() {
+    let mut page = sample_page(HashMap::new(), vec![]);
+    page.selected_team.as_mut().unwrap().members = vec![Member {
+        user_id: 6,
+        username: "bob".into(),
+        role: "member".into(),
+    }];
+    let output = html(page);
+    assert!(output.contains("href=\"#remove-team-member-6\""));
+    assert!(output.contains("id=\"remove-team-member-6\""));
+    assert!(output.contains("aria-label=\"Remove bob from the team\""));
+    assert!(output.contains("Type bob to confirm"));
+    assert!(output.contains("value=\"remove-team-member\""));
+}
+
+#[test]
+fn member_removal_asks_for_the_username_in_a_centred_dialog() {
+    let mut page = member_page();
+    page.can_manage = true;
+    page.is_owner = true;
+    page.viewer_id = 5;
+    let output = html(page);
+    assert!(output.contains("href=\"#remove-member-6\""));
+    assert!(output.contains("id=\"remove-member-6\""));
+    assert!(output.contains("aria-label=\"Remove bob from the organization\""));
+    assert!(output.contains("Type bob to confirm"));
+}
+
+#[test]
 fn admins_change_plain_members_but_not_owners() {
     let mut page = member_page();
     page.can_manage = true;
@@ -909,7 +982,7 @@ fn admins_change_plain_members_but_not_owners() {
     // The DAO refuses an admin's change to an owner, so the owner row shows no controls.
     assert_eq!(output.matches("value=\"remove-member\"").count(), 1);
     assert_eq!(output.matches("value=\"member-role\"").count(), 1);
-    assert!(output.contains("Add member"));
+    assert!(output.contains("Send invitation"));
 }
 
 #[test]
@@ -921,8 +994,13 @@ fn organization_pages_use_no_disclosure_widgets() {
         html(member_page()),
         organization_index(false, true),
     ] {
-        assert!(!output.contains("<details"), "{output}");
-        assert!(!output.contains("<summary"), "{output}");
+        // The only menu is the account settings section picker a phone shows in place of the tab column.
+        let output = output.replace("<details class=\"identity-settings-picker\"", "<picker");
+        assert!(
+            !output.contains("<details"),
+            "{}",
+            &output[..output.len().min(200)]
+        );
     }
 }
 
@@ -979,4 +1057,43 @@ fn organization_pictures_use_the_upload_or_the_generated_avatar() {
     let uploaded = html(uploaded);
     assert!(uploaded.contains("src=\"/api/files/abc/download\""));
     assert!(!uploaded.contains("src=\"/avatars/native_org\""));
+}
+
+#[test]
+fn pending_invitations_show_cancel_to_owners_and_accept_or_decline_to_invitees() {
+    let mut page = sample_page(HashMap::new(), vec![]);
+    page.can_manage = true;
+    page.tab = "members".into();
+    page.pending_invitations = vec![Member {
+        user_id: 44,
+        username: "dana".into(),
+        role: "admin".into(),
+    }];
+    let owner_view = html(page.clone());
+    assert!(owner_view.contains("Pending invitations"));
+    assert!(owner_view.contains("Invited as admin"));
+    assert!(owner_view.contains("id=\"cancel-invitation-44\""));
+    assert!(owner_view.contains("value=\"cancel-invitation\""));
+    assert!(owner_view.contains("Invite a member"));
+
+    // Members who cannot manage see no pending list, and no way to cancel.
+    page.can_manage = false;
+    let plain_view = html(page.clone());
+    assert!(!plain_view.contains("Pending invitations"));
+    assert!(!plain_view.contains("cancel-invitation"));
+
+    // The organizations list offers accept and decline for each invitation.
+    let mut list = sample_page(HashMap::new(), vec![]);
+    list.selected = None;
+    list.invitations = vec![Invitation {
+        org_id: 7,
+        name: "acme".into(),
+        display_name: Some("Acme".into()),
+        role: "member".into(),
+    }];
+    let invitee_view = html(list);
+    assert!(invitee_view.contains("Invitations"));
+    assert!(invitee_view.contains("action=\"/settings/organizations/invitations/7/accept\""));
+    assert!(invitee_view.contains("action=\"/settings/organizations/invitations/7/decline\""));
+    assert!(invitee_view.contains("joins as member"));
 }

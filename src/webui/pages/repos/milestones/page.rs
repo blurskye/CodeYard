@@ -3,7 +3,11 @@ use crate::webui::pages::repos::issues::filter_menu::{Choice, FilterMenu};
 use crate::webui::pages::repos::issues::{
     csrf, notice, rows, state_class, Item, Kind, ListCounts, Milestone, MilestoneDraft, Repository,
 };
-use crate::webui::{components::DraftTextarea, navigation::NavLink, pages::repos};
+use crate::webui::{
+    components::{confirm_dialog, DraftTextarea},
+    navigation::NavLink,
+    pages::repos,
+};
 use dioxus::prelude::*;
 
 fn progress(milestone: &Milestone) -> Element {
@@ -198,13 +202,13 @@ pub fn detail(
                                 {csrf(&repo.csrf)}
                                 button { r#type: "submit", class: "btn btn-secondary btn-sm", if action == "close" { "Close milestone" } else { "Reopen milestone" } }
                             }
-                            details { class: "collaboration-edit",
+                            details { class: "collaboration-edit native-menu repo-delete-menu",
                                 summary { class: "btn btn-danger btn-sm", "Delete milestone" }
-                                form { method: "post", action: format!("{url}/delete"), class: "collaboration-form-fields",
+                                {confirm_dialog(None, &format!("Delete milestone {}", milestone.title), &url, &format!("{url}/delete"), rsx! {
                                     {csrf(&repo.csrf)}
-                                    label { class: "collaboration-checkbox", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Delete this milestone. Its issues stay open or closed and lose it." }
-                                    div { class: "collaboration-actions", button { r#type: "submit", class: "btn btn-danger", "Delete milestone" } }
-                                }
+                                    strong { "Delete milestone {milestone.title}?" }
+                                    label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Delete this milestone. Its issues stay open or closed and lose it." }
+                                }, "Delete milestone")}
                             }
                         }
                     }

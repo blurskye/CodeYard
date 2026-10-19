@@ -1,3 +1,4 @@
+mod account_management;
 mod admin_accounts;
 mod avatars;
 mod cli_identity;
@@ -7,3 +8,4 @@ mod production_auth;
 mod profile_activity;
 #[path = "../support/mod.rs"]
 mod support;
+mod two_factor;

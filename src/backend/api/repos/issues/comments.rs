@@ -9,6 +9,7 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::issues::comment_link;
 use crate::backend::issues::comments::CreateCommentRequest;
+use crate::webui::pages::repos::issues::DetailDraft;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -193,6 +194,97 @@ pub(crate) async fn native_comment(
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
             render_detail(&ctx, &repo, kind, &value, &draft, Some(&message), status).await
+        }
+    }
+}
+
+/// Changes the author's comment from the issue page. A preview shows the page again with the text.
+pub(crate) async fn native_edit_comment(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, i64)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    authorize_post(&ctx, &form)?;
+    let kind = kind(&uri);
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = item(&ctx, &repo, kind, number).await?;
+    let mut draft = submitted_detail(&form, "comment");
+    draft.editing = Some(comment_id);
+    if draft.preview {
+        return render_detail(&ctx, &repo, kind, &value, &draft, None, StatusCode::OK).await;
+    }
+    let result = crate::backend::issues::comments::edit_issue_comment(
+        &ctx.state.pool,
+        &ctx.state.notification_broadcaster,
+        ctx.require_user()?.id,
+        crate::backend::issues::comments::CommentTarget {
+            owner,
+            repo: name,
+            number,
+            comment_id,
+        },
+        crate::backend::issues::comments::CreateCommentRequest {
+            body: draft.comment.clone(),
+        },
+    )
+    .await
+    .map_err(crate::backend::api::repos::issues::operation_error)
+    .map(|c| c.id);
+    match result {
+        Ok(id) => {
+            let position = db::issues::issue_comment_position(&ctx.state.pool, id).await;
+            let base = format!("{}/{}", repo.view.family_url(kind), number);
+            Ok(ctx.redirect(&comment_link(&base, id, position)))
+        }
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_detail(&ctx, &repo, kind, &value, &draft, Some(&message), status).await
+        }
+    }
+}
+
+/// Deletes a comment from the issue page, after the confirmation dialog.
+pub(crate) async fn native_delete_comment(
+    State(state): State<Arc<AppState>>,
+    Path((owner, name, number, comment_id)): Path<(String, String, i32, i64)>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> ResultPage<Response> {
+    let ctx = PageContext::load(state, headers, &uri).await?;
+    authorize_post(&ctx, &form)?;
+    let kind = kind(&uri);
+    let repo = repository(&ctx, &owner, &name).await?;
+    let value = item(&ctx, &repo, kind, number).await?;
+    let result = crate::backend::issues::comments::delete_issue_comment(
+        &ctx.state.pool,
+        ctx.require_user()?.id,
+        crate::backend::issues::comments::CommentTarget {
+            owner,
+            repo: name,
+            number,
+            comment_id,
+        },
+    )
+    .await
+    .map_err(crate::backend::api::repos::issues::operation_error);
+    match result {
+        Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
+        Err(failure) => {
+            let (status, message) = safe_api_error(&failure);
+            render_detail(
+                &ctx,
+                &repo,
+                kind,
+                &value,
+                &DetailDraft::default(),
+                Some(&message),
+                status,
+            )
+            .await
         }
     }
 }

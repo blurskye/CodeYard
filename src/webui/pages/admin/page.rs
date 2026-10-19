@@ -126,109 +126,6 @@ pub(super) fn timeframe_control(days: i32) -> Element {
     }
 }
 
-#[component]
-fn BanAccountAction(account: Account, token: String, days: i32) -> Element {
-    let action = format!("/admin/accounts/{}/ban", account.id);
-    #[cfg(target_arch = "wasm32")]
-    let dialog_id = format!("ban-account-{}", account.id);
-    let title_id = format!("ban-account-title-{}", account.id);
-    let menu_label = format!("Actions for {}", account.username);
-    rsx! {
-        details { class: "native-menu identity-row-menu",
-            summary { class: "identity-row-menu-button", "aria-label": menu_label.clone(), title: menu_label,
-                svg { "aria-hidden": "true", width: "16", height: "16", view_box: "0 0 24 24", fill: "currentColor",
-                    circle { cx: "5", cy: "12", r: "2" }
-                    circle { cx: "12", cy: "12", r: "2" }
-                    circle { cx: "19", cy: "12", r: "2" }
-                }
-            }
-            div { class: "identity-row-menu-panel",
-                a { href: format!("{action}?days={days}"), class: "identity-row-menu-danger",
-                    onclick: move |event| {
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            use wasm_bindgen::JsCast;
-                            if let Some(dialog) = web_sys::window()
-                                .and_then(|window| window.document())
-                                .and_then(|document| document.get_element_by_id(&dialog_id))
-                                .and_then(|element| element.dyn_into::<web_sys::HtmlDialogElement>().ok())
-                            {
-                                if dialog.show_modal().is_ok() {
-                                    event.prevent_default();
-                                }
-                            }
-                        }
-                        #[cfg(not(target_arch = "wasm32"))]
-                        let _ = event;
-                    },
-                    "Ban account…"
-                }
-            }
-        }
-        dialog { id: format!("ban-account-{}", account.id), class: "admin-ban-dialog", "aria-labelledby": title_id.clone(),
-            h2 { id: title_id, class: "text-lg font-semibold", "Ban {account.username}?" }
-            p { class: "mt-3 text-sm", "Banning this account signs it out, revokes its tokens and stops its CI runs. Its repositories are kept, and unbanning restores access." }
-            form { method: "post", action: action, class: "mt-6 flex flex-wrap justify-end gap-3",
-                {csrf(&token)}
-                input { r#type: "hidden", name: "banned", value: "true" }
-                input { r#type: "hidden", name: "confirm_delete", value: "yes" }
-                input { r#type: "hidden", name: "days", value: days.to_string() }
-                button { r#type: "button", class: "rounded-md border border-border px-4 py-2",
-                    onclick: move |_| {
-                        #[cfg(target_arch = "wasm32")]
-                        {
-                            use wasm_bindgen::JsCast;
-                            if let Some(dialog) = web_sys::window()
-                                .and_then(|window| window.document())
-                                .and_then(|document| document.get_element_by_id(&format!("ban-account-{}", account.id)))
-                                .and_then(|element| element.dyn_into::<web_sys::HtmlDialogElement>().ok())
-                            {
-                                dialog.close();
-                            }
-                        }
-                    },
-                    "Cancel"
-                }
-                button { r#type: "submit", class: "rounded-md bg-destructive px-4 py-2 text-destructive-foreground",
-                    "Ban account"
-                }
-            }
-        }
-    }
-}
-
-pub fn ban_confirmation_page(username: &str, user_id: i64, token: &str, days: i32) -> Element {
-    rsx! {
-        section { class: "page-shell max-w-5xl py-8 pb-14",
-            header { class: "admin-header",
-                div { class: "admin-header-main",
-                    nav { class: "admin-crumbs", aria_label: "Breadcrumb",
-                        NavLink { href: "/admin".to_string(), "Administration" }
-                        " / "
-                        NavLink { href: format!("/admin?days={days}#admin-accounts-title"), "Accounts" }
-                        " / {username}"
-                    }
-                    h1 { "Ban {username}?" }
-                    p { "Review what a ban does before you confirm it." }
-                }
-            }
-            section { class: "panel", aria_label: "Confirm the ban",
-                div { class: "panel-body",
-                    p { "Banning this account signs it out, revokes its tokens and stops its CI runs. Its repositories are kept, and unbanning restores access." }
-                    form { method: "post", action: format!("/admin/accounts/{user_id}/ban"), class: "admin-confirm-actions",
-                        {csrf(token)}
-                        input { r#type: "hidden", name: "banned", value: "true" }
-                        input { r#type: "hidden", name: "confirm_delete", value: "yes" }
-                        input { r#type: "hidden", name: "days", value: days.to_string() }
-                        NavLink { href: format!("/admin?days={days}"), class: "btn", "Cancel" }
-                        button { r#type: "submit", class: "btn btn-destructive", "Ban account" }
-                    }
-                }
-            }
-        }
-    }
-}
-
 pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool) -> Element {
     let values: Vec<i64> = model
         .activity
@@ -348,39 +245,9 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
             }
             section { class: "identity-admin-panel", aria_labelledby: "admin-accounts-title",
                 header { class: "identity-admin-panel-header",
-                    div { h2 { id: "admin-accounts-title", "All accounts" } p { {count_label(model.accounts.len(), "account", "accounts")} } }
+                    div { h2 { id: "admin-accounts-title", "Accounts" } p { {count_label(users, "account", "accounts")} " · {banned} banned" } }
+                    NavLink { href: "/admin/users".to_string(), class: "btn", "Manage users" }
                 }
-                div { class: "identity-admin-warning", "Banning an account signs it out, revokes its tokens and stops its CI runs. Its repositories are kept." }
-                div { class: "identity-table-wrap", table { class: "identity-table identity-account-table",
-                    thead { tr { th { "Account" } th { "Role" } th { "Status" } th { class: "identity-num", "Storage" } th { "Activity" } th { "Joined" } th { class: "identity-table-action", "Action" } } }
-                    tbody { for account in &model.accounts { tr {
-                        td { NavLink { href: format!("/{}", crate::webui::encode_component(&account.username)), class: "identity-account-name", "{account.username}" }
-                            p { "{account.email}" }
-                        }
-                        td { if account.admin { "Admin" } else { "Member" } }
-                        td {
-                            span { class: if account.banned { "identity-status identity-status-danger" } else { "identity-status identity-status-success" }, if account.banned { "Banned" } else { "Active" } }
-                            if account.must_change_password { p { "Password change required" } }
-                        }
-                        td { class: "identity-num", {format_bytes(account.bytes)} p { {count_label(account.files.max(0) as usize, "file", "files")} } }
-                        td { {count_label(account.contributions.max(0) as usize, "contribution", "contributions")} p { {count_label(account.commits.max(0) as usize, "commit", "commits")} " · {account.pushes} push workflow runs" } }
-                        td { "{account.created}" }
-                        td { class: "identity-table-action",
-                            if account.id == model.current_user_id {
-                                span { class: "identity-muted", "You" }
-                            } else if account.banned {
-                                form { method: "post", action: format!("/admin/accounts/{}/ban", account.id),
-                                    {csrf(token)}
-                                    input { r#type: "hidden", name: "banned", value: "false" }
-                                    input { r#type: "hidden", name: "days", value: model.days.to_string() }
-                                    button { r#type: "submit", class: "identity-button", "Unban" }
-                                }
-                            } else {
-                                BanAccountAction { account: account.clone(), token: token.to_owned(), days: model.days }
-                            }
-                        }
-                    } } }
-                } }
             }
             section { class: "identity-admin-panel", aria_labelledby: "admin-activity-title",
                 header { class: "identity-admin-panel-header",
@@ -404,8 +271,8 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
                             for column in day_columns {
                                 rect { x: column.x, y: column.y, width: column.width, height: column.height, class: "identity-admin-bar" }
                             }
-                            for (x, anchor, date) in date_labels {
-                                text { x: x, y: 190.0, text_anchor: anchor, class: "identity-admin-axis", "{date}" }
+                            for (index, (x, anchor, date)) in date_labels.into_iter().enumerate() {
+                                text { x: x, y: 190.0, text_anchor: anchor, class: if index % 2 == 1 { "identity-admin-axis identity-admin-axis-minor" } else { "identity-admin-axis" }, "{date}" }
                             }
                         }
                     }
@@ -448,6 +315,7 @@ pub struct Account {
     pub admin: bool,
     pub banned: bool,
     pub must_change_password: bool,
+    pub two_factor: bool,
     pub files: i64,
     pub bytes: i64,
     pub commits: i64,

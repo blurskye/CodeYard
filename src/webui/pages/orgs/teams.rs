@@ -3,7 +3,7 @@ use super::{
     privacy_label, team_page, Page, REPOSITORY_CHOICE_LIMIT,
 };
 use crate::webui::{
-    components::{count_label, Avatar, DraftInput, DraftSelect, SelectOption},
+    components::{confirm_dialog, count_label, Avatar, DraftInput, DraftSelect, SelectOption},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -186,12 +186,16 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                                             div { class: "org-row-actions",
                                                 span { class: "org-label", "{member.role}" }
                                                 if manage {
-                                                    form { method: "post", action: target.to_owned(), class: "org-inline-form",
-                                                        input { r#type: "hidden", name: "team_id", value: "{detail.team.id}" }
-                                                        input { r#type: "hidden", name: "user_id", value: "{member.user_id}" }
-                                                        {fields::removal_confirm(&member.username)}
-                                                        {controls_as(page, "remove-team-member", "Remove", "btn btn-sm btn-danger")}
-                                                    }
+                                                    a { class: "btn btn-sm btn-danger", href: "#remove-team-member-{member.user_id}", "Remove" span { class: "site-sr-only", " {member.username}" } }
+                                                    {confirm_dialog(Some(format!("remove-team-member-{}", member.user_id)).as_deref(), &format!("Remove {} from the team", member.username), target, target, rsx! {
+                                                        div { class: "org-form",
+                                                            strong { "Remove {member.username} from the team?" }
+                                                            input { r#type: "hidden", name: "team_id", value: "{detail.team.id}" }
+                                                            input { r#type: "hidden", name: "user_id", value: "{member.user_id}" }
+                                                            {fields::removal_confirm(&member.username)}
+                                                            {fields::hidden_controls(page, "remove-team-member")}
+                                                        }
+                                                    }, "Remove")}
                                                 }
                                             }
                                         }
@@ -250,8 +254,10 @@ fn management(page: &Page, target: &str, detail: &super::TeamDetail) -> Element 
     let more_note = format!(
         "This organization has more than {REPOSITORY_CHOICE_LIMIT} repositories; enter the repository ID."
     );
-    // The delete confirmation is typed, never filled in, except to show a rejected attempt.
-    let confirmation = if page.draft.get("action").is_some_and(|v| v == "team-delete") {
+    // The delete confirmation is typed, never filled in, except to show a rejected attempt, which
+    // reopens its dialog.
+    let refused = page.draft.get("action").is_some_and(|v| v == "team-delete");
+    let confirmation = if refused {
         page.draft.get("team_id").cloned().unwrap_or_default()
     } else {
         String::new()
@@ -301,11 +307,22 @@ fn management(page: &Page, target: &str, detail: &super::TeamDetail) -> Element 
                 h4 { id: "team-delete-title", "Delete team" }
                 p { "Deleting a team removes its memberships and repository access." }
             }
-            form { method: "post", action: target.to_owned(), class: "org-form org-danger-form",
-                label { span { "Type the team ID to confirm" }
-                    DraftInput { class: FIELD, name: "team_id", initial_value: confirmation, placeholder: detail.team.id.to_string(), maxlength: Some(32) }
+            div { class: "org-danger-action",
+                if refused {
+                    if let Some(message) = &page.message {
+                        div { role: "alert", class: "repo-alert repo-alert-error", p { "{message}" } }
+                    }
                 }
-                {controls_as(page, "team-delete", "Delete team and its grants", "btn btn-destructive")}
+                a { class: "btn btn-destructive", href: "#team-delete-dialog", "Delete team and its grants" }
+                {confirm_dialog(Some("team-delete-dialog"), &format!("Delete team {}", detail.team.name), target, target, rsx! {
+                    div { class: "org-form",
+                        strong { "Delete team {detail.team.name}?" }
+                        label { span { "Type the team ID to confirm" }
+                            DraftInput { class: FIELD, name: "team_id", initial_value: confirmation, placeholder: detail.team.id.to_string(), maxlength: Some(32) }
+                        }
+                        {fields::hidden_controls(page, "team-delete")}
+                    }
+                }, "Delete team and its grants")}
             }
         }
     }

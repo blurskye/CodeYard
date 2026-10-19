@@ -4,6 +4,7 @@ pub mod comments;
 pub mod issue;
 pub mod labels;
 pub mod reactions;
+pub mod tasks;
 
 pub fn json_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
     use axum::{
@@ -56,6 +57,18 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         .route(
             "/:owner/:repo/issues/:number/comments",
             post(comments::native_comment),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/comments/:comment_id/edit",
+            post(comments::native_edit_comment),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/comments/:comment_id/delete",
+            post(comments::native_delete_comment),
+        )
+        .route(
+            "/:owner/:repo/issues/:number/tasks",
+            post(tasks::native_toggle_task),
         )
         .route(
             "/:owner/:repo/issues/:number/react",

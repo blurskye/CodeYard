@@ -1,6 +1,7 @@
 //! Shared SSR/hydrated issue and PR presentation. Values are authorized by the caller.
 //! This is the collaboration lane: the `Page` enum the app renders for issues and pull requests.
-use super::{detail, list, new, BranchChoices, DetailDraft, IssueChoices, NewDraft};
+use super::new::chooser;
+use super::{detail, list, new, BranchChoices, DetailDraft, IssueChoices, NewDraft, TemplateCard};
 use crate::webui::pages::repos::{
     actions::Run,
     chrome::RepoChrome,
@@ -8,7 +9,10 @@ use crate::webui::pages::repos::{
     compare, labels, milestones,
     pulls::{self, Conversation, Diff, LineComment, Review, ReviewDraft, Reviewer, Thread},
 };
-use crate::webui::{components::references::References, encode_component};
+use crate::webui::{
+    components::{references::References, task_lists::TaskCount},
+    encode_component,
+};
 use dioxus::prelude::*;
 use std::collections::BTreeMap;
 
@@ -174,6 +178,12 @@ pub struct Item {
     /// The comments on the issue or pull request, for the counts in the lists and tabs.
     #[serde(default)]
     pub comment_count: i64,
+    /// Whether the viewer may tick the task boxes of the body: its author or a writer.
+    #[serde(default)]
+    pub can_tick: bool,
+    /// The task boxes in the body and how many are ticked. Lists show it; the detail page does not.
+    #[serde(default)]
+    pub tasks: TaskCount,
     /// The commits between the base and head of a pull request, for its Commits tab. None when Git
     /// could not count them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -325,6 +335,25 @@ pub struct Comment {
     pub conversation: Option<Conversation>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<Reaction>,
+    /// Set on a comment the viewer wrote: they may change its text.
+    #[serde(default)]
+    pub can_edit: bool,
+    /// Set on a comment the viewer may delete: their own, or any when they maintain the repository.
+    #[serde(default)]
+    pub can_delete: bool,
+    /// When the comment was last edited, after it was written. None for a comment never edited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edited: Option<String>,
+    /// The text being edited when a form is re-rendered, such as a preview or a refused edit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit: Option<CommentEdit>,
+}
+
+/// An edit form that is shown again with the text the author typed.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CommentEdit {
+    pub body: String,
+    pub preview: bool,
 }
 
 /// One page of discussion comments and reviews, oldest first. `page` counts from 1.
@@ -369,6 +398,12 @@ pub enum Page {
         items: Vec<Item>,
         #[serde(default)]
         filters: ListFilters,
+    },
+    /// The template chooser of a new issue, shown when the repository has issue templates.
+    Choose {
+        repository: Repository,
+        templates: Vec<TemplateCard>,
+        blank_allowed: bool,
     },
     New {
         repository: Repository,
@@ -493,6 +528,7 @@ impl Page {
     pub fn repo_chrome(&self) -> &RepoChrome {
         match self {
             Page::List { repository, .. }
+            | Page::Choose { repository, .. }
             | Page::New { repository, .. }
             | Page::Detail { repository, .. }
             | Page::Milestones { repository, .. }
@@ -520,6 +556,11 @@ pub fn render(page: Page) -> Element {
             items,
             filters,
         } => list(&repository, kind, &state, &query, counts, &items, &filters),
+        Page::Choose {
+            repository,
+            templates,
+            blank_allowed,
+        } => chooser(&repository, &templates, blank_allowed),
         Page::New {
             repository,
             kind,

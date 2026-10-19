@@ -1,8 +1,8 @@
 //! Account pages: sign-in and sign-out, account settings, administration and profiles.
 //! One `Page` covers them, and the app renders it through `render`.
 use crate::webui::pages::{
-    admin::{admin_page, ban_confirmation_page, Admin},
-    auth::{auth_page, logout_page, password_help_page, AuthMode},
+    admin::{admin_page, admin_users_page, Admin, AdminUsers},
+    auth::{auth_page, logout_page, password_help_page, two_factor_page, AuthMode},
     fields::FormValues,
     settings::{settings_page, Settings},
     users::{profile_page, Profile, ProfileActivity, ProfileStars, Repository},
@@ -32,6 +32,14 @@ pub enum Page {
     PasswordHelp {
         redirect: String,
     },
+    TwoFactor {
+        action: String,
+        csrf_token: String,
+        pending: String,
+        redirect: String,
+        message: Option<String>,
+        is_error: bool,
+    },
     Settings {
         model: Box<Settings>,
         csrf_token: String,
@@ -44,11 +52,11 @@ pub enum Page {
         message: Option<String>,
         is_error: bool,
     },
-    BanConfirmation {
-        username: String,
-        user_id: i64,
+    AdminUsers {
+        model: AdminUsers,
         csrf_token: String,
-        days: i32,
+        message: Option<String>,
+        is_error: bool,
     },
     Profile {
         profile: Profile,
@@ -91,6 +99,21 @@ pub fn render(page: Page) -> Element {
         ),
         Page::Logout { csrf_token } => logout_page(&csrf_token),
         Page::PasswordHelp { redirect } => password_help_page(&redirect),
+        Page::TwoFactor {
+            action,
+            csrf_token,
+            pending,
+            redirect,
+            message,
+            is_error,
+        } => two_factor_page(
+            &action,
+            &csrf_token,
+            &pending,
+            &redirect,
+            message.as_deref(),
+            is_error,
+        ),
         Page::Settings {
             model,
             csrf_token,
@@ -103,12 +126,12 @@ pub fn render(page: Page) -> Element {
             message,
             is_error,
         } => admin_page(model, &csrf_token, message.as_deref(), is_error),
-        Page::BanConfirmation {
-            username,
-            user_id,
+        Page::AdminUsers {
+            model,
             csrf_token,
-            days,
-        } => ban_confirmation_page(&username, user_id, &csrf_token, days),
+            message,
+            is_error,
+        } => admin_users_page(model, &csrf_token, message.as_deref(), is_error),
         Page::Profile {
             profile,
             repositories,
@@ -143,7 +166,7 @@ pub fn render(page: Page) -> Element {
 mod tests {
     use super::*;
     use crate::webui::pages::{
-        admin::{Account, Activity, Signup},
+        admin::{Account, Activity, AdminUsers, Signup},
         fields::preserved_values,
         settings::Key,
     };
@@ -223,6 +246,7 @@ mod tests {
                             created: "2026-10-02".into(),
                         }],
                         tokens: vec![],
+                        sessions: vec![],
                         new_token: None,
                         password_supported: true,
                         must_change_password: true,
@@ -234,6 +258,7 @@ mod tests {
                             created: "2026-10-02".into(),
                         }],
                         values: values.clone(),
+                        two_factor: Default::default(),
                     }),
                     csrf_token: "csrf-marker".into(),
                     message: Some("<b>Validation error</b>".into()),
@@ -248,6 +273,7 @@ mod tests {
                     current_user_id: 1,
                     ai_crawlers: "block".into(),
                     accounts: vec![Account {
+                        two_factor: false,
                         id: 2,
                         username: "bob".into(),
                         email: "bob@example.test".into(),
@@ -277,7 +303,38 @@ mod tests {
                 message: Some("<b>Validation error</b>".into()),
                 is_error: true,
             },
-            "All accounts",
+            "Manage users",
+        ));
+        pages.push((
+            Page::AdminUsers {
+                model: AdminUsers {
+                    current_user_id: 1,
+                    accounts: vec![Account {
+                        two_factor: false,
+                        id: 2,
+                        username: "bob".into(),
+                        email: "bob@example.test".into(),
+                        admin: false,
+                        banned: true,
+                        must_change_password: true,
+                        files: 3,
+                        bytes: 1024,
+                        commits: 4,
+                        pushes: 2,
+                        contributions: 6,
+                        created: "2026-10-02".into(),
+                    }],
+                    search: "bo".into(),
+                    page: 1,
+                    pages: 2,
+                    total: 30,
+                    values: FormValues::default(),
+                },
+                csrf_token: "csrf-marker".into(),
+                message: Some("<b>Validation error</b>".into()),
+                is_error: true,
+            },
+            "Users",
         ));
         pages.push((
             Page::Profile {

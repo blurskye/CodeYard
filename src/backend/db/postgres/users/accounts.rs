@@ -291,6 +291,7 @@ pub async fn list_admin_account_summaries(pool: &PgPool) -> Result<Vec<AdminAcco
             u.is_admin,
             u.is_banned,
             u.must_change_password,
+            u.two_factor_enabled,
             u.created_at,
             storage.total_files,
             (storage.total_bytes + repo_storage.total_repo_bytes)::BIGINT AS total_bytes,

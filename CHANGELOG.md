@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.3
+
+- **Releases:** a Releases block on the Code page and a Releases | Tags switch. Create, edit and delete releases on a
+  tag, with notes, a pre-release flag and uploaded files. Branch and tag archives download as
+  `.zip` or `.tar.gz`.
+- **Webhooks:** repository and organization webhooks with a signing secret, a delivery log,
+  redelivery and a test ping, for push, issue, pull request and comment events.
+- **Two-factor sign-in:** authenticator-app codes and one-time backup codes, set up under
+  account settings. An administrator can reset a locked-out account.
+- **Deploy keys:** read-only or write SSH keys that give one repository access, for build
+  servers. A write key never bypasses branch protection.
+- **Templates:** Markdown issue templates, YAML issue forms (input, text area, dropdown and
+  checkboxes, with required fields) and a pull request template. Task lists (`- [ ]`) can be
+  ticked in place.
+- **CODEOWNERS:** owners of the changed files are requested as reviewers on a pull request, and
+  again when the base branch changes.
+- **Wiki and insights:** a per-repository wiki and a commit-activity page, reachable by URL
+  and not shown in the repository tabs.
+- **Accounts:** organization invitations, an admin users page, and email and session settings.
+- **Database:** additive migrations 2 to 8 on top of the 0.1.2 baseline.
+
 ## 0.1.2
 
 - **New interface:** a header with the page context (Dashboard, or owner / repo with the

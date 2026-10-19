@@ -3,4 +3,7 @@ mod page;
 #[cfg(test)]
 mod tests;
 
-pub use page::{settings_nav, settings_page, settings_tab, Key, Settings, Token};
+pub use page::{
+    settings_nav, settings_page, settings_tab, AccountSession, Key, Settings, Token, TwoFactor,
+    TwoFactorSetup,
+};

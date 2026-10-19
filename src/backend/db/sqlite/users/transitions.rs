@@ -1,4 +1,6 @@
-use crate::backend::db::users::transitions::{AccountAdmission, BanChange, SetupClaim};
+use crate::backend::db::users::transitions::{
+    AccountAdmission, BanChange, EmailChange, RoleChange, SetupClaim,
+};
 use sqlx::SqlitePool;
 // Atomic identity transitions. No provider, filesystem or KDF work under locks.
 use crate::backend::db::models::{NodeConfiguration, User};
@@ -229,6 +231,60 @@ pub async fn change_ban(
     tx.commit().await?;
     // Repository rows, objects and disk contents are preserved on suspension.
     Ok(BanChange::Updated(Box::new(user)))
+}
+
+/// Sets the account's address. Another account's address is refused in the same transaction.
+pub async fn change_email(pool: &SqlitePool, user_id: i64, email: &str) -> Result<EmailChange> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE email=?1 AND id<>?2)")
+        .bind(email)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?
+    {
+        return Ok(EmailChange::Taken);
+    }
+    let user = sqlx::query_as::<_, User>(
+        "UPDATE users SET email=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *",
+    )
+    .bind(user_id)
+    .bind(email)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(user) = user else {
+        return Ok(EmailChange::Missing);
+    };
+    tx.commit().await?;
+    Ok(EmailChange::Updated(Box::new(user)))
+}
+
+/// Grants or removes the site administrator role. The acting administrator is active and is
+/// never the target, so at least one administrator always remains.
+pub async fn change_admin_role(
+    pool: &SqlitePool,
+    actor: i64,
+    target: i64,
+    admin: bool,
+) -> Result<RoleChange> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !active_admin(&mut tx, actor).await? {
+        return Ok(RoleChange::Denied);
+    }
+    if actor == target {
+        return Ok(RoleChange::SelfChange);
+    }
+    let user = sqlx::query_as::<_, User>(
+        "UPDATE users SET is_admin=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *",
+    )
+    .bind(target)
+    .bind(admin)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(user) = user else {
+        return Ok(RoleChange::Missing);
+    };
+    tx.commit().await?;
+    Ok(RoleChange::Updated(Box::new(user)))
 }
 
 pub async fn register_password(

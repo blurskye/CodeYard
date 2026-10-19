@@ -103,6 +103,17 @@ pub(crate) async fn lock_write_authority(
         .is_some_and(|a| a.access.can_write() || a.personal_override))
 }
 
+/// Moderation of other people's comments: repository maintainers and site administrators.
+pub(crate) async fn lock_maintain_authority(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    Ok(lock_discussion_authority(tx, actor_id, repo_id)
+        .await?
+        .is_some_and(|a| a.access.can_maintain() || a.personal_override))
+}
+
 /// Repository policy mutation; reuse the locked current authority snapshot.
 pub(crate) async fn lock_admin_authority(
     tx: &mut Transaction<'_, Sqlite>,

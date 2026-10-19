@@ -110,6 +110,7 @@ impl Reply {
             .iter()
             .any(|v| v.to_str().unwrap().contains("Cookie")));
     }
+    #[track_caller]
     pub fn redirect(&self, path: &str) {
         assert_eq!(self.status, StatusCode::SEE_OTHER);
         assert_eq!(self.headers[header::LOCATION], path);

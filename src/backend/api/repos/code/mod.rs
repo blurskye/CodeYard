@@ -78,7 +78,7 @@ pub fn page_router() -> Router<Arc<AppState>> {
 pub fn download_router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/:owner/:repo/raw/*ref_path", get(raw::raw_page))
-        .route("/:owner/:repo/archive", get(archive::page))
+        .route("/:owner/:repo/archive/*archive", get(archive::page))
 }
 
 /// Uploads carry whole files, so this router has its own, larger body limit.

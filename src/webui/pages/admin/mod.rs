@@ -4,7 +4,7 @@ mod page;
 pub mod storage;
 #[cfg(test)]
 mod tests;
+mod users;
 
-pub use page::{
-    admin_page, ban_confirmation_page, normalize_days, Account, Activity, Admin, Signup,
-};
+pub use page::{admin_page, normalize_days, Account, Activity, Admin, Signup};
+pub use users::{admin_users_page, AdminUsers};

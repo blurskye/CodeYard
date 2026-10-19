@@ -11,7 +11,7 @@ use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::identity;
 use crate::backend::identity::credentials::PasswordAccount;
-use crate::backend::identity::login::PasswordCredentials;
+use crate::backend::identity::login::{FirstFactor, PasswordCredentials};
 use crate::backend::identity::registration::RegistrationOutcome;
 use crate::backend::identity::setup::SetupInput;
 use crate::webui::pages::{
@@ -38,8 +38,9 @@ pub async fn login(
     Json(req): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let session = LoginSessionRequest::from_headers(&headers);
-    let authenticated = identity::login::password_login(
+    let first = identity::login::password_login(
         &state.pool,
+        state.secret_encryptor.as_deref(),
         PasswordCredentials {
             identity: &req.username,
             password: &req.password,
@@ -48,6 +49,9 @@ pub async fn login(
     )
     .await
     .map_err(errors::login_failure)?;
+    let FirstFactor::Authenticated(authenticated) = first else {
+        return Err(errors::two_factor_required_failure());
+    };
     let cookie =
         session::build_session_cookie(&authenticated.session_id, session::session_duration_days());
     Ok((
@@ -245,8 +249,9 @@ pub(crate) async fn auth_post(
         password: field(&form, "password"),
     };
     let result: Result<Option<String>, ApiFailure> = match mode {
-        AuthMode::Login => identity::login::password_login(
+        AuthMode::Login => match identity::login::password_login(
             &ctx.state.pool,
+            ctx.state.secret_encryptor.as_deref(),
             PasswordCredentials {
                 identity: account.username,
                 password: account.password,
@@ -254,8 +259,14 @@ pub(crate) async fn auth_post(
             session_request.context(),
         )
         .await
-        .map(|authenticated| Some(authenticated.session_id))
-        .map_err(auth::errors::login_failure),
+        {
+            Ok(FirstFactor::Authenticated(authenticated)) => Ok(Some(authenticated.session_id)),
+            Ok(FirstFactor::SecondFactor { pending }) => {
+                let redirect = safe_redirect(form.get("redirect").map(String::as_str));
+                return auth::two_factor::challenge(&ctx, &redirect, pending, None, StatusCode::OK);
+            }
+            Err(error) => Err(auth::errors::login_failure(error)),
+        },
         AuthMode::Register => identity::registration::register_password(
             &ctx.state.pool,
             account,

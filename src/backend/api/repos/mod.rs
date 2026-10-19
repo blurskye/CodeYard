@@ -12,14 +12,18 @@ pub mod activity;
 pub mod chrome;
 pub mod code;
 pub mod collection;
+pub mod deploy_keys;
+pub mod insights;
 pub mod issues;
 pub mod labels;
 pub mod milestones;
 pub mod pulls;
 pub mod refs;
+pub mod releases;
 pub mod repository;
 pub mod responses;
 pub mod settings;
+pub mod wiki;
 
 pub fn router() -> Router<Arc<AppState>> {
     let json = Router::new()
@@ -50,8 +54,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(settings::json_router())
         .merge(activity::json_router())
         .merge(labels::router())
+        .merge(deploy_keys::json_router())
         .merge(issues::json_router())
         .merge(pulls::json_router())
+        .merge(releases::json_router())
+        .merge(wiki::json_router())
         .route_layer(axum::middleware::from_fn(
             crate::backend::api::http::middleware::require_node_access,
         ))
@@ -69,12 +76,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024));
     let pages = Router::new()
         .route("/:owner/:repo/settings", get(repository::page))
+        .route("/:owner/:repo/insights", get(insights::page))
         .route(
             "/:owner/:repo/_forms/:action",
             get(repository::get_form).post(repository::post_form),
         )
         .merge(code::page_router())
         .merge(refs::page_router())
+        .merge(releases::page_router())
+        .merge(wiki::page_router())
         .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024));
     Router::new()
         .merge(json)
@@ -87,4 +97,5 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(pulls::page_router())
         .merge(milestones::page_router())
         .merge(labels::page_router())
+        .merge(releases::upload_router())
 }

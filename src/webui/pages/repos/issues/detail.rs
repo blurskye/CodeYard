@@ -1,5 +1,5 @@
 use super::{
-    editor::DetailEditForm,
+    editor::{DetailEditForm, MarkdownEditor},
     label_style, merge_method_available, preselected_merge_method,
     reactions::{react_action, reaction_bar},
     Comment, CommentPage, Comparison, Event, Item, Kind, Label, Milestone, Repository, StackLayer,
@@ -7,8 +7,8 @@ use super::{
 };
 use crate::webui::{
     components::{
-        compact_date, count_label, current_time, references::References, relative_date, Avatar,
-        Markdown,
+        compact_date, confirm_dialog, count_label, current_time, references::References,
+        relative_date, Avatar, Markdown,
     },
     encode_component,
     navigation::NavLink,
@@ -22,6 +22,9 @@ pub struct DetailDraft {
     pub title: Option<String>,
     pub body: Option<String>,
     pub comment: String,
+    /// The comment being edited, with its text in `comment`. None when the comment box is in use.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editing: Option<i64>,
     pub label: String,
     pub preview: bool,
     /// The merge method that the submitted merge form chose, kept when the merge is refused.
@@ -688,6 +691,50 @@ fn discussion_entry(
     }
 }
 
+/// The edit and delete controls of a comment the viewer may change. Both open in place, so they
+/// work without JavaScript. The server checks the same rights again when the form is sent.
+fn comment_controls(
+    repo: &Repository,
+    url: &str,
+    comment: &Comment,
+    references: &References,
+) -> Element {
+    let id = comment.id;
+    let action = format!("{url}/comments/{id}");
+    let body = comment
+        .edit
+        .as_ref()
+        .map_or_else(|| comment.body.clone(), |edit| edit.body.clone());
+    let preview = comment.edit.as_ref().is_some_and(|edit| edit.preview);
+    let open = comment.edit.is_some();
+    rsx! {
+        div { class: "collaboration-comment-controls",
+            if comment.can_edit {
+                details { class: "collaboration-comment-edit", open,
+                    summary { class: "btn btn-secondary btn-sm", title: "Edit this comment", "Edit" }
+                    form { method: "post", action: format!("{action}/edit"), class: "collaboration-comment-edit-form",
+                        {csrf(&repo.csrf)}
+                        MarkdownEditor { id: format!("edit-comment-{id}"), initial: body, rows: 8usize, required: true, initial_preview: preview, references: references.clone() }
+                        div { class: "collaboration-form-actions",
+                            button { class: "btn btn-primary", r#type: "submit", "Save changes" }
+                        }
+                    }
+                }
+            }
+            if comment.can_delete {
+                details { class: "native-menu repo-delete-menu",
+                    summary { class: "btn btn-danger btn-sm", title: "Delete this comment", "Delete" }
+                    {confirm_dialog(None, "Delete comment", &format!("{url}#comment-{id}"), &format!("{action}/delete"), rsx! {
+                        {csrf(&repo.csrf)}
+                        strong { "Delete this comment?" }
+                        p { class: "collaboration-muted", "Its text is removed for everyone. This cannot be undone." }
+                    }, "Delete comment")}
+                }
+            }
+        }
+    }
+}
+
 /// One comment as an article. A root comment on a file is wrapped in its thread anchor, which
 /// resolve redirects use.
 pub(in crate::webui::pages::repos) fn comment_entry(
@@ -698,11 +745,15 @@ pub(in crate::webui::pages::repos) fn comment_entry(
     comment: &Comment,
     references: &References,
 ) -> Element {
+    // A writer or the author ticks the task boxes of a comment through its own form.
+    let task_form = (comment.can_edit && comment.conversation.is_none())
+        .then(|| format!("task-comment-{}", comment.id));
     let article = rsx! {
         article { id: format!("comment-{}", comment.id), class: "collaboration-panel collaboration-comment",
             header { class: "collaboration-panel-header", {author_link(&comment.author)} " commented " {ago(&comment.created)}
                 if let Some(text) = role_badge(&repo.owner, item_author, &comment.author) { span { class: "collaboration-badge", "{text}" } }
                 if let Some(conversation) = &comment.conversation { {review::conversation_badges(conversation)} }
+                if let Some(edited) = &comment.edited { span { class: "collaboration-muted collaboration-edited", title: format!("Edited {}", compact_date(edited)), "edited" } }
             }
             // A thread's location links to the thread on the Files changed tab, where its lines are shown.
             if let Some(location) = &comment.location {
@@ -711,8 +762,15 @@ pub(in crate::webui::pages::repos) fn comment_entry(
                     else { "{location}" }
                 }
             }
-            div { class: "collaboration-markdown", Markdown { content: comment.body.clone(), references: references.clone() } }
+            div { class: "collaboration-markdown", Markdown { content: comment.body.clone(), references: references.clone(), task_form: task_form.clone() } }
+            if let Some(form_id) = &task_form {
+                form { id: form_id.clone(), method: "post", action: format!("{url}/tasks"), hidden: true,
+                    {csrf(&repo.csrf)}
+                    input { r#type: "hidden", name: "comment", value: comment.id.to_string() }
+                }
+            }
             {reaction_bar(repo, &react_action(url, page), Some(("comment", comment.id)), &comment.reactions)}
+            if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references)} }
             if let Some(conversation) = &comment.conversation {
                 if conversation.can_resolve { {review::resolve_form(repo, url, comment.id, conversation, false, page)} }
             }
@@ -992,7 +1050,14 @@ pub fn detail(
                                     }
                                     div { class: "collaboration-markdown",
                                         if item.body.trim().is_empty() { p { class: "collaboration-muted", "No description provided." } }
-                                        else { Markdown { content: item.body.clone(), references: references.clone() } }
+                                        else { Markdown { content: item.body.clone(), references: references.clone(), task_form: item.can_tick.then(|| "task-body".to_owned()) } }
+                                    }
+                                    if item.can_tick && !item.body.trim().is_empty() {
+                                        form { id: "task-body", method: "post", action: format!("{url}/tasks"), hidden: true,
+                                            {csrf(&repo.csrf)}
+                                            input { r#type: "hidden", name: "expected_state", value: item.state.clone() }
+                                            input { r#type: "hidden", name: "expected_updated", value: item.updated.clone() }
+                                        }
                                     }
                                     {reaction_bar(repo, &react_action(&url, page), None, &item.reactions)}
                                 }

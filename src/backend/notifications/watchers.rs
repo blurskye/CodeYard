@@ -1,5 +1,5 @@
-//! Watch notifications. A new issue or pull request notifies the users watching the repository:
-//! everyone on "All activity", and "Custom" watchers who picked that kind of event.
+//! Watch notifications. A new issue, pull request or published release notifies the users watching
+//! the repository: everyone on "All activity", and "Custom" watchers who picked that kind of event.
 use super::create::{create_and_broadcast_notification, NotificationRequest};
 use super::NotificationBroadcaster;
 use crate::backend::db;
@@ -12,6 +12,7 @@ const WATCHER_BATCH: i64 = 200;
 pub enum WatchEvent {
     Issue,
     Pull,
+    Release,
 }
 
 impl WatchEvent {
@@ -19,18 +20,21 @@ impl WatchEvent {
         match self {
             Self::Issue => "issues",
             Self::Pull => "pulls",
+            Self::Release => "releases",
         }
     }
 }
 
-/// The new issue or pull request a watch notification is about.
+/// The new issue, pull request or published release a watch notification is about.
 pub struct WatchedItem<'a> {
     pub event: WatchEvent,
     pub actor: &'a db::models::User,
     pub repository: &'a db::models::Repository,
     pub owner: &'a str,
     pub repo: &'a str,
-    pub number: i32,
+    /// The issue or pull request number; `None` for a release.
+    pub number: Option<i32>,
+    /// The item's title, or the tag of a release.
     pub title: &'a str,
     pub link: &'a str,
     /// Users this event already notifies for another reason. Each one is notified once.
@@ -44,14 +48,23 @@ pub async fn notify_watchers(
     broadcaster: &NotificationBroadcaster,
     item: WatchedItem<'_>,
 ) -> Vec<i64> {
-    let (kind, noun) = match item.event {
-        WatchEvent::Issue => ("issue_opened", "issue"),
-        WatchEvent::Pull => ("pull_request_opened", "pull request"),
+    let (kind, headline) = match (item.event, item.number) {
+        (WatchEvent::Issue, Some(number)) => ("issue_opened", format!("opened issue #{number}")),
+        (WatchEvent::Pull, Some(number)) => (
+            "pull_request_opened",
+            format!("opened pull request #{number}"),
+        ),
+        _ => (
+            "release_published",
+            format!("published release {}", item.title),
+        ),
     };
     let title = format!(
-        "{} opened {noun} #{} in {}/{}",
-        item.actor.username, item.number, item.owner, item.repo
+        "{} {headline} in {}/{}",
+        item.actor.username, item.owner, item.repo
     );
+    // A release notification carries its tag in the title, so the body is left empty.
+    let body = (item.event != WatchEvent::Release).then_some(item.title);
     let mut sent = Vec::new();
     let mut after = 0;
     loop {
@@ -90,7 +103,7 @@ pub async fn notify_watchers(
                     repo_id: Some(item.repository.id),
                     kind,
                     title: &title,
-                    body: Some(item.title),
+                    body,
                     link: Some(item.link),
                     metadata: json!({
                         "repo_owner": item.owner,

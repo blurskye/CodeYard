@@ -8,6 +8,7 @@ use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome::*;
 use crate::backend::db::organizations::*;
 use crate::backend::repositories::lifecycle;
+use crate::backend::webhooks;
 use crate::webui::app::Page;
 use crate::webui::pages::orgs as view;
 use axum::extract::rejection::FormRejection;
@@ -21,6 +22,9 @@ pub(super) type Fields = HashMap<String, String>;
 pub(super) const BODY_LIMIT: usize = 32 * 1024;
 /// Refusal for a form that has no more specific reason.
 pub(super) const INVALID_FORM: &str = "Check the organization form values.";
+const ORG_NAME_RULE: &str = "Organization name must be 3-255 characters: letters, numbers, hyphens or underscores. Reserved names cannot be used.";
+const ORG_DISPLAY_NAME_RULE: &str =
+    "Display name must be at most 255 characters and cannot contain control characters.";
 /// Query value that makes the organizations index show the deletion notice.
 const DELETED_NOTICE: &str = "organization-deleted";
 
@@ -61,6 +65,7 @@ fn keys(action: &str) -> &'static [&'static str] {
         "add-member" => &["username", "role"],
         "member-role" => &["user_id", "role"],
         "remove-member" => &["user_id", "confirm"],
+        "cancel-invitation" => &["user_id"],
         "recover-owner" => &["org_id", "username", "confirm"],
         "delete-organization" => &["confirm"],
         "team" => &["slug", "name", "description", "privacy"],
@@ -125,16 +130,26 @@ impl Command {
             let description = form
                 .contains_key("description")
                 .then(|| optional(form, "description"));
-            OrganizationProfile::partial(display_name, description).map_err(|_| INVALID_FORM)
+            OrganizationProfile::partial(display_name, description).map_err(|error| match error {
+                OrganizationInputError::Name => ORG_DISPLAY_NAME_RULE,
+                _ => INVALID_FORM,
+            })
         };
         let command = match field(form, "action") {
             "create" if current.is_none() => Self::Create(
-                NewOrganization::new(field(form, "slug"), profile()?).map_err(|_| INVALID_FORM)?,
+                NewOrganization::new(field(form, "slug"), profile()?).map_err(
+                    |error| match error {
+                        OrganizationInputError::Slug => ORG_NAME_RULE,
+                        _ => INVALID_FORM,
+                    },
+                )?,
             ),
             "profile" => Self::Profile(profile()?),
-            "add-member" | "member-role" | "remove-member" => Self::Membership(
-                super::membership::Command::parse(form).map_err(|()| INVALID_FORM)?,
-            ),
+            "add-member" | "member-role" | "remove-member" | "cancel-invitation" => {
+                Self::Membership(
+                    super::membership::Command::parse(form).map_err(|()| INVALID_FORM)?,
+                )
+            }
             "delete-organization" => match current {
                 Some(org) if field(form, "confirm") == org.name => Self::Delete,
                 _ => return Err("Type the organization name to confirm deletion."),
@@ -327,7 +342,10 @@ pub(super) async fn respond(
         notice: (ctx.query.get("notice").map(String::as_str) == Some(DELETED_NOTICE))
             .then(|| "Organization deleted.".to_owned()),
         message,
+        webhooks: None,
         draft,
+        invitations: vec![],
+        pending_invitations: vec![],
     };
     if let Some(org) = org {
         model.selected_team = match super::teams::detail(ctx, actor, org).await {
@@ -397,7 +415,79 @@ pub(super) async fn respond(
             };
         model.repositories = repositories;
         model.more_repositories = more_repositories;
+        if model.tab == "webhooks" && !is_owner {
+            model.tab = "overview".to_owned();
+        }
+        if model.tab == "webhooks" {
+            let base = format!("{INDEX}/{org}?tab=webhooks");
+            let action_base = format!("{INDEX}/{org}/webhooks?tab=webhooks");
+            let place = webhooks::panel::Place {
+                owner: crate::backend::db::webhooks::HookOwner::Organization(org),
+                base: &base,
+                action_base: &action_base,
+                csrf_token: &ctx.csrf_token,
+                repository_id: None,
+            };
+            let viewer = ctx.require_user().ok();
+            let built = match viewer {
+                Some(viewer) => {
+                    webhooks::panel::build(&ctx.state.pool, viewer, &place, &ctx.query).await
+                }
+                None => Err(webhooks::settings::HookError::Denied),
+            };
+            match built {
+                Ok(mut panel) => {
+                    // A refused webhook action returns here with its message in the section.
+                    panel.error = model.message.take();
+                    model.webhooks = Some(Box::new(panel));
+                }
+                Err(
+                    webhooks::settings::HookError::Denied | webhooks::settings::HookError::NotFound,
+                ) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            }
+        }
+        if can_manage {
+            let Ok(first) = OrganizationPage::new(0, PAGE_LIMIT) else {
+                return invalid(ctx);
+            };
+            model.pending_invitations = match organizations::list_organization_invitations(
+                &ctx.state.pool,
+                actor,
+                org,
+                first,
+            )
+            .await
+            {
+                Ok(Applied(values)) => {
+                    let pending = values
+                        .into_iter()
+                        .map(|invite| (invite.user_id, invite.role))
+                        .collect();
+                    match super::membership::project(ctx, pending).await {
+                        Ok(members) => members,
+                        Err(response) => return response,
+                    }
+                }
+                _ => return unavailable(ctx),
+            };
+        }
     } else {
+        model.invitations =
+            match organizations::list_received_organization_invitations(&ctx.state.pool, actor)
+                .await
+            {
+                Ok(values) => values
+                    .into_iter()
+                    .map(|invite| view::Invitation {
+                        org_id: invite.org_id,
+                        name: invite.org_name,
+                        display_name: invite.org_display_name,
+                        role: invite.role,
+                    })
+                    .collect(),
+                Err(_) => return unavailable(ctx),
+            };
         if ["team", "team_members_after", "team_repositories_after"]
             .iter()
             .any(|key| ctx.query.contains_key(*key))
@@ -437,7 +527,7 @@ pub(super) async fn respond(
 /// The section the URL names. Overview is the default, and any other value shows it too.
 pub(super) fn requested_tab(ctx: &PageContext) -> String {
     match ctx.query.get("tab").map(String::as_str) {
-        Some(tab @ ("members" | "teams")) => tab.to_owned(),
+        Some(tab @ ("members" | "teams" | "webhooks")) => tab.to_owned(),
         _ => "overview".to_owned(),
     }
 }
@@ -546,7 +636,7 @@ async fn apply(
         }
         Command::Membership(command) => {
             // An unknown username is the one Missing that the form reports by name.
-            let add = matches!(command, super::membership::Command::Add { .. });
+            let add = matches!(command, super::membership::Command::Invite { .. });
             return super::membership::apply(ctx, actor, org, command)
                 .await
                 .map(|outcome| match outcome {
@@ -710,6 +800,13 @@ pub(super) async fn mutate(
     if matches!(outcome, Ok(Missing)) && field(&form, "action") == "add-member" {
         let message = format!("No user named {}.", field(&form, "username"));
         return respond(&ctx, org, StatusCode::NOT_FOUND, Some(message), draft).await;
+    }
+    if matches!(outcome, Ok(Conflict)) && field(&form, "action") == "add-member" {
+        let message = format!(
+            "{} is already a member or has a pending invitation.",
+            field(&form, "username")
+        );
+        return respond(&ctx, org, StatusCode::CONFLICT, Some(message), draft).await;
     }
     let (status, message) = match outcome {
         Ok(Applied(())) => {

@@ -36,6 +36,7 @@ fn repo_chrome() -> RepoChrome {
         topics: Vec::new(),
         is_private: false,
         is_archived: false,
+        wiki_enabled: true,
         can_write: true,
         can_admin: true,
         is_owner: false,
@@ -939,4 +940,46 @@ fn the_runs_footer_shows_only_when_the_page_is_full() {
     let rendered = html(full);
     assert!(rendered.contains("Showing the latest 1 runs."));
     assert!(rendered.contains("Show more runs"));
+}
+
+#[test]
+fn run_page_offers_cancel_and_rerun_forms_only_to_writers() {
+    let selected = |run: Run| SelectedRun {
+        run,
+        logs: vec![],
+        deployment: None,
+        fetched_lines: 0,
+        logs_truncated: false,
+    };
+    let mut page = model();
+    let mut running = run();
+    running.head_sha = Some("a".repeat(40));
+    page.selected = Some(selected(running.clone()));
+    let rendered = html(page.clone());
+    assert!(
+        rendered.contains("action=\"/alice/repo/actions/runs/real-run/cancel\""),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("/rerun\""), "{rendered}");
+    assert!(rendered.contains("name=\"csrf_token\""), "{rendered}");
+
+    // Readers get neither form.
+    page.can_dispatch = false;
+    let reader = html(page.clone());
+    assert!(!reader.contains("/cancel\""), "{reader}");
+    assert!(!reader.contains("/rerun\""), "{reader}");
+    page.can_dispatch = true;
+
+    // A finished push run is run again; a finished pull request run is not offered that.
+    running.status = "succeeded".into();
+    page.selected = Some(selected(running.clone()));
+    let finished = html(page.clone());
+    assert!(
+        finished.contains("action=\"/alice/repo/actions/runs/real-run/rerun\""),
+        "{finished}"
+    );
+    assert!(!finished.contains("/cancel\""), "{finished}");
+    running.event = "pull_request".into();
+    page.selected = Some(selected(running));
+    assert!(!html(page).contains("/rerun\""));
 }

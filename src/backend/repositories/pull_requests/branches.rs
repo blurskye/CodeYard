@@ -118,6 +118,7 @@ async fn move_head(
         .map_err(|_| RefreshError::Database)?;
     if let Some(current) = current {
         let _ = queue_pull_request_ci(pool, ci, base, &current, actor_id).await;
+        super::code_owners::request_code_owner_reviews(pool, ci, base, &current, actor_id).await;
     }
     Ok(true)
 }
@@ -203,6 +204,16 @@ async fn refresh_one(
             .map_err(|_| RefreshError::Database)?
             {
                 changed = true;
+                // The base may have changed CODEOWNERS or the files the pull request differs in.
+                let current = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+                    .await
+                    .map_err(|_| RefreshError::Database)?;
+                if let Some(current) = current {
+                    super::code_owners::request_code_owner_reviews(
+                        pool, ci, &base, &current, actor_id,
+                    )
+                    .await;
+                }
             } else {
                 retry = true;
             }

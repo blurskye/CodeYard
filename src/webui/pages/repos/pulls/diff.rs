@@ -21,6 +21,9 @@ pub struct DiffFile {
     pub additions: i32,
     pub deletions: i32,
     pub patch: String,
+    /// The owners the base branch's CODEOWNERS names for this file, as written.
+    #[serde(default)]
+    pub owners: Vec<String>,
 }
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Diff {
@@ -237,6 +240,9 @@ fn file_cards(
             details { id: format!("diff-file-{index}"), open: !viewed.is_some_and(|marks| marks.paths.contains(&file.filename)), class: "collaboration-panel collaboration-diff-file",
                 summary { class: "collaboration-panel-header collaboration-diff-header",
                     span { class: "collaboration-diff-filename", "{file.filename}" }
+                    if !file.owners.is_empty() {
+                        span { class: "collaboration-badge", title: "Code owners of this file", {format!("Owned by {}", file.owners.join(", "))} }
+                    }
                     for badge in patch_badges(&file.status, &file.patch) { span { class: "patch-badge", "{badge}" } }
                     span { class: "collaboration-additions", "+{file.additions}" }
                     span { class: "collaboration-deletions", "−{file.deletions}" }

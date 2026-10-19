@@ -333,6 +333,68 @@ pub async fn access_management(f: &Fixture) {
     assert_eq!(members[0].user_id, f.owner.id);
 }
 
+/// An invitation stays pending until the invitee accepts. The owner sees and cancels it, and
+/// the invitee answers it from the organizations list.
+pub async fn invitations(f: &Fixture) {
+    let pool = f.database.pool();
+    let invitee = Fixture::actor(pool, "invitee_pending").await;
+    let invitee_id = invitee.id.to_string();
+    let path = f.path();
+    let invite = [
+        ("action", "add-member"),
+        ("username", "invitee_pending"),
+        ("role", "member"),
+    ];
+    f.form(&f.owner, &path, &invite).await.redirect(&path);
+    let page = f.get(&f.owner, &path).await.organization();
+    assert!(page
+        .pending_invitations
+        .iter()
+        .any(|pending| pending.user_id == invitee.id && pending.role == "member"));
+    assert!(!page
+        .members
+        .iter()
+        .any(|member| member.user_id == invitee.id));
+    let received = f.get(&invitee, INDEX).await.organization().invitations;
+    assert!(received.iter().any(|invite| invite.org_id == f.org));
+    // Asking again names the conflict, and keeps the username in the form.
+    let duplicate = f.form(&f.owner, &path, &invite).await;
+    assert_eq!(duplicate.status, StatusCode::CONFLICT);
+    assert_eq!(
+        duplicate.organization().draft["username"],
+        "invitee_pending"
+    );
+    f.form(
+        &f.owner,
+        &path,
+        &[("action", "cancel-invitation"), ("user_id", &invitee_id)],
+    )
+    .await
+    .redirect(&path);
+    assert!(!f
+        .get(&f.owner, &path)
+        .await
+        .organization()
+        .pending_invitations
+        .iter()
+        .any(|pending| pending.user_id == invitee.id));
+    f.form(&f.owner, &path, &invite).await.redirect(&path);
+    f.form(
+        &invitee,
+        &format!("{INDEX}/invitations/{}/accept", f.org),
+        &[],
+    )
+    .await
+    .redirect(&path);
+    assert!(f
+        .get(&f.owner, &path)
+        .await
+        .organization()
+        .members
+        .iter()
+        .any(|member| member.user_id == invitee.id && member.role == "member"));
+}
+
 pub async fn contracts(f: &Fixture) {
     let pool = f.database.pool();
     let target = Fixture::actor(pool, "inactive_cleanup_target").await;
@@ -419,6 +481,12 @@ pub async fn contracts(f: &Fixture) {
     )
     .await
     .redirect(&f.path());
+    // The invitation makes the owner a member only when they accept it.
+    applied(
+        accept_organization_invitation(pool, target.id, f.org)
+            .await
+            .unwrap(),
+    );
     // Add is not update: conflict cannot change existing authority.
     let conflict = f
         .form(

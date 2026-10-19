@@ -61,6 +61,33 @@ native_operation!(crate::backend::db::postgres::issues::list_issue_comments,
     offset: i64,
 ) -> Result<Vec<IssueCommentEntry>>);
 
+native_operation!(crate::backend::db::postgres::issues::get_issue_comment,
+    crate::backend::db::sqlite::issues::get_issue_comment,
+    fn get_issue_comment(pool: &DbPool, comment_id: i64) -> Result<Option<IssueComment>>);
+
+// Changes the body of the author's comment on the issue. None when the change is refused.
+native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
+    crate::backend::db::sqlite::issues::edit_issue_comment,
+    fn edit_issue_comment(
+    pool: &DbPool,
+    actor_id: i64,
+    repo_id: i64,
+    issue_id: i64,
+    comment_id: i64,
+    body: &str,
+) -> Result<Option<IssueComment>>);
+
+// Deletes a comment on the issue: its author, or a maintainer. False when refused.
+native_operation!(crate::backend::db::postgres::issues::delete_issue_comment,
+    crate::backend::db::sqlite::issues::delete_issue_comment,
+    fn delete_issue_comment(
+    pool: &DbPool,
+    actor_id: i64,
+    repo_id: i64,
+    issue_id: i64,
+    comment_id: i64,
+) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::issues::issue_comment_position,
     crate::backend::db::sqlite::issues::issue_comment_position,
     fn issue_comment_position(pool: &DbPool, comment_id: i64) -> Result<i64>);

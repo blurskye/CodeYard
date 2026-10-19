@@ -201,7 +201,7 @@ async fn all_real_lane_routers_construct_and_infrastructure_failure_is_html_503(
         "/login",
         "/missing/unknown/page",
         "/alice/repo/raw/main/README.md",
-        "/alice/repo/archive?ref=feature%2Ftest",
+        "/alice/repo/archive/feature%2Ftest.zip",
     ] {
         let response = app
             .clone()
@@ -319,7 +319,6 @@ async fn a_get_at_a_form_url_goes_to_the_page_the_form_belongs_to() {
         ("/settings/tokens", "/settings?tab=tokens"),
         ("/settings/tokens/7/delete", "/settings?tab=tokens"),
         ("/settings/appearance", "/settings?tab=appearance"),
-        ("/admin/users", "/admin"),
         ("/alice/demo/commits/main", "/alice/demo/commits?ref=main"),
         (
             "/alice/demo/commits/feature/x%20y",

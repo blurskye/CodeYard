@@ -27,7 +27,7 @@ use tower::ServiceExt;
 
 /// Password hashing has four process-wide permits, and provider settings are
 /// environment variables. The contracts in this file therefore run one at a time.
-static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+use crate::support::PASSWORD_WORK as SERIAL;
 const SSH_KEY: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 

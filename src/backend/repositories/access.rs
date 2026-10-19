@@ -56,6 +56,22 @@ pub async fn can_write(pool: &db::DbPool, user: &User, repository: &Repository) 
     )
 }
 
+/// Moderation of other people's comments: maintainers, owners and site administrators of personal
+/// repositories. Archived repositories take no moderation.
+pub async fn can_maintain(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
+    if repository.is_archived || user.is_banned || user.must_change_password {
+        return Ok(false);
+    }
+    if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
+        return Ok(true);
+    }
+    Ok(
+        db::repositories::access::get_user_repo_access(pool, user.id, repository.id)
+            .await?
+            .can_maintain(),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccessError {
     NotFound,

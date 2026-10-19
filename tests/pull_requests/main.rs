@@ -1,3 +1,4 @@
+mod code_owners;
 mod compare;
 mod diff_view;
 mod forks;

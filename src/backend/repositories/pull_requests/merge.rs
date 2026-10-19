@@ -9,6 +9,7 @@ use crate::backend::repositories::protection::{
     check_branch_write, BranchWrite, History, Refusal, WriteVia,
 };
 use crate::backend::repositories::pull_requests;
+use crate::backend::repositories::pull_requests::code_owners;
 use crate::backend::repositories::store::allowed_merge_methods;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::validate_merge_revision;
@@ -273,6 +274,39 @@ async fn merge_blockers(
                     approval_count
                 ),
             });
+        }
+
+        if rule.require_code_owner_review {
+            // Only approvals that count for this head, from users who can write, reach this list.
+            let approvers: Vec<i64> = decisions
+                .iter()
+                .filter(|decision| {
+                    decision.state == "approved"
+                        && (!rule.dismiss_stale_reviews
+                            || decision.commit_sha.as_deref()
+                                == Some(pull_request.head_sha.as_str()))
+                })
+                .map(|decision| decision.author_id)
+                .collect();
+            let missing = code_owners::missing_owner_approvals(
+                pool,
+                ci,
+                repository,
+                target.1,
+                pull_request,
+                &approvers,
+            )
+            .await
+            .map_err(|_| OperationError::Unavailable {
+                code: "git_unavailable",
+                message: "Code owners are unavailable; merge denied.".to_owned(),
+            })?;
+            if !missing.is_empty() {
+                blockers.push(OperationError::Conflict {
+                    code: "branch_protection",
+                    message: format!("Waiting on review from {}", missing.join(", ")),
+                });
+            }
         }
 
         if rule.require_conversation_resolution {

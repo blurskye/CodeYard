@@ -1,7 +1,7 @@
 mod collection;
 mod confirm;
 mod content;
-mod download;
+pub(crate) mod download;
 mod file;
 mod public;
 mod stats;

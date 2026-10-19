@@ -112,6 +112,8 @@ fn item() -> Item {
         updated: "revision-1".into(),
         labels: vec![],
         comment_count: 0,
+        can_tick: false,
+        tasks: Default::default(),
         commit_count: None,
         file_count: None,
         check_count: 0,
@@ -150,6 +152,7 @@ fn page_modes() -> Vec<Page> {
             additions: 1,
             deletions: 0,
             patch: "<script>patch()</script>".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 0,
@@ -169,6 +172,17 @@ fn page_modes() -> Vec<Page> {
             items: vec![entry.clone()],
             filters: ListFilters::default(),
         });
+        if kind == Kind::Issue {
+            modes.push(Page::Choose {
+                repository: repository_at(Kind::Issue, "/new"),
+                templates: vec![TemplateCard {
+                    path: ".github/ISSUE_TEMPLATE/<bug>.md".into(),
+                    name: "<Bug> report".into(),
+                    about: "</a><script>choose()</script>".into(),
+                }],
+                blank_allowed: true,
+            });
+        }
         for preview in [false, true] {
             modes.push(Page::New {
                 repository: repository_at(kind, "/new"),
@@ -211,6 +225,10 @@ fn page_modes() -> Vec<Page> {
                     location: Some("src/<file>:12 (RIGHT)".into()),
                     conversation: None,
                     reactions: Vec::new(),
+                    can_edit: false,
+                    can_delete: false,
+                    edited: None,
+                    edit: None,
                 }],
                 reviews: Vec::new(),
                 page: 2,
@@ -227,6 +245,7 @@ fn page_modes() -> Vec<Page> {
                 title: Some("preserved & title".into()),
                 body: Some("</textarea><script>edit()</script>".into()),
                 comment: "preserved comment".into(),
+                editing: None,
                 label: "11".into(),
                 preview: true,
                 merge_method: String::new(),
@@ -331,7 +350,7 @@ fn page_modes() -> Vec<Page> {
 #[test]
 fn safe_page_json_roundtrips_every_variant_and_recovery_mode() {
     let modes = page_modes();
-    assert_eq!(modes.len(), 17);
+    assert_eq!(modes.len(), 18);
     for page in modes {
         let encoded = serde_json::to_string(&page).unwrap();
         let decoded: Page = serde_json::from_str(&encoded).unwrap();
@@ -345,6 +364,11 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
             let decoded: Page =
                 serde_json::from_str(&serde_json::to_string(&page).unwrap()).unwrap();
             let plain = match &page {
+                Page::Choose {
+                    repository,
+                    templates,
+                    blank_allowed,
+                } => new::chooser(repository, templates, *blank_allowed),
                 Page::Milestones {
                     repository,
                     state,
@@ -659,6 +683,10 @@ fn discussion_pages_link_to_the_neighbouring_pages() {
                 location: None,
                 conversation: None,
                 reactions: Vec::new(),
+                can_edit: false,
+                can_delete: false,
+                edited: None,
+                edit: None,
             }],
             reviews: Vec::new(),
             page,
@@ -976,6 +1004,7 @@ fn merge_box_names_a_change_request_beside_what_branch_protection_allows() {
             status: ReviewerStatus::ChangesRequested,
             stale: false,
             pending: false,
+            code_owner: false,
         }];
         let render = |entry: &Item| {
             dioxus_ssr::render_element(super::detail(
@@ -1047,6 +1076,7 @@ fn files_diff() -> Diff {
             additions: 1,
             deletions: 1,
             patch: "@@ -1,2 +1,2 @@\n keep\n-old\n+new\n".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 1,
@@ -1319,6 +1349,7 @@ fn compare_page_offers_a_pull_request_only_for_changes_between_different_branche
             additions: 2,
             deletions: 1,
             patch: "@@ -1 +1,2 @@\n-old\n+new\n+more".into(),
+            owners: Vec::new(),
         }],
         additions: 2,
         deletions: 1,
@@ -1383,6 +1414,7 @@ fn compare_page_links_to_the_open_pull_request_for_its_pair() {
             additions: 2,
             deletions: 1,
             patch: "@@ -1 +1,2 @@\n-old\n+new\n+more".into(),
+            owners: Vec::new(),
         }],
         additions: 2,
         deletions: 1,
@@ -1565,6 +1597,7 @@ fn every_collaboration_mode_reuses_the_complete_code_chrome_outside_content() {
     crate::webui::tests::in_scope(|| {
         for page in page_modes() {
             let (repo, family) = match &page {
+                Page::Choose { repository, .. } => (repository, Kind::Issue.family()),
                 Page::Milestones { repository, .. }
                 | Page::MilestoneNew { repository, .. }
                 | Page::MilestoneDetail { repository, .. }
@@ -1824,6 +1857,7 @@ fn diff_is_escaped_native_html() {
             additions: 1,
             deletions: 0,
             patch: "<script>evil()</script>".into(),
+            owners: Vec::new(),
         }],
         viewed: None,
     };
@@ -1953,6 +1987,7 @@ fn diff_threads_show_reaction_bars_that_return_to_the_diff_except_while_pending(
             additions: 1,
             deletions: 1,
             patch: "@@ -1,2 +1,2 @@\n keep\n-old\n+new\n".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 1,
@@ -2008,6 +2043,59 @@ fn diff_threads_show_reaction_bars_that_return_to_the_diff_except_while_pending(
     assert!(!html.contains("name=\"comment\" value=\"7\""), "{html}");
 }
 
+#[test]
+fn comment_controls_show_only_the_rights_the_viewer_has() {
+    let mut mine = comment_at(31, "today");
+    mine.can_edit = true;
+    mine.can_delete = true;
+    mine.edited = Some("2026-10-17T10:00:00Z".into());
+    let mut moderated = comment_at(32, "today");
+    moderated.author = "bob".into();
+    moderated.can_delete = true;
+    let other = comment_at(33, "today");
+    let comments = CommentPage {
+        comments: vec![mine, moderated, other],
+        reviews: Vec::new(),
+        page: 1,
+        has_more: false,
+        events: Vec::new(),
+    };
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(detail(
+            &repository_at(Kind::Issue, "/7"),
+            Kind::Issue,
+            &item(),
+            &comments,
+            &[],
+            &DetailDraft::default(),
+            None,
+            &Default::default(),
+            &[],
+        ))
+    });
+    assert!(
+        html.contains("action=\"/alice/repo/issues/7/comments/31/edit\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("action=\"/alice/repo/issues/7/comments/31/delete\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("action=\"/alice/repo/issues/7/comments/32/delete\""),
+        "{html}"
+    );
+    assert!(!html.contains("comments/32/edit"), "{html}");
+    assert!(!html.contains("comments/33/delete"), "{html}");
+    assert!(!html.contains("comments/33/edit"), "{html}");
+    assert!(html.contains("Delete this comment?"), "{html}");
+    assert_eq!(html.matches("collaboration-edited\"").count(), 1, "{html}");
+    assert!(
+        html.contains("name=\"csrf_token\" value=\"csrf-sentinel\""),
+        "{html}"
+    );
+}
+
 fn comment_at(id: i64, created: &str) -> Comment {
     Comment {
         id,
@@ -2017,6 +2105,10 @@ fn comment_at(id: i64, created: &str) -> Comment {
         location: None,
         conversation: None,
         reactions: Vec::new(),
+        can_edit: false,
+        can_delete: false,
+        edited: None,
+        edit: None,
     }
 }
 
@@ -2101,24 +2193,28 @@ fn sidebar_lists_each_reviewers_latest_decision_and_open_requests() {
                 status: ReviewerStatus::Approved,
                 stale: true,
                 pending: false,
+                code_owner: false,
             },
             Reviewer {
                 username: "carol".into(),
                 status: ReviewerStatus::ChangesRequested,
                 stale: false,
                 pending: false,
+                code_owner: false,
             },
             Reviewer {
                 username: "dave".into(),
                 status: ReviewerStatus::Dismissed,
                 stale: false,
                 pending: false,
+                code_owner: false,
             },
             Reviewer {
                 username: "erin".into(),
                 status: ReviewerStatus::Requested,
                 stale: false,
                 pending: true,
+                code_owner: false,
             },
         ];
         let html = dioxus_ssr::render_element(detail(
@@ -2154,12 +2250,14 @@ fn reviewer_forms_are_for_writers_on_open_pull_requests() {
                 status: ReviewerStatus::Approved,
                 stale: false,
                 pending: false,
+                code_owner: false,
             },
             Reviewer {
                 username: "erin".into(),
                 status: ReviewerStatus::Requested,
                 stale: false,
                 pending: true,
+                code_owner: false,
             },
         ];
         let render = |repo: &Repository, entry: &Item| {
@@ -2202,6 +2300,7 @@ fn reviewer_names_and_a_refused_request_are_escaped_and_kept() {
             status: ReviewerStatus::Requested,
             stale: false,
             pending: true,
+            code_owner: false,
         }];
         let draft = DetailDraft {
             reviewer: "<img src=x>".into(),
@@ -2233,6 +2332,7 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
             additions: 1,
             deletions: 1,
             patch: "@@ -1,2 +1,2 @@\n keep\n-old\n+new\n".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 1,
@@ -2304,6 +2404,7 @@ fn a_refused_reply_is_drawn_once_inside_its_thread() {
             additions: 1,
             deletions: 1,
             patch: "@@ -1,2 +1,2 @@\n keep\n-old\n+new\n".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 1,
@@ -2755,6 +2856,7 @@ fn files_list_each_file_and_offer_viewed_marks_to_signed_in_viewers() {
                     additions: 2,
                     deletions: 1,
                     patch: "@@ -1 +1,2 @@\n-old\n+new\n+more\n".into(),
+                    owners: Vec::new(),
                 },
                 DiffFile {
                     filename: "docs/new.md".into(),
@@ -2762,6 +2864,7 @@ fn files_list_each_file_and_offer_viewed_marks_to_signed_in_viewers() {
                     additions: 3,
                     deletions: 0,
                     patch: "@@ -0,0 +1,3 @@\n+a\n+b\n+c\n".into(),
+                    owners: Vec::new(),
                 },
             ]
         };
@@ -2859,6 +2962,7 @@ fn diff_rows_keep_their_text_and_numbers_and_hide_git_headers() {
             additions: 1,
             deletions: 1,
             patch: "--- a/file\n+++ b/file\n@@ -1,2 +1,2 @@\n context\n-old\n+<script>new</script>\n\\ No newline at end of file".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 1,
@@ -2906,6 +3010,7 @@ fn diff_lines_offer_a_plus_that_opens_the_composer_to_signed_in_readers() {
             additions: 1,
             deletions: 1,
             patch: "@@ -1,2 +1,2 @@\n keep\n-old\n+new".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 1,
@@ -2970,6 +3075,7 @@ fn files_changed_puts_its_tree_behind_a_toggle_and_draws_no_script_only_controls
             additions: 2,
             deletions: 1,
             patch: "@@ -1 +1,2 @@\n-x\n+y\n+z\n".into(),
+            owners: Vec::new(),
         }],
         additions: 2,
         deletions: 1,
@@ -3135,6 +3241,36 @@ fn labels_sort_by_most_used_and_count_the_items_on_each_label() {
 }
 
 #[test]
+fn label_delete_asks_in_a_centred_dialog_with_cancel() {
+    crate::webui::tests::in_scope(|| {
+        let html = dioxus_ssr::render_element(labels::list(
+            &repository(),
+            &[Label {
+                id: 1,
+                name: "wontfix".into(),
+                color: "#0075ca".into(),
+                description: String::new(),
+            }],
+            "",
+            "name",
+            &Default::default(),
+        ));
+        assert!(
+            html.contains("aria-label=\"Delete label wontfix\""),
+            "{html}"
+        );
+        assert!(
+            html.contains("action=\"/alice/repo/_forms/delete-label\""),
+            "{html}"
+        );
+        assert!(html.contains("href=\"/alice/repo/labels\""), "{html}");
+        assert!(html.contains(">Cancel</a>"), "{html}");
+        assert!(html.contains("name=\"confirm\""), "{html}");
+        assert!(!html.contains("class=\"collaboration-checkbox\""), "{html}");
+    });
+}
+
+#[test]
 fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
     crate::webui::tests::in_scope(|| {
         let comment = |id: i64, author: &str| Comment {
@@ -3145,6 +3281,10 @@ fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
             location: None,
             conversation: None,
             reactions: Vec::new(),
+            can_edit: false,
+            can_delete: false,
+            edited: None,
+            edit: None,
         };
         let comments = CommentPage {
             comments: vec![
@@ -3305,8 +3445,12 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             "action=\"/alice/repo/milestones/3/edit\"",
             "action=\"/alice/repo/milestones/3/close\"",
             "action=\"/alice/repo/milestones/3/delete\"",
-            // Deleting asks for a ticked confirmation box first, as label deletion does.
+            // Deleting opens a dialog with a ticked confirmation box, as label deletion does.
             "name=\"confirm\"",
+            "repo-confirm-modal",
+            "aria-label=\"Delete milestone Release\"",
+            "href=\"/alice/repo/milestones/3\"",
+            ">Cancel</a>",
             "href=\"/alice/repo/milestones/3?state=all\"",
             "class=\"collaboration-row\"",
             "← Milestones",
@@ -3314,6 +3458,7 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
         ] {
             assert!(detail_html.contains(expected), "missing {expected}");
         }
+        assert!(!detail_html.contains("class=\"collaboration-checkbox\""));
         let mut reader = repository();
         reader.can_write = false;
         let reader_html = dioxus_ssr::render_element(milestones::detail(
@@ -3544,6 +3689,7 @@ fn split_files_changed_pairs_lines_and_links_both_views() {
             additions: 2,
             deletions: 1,
             patch: "@@ -1,3 +1,4 @@\n keep\n-old\n+new\n+more\n tail".into(),
+            owners: Vec::new(),
         }],
         additions: 2,
         deletions: 1,
@@ -3618,6 +3764,7 @@ fn split_view_skips_git_header_lines_and_comments_return_to_it() {
             additions: 1,
             deletions: 1,
             patch: "diff --git a/src/lib.rs b/src/lib.rs\nindex 1111111..2222222 100644\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new\n".into(),
+            owners: Vec::new(),
         }],
         additions: 1,
         deletions: 1,
@@ -3846,6 +3993,7 @@ fn reviewer_picker_rows_show_avatars_and_checks_for_open_requests() {
             status: ReviewerStatus::Requested,
             stale: false,
             pending: true,
+            code_owner: false,
         }];
         let assignable = vec!["bob".to_string(), "carol".to_string()];
         let html = dioxus_ssr::render_element(super::detail(

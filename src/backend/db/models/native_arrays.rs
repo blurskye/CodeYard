@@ -22,6 +22,7 @@ impl<'r> FromRow<'r, sqlx::postgres::PgRow> for BranchProtectionRule {
             force_push_allowances: row.try_get("force_push_allowances")?,
             enforce_admins: row.try_get("enforce_admins")?,
             require_conversation_resolution: row.try_get("require_conversation_resolution")?,
+            require_code_owner_review: row.try_get("require_code_owner_review")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
         })
@@ -64,6 +65,7 @@ impl<'r> FromRow<'r, sqlx::sqlite::SqliteRow> for BranchProtectionRule {
             })?,
             enforce_admins: row.try_get("enforce_admins")?,
             require_conversation_resolution: row.try_get("require_conversation_resolution")?,
+            require_code_owner_review: row.try_get("require_code_owner_review")?,
             created_at: row.try_get("created_at")?,
             updated_at: row.try_get("updated_at")?,
         })

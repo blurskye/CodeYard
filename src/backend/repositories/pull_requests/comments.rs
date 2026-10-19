@@ -2,11 +2,13 @@ use super::OperationError;
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use crate::backend::issues::comment_link;
+use crate::backend::issues::comments::CommentTarget;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{mentions_anyone, notify_mentions, MentionSource};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
+use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
@@ -460,6 +462,38 @@ pub async fn create_pull_request_comment(
         .await;
     }
 
+    if comment.path.is_some() {
+        let (comment_for_hook, pull_for_hook, repository_for_hook) =
+            (comment.clone(), pull_request.clone(), repository.clone());
+        let (pull_author_id, comment_author_id, sender_id) =
+            (pull_request.author_id, comment.author_id, user.id);
+        webhooks::emit(
+            pool,
+            &repository,
+            events::PULL_REQUEST_REVIEW_COMMENT,
+            vec![pull_author_id, comment_author_id, sender_id],
+            move |owner, people| {
+                let (pull_author, comment_author, sender) = (
+                    people.get(pull_author_id),
+                    people.get(comment_author_id),
+                    people.get(sender_id),
+                );
+                payloads::pull_request_review_comment(
+                    "created",
+                    &comment_for_hook,
+                    &pull_for_hook,
+                    &pull_author,
+                    &comment_author,
+                    Scope {
+                        repo: &repository_for_hook,
+                        owner,
+                        sender: &sender,
+                    },
+                )
+            },
+        );
+    }
+
     Ok(comment)
 }
 
@@ -507,7 +541,7 @@ pub async fn set_comment_resolved(
             .map_err(unavailable)?
     {
         return Err(OperationError::Denied {
-            code: "forbidden",
+            code: "comment_forbidden",
             message: "Only the pull request author or a collaborator with write access can resolve conversations".to_owned(),
         });
     }
@@ -541,4 +575,235 @@ pub async fn set_comment_resolved(
         code: "not_found",
         message: "Comment not found".to_owned(),
     })
+}
+
+/// The pull request and the conversation comment on it, when the user may read them. A comment
+/// filed in a review is not a conversation comment and is not found here.
+async fn conversation_comment_on_pull(
+    pool: &db::DbPool,
+    user: &db::models::User,
+    owner: &str,
+    repo: &str,
+    number: i32,
+    comment_id: i64,
+) -> Result<
+    (
+        db::models::Repository,
+        db::models::PullRequest,
+        db::models::PullRequestComment,
+    ),
+    OperationError,
+> {
+    let repository = db::repositories::records::get_repository(pool, owner, repo)
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository not found".to_owned(),
+        })?;
+    super::require_read(pool, user, &repository).await?;
+    let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Pull request not found".to_owned(),
+        })?;
+    let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Collaboration storage is temporarily unavailable".to_owned(),
+        })?
+        .filter(|comment| comment.pull_request_id == pull_request.id && comment.review_id.is_none())
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Comment not found".to_owned(),
+        })?;
+    Ok((repository, pull_request, comment))
+}
+
+/// Changes the body of a conversation comment. Only its author may, and not in an archived repository.
+pub async fn edit_pull_request_comment(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    target: CommentTarget,
+    body: String,
+) -> Result<db::models::PullRequestComment, OperationError> {
+    let CommentTarget {
+        owner,
+        repo,
+        number,
+        comment_id,
+    } = target;
+    let user = super::actor(pool, actor_id).await?;
+    let (repository, pull_request, previous) =
+        conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
+    if repository.is_archived {
+        return Err(archived_refusal());
+    }
+    if previous.author_id != user.id {
+        return Err(OperationError::Denied {
+            code: "comment_forbidden",
+            message: "Only the author can edit this comment.".to_owned(),
+        });
+    }
+    if let Err(message) = crate::backend::issues::validate_body(&body, true) {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: message.to_owned(),
+        });
+    }
+    let comment = db::pull_requests::reviews::edit_pull_request_comment(
+        pool,
+        user.id,
+        repository.id,
+        pull_request.id,
+        comment_id,
+        &body,
+    )
+    .await
+    .map_err(super::write_error)?
+    .ok_or_else(|| OperationError::Denied {
+        code: "comment_forbidden",
+        message: "You cannot edit this comment.".to_owned(),
+    })?;
+
+    // Only the names the edit adds notify; the others were notified when first written.
+    if mentions_anyone(&body) {
+        let link = pull_request_comment_link(pool, &owner, &repo, &pull_request, &comment).await;
+        notify_mentions(
+            pool,
+            broadcaster,
+            MentionSource {
+                actor: &user,
+                repository: &repository,
+                owner: &owner,
+                repo: &repo,
+                number: pull_request.number,
+                subject: &pull_request.title,
+                link: &link,
+                old_text: Some(&previous.body),
+                text: &body,
+                notified: &[pull_request.author_id],
+            },
+        )
+        .await;
+    }
+    if comment.path.is_some() {
+        let (comment_for_hook, pull_for_hook, repository_for_hook) =
+            (comment.clone(), pull_request.clone(), repository.clone());
+        let (pull_author_id, comment_author_id, sender_id) =
+            (pull_request.author_id, comment.author_id, user.id);
+        webhooks::emit(
+            pool,
+            &repository,
+            events::PULL_REQUEST_REVIEW_COMMENT,
+            vec![pull_author_id, comment_author_id, sender_id],
+            move |owner, people| {
+                let (pull_author, comment_author, sender) = (
+                    people.get(pull_author_id),
+                    people.get(comment_author_id),
+                    people.get(sender_id),
+                );
+                payloads::pull_request_review_comment(
+                    "edited",
+                    &comment_for_hook,
+                    &pull_for_hook,
+                    &pull_author,
+                    &comment_author,
+                    Scope {
+                        repo: &repository_for_hook,
+                        owner,
+                        sender: &sender,
+                    },
+                )
+            },
+        );
+    }
+
+    Ok(comment)
+}
+
+/// Deletes a conversation comment and the notifications about it. The author may delete their own
+/// comment and a repository maintainer may delete anyone's.
+pub async fn delete_pull_request_comment(
+    pool: &db::DbPool,
+    actor_id: i64,
+    target: CommentTarget,
+) -> Result<(), OperationError> {
+    let CommentTarget {
+        owner,
+        repo,
+        number,
+        comment_id,
+    } = target;
+    let user = super::actor(pool, actor_id).await?;
+    let (repository, pull_request, previous) =
+        conversation_comment_on_pull(pool, &user, &owner, &repo, number, comment_id).await?;
+    if repository.is_archived {
+        return Err(archived_refusal());
+    }
+    let removed = db::pull_requests::reviews::delete_pull_request_comment(
+        pool,
+        user.id,
+        repository.id,
+        pull_request.id,
+        comment_id,
+    )
+    .await
+    .map_err(super::write_error)?;
+    if removed {
+        if previous.path.is_some() {
+            let (comment_for_hook, pull_for_hook, repository_for_hook) =
+                (previous.clone(), pull_request.clone(), repository.clone());
+            let (pull_author_id, comment_author_id, sender_id) =
+                (pull_request.author_id, previous.author_id, user.id);
+            webhooks::emit(
+                pool,
+                &repository,
+                events::PULL_REQUEST_REVIEW_COMMENT,
+                vec![pull_author_id, comment_author_id, sender_id],
+                move |owner, people| {
+                    let (pull_author, comment_author, sender) = (
+                        people.get(pull_author_id),
+                        people.get(comment_author_id),
+                        people.get(sender_id),
+                    );
+                    payloads::pull_request_review_comment(
+                        "deleted",
+                        &comment_for_hook,
+                        &pull_for_hook,
+                        &pull_author,
+                        &comment_author,
+                        Scope {
+                            repo: &repository_for_hook,
+                            owner,
+                            sender: &sender,
+                        },
+                    )
+                },
+            );
+        }
+        Ok(())
+    } else {
+        Err(OperationError::Denied {
+            code: "comment_forbidden",
+            message: "You cannot delete this comment.".to_owned(),
+        })
+    }
+}
+
+fn archived_refusal() -> OperationError {
+    OperationError::Denied {
+        code: "repository_archived",
+        message: "This repository is archived and read-only.".to_owned(),
+    }
 }

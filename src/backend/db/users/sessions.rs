@@ -82,6 +82,21 @@ native_operation!(crate::backend::db::postgres::users::sessions::rotate_authenti
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>>);
 
+// The account's sessions that have not expired.
+native_operation!(crate::backend::db::postgres::users::sessions::list_user_sessions,
+    crate::backend::db::sqlite::users::sessions::list_user_sessions,
+    fn list_user_sessions(pool: &DbPool, user_id: i64) -> Result<Vec<Session>>);
+
+// Ends one session if it belongs to the account. Returns whether a session was ended.
+native_operation!(crate::backend::db::postgres::users::sessions::revoke_user_session,
+    crate::backend::db::sqlite::users::sessions::revoke_user_session,
+    fn revoke_user_session(pool: &DbPool, user_id: i64, session_id: &str) -> Result<bool>);
+
+// Ends every session of the account except `keep`. Returns how many were ended.
+native_operation!(crate::backend::db::postgres::users::sessions::revoke_other_user_sessions,
+    crate::backend::db::sqlite::users::sessions::revoke_other_user_sessions,
+    fn revoke_other_user_sessions(pool: &DbPool, user_id: i64, keep: &str) -> Result<u64>);
+
 native_operation!(crate::backend::db::postgres::users::sessions::create_browser_session,
     crate::backend::db::sqlite::users::sessions::create_browser_session,
     fn create_browser_session(

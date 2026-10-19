@@ -777,8 +777,10 @@ fn search_notices(model: &SearchModel) -> Element {
 
 /// The issue or pull request results: state icon and state, title, number, author and an excerpt.
 fn issue_results(model: &SearchModel, kind: Kind, issues: &[IssueCard], none: &str) -> Element {
+    // The rows are the issue list's rows, so they take its stylesheet.
     rsx! {
-        div { class: "panel overflow-hidden",
+        style { dangerous_inner_html: include_str!("../repos/style.css") }
+        div { class: "panel overflow-hidden repo-content",
             if issues.is_empty() { div { class: "px-4 py-14 text-center", h2 { class: "font-semibold", "{none}" } } }
             for issue in issues {
                 article { class: "collaboration-row",

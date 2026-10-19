@@ -281,7 +281,10 @@ pub(crate) fn safe_api_error(failure: &ApiFailure) -> (StatusCode, String) {
             | "response_too_large"
             | "milestone_title_taken"
             | "unassignable"
-            | "too_many_assignees" => &error.message,
+            | "too_many_assignees"
+            | "repository_archived"
+            | "conversation_locked"
+            | "comment_forbidden" => &error.message,
             "merge_conflict" => "Git could not merge these branches. Resolve the conflict before retrying.",
             "not_found" => "The requested resource was not found or you do not have access.",
             "unauthorized" => "Please sign in again before continuing.",
@@ -436,6 +439,8 @@ pub(crate) fn issue_item(
         milestone: None,
         comparison: None,
         comment_count: 0,
+        can_tick: false,
+        tasks: Default::default(),
         commit_count: None,
         file_count: None,
         check_count: 0,
@@ -584,6 +589,11 @@ pub(crate) fn pull_item(
             .user
             .as_ref()
             .is_some_and(|user| user.id != pull.author_id);
+    let can_tick = repo.view.can_write
+        || ctx
+            .user
+            .as_ref()
+            .is_some_and(|user| user.id == pull.author_id);
     Ok(view::Item {
         number: pull.number,
         title: pull.title,
@@ -599,6 +609,8 @@ pub(crate) fn pull_item(
         assignees: Vec::new(),
         milestone: None,
         comment_count: 0,
+        can_tick,
+        tasks: Default::default(),
         commit_count: None,
         file_count: None,
         check_count: 0,
@@ -701,7 +713,13 @@ pub(crate) async fn item(
                 .map_err(|_| unavailable(ctx))?
                 .first()
                 .map_or(0, |(_, count)| *count);
+            let can_tick = repo.view.can_write
+                || ctx
+                    .user
+                    .as_ref()
+                    .is_some_and(|user| user.id == value.author_id);
             let mut shown = issue_item(value, author, labels);
+            shown.can_tick = can_tick;
             shown.assignees = assignees;
             shown.milestone = milestone;
             shown.comment_count = comment_count;
@@ -822,6 +840,52 @@ pub(crate) async fn item(
         }
     }
 }
+/// What the viewer may do to the comments of a discussion: change their own, and delete their own
+/// or, as a maintainer, anyone's. The server checks the same rules again when the form is sent.
+pub(crate) struct CommentRights {
+    viewer: Option<i64>,
+    maintains: bool,
+    open: bool,
+}
+
+impl CommentRights {
+    /// `open` is false for a locked thread. An archived repository is never open.
+    pub(crate) async fn load(
+        ctx: &PageContext,
+        repo: &RepositoryData,
+        open: bool,
+    ) -> ResultPage<Self> {
+        let maintains = match &ctx.user {
+            Some(user) => crate::backend::repositories::access::can_maintain(
+                &ctx.state.pool,
+                user,
+                &repo.record,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?,
+            None => false,
+        };
+        Ok(Self {
+            viewer: ctx.user.as_ref().map(|user| user.id),
+            maintains,
+            open: open && !repo.record.is_archived,
+        })
+    }
+
+    pub(crate) fn apply(
+        &self,
+        comment: &mut view::Comment,
+        author_id: i64,
+        created: DateTime<Utc>,
+        updated: DateTime<Utc>,
+    ) {
+        let mine = self.viewer == Some(author_id);
+        comment.can_edit = self.open && mine;
+        comment.can_delete = self.open && (mine || self.maintains);
+        comment.edited = (updated > created).then(|| updated.to_rfc3339());
+    }
+}
+
 /// One page of the discussion, from the `page` query value (default 1). One extra
 /// row is read to tell whether a next page exists.
 pub(crate) async fn discussion(
@@ -853,6 +917,7 @@ pub(crate) async fn discussion(
             let rows = db::issues::list_issue_comments(&ctx.state.pool, issue.id, fetch, offset)
                 .await
                 .map_err(|_| unavailable(ctx))?;
+            let rights = CommentRights::load(ctx, repo, !issue.locked).await?;
             has_more = chrome::has_next_page(page, rows.len(), COMMENTS_PER_PAGE);
             subject = (db::timeline::Subject::Issue, issue.id);
             span = (
@@ -865,7 +930,7 @@ pub(crate) async fn discussion(
             for comment in rows.into_iter().take(COMMENTS_PER_PAGE) {
                 let author = comment.author.username;
                 let comment = comment.comment;
-                comments.push(view::Comment {
+                let mut shown = view::Comment {
                     id: comment.id,
                     author,
                     body: comment.body,
@@ -873,7 +938,18 @@ pub(crate) async fn discussion(
                     location: None,
                     conversation: None,
                     reactions: Vec::new(),
-                });
+                    can_edit: false,
+                    can_delete: false,
+                    edited: None,
+                    edit: None,
+                };
+                rights.apply(
+                    &mut shown,
+                    comment.author_id,
+                    comment.created_at,
+                    comment.updated_at,
+                );
+                comments.push(shown);
             }
         }
         Kind::Pull => {
@@ -903,10 +979,18 @@ pub(crate) async fn discussion(
             );
             subject = (db::timeline::Subject::PullRequest, pull.id);
             let mut page_reviews = Vec::new();
+            let rights = CommentRights::load(ctx, repo, true).await?;
             for row in rows.into_iter().take(COMMENTS_PER_PAGE) {
                 match row {
                     DiscussionItem::Comment(entry) => {
-                        comments.push(review_forms::discussion_comment(ctx, repo, &pull, entry));
+                        let (author_id, created, updated) = (
+                            entry.comment.author_id,
+                            entry.comment.created_at,
+                            entry.comment.updated_at,
+                        );
+                        let mut shown = review_forms::discussion_comment(ctx, repo, &pull, entry);
+                        rights.apply(&mut shown, author_id, created, updated);
+                        comments.push(shown);
                     }
                     DiscussionItem::Review(entry) => page_reviews.push(entry),
                 }
@@ -953,6 +1037,19 @@ pub(crate) async fn render_detail(
     let mut value = shown.clone();
     fill_merge_blockers(ctx, repo, kind, draft, &mut value).await;
     let mut comments = discussion(ctx, repo, kind, value.number).await?;
+    // A comment whose edit was previewed or refused keeps the text the author typed.
+    if let Some(id) = draft.editing {
+        if let Some(comment) = comments
+            .comments
+            .iter_mut()
+            .find(|comment| comment.id == id)
+        {
+            comment.edit = Some(view::CommentEdit {
+                body: draft.comment.clone(),
+                preview: draft.preview,
+            });
+        }
+    }
     crate::backend::api::repos::issues::reactions::attach(
         ctx,
         repo,

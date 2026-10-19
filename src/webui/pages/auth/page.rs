@@ -206,6 +206,46 @@ pub fn password_help_page(redirect: &str) -> Element {
     }
 }
 
+/// The second step of sign-in: a code from the authenticator app, or a recovery code. The sealed
+/// `pending` token from the password step rides in a hidden field; no session exists yet.
+pub fn two_factor_page(
+    action: &str,
+    token: &str,
+    pending: &str,
+    redirect: &str,
+    message: Option<&str>,
+    is_error: bool,
+) -> Element {
+    rsx! {
+        style { dangerous_inner_html: include_str!("../account.css") }
+        section { class: "identity-auth", aria_labelledby: "identity-auth-title",
+            header { class: "identity-auth-header",
+                img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "identity-auth-brand" }
+                h1 { id: "identity-auth-title", "Two-factor authentication" }
+                p { "Enter the six-digit code from your authenticator app, or one of your recovery codes." }
+            }
+            if let Some(message) = message {
+                p { role: if is_error { "alert" } else { "status" }, class: if is_error { "identity-auth-error" } else { "identity-auth-notice" }, "{message}" }
+            }
+            form { method: "post", action: action.to_owned(), class: "identity-form",
+                {csrf(token)}
+                input { r#type: "hidden", name: "pending", value: pending.to_owned() }
+                input { r#type: "hidden", name: "redirect", value: redirect.to_owned() }
+                div { class: "space-y-2",
+                    label { r#for: "two-factor-code", class: "block text-sm font-semibold", "Code" }
+                    input { id: "two-factor-code", r#type: "text", name: "code", class: FIELD, required: true, maxlength: "32",
+                        autocomplete: "one-time-code", inputmode: "text", autofocus: true, spellcheck: "false" }
+                    p { class: "identity-form-hint", "Recovery codes look like XXXX-XXXX-XXXX-XXXX and work once." }
+                }
+                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Verify" } }
+            }
+            p { class: "identity-auth-switch",
+                NavLink { href: format!("/login?redirect={}", crate::webui::encode_component(redirect)), class: "identity-auth-link", "Start over" }
+            }
+        }
+    }
+}
+
 pub fn logout_page(token: &str) -> Element {
     rsx! { div { class: "page-shell py-8 max-w-lg", section { class: PANEL,
         h1 { class: "text-2xl font-semibold", "Sign out" }

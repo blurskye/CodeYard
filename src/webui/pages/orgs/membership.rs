@@ -3,7 +3,7 @@ use super::{
     teams, Page,
 };
 use crate::webui::{
-    components::{count_label, Avatar, DraftSelect, SelectOption},
+    components::{confirm_dialog, count_label, Avatar, DraftSelect, SelectOption},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -44,10 +44,10 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                 }
             }
             if page.can_manage && !suspended {
-                form { method: "post", action: target.to_owned(), class: "org-inline-form org-add-member", aria_label: "Add a member",
+                form { method: "post", action: target.to_owned(), class: "org-inline-form org-add-member", aria_label: "Invite a member",
                     {input(page, "add-member", "username", "Username")}
                     {select("Role", "role", field_value(page, "add-member", "role"), role_options())}
-                    {controls(page, "add-member", "Add member")}
+                    {controls(page, "add-member", "Send invitation")}
                 }
             }
             ul { class: "org-list",
@@ -72,10 +72,39 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                                     }
                                     {controls_as(page, "member-role", "Update", "btn")}
                                 }
-                                form { method: "post", action: target.to_owned(), class: "org-inline-form",
-                                    input { r#type: "hidden", name: "user_id", value: "{member.user_id}" }
-                                    {fields::removal_confirm(&member.username)}
-                                    {controls_as(page, "remove-member", "Remove", "btn btn-danger")}
+                                a { class: "btn btn-danger", href: "#remove-member-{member.user_id}", "Remove" span { class: "site-sr-only", " {member.username}" } }
+                                {confirm_dialog(Some(format!("remove-member-{}", member.user_id)).as_deref(), &format!("Remove {} from the organization", member.username), target, target, rsx! {
+                                    div { class: "org-form",
+                                        strong { "Remove {member.username} from the organization?" }
+                                        input { r#type: "hidden", name: "user_id", value: "{member.user_id}" }
+                                        {fields::removal_confirm(&member.username)}
+                                        {fields::hidden_controls(page, "remove-member")}
+                                    }
+                                }, "Remove")}
+                            }
+                        }
+                    }
+                }
+            }
+            if page.can_manage && !page.pending_invitations.is_empty() {
+                section { class: "org-subsection", aria_labelledby: "organization-pending-title",
+                    h3 { id: "organization-pending-title", "Pending invitations" }
+                    ul { class: "org-list",
+                        for invite in &page.pending_invitations {
+                            li { key: "pending-{invite.user_id}", class: "org-row",
+                                div { class: "org-row-main",
+                                    h3 { "{invite.username}" }
+                                    p { "Invited as {invite.role}. Joins when they accept." }
+                                }
+                                div { class: "org-row-actions",
+                                    a { class: "btn btn-danger", href: "#cancel-invitation-{invite.user_id}", "Cancel invitation" }
+                                    {confirm_dialog(Some(format!("cancel-invitation-{}", invite.user_id)).as_deref(), &format!("Cancel the invitation to {}", invite.username), target, target, rsx! {
+                                        div { class: "org-form",
+                                            strong { "Cancel the invitation to {invite.username}?" }
+                                            input { r#type: "hidden", name: "user_id", value: "{invite.user_id}" }
+                                            {fields::hidden_controls(page, "cancel-invitation")}
+                                        }
+                                    }, "Cancel invitation")}
                                 }
                             }
                         }

@@ -10,8 +10,8 @@ use crate::backend::{
     db,
     git::{
         self, repository::process, BlobContent, BranchStatus, CiCommit, CiWorkflowFile,
-        CiWorkflowSource, CommitFilter, CommitInfo, ContributorInfo, DiffInfo, FileBlame, FileList,
-        LanguageStat, RepoInfo, TagInfo, TreeEntry,
+        CiWorkflowSource, CommitActivityLog, CommitFilter, CommitInfo, ContributorInfo, DiffInfo,
+        FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry,
     },
     repositories::{
         access, languages,
@@ -652,18 +652,25 @@ impl LocalStore {
         self.blocking(git::list_tags).await
     }
 
-    pub(super) async fn archive_zip(
+    pub(super) async fn archive(
         &self,
         git_ref: &str,
         prefix: &str,
+        format: git::ArchiveFormat,
     ) -> Result<Vec<u8>, RepoError> {
         let git_ref = git_ref.to_owned();
         let revision = self
             .blocking(move |repo| git::resolve_archive_revision(repo, &git_ref))
             .await?;
-        git::archive_zip(self.path(), revision, prefix, MAX_ARCHIVE_RESPONSE_BYTES)
-            .await
-            .map_err(RepoError::from)
+        git::archive(
+            self.path(),
+            revision,
+            prefix,
+            format,
+            MAX_ARCHIVE_RESPONSE_BYTES,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn languages(&self, git_ref: &str) -> Result<Vec<LanguageStat>, RepoError> {
@@ -676,6 +683,15 @@ impl LocalStore {
         let (git_ref, path) = (git_ref.to_owned(), path.to_owned());
         self.blocking(move |repo| git::blame_file(repo, &git_ref, &path))
             .await
+    }
+
+    pub(super) async fn commit_activity(
+        &self,
+        git_ref: &str,
+    ) -> Result<CommitActivityLog, RepoError> {
+        git::read_commit_activity(self.path(), git_ref)
+            .await
+            .map_err(RepoError::from)
     }
 
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
@@ -1477,6 +1493,37 @@ impl LocalStore {
             return Err(unavailable("Git could not set the replica's refs"));
         }
         Ok(())
+    }
+
+    /// Makes an existing branch the default. The database is updated first, so an archived
+    /// repository refuses the change before HEAD moves.
+    pub(super) async fn set_default_branch(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        name: &str,
+    ) -> Result<(), RepoError> {
+        let _lock = git::locks::lock(self.path()).await;
+        let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
+        let (status, _) = self
+            .git(&["show-ref", "--verify", "--quiet", &reference])
+            .await?;
+        if !status.success() {
+            return Err(RepoError::new(
+                ErrorKind::NotFound,
+                "That branch does not exist",
+            ));
+        }
+        let updated = db::repositories::records::set_repository_default_branch(pool, repo_id, name)
+            .await
+            .map_err(|_| unavailable("Repository storage is unavailable"))?;
+        if !updated {
+            return Err(RepoError::new(
+                ErrorKind::Invalid,
+                "This repository is archived and read-only.",
+            ));
+        }
+        self.set_head_target(&reference).await
     }
 
     /// Points HEAD at a branch, such as `refs/heads/main`.

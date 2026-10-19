@@ -2,7 +2,8 @@
 
 use crate::backend::api::http::error::ApiError;
 use crate::backend::identity::accounts::{
-    BanError, ManagedAccountError, PasswordChangeError, SignupReviewError,
+    BanError, EmailChangeError, ManagedAccountError, PasswordChangeError, RoleError,
+    SignupReviewError,
 };
 use crate::backend::identity::admission::AdmissionError;
 use crate::backend::identity::credentials::AccountInputError;
@@ -11,6 +12,7 @@ use crate::backend::identity::passwords::PasswordError;
 use crate::backend::identity::registration::RegistrationError;
 use crate::backend::identity::sessions::{AccountAuthorityError, SessionIssueError};
 use crate::backend::identity::setup::SetupError;
+use crate::backend::identity::two_factor::TwoFactorError;
 use axum::http::StatusCode;
 use axum::Json;
 
@@ -115,6 +117,69 @@ pub(crate) fn login_failure(error: LoginError) -> Failure {
         LoginError::InvalidCredentials => invalid_credentials(),
         LoginError::Banned => failure(StatusCode::FORBIDDEN, "forbidden", "Account is banned"),
         LoginError::Session(error) => session_issue_failure(error),
+        LoginError::TwoFactorUnavailable => failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "two_factor_unavailable",
+            "Two-factor sign-in is unavailable on this node",
+        ),
+        LoginError::PendingLoginExpired => failure(
+            StatusCode::UNAUTHORIZED,
+            "two_factor_expired",
+            "Your sign-in expired. Sign in again.",
+        ),
+        LoginError::InvalidTwoFactorCode => failure(
+            StatusCode::UNAUTHORIZED,
+            "invalid_two_factor_code",
+            "That code does not match. Check your app and try again.",
+        ),
+    }
+}
+
+/// The JSON API does not complete two-factor sign-in, so a password is not enough for it.
+pub(crate) fn two_factor_required_failure() -> Failure {
+    failure(
+        StatusCode::FORBIDDEN,
+        "two_factor_required",
+        "This account signs in with two-factor authentication on the web. Use an access token for the API and Git.",
+    )
+}
+
+pub(crate) fn two_factor_failure(error: TwoFactorError) -> Failure {
+    match error {
+        TwoFactorError::KeyUnavailable => failure(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "two_factor_unavailable",
+            "Two-factor authentication needs the secrets master key on this node",
+        ),
+        TwoFactorError::Unavailable => database_failure(),
+        TwoFactorError::Admission(error) => admission_failure(error),
+        TwoFactorError::Password(error) => password_failure(error),
+        TwoFactorError::InvalidPassword => failure(
+            StatusCode::UNAUTHORIZED,
+            "invalid_password",
+            "Current password is incorrect",
+        ),
+        TwoFactorError::InvalidCode => failure(
+            StatusCode::BAD_REQUEST,
+            "invalid_two_factor_code",
+            "That code does not match. Check your app and try again.",
+        ),
+        TwoFactorError::AlreadyEnabled => failure(
+            StatusCode::CONFLICT,
+            "conflict",
+            "Two-factor authentication is already on",
+        ),
+        TwoFactorError::NotEnabled => failure(
+            StatusCode::CONFLICT,
+            "conflict",
+            "Two-factor authentication is not on",
+        ),
+        TwoFactorError::SetupExpired => failure(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "This setup expired. Start again.",
+        ),
+        TwoFactorError::Authority(error) => admin_authority_failure(error),
     }
 }
 
@@ -279,6 +344,50 @@ pub(crate) fn ban_failure(error: BanError) -> Failure {
             StatusCode::CONFLICT,
             "conflict",
             "Cannot ban the last active admin",
+        ),
+    }
+}
+
+pub(crate) fn email_failure(error: EmailChangeError) -> Failure {
+    match error {
+        EmailChangeError::Authority(error) => {
+            password_change_failure(PasswordChangeError::Authority(error))
+        }
+        EmailChangeError::InvalidEmail => failure(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "Enter a valid email address",
+        ),
+        EmailChangeError::Admission(error) => admission_failure(error),
+        EmailChangeError::Password(error) => password_failure(error),
+        EmailChangeError::InvalidCredentials => failure(
+            StatusCode::BAD_REQUEST,
+            "invalid_credentials",
+            "Current password is incorrect",
+        ),
+        EmailChangeError::Taken => failure(
+            StatusCode::CONFLICT,
+            "conflict",
+            "That email address is already used by another account",
+        ),
+        EmailChangeError::AccountUnavailable => database_failure(),
+    }
+}
+
+pub(crate) fn role_failure(error: RoleError) -> Failure {
+    match error {
+        RoleError::Authority(error) => admin_authority_failure(error),
+        RoleError::AccountUnavailable => database_failure(),
+        RoleError::Denied => failure(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "Current administrator authority required",
+        ),
+        RoleError::Missing => failure(StatusCode::NOT_FOUND, "not_found", "User not found"),
+        RoleError::SelfChange => failure(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "You cannot change your own administrator role",
         ),
     }
 }
