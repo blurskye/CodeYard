@@ -47,8 +47,8 @@ jobs:
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             export PATH="$HOME/.cargo/bin:$PATH"
           fi
-          rustup toolchain install 1.97.0 --profile minimal -c rustfmt -c clippy
-          rustup default 1.97.0
+          rustup toolchain install 1.99.0 --profile minimal -c rustfmt -c clippy
+          rustup default 1.99.0
           rustc --version
       - name: Check formatting
         run: cargo fmt --all -- --check
