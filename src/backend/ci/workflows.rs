@@ -4,10 +4,29 @@ use crate::backend::repositories::store::{ErrorKind, RepoError, RepoStore, MAX_C
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
+use std::{
+    collections::VecDeque,
+    sync::{LazyLock, Mutex},
+    time::Duration,
+};
 use tokio::sync::Semaphore;
 use tracing::warn;
 
+pub(super) static PARSING_SLOTS: Semaphore = Semaphore::const_new(2);
 static DISCOVERY_SLOTS: Semaphore = Semaphore::const_new(2);
+const DISCOVERY_READ_TIMEOUT: Duration = Duration::from_secs(3);
+const WORKFLOW_CACHE_BYTES: usize = 8 * 1024 * 1024;
+const WORKFLOW_CACHE_ENTRIES: usize = 32;
+
+struct CachedWorkflows {
+    repository: String,
+    sha: String,
+    bytes: usize,
+    definitions: Vec<WorkflowDefinition>,
+}
+
+static WORKFLOW_CACHE: LazyLock<Mutex<VecDeque<CachedWorkflows>>> =
+    LazyLock::new(|| Mutex::new(VecDeque::new()));
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkflowEventFilter {
@@ -223,16 +242,38 @@ pub async fn list_workflows_for_ref(
     store: &RepoStore,
     git_ref: &str,
 ) -> Result<Vec<WorkflowDefinition>> {
-    let permit = DISCOVERY_SLOTS.acquire().await?;
-    let files = match store.workflow_files(git_ref).await {
+    // Resolve on every request so a moved branch cannot return stale definitions. Only the
+    // immutable result is cached; callers still authorize repository reads before discovery.
+    let deadline = tokio::time::Instant::now() + DISCOVERY_READ_TIMEOUT;
+    let sha = tokio::time::timeout_at(deadline, store.commit(git_ref))
+        .await
+        .context("workflow repository read timed out")??
+        .sha;
+    let repository = store.location().to_owned();
+    {
+        let cache = WORKFLOW_CACHE.lock().unwrap();
+        if let Some(entry) = cache
+            .iter()
+            .find(|entry| entry.repository == repository && entry.sha == sha)
+        {
+            return Ok(entry.definitions.clone());
+        }
+    }
+    // Repository I/O has its own store/RPC admission. A slow storage node must not hold
+    // either of the process-wide YAML parsing slots.
+    let files = match tokio::time::timeout_at(deadline, store.workflow_files(&sha))
+        .await
+        .context("workflow repository read timed out")?
+    {
         Ok(files) => files,
-        Err(error) if is_missing_workflow_tree_error(&error) => return Ok(Vec::new()),
+        Err(error) if is_missing_workflow_tree_error(&error) => Vec::new(),
         Err(error) => {
             return Err(error)
                 .with_context(|| format!("failed to list workflows at ref {}", git_ref));
         }
     };
 
+    let permit = DISCOVERY_SLOTS.acquire().await?;
     let git_ref = git_ref.to_owned();
     tokio::task::spawn_blocking(move || {
         // Cancellation must not release capacity while YAML is still being parsed or dropped.
@@ -251,6 +292,25 @@ pub async fn list_workflows_for_ref(
         }
 
         workflows.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
+        let bytes = serde_json::to_vec(&workflows)
+            .expect("workflow definitions serialize")
+            .len();
+        if bytes <= WORKFLOW_CACHE_BYTES {
+            let mut cache = WORKFLOW_CACHE.lock().unwrap();
+            cache.retain(|entry| entry.repository != repository || entry.sha != sha);
+            while cache.len() >= WORKFLOW_CACHE_ENTRIES
+                || cache.iter().map(|entry| entry.bytes).sum::<usize>() + bytes
+                    > WORKFLOW_CACHE_BYTES
+            {
+                cache.pop_front();
+            }
+            cache.push_back(CachedWorkflows {
+                repository,
+                sha,
+                bytes,
+                definitions: workflows.clone(),
+            });
+        }
         workflows
     })
     .await
@@ -344,11 +404,22 @@ pub(crate) fn parse_yaml(content: &[u8]) -> Result<Value> {
 }
 
 pub(crate) fn parse_workflow_definition(path: &str, content: &str) -> Result<WorkflowDefinition> {
+    ensure!(
+        super::admission::is_safe_workflow_path(path),
+        "invalid CI workflow path"
+    );
     let yaml = parse_workflow_yaml(content)
         .with_context(|| format!("workflow {} is not valid YAML", path))?;
 
-    let name = workflow_name(&yaml, path)?;
-    let triggers = parse_triggers(extract_on_section(&yaml))?;
+    workflow_definition_from_yaml(path, &yaml)
+}
+
+pub(super) fn workflow_definition_from_yaml(
+    path: &str,
+    yaml: &Value,
+) -> Result<WorkflowDefinition> {
+    let name = workflow_name(yaml, path)?;
+    let triggers = parse_triggers(extract_on_section(yaml))?;
 
     Ok(WorkflowDefinition {
         path: path.to_string(),
@@ -729,6 +800,10 @@ fn matches_any_pattern(
 /// no directory, so `**/README.md` matches a root README.md. Branch protection patterns use
 /// this too.
 pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
+    glob_matches(pattern, value, false)
+}
+
+fn glob_matches(pattern: &str, value: &str, escapes: bool) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let value: Vec<char> = value.chars().collect();
     // Each row records which value prefixes match the pattern consumed so far.
@@ -737,10 +812,15 @@ pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
     let mut current = vec![false; value.len() + 1];
     previous[0] = true;
     let mut index = 0;
+    let mut next_class_end = pattern.iter().position(|&ch| ch == ']');
     while index < pattern.len() {
         current.fill(false);
+        let escaped = escapes && pattern[index] == '\\' && index + 1 < pattern.len();
+        if escaped {
+            index += 1;
+        }
         let ch = pattern[index];
-        let double = ch == '*' && pattern.get(index + 1) == Some(&'*');
+        let double = !escaped && ch == '*' && pattern.get(index + 1) == Some(&'*');
         if double
             && pattern.get(index + 2) == Some(&'/')
             && (index == 0 || pattern[index - 1] == '/')
@@ -756,7 +836,7 @@ pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
                 current[offset] |= matched;
             }
             index += 3;
-        } else if ch == '*' {
+        } else if ch == '*' && !escaped {
             current[0] = previous[0];
             for (offset, &letter) in value.iter().enumerate() {
                 current[offset + 1] =
@@ -764,19 +844,52 @@ pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
             }
             index += if double { 2 } else { 1 };
         } else {
+            let class_end = if ch == '[' && !escaped {
+                // Advance the closing-bracket search only forwards, including for malformed
+                // classes, so repeated `[` characters cannot make parsing quadratic.
+                if next_class_end.is_some_and(|end| end <= index) {
+                    next_class_end = pattern[index + 1..]
+                        .iter()
+                        .position(|&ch| ch == ']')
+                        .map(|offset| index + 1 + offset);
+                }
+                next_class_end.filter(|&end| end > index + 1)
+            } else {
+                None
+            };
             for (offset, &letter) in value.iter().enumerate() {
                 current[offset + 1] = previous[offset]
-                    && if ch == '?' {
+                    && if let Some(end) = class_end {
+                        letter != '/' && glob_class_matches(&pattern[index + 1..end], letter)
+                    } else if ch == '?' && !escaped {
                         letter != '/'
                     } else {
                         ch == letter
                     };
             }
-            index += 1;
+            index = class_end.map_or(index + 1, |end| end + 1);
         }
         std::mem::swap(&mut previous, &mut current);
     }
     previous[value.len()]
+}
+
+fn glob_class_matches(mut class: &[char], letter: char) -> bool {
+    let negated = matches!(class.first(), Some('!' | '^'));
+    if negated {
+        class = &class[1..];
+    }
+    let mut matched = false;
+    while !class.is_empty() {
+        if class.len() >= 3 && class[1] == '-' {
+            matched |= class[0] <= letter && letter <= class[2];
+            class = &class[3..];
+        } else {
+            matched |= class[0] == letter;
+            class = &class[1..];
+        }
+    }
+    matched != negated
 }
 
 /// Charges `budget` for the work before matching, so one budget bounds a caller's total.
@@ -789,6 +902,16 @@ pub(crate) fn github_glob_matches_bounded(
     Ok(github_glob_matches(pattern, value))
 }
 
+/// CODEOWNERS uses backslashes to quote whitespace and wildcard characters.
+pub(crate) fn code_owner_glob_matches_bounded(
+    pattern: &str,
+    value: &str,
+    budget: &mut WorkflowMatchBudget,
+) -> std::result::Result<bool, WorkflowMatchLimit> {
+    budget.charge(pattern.len(), value.len())?;
+    Ok(glob_matches(pattern, value, true))
+}
+
 fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
     // Only an absent workflow directory inside a resolved commit is empty.
     // Missing repositories/refs/objects and unrelated errors remain outages;
@@ -799,6 +922,55 @@ fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn character_classes_match_release_filters_with_the_shared_budget() {
+        let workflow = parse_workflow_definition(
+            ".github/workflows/release.yml",
+            "on:\n  push:\n    tags: ['v[0-9]*']\n",
+        )
+        .unwrap();
+        assert!(workflow.matches_event("push", "refs/tags/v1.2.3"));
+        assert!(!workflow.matches_event("push", "refs/tags/vnext"));
+        for (pattern, value, matched) in [
+            ("[a-cx-z]", "b", true),
+            ("[a-cx-z]", "y", true),
+            ("[a-cx-z]", "d", false),
+            ("[!0-9]", "a", true),
+            ("[!0-9]", "5", false),
+            ("[!a]", "/", false),
+            ("[-a]", "-", true),
+            ("[ab", "[ab", true),
+            ("[[[[", "[[[[", true),
+            ("]a[0-9]", "]a1", true),
+        ] {
+            assert_eq!(
+                github_glob_matches(pattern, value),
+                matched,
+                "{pattern} {value}"
+            );
+        }
+        let mut budget = WorkflowMatchBudget { remaining: 1 };
+        assert!(workflow
+            .matches_event_with_budget("push", "refs/tags/v1", &mut budget)
+            .is_err());
+    }
+
+    #[test]
+    fn discovery_and_admission_reject_the_same_workflow_paths() {
+        for path in [
+            ".github/workflows/build linux.yml",
+            ".github/workflows/雪.yaml",
+            &format!(".github/workflows/{}.yml", "x".repeat(238)),
+        ] {
+            assert!(!super::super::admission::is_safe_workflow_path(path));
+            assert!(parse_workflow_definition(path, "on: workflow_dispatch").is_err());
+            assert!(parse_push_workflow(path, "on: push").is_err());
+        }
+        let path = format!(".github/workflows/{}.yml", "x".repeat(233));
+        assert_eq!(path.len(), 255);
+        assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_ok());
+    }
 
     #[test]
     fn aliases_may_not_expand_past_the_limit() {
@@ -1130,6 +1302,12 @@ on: [push, pull_request]
             ("a.yaml".into(), b"name: Zebra\non: push\n".to_vec()),
             ("limit.yml".into(), exact),
             ("broken.yml".into(), b"on: [push\n".to_vec()),
+            (
+                "build linux.yml".into(),
+                b"on: workflow_dispatch\n".to_vec(),
+            ),
+            ("雪.yaml".into(), b"on: workflow_dispatch\n".to_vec()),
+            (format!("{}.yml", "x".repeat(238)), b"on: push\n".to_vec()),
             ("oversized.yml".into(), vec![b'#'; limit + 1]),
             ("binary.yml".into(), vec![0, 255]),
             (format!("{}.yml", "n".repeat(252)), b"on: push\n".to_vec()),
@@ -1164,6 +1342,66 @@ on: [push, pull_request]
             .unwrap_err()
             .message
             .contains("size limit"));
+    }
+
+    #[tokio::test]
+    async fn discovery_reuses_immutable_definitions_and_refreshes_moved_refs() {
+        let (directory, store) = workflow_store(vec![(
+            "cached.yml".into(),
+            b"name: Cached\non: push\n".to_vec(),
+        )]);
+        let first = list_workflows_for_ref(&store, "main").await.unwrap();
+        assert_eq!(first[0].name, "Cached");
+        let old_sha = store.commit("main").await.unwrap().sha;
+        let blob = git2::Oid::hash_object(git2::ObjectType::Blob, b"name: Cached\non: push\n")
+            .unwrap()
+            .to_string();
+        std::fs::remove_file(
+            directory
+                .path()
+                .join("objects")
+                .join(&blob[..2])
+                .join(&blob[2..]),
+        )
+        .unwrap();
+        assert!(store
+            .ci_workflow_file(&old_sha, ".github/workflows/cached.yml")
+            .await
+            .is_err());
+        assert_eq!(
+            list_workflows_for_ref(&store, "main").await.unwrap()[0].name,
+            "Cached"
+        );
+        {
+            let git = git2::Repository::open_bare(directory.path()).unwrap();
+            let parent = git
+                .find_commit(git2::Oid::from_str(&old_sha).unwrap())
+                .unwrap();
+            let tree = git
+                .find_tree(git.treebuilder(None).unwrap().write().unwrap())
+                .unwrap();
+            let signature = git2::Signature::now("Fixture", "fixture@example.invalid").unwrap();
+            git.commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "Remove workflows",
+                &tree,
+                &[&parent],
+            )
+            .unwrap();
+        }
+        assert!(list_workflows_for_ref(&store, "main")
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            list_workflows_for_ref(&store, &old_sha).await.unwrap()[0].name,
+            "Cached"
+        );
+        let cache = WORKFLOW_CACHE.lock().unwrap();
+        assert!(cache.len() <= WORKFLOW_CACHE_ENTRIES);
+        assert!(cache.iter().map(|entry| entry.bytes).sum::<usize>() <= WORKFLOW_CACHE_BYTES);
     }
 
     #[tokio::test]
@@ -1340,6 +1578,10 @@ fn field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
 }
 
 pub(crate) fn parse_push_workflow(path: &str, text: &str) -> Result<WorkflowDefinition> {
+    ensure!(
+        super::admission::is_safe_workflow_path(path),
+        "invalid CI workflow path"
+    );
     // `serde_yaml`'s recursion and alias-expansion defaults are intentionally retained.
     let yaml = parse_workflow_yaml(text)?;
     let push = match field(&yaml, "on") {

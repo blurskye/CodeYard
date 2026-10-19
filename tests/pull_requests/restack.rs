@@ -1011,6 +1011,166 @@ async fn postgres_merged_layer_offers_no_rebase() {
     merged_layer_contract(true).await;
 }
 
+async fn slow_ci_admission_contract(restack: bool) {
+    let mut f = Database::new(true).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    f.execute(
+        "UPDATE users SET is_admin = TRUE WHERE id = $1",
+        &[app.owner],
+    )
+    .await;
+    let main = app.alice.save("main", "README.md", "unborn").await;
+    let main = save_text(&app.alice, "main", ".github/workflows/ci.yml", "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n", &main).await;
+    app.alice.branch("feature-1", &main).await;
+    let one = app.alice.save("feature-1", "one.txt", &main).await;
+    app.alice.open_draft("One", "feature-1", "main").await;
+    app.alice.branch("feature-2", &one).await;
+    app.alice.save("feature-2", "two.txt", &one).await;
+    app.alice.open_draft("Two", "feature-2", "feature-1").await;
+    join(&app.alice, 2).await;
+    app.alice.save("main", "new.txt", &main).await;
+    f.execute("UPDATE pull_requests SET is_draft = FALSE", &[])
+        .await;
+    let db::DbPool::Postgres(pool) = f.pool() else {
+        unreachable!()
+    };
+    let mut lock = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE ci_runs IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let release = async {
+        tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+        lock.commit().await.unwrap();
+    };
+    let admission = async {
+        if restack {
+            let (status, result) = rebase(&app.alice, 2).await;
+            assert_eq!(status, StatusCode::OK, "{result}");
+        } else {
+            let pull = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 2)
+                .await
+                .unwrap()
+                .unwrap();
+            let ci = codeyard::backend::ci::CiRuns::new(
+                f.pool().clone(),
+                Arc::new(CiConfig::default()),
+                Arc::new(tokio::sync::Notify::new()),
+                None,
+                Arc::new(codeyard::backend::notifications::NotificationBroadcaster::new(f.pool())),
+            );
+            codeyard::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+                f.pool(), &ci, &app.repository, &[pull], app.owner).await;
+        }
+    };
+    tokio::join!(admission, release);
+    let head = branch_tip(&app.repository.disk_path, "feature-2");
+    let runs = db::ci::list_ci_runs_for_repo(f.pool(), app.repository.id, 100)
+        .await
+        .unwrap();
+    assert!(
+        runs.iter().any(|run| run.event == "pull_request"
+            && run.pull_request_id.is_some()
+            && run.head_sha.as_deref() == Some(&head)),
+        "{runs:?}"
+    );
+    if restack {
+        assert!(
+            runs.iter().any(|run| run.event == "push"
+                && run.branch == "feature-2"
+                && run.head_sha.as_deref() == Some(&head)),
+            "{runs:?}"
+        );
+    }
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn postgres_slow_restack_admission_finishes_after_five_seconds() {
+    slow_ci_admission_contract(true).await;
+}
+#[tokio::test]
+async fn postgres_slow_moved_pr_admission_finishes_after_five_seconds() {
+    slow_ci_admission_contract(false).await;
+}
+
+async fn rewrite_boundary_contract(pg: bool, mode: &str) {
+    let mut f = Database::new(pg).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    let path = &app.repository.disk_path;
+    let main = app.alice.save("main", "README.md", "unborn").await;
+    let lower = if mode == "bottom" {
+        "main"
+    } else {
+        "feature-1"
+    };
+    if lower != "main" {
+        app.alice.branch(lower, &main).await;
+    }
+    let old = app.alice.save(lower, "obsolete.txt", &main).await;
+    if lower != "main" {
+        app.alice.open_pull("Lower", lower, "main").await;
+    }
+    app.alice.branch("upper", &old).await;
+    let upper = app.alice.save("upper", "child.txt", &old).await;
+    app.alice.open_pull("Upper", "upper", lower).await;
+    if mode == "bottom" {
+        app.alice.branch("top", &upper).await;
+        app.alice.save("top", "top.txt", &upper).await;
+        app.alice.open_pull("Top", "top", "upper").await;
+        join(&app.alice, 2).await;
+    } else if mode != "late_join" {
+        join(&app.alice, 2).await;
+    }
+    let rewritten = amend(path, lower, &main, "replacement.txt", "new\n");
+    app.alice.save(lower, "extra.txt", &rewritten).await;
+    if mode == "late_join" {
+        join(&app.alice, 2).await;
+    }
+    if mode == "merged" {
+        let (status, result) = merge_with(&app.alice, 1, "squash").await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+    }
+    let number = if mode == "bottom" { 1 } else { 2 };
+    let (status, result) = rebase(&app.alice, number).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let head = branch_tip(path, "upper");
+    assert!(has_file(path, &head, "child.txt"));
+    assert!(has_file(path, &head, "replacement.txt"));
+    assert!(
+        !has_file(path, &head, "obsolete.txt"),
+        "superseded base changes were replayed"
+    );
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_join_after_parent_rewrite_keeps_the_replay_boundary() {
+    rewrite_boundary_contract(false, "late_join").await;
+}
+#[tokio::test]
+async fn postgres_join_after_parent_rewrite_keeps_the_replay_boundary() {
+    rewrite_boundary_contract(true, "late_join").await;
+}
+#[tokio::test]
+async fn sqlite_bottom_restack_keeps_the_recorded_fork() {
+    rewrite_boundary_contract(false, "bottom").await;
+}
+#[tokio::test]
+async fn postgres_bottom_restack_keeps_the_recorded_fork() {
+    rewrite_boundary_contract(true, "bottom").await;
+}
+#[tokio::test]
+async fn sqlite_merged_amended_parent_keeps_the_child_boundary() {
+    rewrite_boundary_contract(false, "merged").await;
+}
+#[tokio::test]
+async fn postgres_merged_amended_parent_keeps_the_child_boundary() {
+    rewrite_boundary_contract(true, "merged").await;
+}
+
 #[tokio::test]
 async fn sqlite_restack_after_the_layer_below_is_amended_replays_only_its_own_commit() {
     amended_layer_contract(false).await;

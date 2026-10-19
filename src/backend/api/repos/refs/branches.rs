@@ -95,7 +95,7 @@ pub async fn create_branch(
         &state.ci_runs,
         actor.id,
         &owner,
-        &repo,
+        super::repository_id(&state, &owner, &repo).await?,
         &req.name,
         &req.sha,
     )
@@ -118,8 +118,7 @@ pub async fn delete_branch(
         state.cluster.as_ref(),
         &state.ci_runs,
         actor.id,
-        &owner,
-        &repo,
+        super::repository_id(&state, &owner, &repo).await?,
         &branch,
     )
     .await

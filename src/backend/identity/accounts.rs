@@ -1,8 +1,8 @@
 use super::{
     admission::{self, AdmissionError},
     credentials::{
-        validate_account, validate_new_account_name, validate_new_password, AccountInputError,
-        PasswordAccount,
+        validate_account, validate_email, validate_new_account_name, validate_new_password,
+        AccountInputError, PasswordAccount,
     },
     passwords::{self, PasswordError},
     sessions::{self, AccountAuthorityError},
@@ -62,16 +62,10 @@ pub async fn change_password(
         .map_err(PasswordChangeError::Password)?;
     // Hash replacement, must-change clearance and every session's revocation are
     // one existing transaction. Failure leaves all three prior facts intact.
-    if !transitions::compare_exchange_password(pool, user.id, expected, &hash, true, true)
+    transitions::compare_exchange_password(pool, user.id, expected, &hash, true, true, session_id)
         .await
         .map_err(|_| PasswordChangeError::AccountUnavailable)?
-    {
-        return Err(PasswordChangeError::CredentialsChanged);
-    }
-    db::users::accounts::get_user_by_id(pool, user.id)
-        .await
-        .map_err(|_| PasswordChangeError::AccountUnavailable)?
-        .ok_or(PasswordChangeError::InvalidCredentials)
+        .ok_or(PasswordChangeError::CredentialsChanged)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -100,7 +94,7 @@ pub async fn change_email(
     let well_formed = email.split_once('@').is_some_and(|(name, host)| {
         !name.is_empty() && host.contains('.') && !email.contains(char::is_whitespace)
     });
-    if !well_formed || email.len() > 255 {
+    if !well_formed || validate_email(email).is_err() {
         return Err(EmailChangeError::InvalidEmail);
     }
     admission::admit_login(pool, Some(user.id), &user.username)
@@ -113,13 +107,21 @@ pub async fn change_email(
     {
         return Err(EmailChangeError::InvalidCredentials);
     }
-    match transitions::change_email(pool, user.id, email)
-        .await
-        .map_err(|_| EmailChangeError::AccountUnavailable)?
+    match transitions::change_email(
+        pool,
+        user.id,
+        email,
+        user.password_hash
+            .as_deref()
+            .ok_or(EmailChangeError::InvalidCredentials)?,
+        session_id.ok_or(EmailChangeError::InvalidCredentials)?,
+    )
+    .await
+    .map_err(|_| EmailChangeError::AccountUnavailable)?
     {
         EmailChange::Updated(user) => Ok(*user),
         EmailChange::Taken => Err(EmailChangeError::Taken),
-        EmailChange::Missing => Err(EmailChangeError::AccountUnavailable),
+        EmailChange::Missing => Err(EmailChangeError::InvalidCredentials),
     }
 }
 
@@ -135,8 +137,7 @@ pub enum ManagedAccountError {
     Denied,
 }
 
-/// Creates an account with a temporary password. `make_admin` grants the administrator role
-/// right after creation, in its own transaction; if that grant fails the account still exists.
+/// Creates a temporary-password account with its requested role in one authorized transaction.
 pub async fn create_managed_account(
     pool: &DbPool,
     administrator_session: Option<&str>,
@@ -170,7 +171,7 @@ pub async fn create_managed_account(
         input.username,
         input.email,
         &hash,
-        Some((admin.id, administrator_session)),
+        Some((admin.id, administrator_session, make_admin)),
     )
     .await
     .map_err(|_| ManagedAccountError::AccountUnavailable)?
@@ -179,11 +180,6 @@ pub async fn create_managed_account(
         AccountAdmission::Conflict => return Err(ManagedAccountError::Conflict),
         _ => return Err(ManagedAccountError::Denied),
     };
-    if make_admin {
-        set_admin_role(pool, Some(administrator_session), user.id, true)
-            .await
-            .map_err(|_| ManagedAccountError::AccountUnavailable)?;
-    }
     Ok(user)
 }
 
@@ -235,16 +231,28 @@ pub async fn review_signup(
     let decision = decision.ok_or(SignupReviewError::InvalidDecision)?;
     // These named transactions also revalidate reviewer authority after locking.
     match decision {
-        SignupDecision::Approve => {
-            db::users::signup_requests::approve_signup_request(pool, request_id, admin.id)
-                .await
-                .map(|user| SignupReviewOutcome::Approved(Box::new(user)))
-                .map_err(review_failure)
-        }
+        SignupDecision::Approve => db::users::signup_requests::approve_signup_request(
+            pool,
+            request_id,
+            (
+                admin.id,
+                administrator_session.unwrap_or_default().to_owned(),
+            ),
+        )
+        .await
+        .map(|user| SignupReviewOutcome::Approved(Box::new(user)))
+        .map_err(review_failure),
         SignupDecision::Reject => {
-            db::users::signup_requests::reject_signup_request(pool, request_id, admin.id)
-                .await
-                .map_err(review_failure)?;
+            db::users::signup_requests::reject_signup_request(
+                pool,
+                request_id,
+                (
+                    admin.id,
+                    administrator_session.unwrap_or_default().to_owned(),
+                ),
+            )
+            .await
+            .map_err(review_failure)?;
             Ok(SignupReviewOutcome::Rejected)
         }
     }
@@ -269,9 +277,17 @@ pub async fn set_ban(
     let admin = sessions::administrator(pool, administrator_session)
         .await
         .map_err(BanError::Authority)?;
-    match transitions::change_ban(pool, admin.id, target, banned)
-        .await
-        .map_err(|_| BanError::AccountUnavailable)?
+    match transitions::change_ban(
+        pool,
+        (
+            admin.id,
+            administrator_session.unwrap_or_default().to_owned(),
+        ),
+        target,
+        banned,
+    )
+    .await
+    .map_err(|_| BanError::AccountUnavailable)?
     {
         BanChange::Updated(user) => Ok(*user),
         BanChange::Denied => Err(BanError::Denied),
@@ -299,9 +315,17 @@ pub async fn set_admin_role(
     let actor = sessions::administrator(pool, administrator_session)
         .await
         .map_err(RoleError::Authority)?;
-    match transitions::change_admin_role(pool, actor.id, target, admin)
-        .await
-        .map_err(|_| RoleError::AccountUnavailable)?
+    match transitions::change_admin_role(
+        pool,
+        (
+            actor.id,
+            administrator_session.unwrap_or_default().to_owned(),
+        ),
+        target,
+        admin,
+    )
+    .await
+    .map_err(|_| RoleError::AccountUnavailable)?
     {
         RoleChange::Updated(user) => Ok(*user),
         RoleChange::Denied => Err(RoleError::Denied),

@@ -35,6 +35,7 @@ pub fn token_hash(value: &str) -> String {
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
     if input.name.trim().is_empty()
         || input.name.trim().len() > 100
+        || input.name.contains('\0')
         || !matches!(input.scope, "read" | "write")
         || input.expires_at.is_some_and(|expiry| expiry <= now)
     {
@@ -79,5 +80,20 @@ pub async fn delete(pool: &DbPool, actor: i64, id: i64) -> Result<(), TokenError
         Ok(())
     } else {
         Err(TokenError::Missing)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_name_rejects_nul() {
+        let input = TokenInput {
+            name: "ci\0token",
+            scope: "read",
+            expires_at: None,
+        };
+        assert_eq!(validate(&input, Utc::now()), Err(TokenError::Invalid));
     }
 }

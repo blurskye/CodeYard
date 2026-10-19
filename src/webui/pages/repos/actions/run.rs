@@ -122,8 +122,19 @@ fn run_form(model: &ActionsPage, run_id: &str, action: &str, label: &str) -> Ele
 }
 
 pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Element {
+    rsx! { SelectedRunView { model: model.clone(), selected: selected.clone() } }
+}
+
+#[component]
+fn SelectedRunView(model: ActionsPage, selected: SelectedRun) -> Element {
+    let projection = use_memo(use_reactive(
+        (&selected.logs, &selected.run.status),
+        |(lines, status)| std::rc::Rc::new(logs::project_logs(&lines, &status)),
+    ));
+    let jobs = projection();
+    let model = &model;
+    let selected = &selected;
     let run = &selected.run;
-    let jobs = logs::project_logs(&selected.logs, &run.status);
     let show_logs = model.value("view") != "summary";
     let log_key = format!(
         "{}:{}:{}",
@@ -149,8 +160,8 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
                     span { class: "actions-sr-only", "Run ID {run.id}" }
                 }
                 div { class: "actions-run-heading-actions",
-                    if model.can_dispatch && cancellable { {run_form(model, &run.id, "cancel", "Cancel run")} }
-                    if model.can_dispatch && !cancellable && run.head_sha.is_some() { {run_form(model, &run.id, "rerun", "Re-run")} }
+                    if model.can_manage_runs && cancellable { {run_form(model, &run.id, "cancel", "Cancel run")} }
+                    if model.can_manage_runs && !cancellable && run.head_sha.is_some() { {run_form(model, &run.id, "rerun", "Re-run")} }
                     RefreshLink { href: model.url(&[]) }
                 }
             }
@@ -194,11 +205,11 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
                             }
                             span { class: "actions-disclosure-label", "Details" }
                         }
-                        if run_failed { p { role: "alert", "This run reported an error. Open the failed step for details." } }
+                        if run_failed { p { role: "alert", "{run.error_message.as_deref().unwrap_or_default()}" } }
                     }
                 }
                 if show_logs {
-                    LogOutput { key: "{log_key}", model: model.clone(), selected: selected.clone() }
+                    LogOutput { key: "{log_key}", model: model.clone(), selected: selected.clone(), jobs: jobs.clone() }
                 } else {
                     section { class: "actions-summary-card", id: "run-summary", "aria-label": "Run summary",
                         dl { class: "actions-summary-grid",
@@ -219,7 +230,7 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
                         }
                         div { class: "actions-workflow-jobs",
                             if jobs.is_empty() { p { class: "actions-workflow-empty", "Jobs will appear when the runner starts." } }
-                            for job in &jobs {
+                            for job in jobs.iter() {
                                 NavLink { class: "actions-workflow-job", href: model.url(&[("view", "logs"), ("workflow_job", &job.name)]),
                                     span { class: "actions-workflow-job-name", {workflow_icon()} "{job.name}" }
                                     span { class: "actions-workflow-job-count", "{job.steps.len()} step" if job.steps.len() != 1 { "s" } }

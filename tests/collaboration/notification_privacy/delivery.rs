@@ -28,6 +28,15 @@ async fn contract(pg: bool) {
     let session = "12".repeat(32);
     let replacement = "34".repeat(32);
     let pool = f.pool();
+    let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(pool);
+    let mut receiver = broadcaster.subscribe();
+    broadcaster.send(hint(recipient, account)).await;
+    let local = serde_json::to_value(receiver.recv().await.unwrap()).unwrap();
+    assert!(
+        !local.to_string().contains("FORGED"),
+        "local broadcasts carry only ids"
+    );
+    assert_eq!(local["notification_id"], account);
     db::users::sessions::create_session(
         pool,
         &session,

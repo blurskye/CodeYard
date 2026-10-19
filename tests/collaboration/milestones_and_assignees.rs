@@ -457,7 +457,22 @@ async fn contract(pg: bool) {
     );
 
     // Deleting a milestone clears it from its issues; it is gone for the next writes.
-    db::milestones::delete_milestone(pool, owner, repo, 1)
+    let original = db::milestones::get_milestone(pool, repo, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        db::milestones::delete_milestone(pool, owner, repo, 1, original.milestone.id + 1000)
+            .await
+            .is_err()
+    );
+    assert!(db::issues::get_issue(pool, repo, first.number)
+        .await
+        .unwrap()
+        .unwrap()
+        .milestone_id
+        .is_some());
+    db::milestones::delete_milestone(pool, owner, repo, 1, original.milestone.id)
         .await
         .unwrap();
     let cleared = db::issues::get_issue(pool, repo, first.number)

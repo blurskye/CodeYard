@@ -31,6 +31,7 @@ pub struct Editor {
     /// The branch refuses direct commits to this user, so the commit goes to `new_branch`.
     #[serde(default)]
     pub protected: bool,
+    pub commit_to_new_branch: bool,
     /// The name for the new branch, prefilled by the server and kept as the user typed it.
     #[serde(default)]
     pub new_branch: String,
@@ -81,14 +82,24 @@ mod saved_draft {
         let _ = key;
     }
 
-    /// Removes this file's drafts saved at other revisions. Nothing can clear them when the
-    /// commit lands, and they can never be shown again, so the next editor visit removes them.
-    pub fn forget_other_revisions(prefix: &str, keep: &str) {
-        for key in stored_keys() {
-            if is_other_revision(&key, prefix, keep) {
-                clear(&key);
-            }
+    /// Prefer this revision, otherwise recover a draft without discarding its original revision.
+    pub fn recover(prefix: &str, current: &str) -> Option<(String, bool)> {
+        if let Some(text) = load(current) {
+            return Some((text, false));
         }
+        let key = recovery_key(stored_keys(), prefix, current)?;
+        load(&key).map(|text| (text, true))
+    }
+
+    pub(super) fn recovery_key(
+        mut keys: Vec<String>,
+        prefix: &str,
+        current: &str,
+    ) -> Option<String> {
+        keys.sort();
+        keys.into_iter()
+            .rev()
+            .find(|key| is_other_revision(key, prefix, current))
     }
 
     fn stored_keys() -> Vec<String> {
@@ -222,6 +233,13 @@ fn follow_scroll(top: f64, left: f64) {
     let _ = (top, left);
 }
 
+fn line_numbers(lines: usize) -> String {
+    (1..=lines)
+        .map(|number| number.to_string())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Local preview state belongs to this component, never the route dispatcher's hook sequence.
 /// The native preview POST and textarea remain functional when hydration is unavailable.
 #[component]
@@ -231,23 +249,25 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
     let (draft_key, original) = use_hook(|| {
         let prefix = draft_prefix(&repo, &editor);
         let key = format!("{prefix}{}", editor.expected_revision);
-        // Drafts of older revisions of this file can never be shown again. A commit cannot
-        // clear them in the browser, so this visit does.
-        saved_draft::forget_other_revisions(&prefix, &key);
         (key, editor.content.clone())
     });
     // A page that came back from the server with an error or a preview already carries
     // the text; otherwise the draft left in this tab comes back.
-    let snapshot = use_signal(|| {
+    let mut stale_draft = use_signal(|| false);
+    let (editor, recovered_stale) = use_hook(|| {
         let mut start = editor.clone();
+        let mut recovered_stale = false;
         if start.error.is_none() && !start.preview {
-            if let Some(text) = saved_draft::load(&draft_key) {
+            if let Some((text, stale)) =
+                saved_draft::recover(&draft_prefix(&repo, &editor), &draft_key)
+            {
                 start.content = text;
+                recovered_stale = stale;
             }
         }
-        start
+        (start, recovered_stale)
     });
-    let editor = snapshot.read().clone();
+    use_effect(move || stale_draft.set(recovered_stale));
     let input_key = draft_key.clone();
     // After a rejected save or a preview the page's text is the submitted text, not the file
     // as Git has it, so it stays saved as a draft until the file is committed.
@@ -260,6 +280,7 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
     // The gutter and the field grow with the text, so one scroll box moves both together. The
     // memo changes only when a line is added or removed, not on every key.
     let lines = use_memo(move || content.read().matches('\n').count() + 1);
+    let gutter = use_memo(move || line_numbers(lines()));
     // The path field's live value decides whether the preview links the page's references. A new
     // file's first load resolves only this repository's numbers, so links to other repositories and
     // to users appear once the native Preview posts the text.
@@ -318,6 +339,9 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
                     }
                 }
                 if let Some(error) = &editor.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { if editor.saved { "{SAVED_FOLLOWUP_FAILED}" } else { "Changes were not saved" } } p { "{error}" } } }
+                if stale_draft() {
+                    p { class: "collaboration-state-banner", role: "status", "Recovered unsaved text from an older revision. Review it against the current file before saving." }
+                }
                 form { id: "repo-editor-form", method: "post", action: write_action, class: "repo-editor-form",
                     {csrf(&repo.csrf_token)}
                     input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
@@ -355,7 +379,7 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
                         }
                         label { class: "repo-sr-only", r#for: "repository-file-content", "File contents" }
                         div { class: "repo-code-editor-body",
-                            pre { class: "repo-code-editor-gutter", aria_hidden: "true", {(1..=lines()).map(|number| number.to_string()).collect::<Vec<_>>().join("\n")} }
+                            pre { class: "repo-code-editor-gutter", aria_hidden: "true", {gutter()} }
                             div { class: "repo-editor-stack",
                                 EditorHighlight { text: content, path: live_path, enabled: hydrated() }
                                 DraftTextarea { id: "repository-file-content", class: "repo-editor-textarea", name: "content", rows: lines().max(10) as u32, initial_value: original.clone(), draft: Some(editor.content.clone()), on_value: move |next: String| {
@@ -374,7 +398,7 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
                     section { class: "repo-commit-box panel",
                         header { class: "repo-section-heading", div { h3 { "Commit changes" } p { "Describe what changed so it is easy to understand in history." } } }
                         div { class: "repo-form-body",
-                            {commit_target(&editor.branch, &editor.new_branch, editor.protected)}
+                            {commit_target(&editor.branch, &editor.new_branch, editor.protected, editor.commit_to_new_branch)}
                             label { class: "repo-field", span { "Commit message" } DraftInput { name: "message", initial_value: editor.message.clone(), maxlength: Some(4096), placeholder: commit_placeholder } }
                             label { class: "repo-field", span { "Extended description" } DraftTextarea { name: "description", initial_value: editor.description.clone(), rows: 3, maxlength: Some(4096) } }
                             p { class: "repo-field-help", "If the branch changed while you were editing, your text will be kept so you can review and try again." }
@@ -398,6 +422,14 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
 mod tests {
     use super::saved_draft::is_other_revision;
     use super::References;
+
+    #[test]
+    fn gutter_numbers_cover_every_source_line() {
+        assert_eq!(super::line_numbers(1), "1");
+        let gutter = super::line_numbers(50_000);
+        assert_eq!(gutter.lines().count(), 50_000);
+        assert!(gutter.ends_with("49999\n50000"));
+    }
 
     #[test]
     fn a_preview_links_the_page_only_for_a_markdown_path() {
@@ -444,7 +476,21 @@ mod tests {
     }
 
     #[test]
-    fn only_other_revisions_of_the_same_file_are_forgotten() {
+    fn older_revision_drafts_are_available_for_recovery() {
+        let prefix = "repo-editor:1:2:main:a.md:false:";
+        let old = format!("{prefix}old");
+        assert_eq!(
+            super::saved_draft::recovery_key(
+                vec![old.clone(), "unrelated".into()],
+                prefix,
+                &format!("{prefix}new")
+            ),
+            Some(old)
+        );
+    }
+
+    #[test]
+    fn only_other_revisions_of_the_same_file_match() {
         let prefix = "repo-editor:1:alice/p:main:a.md:false:";
         let keep = "repo-editor:1:alice/p:main:a.md:false:new";
         let stale = format!("{prefix}old");

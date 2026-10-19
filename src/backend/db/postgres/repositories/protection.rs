@@ -134,10 +134,11 @@ pub async fn upsert_commit_status(
         !server_owned_status_context(input.context),
         "server-owned commit status context"
     );
+    crate::backend::db::repositories::protection::validate_status_metadata(&input)?;
     let actor_id = input.creator_id.ok_or(ProtectionWriteRefusal::Denied)?;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        crate::backend::db::postgres::discussions::lock_write_authority(
+        crate::backend::db::postgres::discussions::lock_exclusive_write_authority(
             &mut tx,
             actor_id,
             input.repo_id,
@@ -146,6 +147,9 @@ pub async fn upsert_commit_status(
         ProtectionWriteRefusal::Denied
     );
     let sha = input.sha.to_ascii_lowercase();
+    let full: bool = sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM commit_statuses WHERE repo_id=$1 AND sha=$2 AND ci_run_id IS NULL) >= 1024 AND NOT EXISTS(SELECT 1 FROM commit_statuses WHERE repo_id=$1 AND sha=$2 AND context=$3)")
+        .bind(input.repo_id).bind(&sha).bind(input.context).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(!full, ProtectionWriteRefusal::StatusLimit);
     let status = sqlx::query_as::<_, CommitStatus>(
         r#"
         INSERT INTO commit_statuses (repo_id, sha, context, state, description, target_url, creator_id)
@@ -175,6 +179,35 @@ pub async fn upsert_commit_status(
     Ok(status)
 }
 
+pub async fn list_commit_statuses_page(
+    pool: &PgPool,
+    repo_id: i64,
+    sha: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<CommitStatus>> {
+    anyhow::ensure!(
+        (1..=100).contains(&limit) && offset >= 0,
+        "Invalid status page"
+    );
+    Ok(sqlx::query_as::<_, CommitStatus>("SELECT id,repo_id,sha,context,state,substr(description,1,1024) AS description,substr(target_url,1,2048) AS target_url,creator_id,created_at,updated_at FROM commit_statuses WHERE repo_id=$1 AND sha=$2 ORDER BY context LIMIT $3 OFFSET $4")
+        .bind(repo_id).bind(sha.to_ascii_lowercase()).bind(limit).bind(offset).fetch_all(pool).await?)
+}
+
+pub async fn commit_status_counts(
+    pool: &PgPool,
+    repo_id: i64,
+    sha: &str,
+) -> Result<Vec<(String, i64)>> {
+    Ok(sqlx::query_as(
+        "SELECT state,COUNT(*) FROM commit_statuses WHERE repo_id=$1 AND sha=$2 GROUP BY state",
+    )
+    .bind(repo_id)
+    .bind(sha.to_ascii_lowercase())
+    .fetch_all(pool)
+    .await?)
+}
+
 pub async fn list_commit_statuses(
     pool: &PgPool,
     repo_id: i64,
@@ -183,7 +216,7 @@ pub async fn list_commit_statuses(
     // Writers store lowercase SHAs, so a request for any case is lowercased to match them.
     let sha = sha.to_ascii_lowercase();
     let statuses = sqlx::query_as::<_, CommitStatus>(
-        r#"SELECT id, repo_id, sha, context, state, description, target_url,
+        r#"SELECT id, repo_id, sha, context, state, substr(description,1,1024) AS description, substr(target_url,1,2048) AS target_url,
                creator_id, created_at, updated_at
            FROM commit_statuses
            WHERE repo_id = $1 AND sha = $2

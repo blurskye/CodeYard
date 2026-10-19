@@ -396,8 +396,23 @@ async fn contract(pg: bool) {
     assert_eq!(closed.status, StatusCode::SEE_OTHER);
     let (_, closed_list) = alice.page("/alice/proj/milestones?state=closed").await;
     assert!(closed_list.contains("v1"), "{closed_list}");
+    let milestone_id = db::milestones::get_milestone(f.pool(), proj.id, 1)
+        .await
+        .unwrap()
+        .unwrap()
+        .milestone
+        .id
+        .to_string();
+    let repository_id = proj.id.to_string();
     let deleted = alice
-        .form_reply("/alice/proj/milestones/1/delete", &[("confirm", "yes")])
+        .form_reply(
+            "/alice/proj/milestones/1/delete",
+            &[
+                ("confirm", "yes"),
+                ("milestone_id", &milestone_id),
+                ("repository_id", &repository_id),
+            ],
+        )
         .await;
     assert_eq!(deleted.status, StatusCode::SEE_OTHER);
     let (_, page) = alice.page(&issue_page).await;

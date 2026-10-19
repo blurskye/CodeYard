@@ -31,13 +31,38 @@ pub async fn get_deploy_key_by_fingerprint(
         .await?)
 }
 
-pub async fn insert_deploy_key(pool: &PgPool, key: &NewDeployKey) -> Result<DeployKey> {
+async fn require_admin(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    actor: i64,
+    repo: i64,
+    session: &str,
+) -> Result<()> {
+    use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
+    let access =
+        lock_user_repo_access_in_transaction(tx, actor, repo, RepositoryRowLock::Shared, true)
+            .await?;
+    let allowed = access.is_some_and(|access| {
+        access.access.can_admin() || (!access.organization && access.is_admin)
+    });
+    anyhow::ensure!(
+        allowed && super::users::transitions::live_session(tx, actor, session).await?,
+        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+    );
+    Ok(())
+}
+
+pub async fn insert_deploy_key(
+    pool: &PgPool,
+    key: &NewDeployKey,
+    session: &str,
+) -> Result<DeployKey> {
     let mut tx = pool.begin().await?;
     // The same advisory lock as account-key enrollment, so one fingerprint is checked once.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 37000003))")
         .bind(&key.fingerprint)
         .execute(&mut *tx)
         .await?;
+    require_admin(&mut tx, key.created_by_id, key.repo_id, session).await?;
     let used: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = $1) OR EXISTS(SELECT 1 FROM deploy_keys WHERE fingerprint = $1)",
     )
@@ -61,12 +86,21 @@ pub async fn insert_deploy_key(pool: &PgPool, key: &NewDeployKey) -> Result<Depl
     Ok(row)
 }
 
-pub async fn delete_deploy_key(pool: &PgPool, repo_id: i64, key_id: i64) -> Result<bool> {
+pub async fn delete_deploy_key(
+    pool: &PgPool,
+    repo_id: i64,
+    key_id: i64,
+    actor: i64,
+    session: &str,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    require_admin(&mut tx, actor, repo_id, session).await?;
     let result = sqlx::query("DELETE FROM deploy_keys WHERE id = $1 AND repo_id = $2")
         .bind(key_id)
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 

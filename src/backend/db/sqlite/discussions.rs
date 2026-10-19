@@ -45,6 +45,15 @@ async fn lock_discussion_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<Option<DiscussionAuthority>> {
+    lock_discussion_authority_with_archived(tx, actor_id, repo_id, false).await
+}
+
+async fn lock_discussion_authority_with_archived(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
+    repo_id: i64,
+    include_archived: bool,
+) -> Result<Option<DiscussionAuthority>> {
     let actor: Option<(bool, bool, bool)> =
         sqlx::query_as("SELECT is_admin, is_banned, must_change_password FROM users WHERE id = ?1")
             .bind(actor_id)
@@ -54,8 +63,8 @@ async fn lock_discussion_authority(
         return Ok(None);
     };
     let repo: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
-        "SELECT owner_kind, owner_user_id, owner_org_id FROM repositories WHERE id = ?1 AND NOT is_archived",
-    ).bind(repo_id).fetch_optional(&mut **tx).await?;
+        "SELECT owner_kind, owner_user_id, owner_org_id FROM repositories WHERE id = ?1 AND (?2 OR NOT is_archived)",
+    ).bind(repo_id).bind(include_archived).fetch_optional(&mut **tx).await?;
     let Some((kind, owner, org)) = repo else {
         return Ok(None);
     };
@@ -123,6 +132,19 @@ pub(crate) async fn lock_admin_authority(
     Ok(lock_discussion_authority(tx, actor_id, repo_id)
         .await?
         .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override))
+}
+
+/// Archival changes must also permit administrators to unarchive a repository.
+pub(crate) async fn lock_archive_authority(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    Ok(
+        lock_discussion_authority_with_archived(tx, actor_id, repo_id, true)
+            .await?
+            .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override),
+    )
 }
 
 /// Whether the actor may still take part in the repository (read access is enough).

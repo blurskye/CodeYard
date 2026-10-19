@@ -44,11 +44,15 @@ native_operation!(crate::backend::db::postgres::milestones::set_milestone_state,
 // Deletes the milestone and clears it from every issue that named it.
 native_operation!(crate::backend::db::postgres::milestones::delete_milestone,
     crate::backend::db::sqlite::milestones::delete_milestone,
-    fn delete_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: i32) -> Result<()>);
+    fn delete_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::milestones::get_milestone,
     crate::backend::db::sqlite::milestones::get_milestone,
     fn get_milestone(pool: &DbPool, repo_id: i64, number: i32) -> Result<Option<MilestoneSummary>>);
+
+native_operation!(crate::backend::db::postgres::milestones::get_milestone_by_id,
+    crate::backend::db::sqlite::milestones::get_milestone_by_id,
+    fn get_milestone_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<MilestoneSummary>>);
 
 // Every milestone of a repository, or only those in `state`, with due dates first.
 native_operation!(crate::backend::db::postgres::milestones::list_repo_milestones,

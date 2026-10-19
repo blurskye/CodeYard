@@ -1,6 +1,6 @@
 use super::history::{readable_history, LogHistoryQuery};
 use super::{authorized_run, unavailable, CiReadError};
-use crate::backend::ci::logs::{is_internal_runner_log_line, normalize_stage_name};
+use crate::backend::ci::logs::normalize_stage_name;
 use crate::backend::{app::AppState, db};
 use axum::{
     extract::{Path, Query, State},
@@ -48,16 +48,11 @@ pub async fn get_ci_job_logs(
         job_id,
         logs: rows
             .into_iter()
-            .filter_map(|row| {
-                if is_internal_runner_log_line(&row.line) {
-                    return None;
-                }
-                Some(JobLogLine {
-                    stage: normalize_stage_name(&row.stage),
-                    line: row.line,
-                    level: row.level,
-                    timestamp: row.created_at.timestamp(),
-                })
+            .map(|row| JobLogLine {
+                stage: normalize_stage_name(&row.stage),
+                line: row.line,
+                level: row.level,
+                timestamp: row.created_at.timestamp(),
             })
             .collect(),
     }))

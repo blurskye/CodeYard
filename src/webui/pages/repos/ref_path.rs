@@ -60,7 +60,27 @@ pub fn file_url(base: &str, kind: &str, reference: &str, path: &str) -> String {
     } else {
         format!("/{}", encode_path(path))
     };
+    // Git forbids prefix collisions within one namespace (main and main/docs), but permits
+    // them across heads and tags. Qualifying the ref keeps filenames out of the other namespace.
+    let qualified;
+    let reference = if !path.is_empty() {
+        qualified = qualified_ref(reference);
+        qualified.as_str()
+    } else {
+        reference
+    };
     format!("{base}/{kind}/{}{tail}", encode_path(reference))
+}
+
+fn qualified_ref(reference: &str) -> String {
+    if reference.starts_with("refs/")
+        || ((7..=40).contains(&reference.len())
+            && reference.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        reference.to_owned()
+    } else {
+        format!("refs/heads/{reference}")
+    }
 }
 
 /// The link a ref menu uses for `path` on `reference`: the same path when the ref has it, else
@@ -94,6 +114,8 @@ pub fn link_base(
     reference: &str,
     directory: &str,
 ) -> crate::webui::components::LinkBase {
+    let reference = qualified_ref(reference);
+    let reference = reference.as_str();
     let blob = file_url(base, "blob", reference, "");
     let directory = encode_path(directory.trim_matches('/'));
     // A resolved link copies the directory and one of the blob, tree or raw URLs. The blob URL
@@ -138,10 +160,27 @@ mod tests {
         );
     }
     #[test]
+    fn generated_links_keep_branch_paths_out_of_the_tag_namespace() {
+        let refs = vec![
+            "main".into(),
+            "main/docs".into(),
+            "refs/heads/main".into(),
+            "refs/tags/main/docs".into(),
+        ];
+        let url = file_url("/u/r", "blob", "main", "docs/a.md");
+        let tail = url.strip_prefix("/u/r/blob/").unwrap();
+        let resolved = resolve_repo_ref_path(&split_path(tail), &refs, true).unwrap();
+        assert_eq!(resolved.reference, "refs/heads/main");
+        assert_eq!(resolved.path, "docs/a.md");
+        let tag = file_url("/u/r", "tree", "refs/tags/main/docs", "");
+        assert!(tag.ends_with("/refs/tags/main/docs"));
+    }
+
+    #[test]
     fn urls_encode_filename_delimiters_without_losing_ref_slashes() {
         assert_eq!(
             file_url("/u/r", "blob", "feature/x", "a #?.rs"),
-            "/u/r/blob/feature/x/a%20%23%3F.rs"
+            "/u/r/blob/refs/heads/feature/x/a%20%23%3F.rs"
         );
     }
 }

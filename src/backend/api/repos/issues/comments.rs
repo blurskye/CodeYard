@@ -229,6 +229,7 @@ pub(crate) async fn native_edit_comment(
         crate::backend::issues::comments::CreateCommentRequest {
             body: draft.comment.clone(),
         },
+        None,
     )
     .await
     .map_err(crate::backend::api::repos::issues::operation_error)

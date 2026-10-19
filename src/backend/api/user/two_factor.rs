@@ -128,8 +128,17 @@ pub(crate) async fn enable_post(
     let token = field(&form, "setup");
     let confirmed = match encryptor(&ctx) {
         Ok(key) => {
-            two_factor::confirm_setup(&ctx.state.pool, key, &user, token, field(&form, "code"))
-                .await
+            two_factor::confirm_setup(
+                &ctx.state.pool,
+                key,
+                &user,
+                &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                    .unwrap_or_default(),
+                field(&form, "current_password"),
+                token,
+                field(&form, "code"),
+            )
+            .await
         }
         Err(error) => Err(error),
     };
@@ -198,6 +207,7 @@ pub(crate) async fn recovery_codes_post(
     match two_factor::regenerate_recovery_codes(
         &ctx.state.pool,
         &user,
+        &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         field(&form, "current_password"),
     )
     .await
@@ -236,7 +246,14 @@ pub(crate) async fn disable_post(
         Ok(user) => user.clone(),
         Err(response) => return response,
     };
-    match two_factor::disable(&ctx.state.pool, &user, field(&form, "current_password")).await {
+    match two_factor::disable(
+        &ctx.state.pool,
+        &user,
+        &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+        field(&form, "current_password"),
+    )
+    .await
+    {
         Ok(()) => ctx.redirect("/settings?tab=two-factor&saved=two-factor-off"),
         Err(error) => refused(&ctx, &form, error).await,
     }

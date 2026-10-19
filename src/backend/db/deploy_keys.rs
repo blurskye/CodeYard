@@ -1,5 +1,5 @@
-//! Deploy key rows. Callers check who may change them; these operations read and write rows and
-//! keep each public key unique across account keys and deploy keys.
+//! Deploy keys: mutations retain live session and repository-admin authority and keep
+//! each public key unique across account keys and deploy keys.
 use crate::backend::db::models::DeployKey;
 use crate::backend::db::DbPool;
 use anyhow::Result;
@@ -30,12 +30,12 @@ native_operation!(crate::backend::db::postgres::deploy_keys::get_deploy_key_by_f
 // Refused with `SshKeyWriteRefusal::AlreadyUsed` when the key is an account key or a deploy key.
 native_operation!(crate::backend::db::postgres::deploy_keys::insert_deploy_key,
     crate::backend::db::sqlite::deploy_keys::insert_deploy_key,
-    fn insert_deploy_key(pool: &DbPool, key: &NewDeployKey) -> Result<DeployKey>);
+    fn insert_deploy_key(pool: &DbPool, key: &NewDeployKey, session: &str) -> Result<DeployKey>);
 
 // Deletes only a key of `repo_id`. Returns false when no such key exists.
 native_operation!(crate::backend::db::postgres::deploy_keys::delete_deploy_key,
     crate::backend::db::sqlite::deploy_keys::delete_deploy_key,
-    fn delete_deploy_key(pool: &DbPool, repo_id: i64, key_id: i64) -> Result<bool>);
+    fn delete_deploy_key(pool: &DbPool, repo_id: i64, key_id: i64, actor: i64, session: &str) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::deploy_keys::touch_deploy_key,
     crate::backend::db::sqlite::deploy_keys::touch_deploy_key,

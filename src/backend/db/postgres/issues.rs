@@ -322,6 +322,7 @@ pub async fn edit_issue_comment(
     issue_id: i64,
     comment_id: i64,
     body: &str,
+    expected_body: &str,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin().await?;
     // Repository authority comes before the comment row. A repository deletion locks the
@@ -343,10 +344,11 @@ pub async fn edit_issue_comment(
     }
     let comment = sqlx::query_as::<_, IssueComment>(
         "UPDATE issue_comments SET body = $2, updated_at = clock_timestamp()
-         WHERE id = $1 RETURNING *",
+         WHERE id = $1 AND body = $3 RETURNING *",
     )
     .bind(comment_id)
     .bind(body)
+    .bind(expected_body)
     .fetch_optional(&mut *tx)
     .await?;
     tx.commit().await?;

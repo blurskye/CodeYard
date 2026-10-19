@@ -23,13 +23,21 @@ pub async fn list_organization_profile_repositories(
     pool: &SqlitePool,
     org: i64,
     viewer: Option<i64>,
+    page: OrganizationPage,
 ) -> Result<Vec<Repository>> {
-    // The private-repository rule is the one list_organization_repositories uses, without paging.
-    Ok(sqlx::query_as("SELECT r.* FROM repositories r WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=?1 AND (NOT r.is_private OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=?2 AND m.role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=?2 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=?2 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY r.name")
-        .bind(org)
-        .bind(viewer)
-        .fetch_all(pool)
-        .await?)
+    let readable = super::super::repositories::access::readable_condition();
+    Ok(sqlx::query_as(&format!("SELECT r.* FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=?1 AND {readable} ORDER BY r.name, r.id LIMIT ?4 OFFSET ?3"))
+        .bind(org).bind(viewer).bind(page.after).bind(page.limit).fetch_all(pool).await?)
+}
+
+pub async fn count_organization_profile_repositories(
+    pool: &SqlitePool,
+    org: i64,
+    viewer: Option<i64>,
+) -> Result<i64> {
+    let readable = super::super::repositories::access::readable_condition();
+    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*) FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id=?1 AND {readable}"))
+        .bind(org).bind(viewer).fetch_one(pool).await?)
 }
 pub async fn list_organization_repositories(
     pool: &SqlitePool,

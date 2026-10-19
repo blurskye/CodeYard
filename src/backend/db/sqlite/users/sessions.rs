@@ -175,7 +175,7 @@ pub async fn rotate_authenticated_session(
     old: Option<&str>,
     fresh: &str,
     user_id: i64,
-    expected_password: Option<&str>,
+    credential: crate::backend::db::users::sessions::SessionCredential<'_>,
     user_agent: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
@@ -216,12 +216,34 @@ pub async fn rotate_authenticated_session(
     let Some(user) = user.filter(|user| !user.is_banned) else {
         return Ok(None);
     };
-    if let Some(expected) = expected_password {
+    if let Some(expected) = credential.password() {
         if user.password_hash.as_deref() != Some(expected) {
             return Ok(None);
         }
     } else if user.must_change_password {
         return Ok(None);
+    }
+    use crate::backend::db::users::sessions::SessionCredential;
+    match credential {
+        SessionCredential::Password(_) if user.two_factor_enabled => return Ok(None),
+        SessionCredential::SecondFactor { .. } if !user.two_factor_enabled => return Ok(None),
+        SessionCredential::SecondFactor {
+            recovery_hash: Some(hash),
+            ..
+        } => {
+            let removed = sqlx::query(
+                "DELETE FROM two_factor_recovery_codes WHERE user_id=?1 AND code_hash=?2",
+            )
+            .bind(user_id)
+            .bind(hash)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if removed != 1 {
+                return Ok(None);
+            }
+        }
+        _ => {}
     }
     if let Some(old) = old {
         sqlx::query("DELETE FROM anonymous_sessions WHERE id=?1")

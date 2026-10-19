@@ -61,19 +61,19 @@ pub async fn repositories_on_profile(
     pool: &DbPool,
     username: &str,
     viewer: Option<i64>,
-) -> Result<(User, Vec<Repository>), ProfileReadError> {
-    let user = accounts::get_user_by_username(pool, username)
-        .await
-        .map_err(|_| ProfileReadError::UserUnavailable)?
-        .ok_or(ProfileReadError::Missing)?;
+    page: i64,
+) -> Result<(User, usize, Vec<Repository>), ProfileReadError> {
+    let (user, count) = repository_count_on_profile(pool, username, viewer).await?;
     let own = viewer == Some(user.id);
-    let repositories = repositories::list_user_repositories(pool, user.id)
-        .await
-        .map_err(|_| ProfileReadError::RepositoriesUnavailable)?
-        .into_iter()
-        .filter(|repository| visible_on_profile(repository.is_private, own))
-        .collect();
-    Ok((user, repositories))
+    let repositories = repositories::list_profile_repositories(
+        pool,
+        user.id,
+        own,
+        (page.clamp(1, 10_000) - 1) * 30,
+    )
+    .await
+    .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
+    Ok((user, count, repositories))
 }
 
 /// The profile's user, and how many repositories the profile lists to `viewer`. The Stars tab shows

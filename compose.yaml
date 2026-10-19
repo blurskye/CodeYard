@@ -54,9 +54,9 @@ services:
     # A clean stop takes at most 90 seconds; Compose's default is 10.
     stop_grace_period: 100s
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-gitserv}:${POSTGRES_PASSWORD:-gitserv}@postgres:5432/${POSTGRES_DB:-gitserv}
+      DATABASE_URL: ${DATABASE_URL:?Set the PostgreSQL URL using percent-encoded credentials and hostname postgres}
       S3_ENDPOINT: http://rustfs-service:9000
-      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://objects.localhost:11002}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?Set a browser-reachable object-storage origin outside the session cookie scope}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}
       S3_SECRET_KEY: ${S3_SECRET_KEY}
       S3_BUCKET: ${S3_BUCKET:-gitserv-files}
@@ -67,10 +67,10 @@ services:
       REPOS_PATH: /data/repos
       GITSERV_NODE_ROLES: ${GITSERV_NODE_ROLES:-web,storage,ssh,actions-worker}
       HOST_KEY_PATH: /data/host_key
-      HTTP_ADDR: ${HTTP_ADDR:-0.0.0.0:3000}
+      HTTP_ADDR: 0.0.0.0:3000
       # Container namespaces cannot autodetect the host's sshd. Explicit standalone default.
       SSH_MODE: ${SSH_MODE:-builtin}
-      SSH_ADDR: ${SSH_ADDR:-0.0.0.0:2222}
+      SSH_ADDR: 0.0.0.0:2222
       SSH_TRUSTED_PROXY_IPS: ${SSH_TRUSTED_PROXY_IPS:-}
       SSH_SOCKET_PATH: ${SSH_SOCKET_PATH:-/run/codeyard/ssh.sock}
       SSH_GIT_USER: ${SSH_GIT_USER:-git}

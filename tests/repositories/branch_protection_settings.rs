@@ -327,7 +327,26 @@ async fn contract(pg: bool) {
 
     // The picker posts each checked person as a repeated field and the typed names as one field.
     // Both reach the rule in order, once each. The page offers the viewer first.
-    let picked = [
+    // A differently cased, nonexistent account is not an alias for bob.
+    let case_refused = alice
+        .form_reply(
+            save,
+            &[
+                ("repository_id", repo.as_str()),
+                ("pattern", "main"),
+                ("required_approving_reviews", "1"),
+                ("force_push_allowances", "bob"),
+                ("force_push_extra", "BOB, alice"),
+            ],
+        )
+        .await;
+    assert_eq!(
+        case_refused.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        case_refused.text()
+    );
+    let mut picked = [
         ("repository_id", repo.as_str()),
         ("pattern", "main"),
         ("required_approving_reviews", "1"),
@@ -338,6 +357,15 @@ async fn contract(pg: bool) {
         ("force_push_allowances", "bob"),
         ("force_push_extra", "BOB, alice"),
     ];
+    // A differently cased name cannot silently select the lowercase account.
+    let refused = alice.form_reply(save, &picked).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        refused.text()
+    );
+    picked.last_mut().unwrap().1 = "bob, alice";
     let reply = alice.form_reply(save, &picked).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     let rules = alice

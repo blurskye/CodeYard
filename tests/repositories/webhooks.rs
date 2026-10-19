@@ -53,6 +53,7 @@ struct Receiver {
     requests: Arc<Mutex<Vec<Received>>>,
     /// Statuses for the next requests; 200 once this runs out.
     replies: Arc<Mutex<VecDeque<u16>>>,
+    response_body: Arc<Mutex<Option<Vec<u8>>>>,
 }
 
 impl Receiver {
@@ -108,10 +109,17 @@ impl Receiver {
                         .unwrap()
                         .push(Received { headers, body });
                     let status = state.replies.lock().unwrap().pop_front().unwrap_or(200);
+                    let body = state
+                        .response_body
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .unwrap_or_else(|| b"ok".to_vec());
                     let response = format!(
-                        "HTTP/1.1 {status} Status\r\nContent-Length: 2\r\nX-Receiver: yes\r\nConnection: close\r\n\r\nok"
+                        "HTTP/1.1 {status} Status\r\nContent-Length: {}\r\nX-Receiver: yes\r\nConnection: close\r\n\r\n", body.len()
                     );
                     let _ = stream.write_all(response.as_bytes()).await;
+                    let _ = stream.write_all(&body).await;
                 });
             }
         });
@@ -272,6 +280,25 @@ async fn flow(pg: bool, receiver: &Receiver, url: &str) {
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains(url), "hook URL is listed");
     assert!(page.contains("Webhooks"));
+    assert!(page.contains("Last delivery 200"));
+    let summaries = db::webhooks::list_delivery_summaries(database.pool(), hook)
+        .await
+        .unwrap();
+    assert_eq!(summaries[0].id, rows[0].id);
+    assert!(summaries[0].request_body.is_empty() && summaries[0].response_body.is_none());
+    assert_eq!(
+        db::webhooks::latest_delivery_status(database.pool(), hook)
+            .await
+            .unwrap(),
+        Some(Some(200))
+    );
+    let (_, detail) = alice
+        .page(&format!(
+            "/alice/proj/settings?tab=webhooks&hook={hook}&delivery={}",
+            rows[0].id
+        ))
+        .await;
+    assert!(detail.contains("zen"));
     assert!(!page.contains(SECRET), "the secret is never rendered");
     let (_, edit) = alice
         .page(&format!(
@@ -466,6 +493,255 @@ async fn pull_request_comment_hooks(pg: bool, url: &str) {
     let rows = deliveries(&database, hook, 3).await;
     assert_eq!(rows[0].event, "pull_request_review_comment");
     assert_eq!(rows[0].action.as_deref(), Some("created"));
+    alice.expect("POST", &format!("/api/repos/alice/proj/pulls/{number}/merge"),
+        json!({"expected_head": head, "expected_base": pull["base_sha"], "merge_method": "merge"}), StatusCode::OK).await;
+    alice
+        .expect(
+            "POST",
+            &comments,
+            json!({"body": "After merge"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let rows = deliveries(&database, hook, 4).await;
+    let sent: Value = serde_json::from_str(&rows[0].request_body).unwrap();
+    assert_eq!(sent["issue"]["state"], "closed");
+    assert_eq!(sent["issue"]["merged"], true);
+}
+
+async fn stale_hooks_and_binary_responses(pg: bool) {
+    use codeyard::backend::webhooks::{self, delivery};
+    let (mut database, _root, _alice, _bob) = setup(pg).await;
+    let pool = database.pool();
+    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = repo.owner_user_id.unwrap();
+    let owner = HookOwner::Repository(repo.id);
+    let receiver = Receiver::default();
+    *receiver.response_body.lock().unwrap() = Some(b"ok\0binary".to_vec());
+    let mut fields = WebhookFields {
+        payload_url: receiver.start().await,
+        content_type: "application/json".into(),
+        events: "push".into(),
+        active: true,
+        ssl_verify: true,
+    };
+    let id = db::webhooks::insert_webhook(pool, owner, actor, &fields, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        db::webhooks::latest_delivery_status(pool, id)
+            .await
+            .unwrap(),
+        None
+    );
+    let hook = db::webhooks::get_webhook(pool, owner, id)
+        .await
+        .unwrap()
+        .unwrap();
+    let outgoing = webhooks::outgoing("push", None, &hook, "{}");
+    delivery::send(pool, &hook, &outgoing).await;
+    let rows = deliveries(&database, id, 1).await;
+    assert_eq!(rows[0].status_code, Some(200));
+    assert_eq!(rows[0].response_body.as_deref(), Some("ok\\0binary"));
+    fields.active = false;
+    db::webhooks::update_webhook(pool, owner, actor, id, &fields, None)
+        .await
+        .unwrap();
+    delivery::send(pool, &hook, &outgoing).await;
+    assert_eq!(receiver.received().len(), 1, "disabled queued hook sent");
+    fields.active = true;
+    fields.payload_url.push_str("/changed");
+    db::webhooks::update_webhook(pool, owner, actor, id, &fields, None)
+        .await
+        .unwrap();
+    delivery::send(pool, &hook, &outgoing).await;
+    assert_eq!(receiver.received().len(), 1, "rotated queued hook sent");
+    let current = db::webhooks::get_webhook(pool, owner, id)
+        .await
+        .unwrap()
+        .unwrap();
+    let outgoing = webhooks::outgoing("push", None, &current, "{}");
+    receiver.replies.lock().unwrap().push_back(500);
+    let pool_for_send = pool.clone();
+    let hook_for_send = current.clone();
+    let sending = tokio::spawn(async move {
+        delivery::send(&pool_for_send, &hook_for_send, &outgoing).await;
+    });
+    for _ in 0..200 {
+        if receiver.received().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(receiver.received().len(), 2);
+    db::webhooks::delete_webhook(pool, owner, actor, id)
+        .await
+        .unwrap();
+    sending.await.unwrap();
+    delivery::send(
+        pool,
+        &current,
+        &webhooks::outgoing("push", None, &current, "{}"),
+    )
+    .await;
+    assert_eq!(receiver.received().len(), 2, "deleted hook retried or sent");
+    assert!(!webhooks::enqueue(
+        pool,
+        current.clone(),
+        webhooks::outgoing(
+            "push",
+            None,
+            &current,
+            &"x".repeat(webhooks::MAX_PAYLOAD_BYTES + 1)
+        )
+    ));
+    database.finish().await;
+}
+
+async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
+    let (mut database, _root, alice, bob) = setup(pg).await;
+    let pool = database.pool();
+    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = repo.owner_user_id.unwrap();
+    let fields = WebhookFields {
+        payload_url: url.into(),
+        content_type: "application/json".into(),
+        events: "push,create,delete,release".into(),
+        active: true,
+        ssl_verify: true,
+    };
+    let hook =
+        db::webhooks::insert_webhook(pool, HookOwner::Repository(repo.id), actor, &fields, None)
+            .await
+            .unwrap()
+            .unwrap();
+    let base = alice.save("main", "README.md", "unborn").await;
+    let rows = deliveries(&database, hook, 2).await;
+    assert!(rows.iter().any(|row| row.event == "create"));
+    let push: Value = serde_json::from_str(
+        &rows
+            .iter()
+            .find(|row| row.event == "push")
+            .unwrap()
+            .request_body,
+    )
+    .unwrap();
+    assert_eq!(push["head_commit"]["id"], base);
+    alice.branch("topic", &base).await;
+    deliveries(&database, hook, 4).await;
+    alice
+        .expect(
+            "DELETE",
+            "/api/repos/alice/proj/branches/topic",
+            Value::Null,
+            StatusCode::NO_CONTENT,
+        )
+        .await;
+    let rows = deliveries(&database, hook, 6).await;
+    assert!(rows.iter().any(|row| row.event == "delete"));
+    let release = alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": "v1", "target_commitish": "main"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    deliveries(&database, hook, 9).await; // tag create, push and release
+    let bob_id = db::users::accounts::get_user_by_username(pool, "bob")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    db::repositories::access::grant_repo_access(
+        pool,
+        bob_id,
+        repo.id,
+        db::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    let path = format!("/api/repos/alice/proj/releases/{}", release["id"]);
+    bob.expect(
+        "PATCH",
+        &path,
+        json!({"body": "Edited by Bob"}),
+        StatusCode::OK,
+    )
+    .await;
+    let rows = deliveries(&database, hook, 10).await;
+    let edited: Value = serde_json::from_str(&rows[0].request_body).unwrap();
+    assert_eq!(edited["release"]["author"]["login"], "alice");
+    assert_eq!(edited["sender"]["login"], "bob");
+    bob.expect("DELETE", &path, Value::Null, StatusCode::NO_CONTENT)
+        .await;
+    let rows = deliveries(&database, hook, 11).await;
+    let deleted: Value = serde_json::from_str(&rows[0].request_body).unwrap();
+    assert_eq!(deleted["release"]["author"]["login"], "alice");
+    assert_eq!(deleted["sender"]["login"], "bob");
+
+    // A request that resolved the old owner cannot fan out content after transfer.
+    database
+        .execute(
+            "UPDATE repositories SET owner_user_id=$1 WHERE id=$2",
+            &[bob_id, repo.id],
+        )
+        .await;
+    let built = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = built.clone();
+    codeyard::backend::webhooks::emit(pool, &repo, "push", vec![], move |_, _| {
+        seen.store(true, std::sync::atomic::Ordering::SeqCst);
+        json!({"private": "new owner's issue body"})
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(!built.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(
+        db::webhooks::list_deliveries(pool, hook)
+            .await
+            .unwrap()
+            .len(),
+        11
+    );
+    database.finish().await;
+}
+
+async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
+    let (mut database, _root, alice, _bob) = setup(pg).await;
+    let repo = repo_id(&database).await;
+    let reply = alice
+        .form_reply(
+            "/alice/proj/_forms/webhook-save",
+            &save_pairs(&repo, url, &["pull_request"]),
+        )
+        .await;
+    assert!(reply.status.is_redirection(), "{}", reply.text());
+    let hook = hook_id(&database).await;
+    deliveries(&database, hook, 1).await;
+    let base = alice.save("main", "README.md", "unborn").await;
+    alice.branch("topic", &base).await;
+    let before = alice.save("topic", "topic.txt", &base).await;
+    alice.open_pull("Review me", "topic", "main").await;
+    deliveries(&database, hook, 2).await;
+    let after = alice.save("topic", "another.txt", &before).await;
+    let rows = deliveries(&database, hook, 3).await;
+    let sync: Vec<_> = rows
+        .iter()
+        .filter(|row| row.action.as_deref() == Some("synchronize"))
+        .collect();
+    assert_eq!(sync.len(), 1);
+    let payload: Value = serde_json::from_str(&sync[0].request_body).unwrap();
+    assert_eq!(payload["before"], before);
+    assert_eq!(payload["after"], after);
+    assert_eq!(payload["pull_request"]["head"]["sha"], after);
+    assert_eq!(payload["repository"]["name"], "proj");
+    database.finish().await;
 }
 
 /// One test runs both engines, because the receiver needs `WEBHOOKS_ALLOW_PRIVATE` for the
@@ -481,6 +757,9 @@ async fn webhooks_on_sqlite_and_postgres() {
         let url = receiver.start().await;
         flow(pg, &receiver, &url).await;
         pull_request_comment_hooks(pg, &url).await;
+        pull_request_head_synchronize_hook(pg, &url).await;
+        stale_hooks_and_binary_responses(pg).await;
+        api_ref_hooks_and_release_authors(pg, &url).await;
     }
 }
 

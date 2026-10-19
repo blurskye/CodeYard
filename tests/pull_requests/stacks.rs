@@ -1792,6 +1792,49 @@ async fn stack_sibling_merge_contract(pg: bool) {
     f.finish().await;
 }
 
+async fn reopen_after_parent_merge_contract(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let root = tempfile::tempdir().unwrap();
+    let (router, alice_id, _) = application(&mut f, root.path()).await;
+    let alice = Client::login(&router, f.pool(), alice_id).await;
+    let path = proj(&f).await.disk_path;
+    let main = alice.save("main", "README.md", "unborn").await;
+    alice.branch("parent", &main).await;
+    let parent = alice.save("parent", "parent.txt", &main).await;
+    alice.open_pull("Parent", "parent", "main").await;
+    alice.branch("child", &parent).await;
+    alice.save("child", "child.txt", &parent).await;
+    alice.open_pull("Child", "child", "parent").await;
+    let (status, result) = join(&alice, 2).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let child = alice.pull(2).await;
+    alice.expect("PUT", "/api/repos/alice/proj/pulls/2", json!({"expected_state": "open", "expected_updated": child["updated_at"], "state": "closed"}), StatusCode::OK).await;
+    alice.merge_current(1).await;
+    let child = alice.pull(2).await;
+    assert_eq!(child["base_branch"], "parent");
+    let reopened = alice.expect("PUT", "/api/repos/alice/proj/pulls/2", json!({"expected_state": "closed", "expected_updated": child["updated_at"], "state": "open"}), StatusCode::OK).await;
+    assert_eq!(reopened["base_branch"], "main");
+    alice.merge_current(2).await;
+    assert!(git2::Repository::open_bare(&path)
+        .unwrap()
+        .find_commit(git2::Oid::from_str(&main_tip(&path)).unwrap())
+        .unwrap()
+        .tree()
+        .unwrap()
+        .get_path(std::path::Path::new("child.txt"))
+        .is_ok());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_reopen_follows_the_merged_parent_destination() {
+    reopen_after_parent_merge_contract(false).await;
+}
+#[tokio::test]
+async fn postgres_reopen_follows_the_merged_parent_destination() {
+    reopen_after_parent_merge_contract(true).await;
+}
+
 /// Saves `content` as the CI workflow of `main` and returns the new tip.
 async fn save_workflow(client: &Client, tip: &str, content: &str) -> String {
     use base64::Engine as _;
@@ -1849,6 +1892,9 @@ async fn stack_upper_layer_ci_contract(pg: bool) {
     assert_eq!(joined.len(), 1, "joining the layer queues its workflow");
     assert_eq!(joined[0].pull_request_id, upper["id"].as_i64());
     assert_eq!(joined[0].branch, "main");
+    let event = joined[0].pull_request_event.as_ref().unwrap();
+    assert_eq!(event["base_ref"], "main");
+    assert_eq!(event["base_sha"], main1);
     assert_eq!(joined[0].status, "queued");
 
     let pushed = alice.save("feature-2", "again.txt", &two).await;

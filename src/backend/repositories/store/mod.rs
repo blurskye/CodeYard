@@ -360,6 +360,10 @@ impl From<anyhow::Error> for RepoError {
         if error.is::<crate::backend::git::repository::process::SessionsBusy>() {
             return Self::sessions_busy();
         }
+        if let Some(conflict) = error.downcast_ref::<crate::backend::git::repository::RefConflict>()
+        {
+            return Self::new(ErrorKind::Conflict, conflict.to_string());
+        }
         if error.is::<crate::backend::git::repository::PullHeadConflict>() {
             return Self::new(ErrorKind::Conflict, "Git pull request ref changed");
         }
@@ -661,6 +665,7 @@ impl RepoStore {
     pub async fn initialize_fork(
         &self,
         pool: &db::DbPool,
+        repo_id: i64,
         source_repo_id: i64,
         actor: i64,
         source: &RepoStore,
@@ -669,7 +674,7 @@ impl RepoStore {
         match (&self.0, &source.0) {
             (Backend::Local(local), Backend::Local(from)) => {
                 local
-                    .initialize_fork(pool, source_repo_id, actor, from, default_branch)
+                    .initialize_fork(pool, repo_id, source_repo_id, actor, from, default_branch)
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
@@ -787,14 +792,55 @@ impl RepoStore {
     /// The entries of the directory `path` ("" is the root) at `git_ref`, folders
     /// first, each with the commit that last touched it.
     pub async fn tree(&self, git_ref: &str, path: &str) -> Result<Vec<TreeEntry>, RepoError> {
+        self.list_tree(git_ref, path, false).await
+    }
+
+    /// Directory names, types and sizes without file history.
+    pub async fn tree_metadata(
+        &self,
+        git_ref: &str,
+        path: &str,
+    ) -> Result<Vec<TreeEntry>, RepoError> {
+        self.list_tree(git_ref, path, true).await
+    }
+
+    async fn list_tree(
+        &self,
+        git_ref: &str,
+        path: &str,
+        metadata_only: bool,
+    ) -> Result<Vec<TreeEntry>, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.tree(git_ref, path).await,
+            Backend::Local(local) => local.tree(git_ref, path, metadata_only).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::Tree {
                             git_ref: git_ref.into(),
                             path: path.into(),
+                            metadata_only,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
+    /// History-free, aggregate-bounded sidebar folders, fetched in one remote call.
+    pub async fn sidebar_trees(
+        &self,
+        git_ref: &str,
+        paths: &[String],
+    ) -> Result<Vec<(String, Vec<TreeEntry>)>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.sidebar_trees(git_ref, paths).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::SidebarTrees {
+                            git_ref: git_ref.into(),
+                            paths: paths.to_vec(),
                         },
                         b"",
                     )
@@ -1112,14 +1158,35 @@ impl RepoStore {
         base_ref: &str,
         head_ref: &str,
     ) -> Result<Vec<String>, RepoError> {
+        self.changed_paths_comparison(base_ref, head_ref, false)
+            .await
+    }
+
+    /// Changed paths between push endpoints, or from the empty tree for a new ref.
+    pub async fn push_changed_paths(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<Vec<String>, RepoError> {
+        self.changed_paths_comparison(base_ref, head_ref, true)
+            .await
+    }
+
+    async fn changed_paths_comparison(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+        endpoints: bool,
+    ) -> Result<Vec<String>, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.changed_paths(base_ref, head_ref).await,
+            Backend::Local(local) => local.changed_paths(base_ref, head_ref, endpoints).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::ChangedPaths {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
+                            endpoints,
                         },
                         b"",
                     )

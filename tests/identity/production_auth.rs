@@ -1323,7 +1323,8 @@ async fn password_session_revocation_failure_rolls_back_both_hash_and_required_c
         PHC,
         &replacement,
         true,
-        true
+        true,
+        None,
     )
     .await
     .is_err());
@@ -1347,10 +1348,12 @@ async fn password_session_revocation_failure_rolls_back_both_hash_and_required_c
         PHC,
         &replacement,
         true,
-        true
+        true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     assert!(stored::get_browser_session(&fixture.pool, &id)
         .await
         .unwrap()

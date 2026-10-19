@@ -7,6 +7,7 @@ use crate::backend::db;
 use crate::backend::db::models::Repository;
 use crate::backend::db::DbPool;
 use crate::backend::repositories::store::{repo_store, ErrorKind, RepoStore};
+use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -120,6 +121,33 @@ async fn move_head(
     if let Some(current) = current {
         let _ = queue_pull_request_ci(pool, ci, base, &current, actor_id, false).await;
         super::code_owners::request_code_owner_reviews(pool, ci, base, &current, actor_id).await;
+        // Describe this successful CAS even if another refresh already moved the row again.
+        let mut current = current;
+        current.head_sha = to.to_owned();
+        let (author_id, repository) = (current.author_id, base.clone());
+        let before = from.to_owned();
+        webhooks::emit(
+            pool,
+            base,
+            events::PULL_REQUEST,
+            vec![author_id, actor_id],
+            move |owner, people| {
+                let (author, sender) = (people.get(author_id), people.get(actor_id));
+                let mut payload = payloads::pull_request(
+                    "synchronize",
+                    &current,
+                    &author,
+                    Scope {
+                        repo: &repository,
+                        owner,
+                        sender: &sender,
+                    },
+                );
+                payload["before"] = serde_json::json!(before);
+                payload["after"] = serde_json::json!(current.head_sha);
+                payload
+            },
+        );
     }
     Ok(true)
 }
@@ -193,10 +221,9 @@ async fn refresh_one(
 
         let mut retry = false;
         if new_base != pull.base_sha {
-            // A stacked layer built on the base it is leaving keeps that base as its fork point, so a
-            // restack replays only its own commits, even after the base moves on again.
-            let fork = match (pull.stack_id, pull.head_repo_id) {
-                (Some(_), Some(head_repo_id)) if head_repo_id == base.id => {
+            // Keep the base this head contains, including before it joins a stack.
+            let fork = match pull.head_repo_id {
+                Some(head_repo_id) if head_repo_id == base.id => {
                     let built_on_base = base_store
                         .is_ancestor(&pull.base_sha, &pull.head_sha)
                         .await
@@ -252,41 +279,60 @@ async fn refresh_one(
 
         let mut head_ready = true;
         let mut head_failed = false;
-        if pull.head_repo_id != Some(base.id) {
-            if let Some(head) = &head {
-                // The pull request may have been closed while the refs were read. A closed
-                // one takes no new commits from its fork.
-                let open = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
-                    .await
-                    .map_err(|_| RefreshError::Database)?
-                    .is_some_and(|row| row.state == "open");
-                if !open {
-                    return Ok(changed);
-                }
-                if let Err(error) = base_store
-                    .fetch_pull_head(
-                        pool,
-                        base.id,
-                        head.id,
-                        pull.author_id,
-                        &repo_store(head, context),
-                        pull.number,
-                        &new_head,
-                        Some(&pull.head_sha),
-                    )
+        if head.is_none()
+            && record_published_head(pool, ci, &base, &base_store, &pull, actor_id).await?
+        {
+            changed = true;
+            retry = true;
+        }
+        if let Some(head) = &head {
+            // The pull request may have been closed while the refs were read. A closed
+            // one takes no new commits from its fork.
+            let open = db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+                .await
+                .map_err(|_| RefreshError::Database)?
+                .is_some_and(|row| row.state == "open");
+            if !open {
+                return Ok(changed);
+            }
+            // Existing same-repository pull requests may not have a retained ref yet.
+            // Their live branch is authoritative; do not replace their row with an older backup.
+            let expected_head = if head.id == base.id {
+                match base_store
+                    .commit_from_primary(&format!("refs/pull/{}/head", pull.number))
                     .await
                 {
-                    head_ready = false;
-                    if error.kind == ErrorKind::Conflict {
-                        if record_published_head(pool, ci, &base, &base_store, &pull, actor_id)
+                    Ok(commit) => Some(commit.sha),
+                    Err(error) if error.kind == ErrorKind::NotFound => None,
+                    Err(_) => return Err(RefreshError::Storage),
+                }
+            } else {
+                Some(pull.head_sha.clone())
+            };
+            if let Err(error) = base_store
+                .fetch_pull_head(
+                    pool,
+                    base.id,
+                    head.id,
+                    pull.author_id,
+                    &repo_store(head, context),
+                    pull.number,
+                    &new_head,
+                    expected_head.as_deref(),
+                )
+                .await
+            {
+                head_ready = false;
+                if error.kind == ErrorKind::Conflict {
+                    if head.id != base.id
+                        && record_published_head(pool, ci, &base, &base_store, &pull, actor_id)
                             .await?
-                        {
-                            changed = true;
-                        }
-                        retry = true;
-                    } else {
-                        head_failed = true;
+                    {
+                        changed = true;
                     }
+                    retry = true;
+                } else {
+                    head_failed = true;
                 }
             }
         }

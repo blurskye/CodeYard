@@ -162,7 +162,7 @@ fn pull_request_json(pull: &PullRequest, author: &Person, repo: &Repository, own
         "number": pull.number,
         "title": pull.title,
         "body": pull.body,
-        "state": pull.state,
+        "state": if pull.merged || pull.state == "merged" { "closed" } else { &pull.state },
         "draft": pull.is_draft,
         "merged": pull.merged,
         "merged_at": optional_time(pull.merged_at),
@@ -352,31 +352,74 @@ pub struct PushedCommit {
     pub author_email: String,
 }
 
-/// The commits a push added: reachable from `after`, not from `before`, newest first and at most
-/// 20. Runs git2 and blocks, so it is called from the blocking payload builder.
-pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> Vec<PushedCommit> {
-    let collect = || -> Result<Vec<PushedCommit>, git2::Error> {
-        let repository = git2::Repository::open_bare(path)?;
-        let mut walk = repository.revwalk()?;
-        walk.push(git2::Oid::from_str(after)?)?;
-        if let Some(before) = before {
-            walk.hide(git2::Oid::from_str(before)?)?;
-        }
-        let mut commits = Vec::new();
-        for oid in walk.take(20) {
-            let commit = repository.find_commit(oid?)?;
-            let author = commit.author();
-            commits.push(PushedCommit {
-                id: commit.id().to_string(),
-                message: commit.message().unwrap_or("").to_owned(),
-                time: commit.time().seconds(),
-                author_name: author.name().unwrap_or("").to_owned(),
-                author_email: author.email().unwrap_or("").to_owned(),
-            });
-        }
-        Ok(commits)
+#[derive(Debug, Default)]
+pub struct PushedCommits {
+    pub commits: Vec<PushedCommit>,
+    pub head: Option<PushedCommit>,
+}
+
+fn bounded_text(text: &str, limit: usize) -> String {
+    let mut end = text.len().min(limit);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
+}
+
+fn pushed_commit(repository: &git2::Repository, revision: &str) -> Option<PushedCommit> {
+    let commit =
+        crate::backend::git::repository::peel_to_commit_checked(repository, revision).ok()?;
+    let author = commit.author();
+    Some(PushedCommit {
+        id: commit.id().to_string(),
+        message: bounded_text(commit.message().unwrap_or(""), 4096),
+        time: commit.time().seconds(),
+        author_name: bounded_text(author.name().unwrap_or(""), 256),
+        author_email: bounded_text(author.email().unwrap_or(""), 256),
+    })
+}
+
+/// At most 20 introduced commits, with a separate new head even for a rewind. Git's bounded
+/// subprocess avoids libgit2's eager hidden-range walk. Called only on a blocking thread.
+pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> PushedCommits {
+    use crate::backend::git::repository::process;
+    let Ok(repository) = git2::Repository::open_bare(path) else {
+        return PushedCommits::default();
     };
-    collect().unwrap_or_default()
+    let head = pushed_commit(&repository, after);
+    let collect = async {
+        let mut command = process::git_command()?;
+        command
+            .current_dir(path)
+            .args(["rev-list", "--max-count=20", after]);
+        if let Some(before) = before {
+            command.args(["--not", before]);
+        }
+        command.arg("--");
+        let (status, output) =
+            process::buffered(command, b"", 20 * 41, std::time::Duration::from_secs(2)).await?;
+        anyhow::ensure!(status.success(), "Webhook commit listing failed");
+        Ok::<_, anyhow::Error>(output)
+    };
+    let output = tokio::runtime::Handle::current()
+        .block_on(collect)
+        .unwrap_or_default();
+    let commits = String::from_utf8_lossy(&output)
+        .lines()
+        .take(20)
+        .filter_map(|oid| pushed_commit(&repository, oid))
+        .collect();
+    PushedCommits { commits, head }
+}
+
+fn pushed_commit_json(commit: &PushedCommit, repo: &Repository, owner: &str) -> Value {
+    json!({
+        "id": commit.id,
+        "message": commit.message,
+        "timestamp": chrono::DateTime::from_timestamp(commit.time, 0).map(time),
+        "url": format!("{}/commit/{}", repository_url(owner, &repo.name), commit.id),
+        "author": { "name": commit.author_name, "email": commit.author_email },
+    })
 }
 
 /// A branch or tag push. `before` is absent for a new ref; the caller sends `create` and
@@ -385,24 +428,20 @@ pub fn push(
     reference: &str,
     before: &str,
     after: &str,
-    commits: &[PushedCommit],
+    commits: &PushedCommits,
     repo: &Repository,
     owner: &str,
     pusher: &Person,
 ) -> Value {
     let commit_values: Vec<Value> = commits
+        .commits
         .iter()
-        .map(|commit| {
-            json!({
-                "id": commit.id,
-                "message": commit.message,
-                "timestamp": chrono::DateTime::from_timestamp(commit.time, 0).map(time),
-                "url": format!("{}/commit/{}", repository_url(owner, &repo.name), commit.id),
-                "author": { "name": commit.author_name, "email": commit.author_email },
-            })
-        })
+        .map(|commit| pushed_commit_json(commit, repo, owner))
         .collect();
-    let head = commit_values.first().cloned().unwrap_or(Value::Null);
+    let head = commits
+        .head
+        .as_ref()
+        .map(|commit| pushed_commit_json(commit, repo, owner));
     json!({
         "ref": reference,
         "before": before,
@@ -421,6 +460,46 @@ pub fn push(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn rewinds_keep_the_head_and_large_messages_are_bounded() {
+        tokio::task::spawn_blocking(|| {
+            let root = tempfile::tempdir().unwrap();
+            let repo = git2::Repository::init_bare(root.path()).unwrap();
+            let tree = repo
+                .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+                .unwrap();
+            let signature = git2::Signature::now("Alice", "a@example.test").unwrap();
+            let first = repo
+                .commit(
+                    None,
+                    &signature,
+                    &signature,
+                    &"é".repeat(10_000),
+                    &tree,
+                    &[],
+                )
+                .unwrap();
+            let parent = repo.find_commit(first).unwrap();
+            let second = repo
+                .commit(None, &signature, &signature, "second", &tree, &[&parent])
+                .unwrap();
+            let rewound =
+                pushed_commits(root.path(), Some(&second.to_string()), &first.to_string());
+            assert!(rewound.commits.is_empty());
+            let head = rewound.head.unwrap();
+            assert_eq!(head.id, first.to_string());
+            assert_eq!(head.message.len(), 4096);
+            assert!(head.message.is_char_boundary(head.message.len()));
+            let forward =
+                pushed_commits(root.path(), Some(&first.to_string()), &second.to_string());
+            assert_eq!(forward.commits.len(), 1);
+            assert_eq!(forward.head.unwrap().id, second.to_string());
+            assert_eq!(bounded_text("aé", 2), "a");
+        })
+        .await
+        .unwrap();
+    }
 
     #[test]
     fn push_marks_created_and_deleted_from_zero_ids() {
@@ -459,7 +538,7 @@ mod tests {
             "refs/heads/new",
             &zero,
             &"a".repeat(40),
-            &[],
+            &PushedCommits::default(),
             &repo,
             "ann",
             &pusher,

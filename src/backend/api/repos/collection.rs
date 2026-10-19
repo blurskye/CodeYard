@@ -456,6 +456,35 @@ pub(crate) async fn create_repository(
             .await
         }
     };
+    if form
+        .get("intent")
+        .is_some_and(|intent| intent == "page-owners")
+    {
+        let choices = match load_choices(&ctx, user.id, page.0, page.1).await {
+            Ok(choices) => choices,
+            Err(_) => {
+                return creation_error(
+                    &ctx,
+                    values,
+                    page,
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    None,
+                    "Repository owner choices are temporarily unavailable.",
+                )
+                .await
+            }
+        };
+        return ctx.page_model(
+            "Create a new repository",
+            AppPage::Discovery(view::Page::NewRepository {
+                owner: user.username.clone(),
+                csrf_token: ctx.csrf_token.clone(),
+                choices,
+                form: values,
+                error: None,
+            }),
+        );
+    }
     let (target, files) = match validity {
         Ok(choice) => choice,
         Err((field, message)) => {

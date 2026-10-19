@@ -40,7 +40,9 @@ fn public_profile_never_links_executable_websites() {
         1,
         2,
         None,
+        Some(2),
     ));
+    assert!(output.contains("href=\"/alice?repo_page=2#profile-repositories\""));
     assert!(!output.contains("href=\"javascript:"));
     assert!(!output.contains("<img src=x"));
     assert!(!output.contains("action=\"/alice/_forms/follow\""));
@@ -66,6 +68,7 @@ fn native_follow_forms_carry_explicit_action_and_csrf() {
         0,
         0,
         None,
+        None,
     ));
     assert!(output.contains("action=\"/alice/_forms/follow\""));
     assert!(output.contains("value=\"unfollow\""));
@@ -82,6 +85,7 @@ fn native_follow_forms_carry_explicit_action_and_csrf() {
         false,
         0,
         0,
+        None,
         None,
     ));
     assert!(!own.contains("action=\"/alice/_forms/follow\""));
@@ -176,6 +180,7 @@ fn profile_initial_html_has_real_rows_metadata_links_and_safe_personal_details()
         1,
         2,
         Some("<b>follow error</b>"),
+        None,
     ));
     assert!(output.contains("Alice &#38; Bob"));
     assert!(output.contains("&#60;script&#62;not markup&#60;/script&#62;"));
@@ -231,6 +236,7 @@ fn profile_prerendered_static_css_has_no_hydration_markers() {
         0,
         0,
         None,
+        None,
     ));
     let css = output
         .split_once("<style")
@@ -270,6 +276,7 @@ fn profile_masthead_shows_the_account_picture_at_96_pixels() {
         0,
         0,
         None,
+        None,
     ));
     assert!(output.contains("src=\"/avatars/alice\""));
     assert!(output.contains("width=\"256\""));
@@ -305,6 +312,7 @@ fn profile_lists_recent_activity_with_a_show_more_link() {
         false,
         0,
         0,
+        None,
         None,
     ));
     assert!(output.contains("Recent activity"));
@@ -345,6 +353,7 @@ fn profile_feed_leaves_out_pushes_without_commits() {
             0,
             0,
             None,
+            None,
         ))
     };
     let output = page(vec![push(0), push(2)]);
@@ -371,6 +380,7 @@ fn profile_without_activity_says_so() {
         false,
         0,
         0,
+        None,
         None,
     ));
     assert!(output.contains("No recent activity."));
@@ -411,6 +421,7 @@ fn profile_groups_activity_by_day_with_links_to_each_repository() {
         false,
         0,
         0,
+        None,
         None,
     ));
     // One heading per day, newest first, and the repository is a link of its own.
@@ -458,6 +469,7 @@ fn profile_stars_tab_counts_on_the_tab_and_lists_its_page_only_when_open() {
             false,
             0,
             0,
+            None,
             None,
         ))
     };
@@ -517,6 +529,7 @@ fn profile_stars_tab_has_the_stars_filter_bar_and_keeps_its_filters_in_pages() {
         0,
         0,
         None,
+        None,
     ));
     // The bar is the one /stars uses, submitted back to the profile's Stars tab.
     assert!(page.contains("id=\"profile-stars-filters\""), "{page}");
@@ -565,6 +578,7 @@ fn profile_stars_tab_says_whose_empty_list_it_is() {
             false,
             0,
             0,
+            None,
             None,
         ))
     };

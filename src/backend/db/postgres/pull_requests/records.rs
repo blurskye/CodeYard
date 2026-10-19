@@ -129,6 +129,7 @@ pub async fn mark_pull_request_ready(
     pool: &PgPool,
     pr_id: i64,
     actor_id: i64,
+    expected: Option<&str>,
 ) -> Result<ReadyOutcome> {
     let mut tx = pool.begin().await?;
     let scope: Option<(i64, i64)> =
@@ -152,16 +153,19 @@ pub async fn mark_pull_request_ready(
         return Ok(ReadyOutcome::Denied);
     }
     // Lock the row so the state read below is still true when it is changed.
-    let row: Option<(String, bool)> = sqlx::query_as(
-        "SELECT state, is_draft FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE",
+    let row: Option<(String, bool, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+        "SELECT state, is_draft, updated_at FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE",
     )
     .bind(pr_id)
     .bind(repo)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((state, draft)) = row else {
+    let Some((state, draft, updated)) = row else {
         return Ok(ReadyOutcome::Missing);
     };
+    if expected.is_some_and(|revision| revision != updated.to_rfc3339()) {
+        return Ok(ReadyOutcome::Changed);
+    }
     if state != "open" {
         return Ok(ReadyOutcome::NotOpen);
     }
@@ -287,7 +291,7 @@ pub async fn list_repo_pull_requests(
         .order_by("pr_comments", "pull_request_id", SHOWN_PR_COMMENT);
     let prs = sqlx::query_as::<_, PullRequestListEntry>(&format!(
         r#"SELECT i.*, {columns}, h.id AS head_display_id, h.name AS head_display_name, CASE WHEN h.owner_kind='user' AND h.owner_org_id IS NULL THEN hu.username WHEN h.owner_kind='org' AND h.owner_user_id IS NULL THEN ho.name END AS head_display_owner FROM pull_requests i JOIN users u ON u.id=i.author_id LEFT JOIN repositories h ON h.id=i.head_repo_id LEFT JOIN users hu ON h.owner_kind='user' AND h.owner_user_id=hu.id LEFT JOIN organizations ho ON h.owner_kind='org' AND h.owner_org_id=ho.id
-        WHERE i.repo_id = $1 AND ($2::TEXT IS NULL OR i.state = $2)
+        WHERE i.repo_id = $1 AND ($2::TEXT IS NULL OR i.state = $2 OR ($11 AND $2 = 'closed' AND i.state = 'merged'))
             AND ($3::TEXT IS NULL OR LOWER(i.title COLLATE "C") LIKE LOWER($3::TEXT COLLATE "C") ESCAPE '\' OR LOWER(i.body COLLATE "C") LIKE LOWER($3::TEXT COLLATE "C") ESCAPE '\')
             AND ($5::BIGINT IS NULL OR i.author_id = $5)
             AND ($6::BIGINT = 0 OR ($6::BIGINT = 1 AND NOT EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id))
@@ -308,6 +312,7 @@ pub async fn list_repo_pull_requests(
     .bind(milestone_mode)
     .bind(milestone_id)
     .bind(labels)
+    .bind(filter.include_merged)
     .fetch_all(pool)
     .await?;
 
@@ -453,7 +458,7 @@ pub async fn update_pull_request(
     if checks_duplicates {
         let duplicate: Option<i32> = sqlx::query_scalar(
             "SELECT o.number FROM pull_requests p JOIN pull_requests o \
-             ON o.repo_id = p.repo_id AND o.head_repo_id IS NOT DISTINCT FROM p.head_repo_id \
+             ON o.repo_id = p.repo_id AND o.head_repo_id = p.head_repo_id \
              AND o.head_branch = p.head_branch AND o.base_branch = COALESCE($2::TEXT, p.base_branch) \
              AND o.state = 'open' AND o.id <> p.id WHERE p.id = $1 LIMIT 1",
         )
@@ -470,12 +475,12 @@ pub async fn update_pull_request(
             title = COALESCE($2, title), body = COALESCE($3, body),
             state = COALESCE($4, state),
             base_branch = COALESCE($8, base_branch), base_sha = COALESCE($9, base_sha),
-            fork_sha = CASE WHEN $8::TEXT IS NULL THEN fork_sha ELSE NULL END,
+            fork_sha = CASE WHEN $8::TEXT IS NULL THEN fork_sha WHEN stack_id IS NOT NULL THEN COALESCE(fork_sha, base_sha) ELSE NULL END,
             closed_at = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN clock_timestamp() ELSE closed_at END,
             updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')
         WHERE id = $1 AND state = $5 AND updated_at = $6 AND repo_id = $7
             AND ($4::TEXT IS NULL OR (state <> 'merged' AND $4 IN ('open', 'closed')))
-            AND ($8::TEXT IS NULL OR stack_id IS NULL)
+            AND ($8::TEXT IS NULL OR stack_id IS NULL OR (state = 'closed' AND $4 = 'open'))
         RETURNING *"#,
     ).bind(pr_id).bind(edit.title).bind(edit.body).bind(edit.state)
         .bind(edit.expected_state).bind(edit.expected_updated).bind(repo)
@@ -683,7 +688,7 @@ pub async fn retarget_stacked_pull_requests(
     // A member whose head is `to` would be based on itself, and one whose move would duplicate
     // another open pull request stays on `from`.
     let moved = sqlx::query_as::<_, PullRequest>(
-        "UPDATE pull_requests SET base_branch = $4, base_sha = $5, fork_sha = NULL, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') \
+        "UPDATE pull_requests SET base_branch = $4, base_sha = $5, fork_sha = COALESCE(fork_sha, base_sha), updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') \
          WHERE repo_id = $1 AND stack_id = $2 AND head_repo_id = $1 AND state = 'open' AND base_branch = $3 \
          AND head_branch <> $4 \
          AND NOT EXISTS (SELECT 1 FROM pull_requests o WHERE o.repo_id = pull_requests.repo_id \

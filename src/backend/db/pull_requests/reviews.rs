@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 pub const MAX_COMMENT_PATH_BYTES: usize = 4 * 1024;
 
 /// A review holds at most this many comments. Each comment that joins a review checks the count
-/// in the same transaction, so a review always fits on one discussion page.
+/// in the same transaction. Reads paginate these comments separately from their reviews.
 pub const MAX_REVIEW_COMMENTS: i64 = 200;
 
 pub struct NewPullRequestComment<'a> {
@@ -48,6 +48,17 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pul
 
 /// Inline comments on files are listed up to this many; `truncated` says more exist.
 pub const MAX_INLINE_COMMENTS: usize = 500;
+pub const MAX_REVIEW_COMMENTS_PAGE: usize = 100;
+pub const MAX_REVIEW_COMMENT_PAGE_BYTES: usize = 1024 * 1024;
+
+pub struct ReviewCommentPage {
+    pub comments: Vec<PullRequestCommentEntry>,
+    pub has_more: bool,
+}
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_review_comments_page,
+    crate::backend::db::sqlite::pull_requests::reviews::list_review_comments_page,
+    fn list_review_comments_page(pool: &DbPool, review_ids: &[i64], offset: i64) -> Result<ReviewCommentPage>);
 
 // Inline comments that are not in a pending review, oldest first.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_inline_comments,
@@ -136,6 +147,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_pul
     pr_id: i64,
     comment_id: i64,
     body: &str,
+    expected_body: &str,
 ) -> Result<Option<PullRequestComment>>);
 
 // Deletes a conversation comment: its author, or a maintainer. False when refused.
@@ -204,6 +216,11 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::request_
     actor_id: i64,
     user_id: i64,
 ) -> Result<bool>);
+
+// Internal callers supply owners derived from the recorded base's CODEOWNERS, never user input.
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::request_code_owner_reviews,
+    crate::backend::db::sqlite::pull_requests::reviews::request_code_owner_reviews,
+    fn request_code_owner_reviews(pool: &DbPool, pull: &crate::backend::db::models::PullRequest, actor_id: i64, owners: &[i64]) -> Result<Vec<User>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::remove_pull_request_reviewer,
     crate::backend::db::sqlite::pull_requests::reviews::remove_pull_request_reviewer,

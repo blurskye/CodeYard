@@ -2,7 +2,9 @@ use super::{comment_link, OperationError};
 use crate::backend::db;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::{mentions_anyone, notify_mentions, MentionSource};
+use crate::backend::notifications::mentions::{
+    mentions_anyone, notify_mentions, MentionComment, MentionSource,
+};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
@@ -157,7 +159,7 @@ pub async fn create_issue_comment(
                 number: issue.number,
                 subject: &issue.title,
                 link: &link,
-                comment_id: Some(comment.id),
+                comment_id: Some(MentionComment::Issue(comment.id)),
                 old_text: None,
                 text: &req.body,
                 notified: &[issue.author_id],
@@ -205,6 +207,7 @@ pub async fn edit_issue_comment(
     actor_id: i64,
     target: CommentTarget,
     req: CreateCommentRequest,
+    expected_body: Option<&str>,
 ) -> Result<db::models::IssueComment, OperationError> {
     let CommentTarget {
         owner,
@@ -218,6 +221,12 @@ pub async fn edit_issue_comment(
         return Err(refusal);
     }
     let previous = issue_comment(pool, &issue, comment_id).await?;
+    if expected_body.is_some_and(|body| body != previous.body) {
+        return Err(OperationError::Conflict {
+            code: "stale_comment",
+            message: "The comment changed. Reload before ticking a task.".into(),
+        });
+    }
     if previous.author_id != user.id {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
@@ -237,6 +246,7 @@ pub async fn edit_issue_comment(
         issue.id,
         comment_id,
         &req.body,
+        &previous.body,
     )
     .await
     .map_err(super::write_error)?
@@ -265,7 +275,7 @@ pub async fn edit_issue_comment(
                 number: issue.number,
                 subject: &issue.title,
                 link: &link,
-                comment_id: Some(comment.id),
+                comment_id: Some(MentionComment::Issue(comment.id)),
                 old_text: Some(&previous.body),
                 text: &req.body,
                 notified: &[],

@@ -11,6 +11,7 @@ mod initial_files;
 mod label_authority;
 mod languages;
 mod readme;
+mod regressions;
 mod releases;
 mod search;
 mod secret_authority;

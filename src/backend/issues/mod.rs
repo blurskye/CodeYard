@@ -45,10 +45,12 @@ pub fn validate_body(body: &str, required: bool) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// Label names are 1–50 bytes. Descriptions have no length limit, but both refuse NUL.
+/// Label names are 1–50 bytes and descriptions at most 1,024 bytes. Both refuse NUL.
 pub fn validate_label(name: &str, description: Option<&str>) -> Result<(), &'static str> {
     if name.is_empty() || name.len() > 50 {
         Err("Label name must be 1-50 characters")
+    } else if description.is_some_and(|text| text.len() > 1_024) {
+        Err("Label description must be at most 1024 bytes")
     } else if name.contains('\0') || description.is_some_and(|text| text.contains('\0')) {
         Err(NUL_REFUSAL)
     } else {
@@ -85,7 +87,7 @@ pub fn parse_due_date(value: &str) -> Result<Option<String>, &'static str> {
 /// holds a comment, so they must use the size the discussion page renders.
 pub(crate) const COMMENTS_PER_PAGE: usize = 30;
 /// The last discussion page a URL can name.
-pub(crate) const MAX_COMMENT_PAGE: usize = 1_000;
+pub(crate) const MAX_COMMENT_PAGE: usize = (i64::MAX as usize) / COMMENTS_PER_PAGE;
 
 /// The discussion page that holds the item at `position`, counted from 1 in the order the
 /// discussion lists it. If the position cannot be read, the first page is named, so a successful
@@ -211,6 +213,21 @@ mod tests {
         assert!(validate_body("", false).is_ok());
         assert!(validate_body(&"x".repeat(65_537), false).is_err());
         assert!(validate_body(&"x".repeat(65_536), false).is_ok());
+    }
+
+    #[test]
+    fn label_descriptions_are_bounded_in_bytes() {
+        assert!(super::validate_label("label", Some(&"x".repeat(1024))).is_ok());
+        assert!(super::validate_label("label", Some(&"x".repeat(1025))).is_err());
+    }
+
+    #[test]
+    fn comment_links_reach_pages_beyond_one_thousand() {
+        assert_eq!(super::discussion_page(Ok(30_001)), 1001);
+        assert_eq!(
+            super::comment_link("/a/r/issues/1", 9, Ok(30_001)),
+            "/a/r/issues/1?page=1001#comment-9"
+        );
     }
 
     #[test]

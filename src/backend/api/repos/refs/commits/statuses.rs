@@ -1,11 +1,12 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::{check_repo_read_access, check_repo_write_access};
+use crate::backend::api::repos::chrome::{json_page, ApiResult, PageQuery};
 use crate::backend::api::repos::responses::map_commit_status_response;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -44,6 +45,7 @@ pub async fn list_commit_statuses(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, sha)): Path<(String, String, String)>,
     headers: HeaderMap,
+    Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<CommitStatusResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
         .await
@@ -75,34 +77,60 @@ pub async fn list_commit_statuses(
     }
     let sha = sha.to_ascii_lowercase();
 
-    let statuses =
-        db::repositories::protection::list_commit_statuses(&state.pool, repository.id, &sha)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Repository operation is unavailable",
-                    )),
-                )
-            })?;
+    let (offset, limit) = json_page(query.page, query.per_page)?;
+    let statuses = db::repositories::protection::list_commit_statuses_page(
+        &state.pool,
+        repository.id,
+        &sha,
+        offset as i64,
+        limit as i64,
+    )
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::new(
+                "database_error",
+                "Repository operation is unavailable",
+            )),
+        )
+    })?;
 
-    let mut responses = Vec::with_capacity(statuses.len());
-    for status in statuses {
-        let creator = if let Some(creator_id) = status.creator_id {
-            db::users::accounts::get_user_by_id(&state.pool, creator_id)
-                .await
-                .ok()
-                .flatten()
-                .map(UserResponse::from)
-        } else {
-            None
-        };
-        responses.push(map_commit_status_response(status, creator));
-    }
+    Ok(Json(status_responses(&state.pool, statuses).await?))
+}
 
-    Ok(Json(responses))
+pub(super) async fn status_responses(
+    pool: &db::DbPool,
+    statuses: Vec<db::models::CommitStatus>,
+) -> ApiResult<Vec<CommitStatusResponse>> {
+    let mut ids: Vec<_> = statuses
+        .iter()
+        .filter_map(|status| status.creator_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let users = db::users::accounts::get_users_by_ids(pool, &ids)
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiError::new(
+                    "database_error",
+                    "Status creators are unavailable",
+                )),
+            )
+        })?;
+    let users: std::collections::HashMap<_, _> = users
+        .into_iter()
+        .map(|user| (user.id, UserResponse::from(user)))
+        .collect();
+    Ok(statuses
+        .into_iter()
+        .map(|status| {
+            let creator = status.creator_id.and_then(|id| users.get(&id)).cloned();
+            map_commit_status_response(status, creator)
+        })
+        .collect())
 }
 
 pub async fn create_commit_status(

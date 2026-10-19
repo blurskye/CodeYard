@@ -199,6 +199,44 @@ impl CiRuns {
         .await
     }
 
+    /// Starts another attempt from a stored run, repeating current execution and PR checks.
+    pub async fn rerun_run(
+        &self,
+        run_id: Uuid,
+        actor_id: i64,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        let run = db::ci::get_ci_run_by_run_id(&self.pool, run_id)
+            .await?
+            .ok_or(AdmissionError::Missing("Run not found"))?;
+        let head_sha = run.head_sha.ok_or(AdmissionError::Conflict(
+            "This run has no commit to run again",
+        ))?;
+        let inputs = run
+            .workflow_inputs
+            .map(serde_json::from_value::<BTreeMap<String, String>>)
+            .transpose()
+            .map_err(|_| AdmissionError::Invalid("Stored workflow inputs are invalid"))?;
+        self.enqueue_run(
+            CiRunRequest {
+                repo_id: run.repo_id,
+                repo_owner: String::new(),
+                repo_name: String::new(),
+                branch: run.branch,
+                head_sha: Some(head_sha),
+                event: run.event,
+                pull_request_id: run.pull_request_id,
+                pipeline: CiPipelineKind::from_value(&run.pipeline),
+                workflow_paths: run.workflow_path.split(',').map(str::to_owned).collect(),
+                environment: run.environment,
+                inputs,
+                triggered_by_id: actor_id,
+                manual: true,
+            },
+            true,
+        )
+        .await
+    }
+
     /// Cheap current-authority check before repository-controlled workflow discovery.
     /// Durable admission repeats this check in the enqueue transaction.
     pub(crate) async fn actor_may_discover_workflows(
@@ -242,8 +280,22 @@ impl CiRuns {
         &self,
         request: CiRunRequest,
     ) -> Result<db::models::CiRun, AdmissionError> {
-        let revision =
-            admission::resolve(&self.pool, &self.config, self.cluster.as_ref(), request).await?;
+        self.enqueue_run(request, false).await
+    }
+
+    async fn enqueue_run(
+        &self,
+        request: CiRunRequest,
+        rerun: bool,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        let revision = admission::resolve(
+            &self.pool,
+            &self.config,
+            self.cluster.as_ref(),
+            request,
+            rerun,
+        )
+        .await?;
         let request = revision.request;
         let head_sha = request
             .head_sha

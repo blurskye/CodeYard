@@ -54,9 +54,10 @@ pub async fn register_password(
     };
     // The account is committed before issuance. A failed session never reopens
     // registration or changes a private-node request into an authenticated account.
-    let session_id = sessions::issue_authenticated_session(pool, session, user.id, Some(&hash))
-        .await
-        .map_err(RegistrationError::Session)?;
+    let session_id =
+        sessions::issue_authenticated_session(pool, session, user.id, Some(hash.as_str()))
+            .await
+            .map_err(RegistrationError::Session)?;
     Ok(RegistrationOutcome::Registered(Box::new(
         AuthenticatedAccount { user, session_id },
     )))

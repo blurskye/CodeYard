@@ -44,6 +44,12 @@ pub enum Operation {
     Tree {
         git_ref: String,
         path: String,
+        #[serde(default)]
+        metadata_only: bool,
+    },
+    SidebarTrees {
+        git_ref: String,
+        paths: Vec<String>,
     },
     WorkflowFiles {
         revision: String,
@@ -120,6 +126,8 @@ pub enum Operation {
     ChangedPaths {
         base_ref: String,
         head_ref: String,
+        #[serde(default)]
+        endpoints: bool,
     },
     DiffFrom {
         source: Uuid,
@@ -261,6 +269,7 @@ impl Operation {
     pub fn is_read_only(&self) -> bool {
         match self {
             Self::Tree { .. }
+            | Self::SidebarTrees { .. }
             | Self::Blob { .. }
             | Self::BlobBytes { .. }
             | Self::BlobById { .. }

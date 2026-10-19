@@ -9,7 +9,12 @@ use super::{
     sessions::{self, AccountAuthorityError},
 };
 use crate::backend::crypto::SecretEncryptor;
-use crate::backend::db::{self, models::User, DbPool};
+use crate::backend::db::{
+    self,
+    models::User,
+    users::two_factor::{FactorAuthority, StoredTwoFactor},
+    DbPool,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use data_encoding::BASE32_NOPAD;
 use hmac::{Hmac, Mac};
@@ -252,7 +257,12 @@ pub async fn begin_setup(
     let encoded = BASE32_NOPAD.encode(&secret);
     let token = seal(
         encryptor,
-        &format!("setup|{}|{}|{encoded}", now_unix() + SETUP_SECONDS, user.id),
+        &format!(
+            "setup|{}|{}|{encoded}|{}",
+            now_unix() + SETUP_SECONDS,
+            user.id,
+            password_digest(user.password_hash.as_deref())
+        ),
     )?;
     Ok(Setup {
         uri: otpauth_uri(&user.username, &encoded),
@@ -270,7 +280,9 @@ pub fn open_setup(
     now: u64,
 ) -> Result<Setup, TwoFactorError> {
     let fields = open_fields(encryptor, token, "setup", now).ok_or(TwoFactorError::SetupExpired)?;
-    if fields[2] != user.id.to_string() {
+    if fields[2] != user.id.to_string()
+        || fields.get(4) != Some(&password_digest(user.password_hash.as_deref()))
+    {
         return Err(TwoFactorError::SetupExpired);
     }
     let secret = fields[3].clone();
@@ -287,9 +299,12 @@ pub async fn confirm_setup(
     pool: &DbPool,
     encryptor: &SecretEncryptor,
     user: &User,
+    session: &str,
+    password: &str,
     token: &str,
     code: &str,
 ) -> Result<Vec<String>, TwoFactorError> {
+    verify_current_password(pool, user, password).await?;
     let now = now_unix();
     let setup = open_setup(encryptor, user, token, now)?;
     let secret = BASE32_NOPAD
@@ -302,22 +317,25 @@ pub async fn confirm_setup(
         .map_err(|_| TwoFactorError::KeyUnavailable)?;
     let codes = new_recovery_codes();
     let hashes: Vec<String> = codes.iter().map(|code| recovery_code_hash(code)).collect();
-    let enabled = db::users::two_factor::enable_two_factor(pool, user.id, &sealed, &nonce, &hashes)
-        .await
-        .map_err(|_| TwoFactorError::Unavailable)?;
+    let enrollment = StoredTwoFactor {
+        secret_encrypted: sealed,
+        nonce: nonce.to_vec(),
+        last_used_step: Some(step),
+    };
+    let authority = password_authority(user, session)?;
+    let enabled =
+        db::users::two_factor::enable_two_factor(pool, user.id, authority, &enrollment, &hashes)
+            .await
+            .map_err(|_| TwoFactorError::Unavailable)?;
     if !enabled {
         return Err(TwoFactorError::AlreadyEnabled);
     }
-    // The code that confirmed the setup is spent, so it cannot also sign the account in.
-    db::users::two_factor::use_totp_step(pool, user.id, step)
-        .await
-        .map_err(|_| TwoFactorError::Unavailable)?;
     Ok(codes)
 }
 
-/// Checks a sign-in code, a TOTP or a recovery code, for an account that has two-factor on.
-/// A TOTP step works once; a recovery code is removed when used.
-pub async fn verify_sign_in_code(
+/// Checks and spends a TOTP step against the enrollment whose secret was verified.
+/// Recovery codes are spent by the session-issuance transaction instead.
+pub async fn verify_totp_code(
     pool: &DbPool,
     encryptor: &SecretEncryptor,
     user_id: i64,
@@ -325,13 +343,8 @@ pub async fn verify_sign_in_code(
     now: u64,
 ) -> Result<bool, TwoFactorError> {
     let code = normalize_code(input);
-    if code.is_empty() {
-        return Ok(false);
-    }
     if !is_totp_code(&code) {
-        return db::users::two_factor::use_recovery_code(pool, user_id, &recovery_code_hash(&code))
-            .await
-            .map_err(|_| TwoFactorError::Unavailable);
+        return Ok(false);
     }
     let Some(stored) = db::users::two_factor::get_two_factor(pool, user_id)
         .await
@@ -345,7 +358,7 @@ pub async fn verify_sign_in_code(
     let Some(step) = matching_step(&secret, &code, now) else {
         return Ok(false);
     };
-    db::users::two_factor::use_totp_step(pool, user_id, step)
+    db::users::two_factor::use_totp_step(pool, user_id, &stored.nonce, step)
         .await
         .map_err(|_| TwoFactorError::Unavailable)
 }
@@ -354,14 +367,20 @@ pub async fn verify_sign_in_code(
 pub async fn regenerate_recovery_codes(
     pool: &DbPool,
     user: &User,
+    session: &str,
     password: &str,
 ) -> Result<Vec<String>, TwoFactorError> {
     verify_current_password(pool, user, password).await?;
     let codes = new_recovery_codes();
     let hashes: Vec<String> = codes.iter().map(|code| recovery_code_hash(code)).collect();
-    if !db::users::two_factor::replace_recovery_codes(pool, user.id, &hashes)
-        .await
-        .map_err(|_| TwoFactorError::Unavailable)?
+    if !db::users::two_factor::replace_recovery_codes(
+        pool,
+        user.id,
+        password_authority(user, session)?,
+        &hashes,
+    )
+    .await
+    .map_err(|_| TwoFactorError::Unavailable)?
     {
         return Err(TwoFactorError::NotEnabled);
     }
@@ -369,9 +388,27 @@ pub async fn regenerate_recovery_codes(
 }
 
 /// Turns two-factor sign-in off after the current password is checked.
-pub async fn disable(pool: &DbPool, user: &User, password: &str) -> Result<(), TwoFactorError> {
+pub async fn disable(
+    pool: &DbPool,
+    user: &User,
+    session: &str,
+    password: &str,
+) -> Result<(), TwoFactorError> {
     verify_current_password(pool, user, password).await?;
-    turn_off(pool, user.id).await
+    turn_off(pool, user.id, password_authority(user, session)?).await
+}
+
+fn password_authority<'a>(
+    user: &'a User,
+    session: &'a str,
+) -> Result<FactorAuthority<'a>, TwoFactorError> {
+    Ok(FactorAuthority::Password {
+        session,
+        expected: user
+            .password_hash
+            .as_deref()
+            .ok_or(TwoFactorError::InvalidPassword)?,
+    })
 }
 
 /// Administrator recovery for a locked-out account. The administrator must be signed in and not
@@ -381,14 +418,29 @@ pub async fn admin_turn_off(
     administrator_session: Option<&str>,
     user_id: i64,
 ) -> Result<(), TwoFactorError> {
-    sessions::administrator(pool, administrator_session)
+    let actor = sessions::administrator(pool, administrator_session)
         .await
         .map_err(TwoFactorError::Authority)?;
-    turn_off(pool, user_id).await
+    let session = administrator_session.ok_or(TwoFactorError::Authority(
+        AccountAuthorityError::NotAuthenticated,
+    ))?;
+    turn_off(
+        pool,
+        user_id,
+        FactorAuthority::Administrator {
+            user_id: actor.id,
+            session,
+        },
+    )
+    .await
 }
 
-async fn turn_off(pool: &DbPool, user_id: i64) -> Result<(), TwoFactorError> {
-    if db::users::two_factor::disable_two_factor(pool, user_id)
+async fn turn_off(
+    pool: &DbPool,
+    user_id: i64,
+    authority: FactorAuthority<'_>,
+) -> Result<(), TwoFactorError> {
+    if db::users::two_factor::disable_two_factor(pool, user_id, authority)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
     {

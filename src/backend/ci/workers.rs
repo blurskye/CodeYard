@@ -147,10 +147,15 @@ impl CiWorkers {
         Ok(())
     }
 
+    /// Stops new claims and signals running jobs without waiting for them.
+    pub fn request_stop(&self) {
+        self.workers.stop.send_replace(true);
+    }
+
     /// Cancels running jobs and waits briefly for results and workspace cleanup.
     pub async fn shutdown(&self) -> Result<()> {
+        self.request_stop();
         let workers = &self.workers;
-        workers.stop.send_replace(true);
         let mut tasks =
             std::mem::take(&mut *workers.tasks.lock().unwrap_or_else(|e| e.into_inner()));
         if tokio::time::timeout(SHUTDOWN_GRACE, async {

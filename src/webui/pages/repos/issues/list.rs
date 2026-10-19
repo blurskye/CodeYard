@@ -188,6 +188,18 @@ pub(in crate::webui::pages::repos) fn choice(href: String, text: &str, chosen: b
     }
 }
 
+/// Copies only selected values, never the choice catalogues used to render the menus.
+fn selected_filters(filters: &ListFilters) -> ListFilters {
+    ListFilters {
+        author: filters.author.clone(),
+        assignee: filters.assignee.clone(),
+        milestone: filters.milestone.clone(),
+        sort: filters.sort.clone(),
+        selected_labels: filters.selected_labels.clone(),
+        ..Default::default()
+    }
+}
+
 /// The filters with one label added, or removed when it is already chosen.
 pub(super) fn toggle_label(filters: &ListFilters, name: &str) -> ListFilters {
     let mut selected = filters.selected_labels.clone();
@@ -199,7 +211,7 @@ pub(super) fn toggle_label(filters: &ListFilters, name: &str) -> ListFilters {
     }
     ListFilters {
         selected_labels: selected,
-        ..filters.clone()
+        ..selected_filters(filters)
     }
 }
 
@@ -239,7 +251,7 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
         &filters.author,
         |f, v| ListFilters {
             author: v,
-            ..f.clone()
+            ..selected_filters(f)
         },
         &filters.authors,
     );
@@ -247,7 +259,7 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
         &filters.assignee,
         |f, v| ListFilters {
             assignee: v,
-            ..f.clone()
+            ..selected_filters(f)
         },
         &filters.assignees,
     );
@@ -256,7 +268,7 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
         Choice::plain(
             href(ListFilters {
                 assignee: "none".to_owned(),
-                ..filters.clone()
+                ..selected_filters(filters)
             }),
             "Assigned to nobody",
             filters.assignee == "none",
@@ -278,7 +290,7 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
     let mut milestones = vec![Choice::plain(
         href(ListFilters {
             milestone: "none".to_owned(),
-            ..filters.clone()
+            ..selected_filters(filters)
         }),
         "No milestone",
         filters.milestone == "none",
@@ -292,7 +304,7 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
         ..Choice::plain(
             href(ListFilters {
                 milestone: milestone.number.to_string(),
-                ..filters.clone()
+                ..selected_filters(filters)
             }),
             &milestone.title,
             filters.milestone == milestone.number.to_string(),
@@ -304,7 +316,7 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
             Choice::plain(
                 href(ListFilters {
                     sort: (*value).to_owned(),
-                    ..filters.clone()
+                    ..selected_filters(filters)
                 }),
                 text,
                 sort == *value,
@@ -315,15 +327,15 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
     rsx! {
         div { class: "collaboration-filter-menus",
             FilterMenu { id: "filter-author", title: "Author", heading: "Filter by author", search_label: "Filter users", searchable: true, set: !filters.author.is_empty(), choices: authors, empty: "No authors yet",
-                clear: clear(!filters.author.is_empty(), ListFilters { author: String::new(), ..filters.clone() }) }
+                clear: clear(!filters.author.is_empty(), ListFilters { author: String::new(), ..selected_filters(filters) }) }
             FilterMenu { id: "filter-labels", title: "Labels", heading: "Filter by label", search_label: "Filter labels", searchable: true, set: !filters.selected_labels.is_empty(), choices: labels, empty: "No labels yet",
-                clear: clear(!filters.selected_labels.is_empty(), ListFilters { selected_labels: Vec::new(), ..filters.clone() }) }
+                clear: clear(!filters.selected_labels.is_empty(), ListFilters { selected_labels: Vec::new(), ..selected_filters(filters) }) }
             FilterMenu { id: "filter-milestones", title: "Milestones", heading: "Filter by milestone", search_label: "Filter milestones", searchable: true, set: !filters.milestone.is_empty(), choices: milestones, empty: "No milestones yet",
-                clear: clear(!filters.milestone.is_empty(), ListFilters { milestone: String::new(), ..filters.clone() }) }
+                clear: clear(!filters.milestone.is_empty(), ListFilters { milestone: String::new(), ..selected_filters(filters) }) }
             FilterMenu { id: "filter-assignees", title: "Assignees", heading: "Filter by assignee", search_label: "Filter users", searchable: true, set: !filters.assignee.is_empty(), choices: assignees, empty: "No one can be assigned yet",
-                clear: clear(!filters.assignee.is_empty(), ListFilters { assignee: String::new(), ..filters.clone() }) }
+                clear: clear(!filters.assignee.is_empty(), ListFilters { assignee: String::new(), ..selected_filters(filters) }) }
             FilterMenu { id: "filter-sort", title: format!("Sort: {sort_text}"), heading: "Sort by",search_label: "", searchable: false, set: sort != "newest", choices: sorts, empty: "",
-                clear: clear(sort != "newest", ListFilters { sort: String::new(), ..filters.clone() }) }
+                clear: clear(sort != "newest", ListFilters { sort: String::new(), ..selected_filters(filters) }) }
         }
     }
 }

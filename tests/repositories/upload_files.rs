@@ -23,8 +23,15 @@ use tower::ServiceExt;
 const BOUNDARY: &str = "upload-test-boundary";
 
 /// A multipart form: the text fields, then one `files` part per file. Returns the content type.
-fn form(fields: &[(&str, &str)], files: &[(&str, &[u8])]) -> (String, Vec<u8>) {
+fn form(
+    repository_id: &str,
+    fields: &[(&str, &str)],
+    files: &[(&str, &[u8])],
+) -> (String, Vec<u8>) {
     let mut body = Vec::new();
+    let fields = [("repository_id", repository_id)]
+        .into_iter()
+        .chain(fields.iter().copied());
     for (name, value) in fields {
         body.extend(
             format!("--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
@@ -119,6 +126,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
+    let repository_id = repository.id.to_string();
     let disk = std::path::PathBuf::from(repository.disk_path.clone());
     let state = AppState::new(
         f.pool().clone(),
@@ -136,6 +144,64 @@ async fn contract(pg: bool) {
     let page = "/upload_owner/site/upload/main";
     let tree = "/upload_owner/site/tree/main";
 
+    // An upload opened for a private repository cannot reach a public replacement.
+    let original = lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "private-upload",
+        None,
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    db::repositories::records::rename_repository(f.pool(), owner, original.id, "renamed-upload")
+        .await
+        .unwrap();
+    let replacement = lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "private-upload",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let (content_type, body) = form(
+        &original.id.to_string(),
+        &[
+            ("csrf_token", &csrf),
+            ("expected_revision", "unborn"),
+            ("message", "private draft"),
+        ],
+        &[("secret.txt", b"private\n")],
+    );
+    let (status, _, reply) = send(
+        &router,
+        &writer.session,
+        "POST",
+        "/upload_owner/private-upload/upload/main",
+        &content_type,
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{reply}");
+    assert!(
+        reply.contains(&format!("name=\"repository_id\" value=\"{}\"", original.id)),
+        "{reply}"
+    );
+    assert!(reply.contains("private draft"));
+    assert!(
+        codeyard::backend::repositories::store::repo_store(&replacement, None)
+            .refs()
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
     // A writer sees the form. A reader is refused, and a visitor is sent to sign in.
     let (status, _, html) = send(&router, &writer.session, "GET", page, "", Vec::new()).await;
     assert_eq!(status, StatusCode::OK, "{html}");
@@ -148,6 +214,7 @@ async fn contract(pg: bool) {
 
     // Two files land in one commit on a branch that does not exist yet.
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", "unborn"),
@@ -179,6 +246,7 @@ async fn contract(pg: bool) {
 
     // A file that exists is replaced, the other is kept, and the empty message gets the default.
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &first.to_string()),
@@ -209,6 +277,7 @@ async fn contract(pg: bool) {
 
     // A directory upload keeps only the file name of each part, so `..` cannot leave it.
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &second.to_string()),
@@ -228,7 +297,7 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::SEE_OTHER, "{reply}");
     assert_eq!(
         location.as_deref(),
-        Some("/upload_owner/site/tree/main/docs")
+        Some("/upload_owner/site/tree/refs/heads/main/docs")
     );
     let third = head(&disk);
     assert_eq!(
@@ -243,10 +312,13 @@ async fn contract(pg: bool) {
 
     // A stale head is a conflict, and the typed message comes back.
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &first.to_string()),
             ("message", "keep this text"),
+            ("commit_target", "new_branch"),
+            ("new_branch", "draft-branch"),
         ],
         &[("late.txt", b"late\n")],
     );
@@ -254,12 +326,14 @@ async fn contract(pg: bool) {
         send(&router, &writer.session, "POST", page, &content_type, body).await;
     assert_eq!(status, StatusCode::CONFLICT, "{reply}");
     assert!(reply.contains("keep this text"), "{reply}");
+    assert!(reply.contains("value=\"new_branch\" checked"), "{reply}");
     assert!(reply.contains("Files were not uploaded"), "{reply}");
     assert_eq!(head(&disk), third);
 
     // Refusals that write nothing: a missing CSRF token, no file, an empty file part, a `..`
     // name, and a file over 25 MiB.
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", "not-the-token"),
             ("expected_revision", &third.to_string()),
@@ -269,6 +343,7 @@ async fn contract(pg: bool) {
     let (status, _, _) = send(&router, &writer.session, "POST", page, &content_type, body).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),
@@ -283,6 +358,7 @@ async fn contract(pg: bool) {
         "{reply}"
     );
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),
@@ -292,6 +368,7 @@ async fn contract(pg: bool) {
     let (status, _, _) = send(&router, &writer.session, "POST", page, &content_type, body).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),
@@ -304,6 +381,7 @@ async fn contract(pg: bool) {
     assert!(reply.contains("Use a relative file path"), "{reply}");
     let big = vec![0u8; 25 * 1024 * 1024 + 1];
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),
@@ -324,6 +402,7 @@ async fn contract(pg: bool) {
         .map(|_| upload_slots.clone().try_acquire_owned().unwrap())
         .collect();
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),
@@ -342,6 +421,7 @@ async fn contract(pg: bool) {
 
     // A reader and a visitor cannot write, whatever the form says.
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &reader.csrf),
             ("expected_revision", &third.to_string()),
@@ -351,6 +431,7 @@ async fn contract(pg: bool) {
     let (status, _, _) = send(&router, &reader.session, "POST", page, &content_type, body).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),
@@ -372,6 +453,7 @@ async fn contract(pg: bool) {
         )
         .await;
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),
@@ -395,6 +477,7 @@ async fn contract(pg: bool) {
 
     // The files go to a new branch that starts at the tip the page showed. Main does not move.
     let (content_type, body) = form(
+        &repository_id,
         &[
             ("csrf_token", &csrf),
             ("expected_revision", &third.to_string()),

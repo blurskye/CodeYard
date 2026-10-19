@@ -73,6 +73,7 @@ pub fn DraftTextarea(
     // The revision of the page this field belongs to, such as the one its save checks. A draft saved
     // against another revision is shown with a notice instead of being restored silently.
     #[props(default)] revision: Option<String>,
+    #[props(default)] on_revision: Option<EventHandler<Option<String>>>,
     #[props(default)] on_value: EventHandler<String>,
     #[props(default)] on_scroll: EventHandler<ScrollEvent>,
 ) -> Element {
@@ -85,7 +86,8 @@ pub fn DraftTextarea(
     // Browsers report textarea text with LF line breaks only.
     let initial_text = use_signal(|| initial_value.replace("\r\n", "\n").replace('\r', "\n"));
     // Where this field's unsent text is kept in session storage, if anywhere.
-    let stored_key = use_signal(|| {
+    #[allow(unused_mut)]
+    let mut stored_key = use_signal(|| {
         if readonly || restored.peek().is_some() {
             None
         } else {
@@ -97,7 +99,9 @@ pub fn DraftTextarea(
     #[cfg(target_arch = "wasm32")]
     let mut submit_mark = use_signal(|| None::<draft_text::SubmitMark>);
     let mut value = use_signal(move || initial_value);
-    let typed_revision = revision.clone();
+    let mut typed_revision = use_signal(|| revision.clone());
+    let reset_revision = revision.clone();
+    let accept_revision = revision.clone();
     rsx! {
         if stale() {
             p { class: "collaboration-state-banner", role: "status",
@@ -109,11 +113,24 @@ pub fn DraftTextarea(
                         if let Some(key) = stored_key.peek().as_deref() {
                             draft_text::clear(key);
                         }
+                        typed_revision.set(reset_revision.clone());
+                        if let Some(handler) = on_revision { handler.call(reset_revision.clone()); }
                         value.set(current.clone());
                         on_value.call(current);
                         stale.set(false);
                     },
                     "Use the current text"
+                }
+                button { r#type: "button", class: "btn btn-secondary btn-sm",
+                    onclick: move |_| {
+                        typed_revision.set(accept_revision.clone());
+                        if let Some(handler) = on_revision { handler.call(accept_revision.clone()); }
+                        if let Some(key) = stored_key.peek().as_deref() {
+                            draft_text::save(key, &value.peek(), accept_revision.as_deref());
+                        }
+                        stale.set(false);
+                    },
+                    "Use this draft on the current revision"
                 }
             }
         }
@@ -124,17 +141,20 @@ pub fn DraftTextarea(
             oninput: move |event| {
                 let text = event.value();
                 if let Some(key) = stored_key.peek().as_deref() {
-                    draft_text::save(key, &text, typed_revision.as_deref());
+                    draft_text::save(key, &text, typed_revision.peek().as_deref());
                 }
                 value.set(text.clone());
                 on_value.call(text);
             },
             onmounted: move |event| {
-                let stored = stored_key.peek().as_deref().and_then(draft_text::load);
                 #[cfg(target_arch = "wasm32")]
                 { use wasm_bindgen::JsCast;
                   if let Some(element) = event.data().downcast::<web_sys::Element>() {
                       if let Some(input) = element.dyn_ref::<web_sys::HtmlTextAreaElement>() {
+                          if stored_key.peek().is_some() {
+                              stored_key.set(draft_text::form_key(element));
+                          }
+                          let stored = stored_key.peek().as_deref().and_then(draft_text::load);
                           let mut text = input.value();
                           let mut stale_draft = false;
                           // Hydration leaves the server text in the field. Text the user
@@ -146,6 +166,8 @@ pub fn DraftTextarea(
                                   input.set_value(&draft);
                                   text = draft;
                               } else if let Some(stored) = stored {
+                                  typed_revision.set(stored.revision.clone());
+                                  if let Some(handler) = on_revision { handler.call(stored.revision.clone()); }
                                   let draft = match draft_text::restore(stored, revision.as_deref()) {
                                       draft_text::Restore::Silently(draft) => draft,
                                       draft_text::Restore::Stale(draft) => {
@@ -173,7 +195,7 @@ pub fn DraftTextarea(
                   }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                let _ = (event, restored, initial_text, stored, &revision);
+                let _ = (event, restored, initial_text, &revision);
             }
         }
     }
@@ -208,6 +230,49 @@ pub mod draft_text {
     pub fn key(name: &str, id: Option<&str>) -> Option<String> {
         let (path, search) = location();
         key_for(&path, &search, name, id)
+    }
+
+    // The action identifies the same logical form on its GET and refused POST pages.
+    #[cfg(target_arch = "wasm32")]
+    pub fn form_key(field: &web_sys::Element) -> Option<String> {
+        let name = field.get_attribute("name")?;
+        let id = field.get_attribute("id");
+        let Some(form) = field.closest("form").ok().flatten() else {
+            return key(&name, id.as_deref());
+        };
+        let Some(action) = form.get_attribute("action") else {
+            return key(&name, id.as_deref());
+        };
+        let mut identity = String::new();
+        for target in ["path", "side", "line", "in_reply_to"] {
+            if let Some(value) = form
+                .query_selector(&format!("input[name='{target}']"))
+                .ok()
+                .flatten()
+                .and_then(|field| field.get_attribute("value"))
+            {
+                identity.push_str(&format!(
+                    ":{target}={}",
+                    crate::webui::encode_component(&value)
+                ));
+            }
+        }
+        key_for_action(&action, &identity, &name, id.as_deref())
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn key_for_action(
+        action: &str,
+        identity: &str,
+        name: &str,
+        id: Option<&str>,
+    ) -> Option<String> {
+        key_for(
+            action.split('#').next().unwrap_or(action),
+            identity,
+            name,
+            id,
+        )
     }
 
     fn key_for(path: &str, search: &str, name: &str, id: Option<&str>) -> Option<String> {
@@ -337,11 +402,18 @@ pub mod draft_text {
         let _ = account;
     }
 
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn is_draft_key(key: &str) -> bool {
+        key.starts_with(DRAFT_PREFIX)
+            || key.starts_with("repo-editor:")
+            || key.starts_with("codeyard-draft-sent:")
+    }
+
     #[cfg(target_arch = "wasm32")]
     fn forget_drafts(storage: &web_sys::Storage) {
         let keys: Vec<String> = (0..storage.length().unwrap_or(0))
             .filter_map(|index| storage.key(index).ok().flatten())
-            .filter(|key| key.starts_with(DRAFT_PREFIX))
+            .filter(|key| is_draft_key(key))
             .collect();
         for key in keys {
             let _ = storage.remove_item(&key);
@@ -425,6 +497,32 @@ pub mod draft_text {
         use super::*;
 
         #[test]
+        fn get_and_refused_post_use_the_same_logical_form_key() {
+            let get = key_for_action("/alice/repo/issues/7/edit", "", "body", Some("edit-body"));
+            let refused = key_for_action(
+                "/alice/repo/issues/7/edit#preview",
+                "",
+                "body",
+                Some("edit-body"),
+            );
+            assert_eq!(get, refused);
+            assert_ne!(
+                key_for_action(
+                    "/alice/repo/pulls/7/comments",
+                    ":path=a:line=1",
+                    "body",
+                    Some("line-comment-body")
+                ),
+                key_for_action(
+                    "/alice/repo/pulls/7/comments",
+                    ":path=b:line=1",
+                    "body",
+                    Some("line-comment-body")
+                )
+            );
+        }
+
+        #[test]
         fn a_draft_is_kept_per_page_query_and_field() {
             let body = key_for("/alice/demo/pulls/6", "", "body", Some("comment-body"));
             assert!(body.is_some());
@@ -453,6 +551,16 @@ pub mod draft_text {
                 key_for("/alice/demo/pulls/6", "", "body", None),
                 key_for("/alice/demo/pulls/6", "", "body", Some("body"))
             );
+        }
+
+        #[test]
+        fn account_cleanup_includes_private_editor_text_and_submit_marks() {
+            assert!(is_draft_key("repo-editor:1:2:main:private.rs:false:abc"));
+            assert!(is_draft_key("codeyard-draft:/settings:name:bio"));
+            assert!(is_draft_key(
+                "codeyard-draft-sent:codeyard-draft:/settings:name:bio"
+            ));
+            assert!(!is_draft_key("codeyard-theme"));
         }
 
         #[test]
@@ -621,7 +729,7 @@ pub fn DraftSelect(
     rsx! {
         if enhanced() {
             div { class: "app-select",
-                button { id: button_id, r#type: "button", class: "app-select-button {class}", disabled,
+                button { id: button_id, r#type: "button", role: "combobox", class: "app-select-button {class}", disabled,
                     aria_label,
                     "aria-haspopup": "listbox",
                     "aria-expanded": if open_now { "true" } else { "false" },
@@ -828,6 +936,22 @@ fn scroll_into_view(id: &str) {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    #[test]
+    fn enhanced_select_owns_its_active_option_as_a_combobox() {
+        fn root() -> Element {
+            rsx! { DraftSelect { name: "choice", initial_value: "a", aria_label: "Choice", options: vec![SelectOption::new("a", "A")] } }
+        }
+        let mut dom = VirtualDom::new(root);
+        dom.rebuild_in_place();
+        for _ in 0..3 {
+            dom.render_immediate_to_vec();
+        }
+        let html = dioxus_ssr::render(&dom);
+        assert!(html.contains("role=\"combobox\""), "{html}");
+        assert!(html.contains("aria-haspopup=\"listbox\""));
+        assert!(html.contains("aria-label=\"Choice\""));
+    }
+
     #[test]
     fn arrow_keys_stop_at_the_ends_of_the_list() {
         assert_eq!(next_index(0, 3), 1);

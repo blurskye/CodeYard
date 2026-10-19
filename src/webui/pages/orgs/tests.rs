@@ -207,6 +207,7 @@ fn public_profile(
             suspended: false,
             avatar_url: None,
         },
+        repository_count: repositories.len() as i64,
         repositories,
         member_count,
         team_count: member_count.map(|_| 2),

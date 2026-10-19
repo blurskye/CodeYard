@@ -84,5 +84,11 @@ native_operation!(crate::backend::db::postgres::webhooks::insert_delivery, crate
 native_operation!(crate::backend::db::postgres::webhooks::list_deliveries, crate::backend::db::sqlite::webhooks::list_deliveries,
     fn list_deliveries(pool: &DbPool, webhook_id: i64) -> Result<Vec<WebhookDelivery>>);
 
+native_operation!(crate::backend::db::postgres::webhooks::latest_delivery_status, crate::backend::db::sqlite::webhooks::latest_delivery_status,
+    fn latest_delivery_status(pool: &DbPool, webhook_id: i64) -> Result<Option<Option<i32>>>);
+
+native_operation!(crate::backend::db::postgres::webhooks::list_delivery_summaries, crate::backend::db::sqlite::webhooks::list_delivery_summaries,
+    fn list_delivery_summaries(pool: &DbPool, webhook_id: i64) -> Result<Vec<WebhookDelivery>>);
+
 native_operation!(crate::backend::db::postgres::webhooks::get_delivery, crate::backend::db::sqlite::webhooks::get_delivery,
     fn get_delivery(pool: &DbPool, webhook_id: i64, delivery_id: i64) -> Result<Option<WebhookDelivery>>);

@@ -33,4 +33,4 @@ native_operation!(crate::backend::db::postgres::activity::record_repository_push
 
 native_operation!(crate::backend::db::postgres::activity::list_user_activity,
     crate::backend::db::sqlite::activity::list_user_activity,
-    fn list_user_activity(pool: &DbPool, user_id: i64, limit: i64, offset: i64) -> Result<Vec<ActivityRow>>);
+    fn list_user_activity(pool: &DbPool, user_id: i64, viewer: Option<i64>, limit: i64, offset: i64) -> Result<Vec<ActivityRow>>);

@@ -386,6 +386,69 @@ pub(crate) async fn initialize_repository(
     Ok(())
 }
 
+#[cfg(test)]
+mod pull_head_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn changed_pull_heads_borrow_existing_base_objects_for_fetch_negotiation() {
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path().join("base.git");
+        let source = root.path().join("source.git");
+        initialize_repository(&base, None, "main").await.unwrap();
+        let repo = git2::Repository::open_bare(&base).unwrap();
+        let signature = git2::Signature::now("Test", "test@example.invalid").unwrap();
+        let large = repo.blob(&vec![b'x'; 1024 * 1024]).unwrap();
+        let mut builder = repo.treebuilder(None).unwrap();
+        builder.insert("large.txt", large, 0o100644).unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let first = repo
+            .commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "base",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        initialize_repository(&source, Some(&base), "main")
+            .await
+            .unwrap();
+        let fork = git2::Repository::open_bare(&source).unwrap();
+        let parent = fork.find_commit(first).unwrap();
+        let mut builder = fork.treebuilder(Some(&parent.tree().unwrap())).unwrap();
+        builder
+            .insert("small.txt", fork.blob(b"new").unwrap(), 0o100644)
+            .unwrap();
+        let tree = fork.find_tree(builder.write().unwrap()).unwrap();
+        let head = fork
+            .commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "new head",
+                &tree,
+                &[&parent],
+            )
+            .unwrap();
+        let prepared = prepare_pull_head(&base, &source, &head.to_string())
+            .await
+            .unwrap();
+        std::fs::remove_file(prepared.path().join("objects/info/alternates")).unwrap();
+        let temporary = git2::Repository::open_bare(prepared.path()).unwrap();
+        assert!(temporary.odb().unwrap().exists(head));
+        assert!(
+            !temporary.odb().unwrap().exists(large),
+            "the existing base blob must not be fetched again"
+        );
+        assert!(
+            !repo.odb().unwrap().exists(head),
+            "preparation must not publish fork objects"
+        );
+    }
+}
+
 const TEMPORARY_PULL_HEAD: &str = "refs/heads/pull-head";
 
 /// A fork head fetched into an isolated repository. Dropping it removes every
@@ -407,7 +470,11 @@ pub(crate) struct PullHeadConflict;
 
 /// Fetches a local fork commit into temporary storage. The base repository is
 /// not touched until [`publish_pull_head`] runs after the live authority check.
-pub(crate) async fn prepare_pull_head(source: &Path, head: &str) -> Result<PreparedPullHead> {
+pub(crate) async fn prepare_pull_head(
+    base: &Path,
+    source: &Path,
+    head: &str,
+) -> Result<PreparedPullHead> {
     validate_merge_revision("main", head)?;
     let source = std::path::absolute(source)?;
     ensure!(source.is_dir(), "Repository storage is unavailable");
@@ -416,6 +483,34 @@ pub(crate) async fn prepare_pull_head(source: &Path, head: &str) -> Result<Prepa
         .ok_or_else(|| anyhow!("Invalid source storage path"))?;
     let temporary = tempfile::tempdir()?;
     initialize_repository(temporary.path(), None, "main").await?;
+    let base = std::fs::canonicalize(base)?;
+    let objects = base.join("objects");
+    let objects = objects
+        .to_str()
+        .ok_or_else(|| anyhow!("Invalid base storage path"))?;
+    ensure!(!objects.contains(['\n', '\r']), "Invalid base storage path");
+    tokio::fs::write(
+        temporary.path().join("objects/info/alternates"),
+        format!("{objects}\n"),
+    )
+    .await?;
+    let refs = super::list_mirror_refs(&base)?;
+    let mut script = String::from("start\n");
+    for (index, target) in refs.values().enumerate() {
+        script.push_str(&format!("update refs/known/{index} {target}\n"));
+    }
+    script.push_str("prepare\ncommit\n");
+    let (status, _) = command(
+        temporary.path(),
+        &["update-ref", "--stdin"],
+        script.as_bytes(),
+        None,
+    )
+    .await?;
+    ensure!(
+        status.success(),
+        "Git pull request negotiation setup failed"
+    );
     let refspec = format!("+{head}:{TEMPORARY_PULL_HEAD}");
     let (status, _) = command(
         temporary.path(),
@@ -611,7 +706,7 @@ pub(crate) async fn publish_merge(
         .ok_or_else(|| anyhow!("Invalid base branch"))?;
     let mut input = String::from("start\n");
     for (head_branch, head) in heads {
-        let head_ref = if head_branch.starts_with("refs/pull/") && head_branch.ends_with("/head") {
+        let head_ref = if head_branch.starts_with("refs/heads/") || is_pull_head_ref(head_branch) {
             ensure!(
                 git2::Reference::is_valid_name(head_branch),
                 "Invalid pull ref"
@@ -623,7 +718,7 @@ pub(crate) async fn publish_merge(
             crate::backend::git::branch_ref(head_branch)
                 .ok_or_else(|| anyhow!("Invalid head branch"))?
         };
-        if *head_branch == base_branch {
+        if head_ref == base_ref {
             bail!("Head and base must be distinct branches");
         }
         input.push_str(&format!("verify {head_ref} {head}\n"));
@@ -675,17 +770,27 @@ pub(crate) async fn publish_restack(
     .await
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct RefConflict(pub(crate) String);
+
 /// Runs one `update-ref --stdin` transaction. A failed check of any line refuses all of them.
 async fn run_ref_transaction(path: &Path, input: &str, message: &str, failure: &str) -> Result<()> {
-    let (status, _) = command(
-        path,
-        &["update-ref", "--stdin", "-m", message],
-        input.as_bytes(),
-        None,
-    )
-    .await?;
-    if !status.success() {
-        bail!("{failure}");
+    let mut command = process::git_command()?;
+    command
+        .arg("--git-dir")
+        .arg(path)
+        .args(["update-ref", "--stdin", "-m", message]);
+    let output = process::run(command, input.as_bytes(), MAX_OUTPUT, COMMAND_TIMEOUT).await?;
+    if !output.status.success() {
+        let diagnostics = String::from_utf8_lossy(&output.stderr);
+        if diagnostics.contains("but expected")
+            || diagnostics.contains("unable to resolve reference")
+            || diagnostics.contains("reference already exists")
+        {
+            return Err(RefConflict(failure.into()).into());
+        }
+        bail!("Git ref transaction failed: {diagnostics}");
     }
     Ok(())
 }

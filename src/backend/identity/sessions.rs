@@ -23,11 +23,11 @@ pub enum SessionIssueError {
     Denied,
 }
 
-pub async fn issue_authenticated_session(
+pub async fn issue_authenticated_session<'a>(
     pool: &DbPool,
     context: SessionContext<'_>,
     user_id: i64,
-    expected_password: Option<&str>,
+    credential: impl Into<stored::SessionCredential<'a>>,
 ) -> Result<String, SessionIssueError> {
     let old = match context.initiating {
         InitiatingSession::Missing => None,
@@ -41,7 +41,7 @@ pub async fn issue_authenticated_session(
         old,
         context.fresh_id,
         user_id,
-        expected_password,
+        credential,
         context.user_agent,
         context.expires_at,
     )

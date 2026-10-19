@@ -799,9 +799,11 @@ async fn ordinary_password_changes_leave_organization_work_running(db: &Database
         "ordinary-two",
         true,
         true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     for run in [&first, &second] {
         let current = db.run(run.run_id).await;
         assert_eq!(current.status, "queued");
@@ -1269,12 +1271,20 @@ fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
 }
 
 async fn visible_repositories(db: &Database, user: i64, limit: i64) -> Vec<i64> {
-    db::ci::list_ci_runs_for_user(db.pool(), user, limit)
+    let runs = db::ci::list_ci_runs_for_user(db.pool(), user, limit)
         .await
-        .unwrap()
-        .into_iter()
-        .map(|run| run.repo_id)
-        .collect()
+        .unwrap();
+    let ids: Vec<_> = runs.iter().map(|run| run.repo_id).collect();
+    let metadata = db::repositories::access::readable_repositories_by_ids(db.pool(), user, &ids)
+        .await
+        .unwrap();
+    let mut expected = ids.clone();
+    expected.sort_unstable();
+    expected.dedup();
+    let mut actual: Vec<_> = metadata.iter().map(|repo| repo.id).collect();
+    actual.sort_unstable();
+    assert_eq!(actual, expected);
+    ids
 }
 
 async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
@@ -1412,6 +1422,8 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     }
     assert_eq!(visible_repositories(db, site, 2).await, [public, direct]);
 
+    // The batch rechecks revocations even when its input came from an earlier run list.
+    let previously_readable = [org_repo, personal, direct, public];
     // Access taken away takes the runs out of the list.
     db.execute(
         "DELETE FROM team_memberships WHERE team_id = $1 AND user_id = $2",
@@ -1424,6 +1436,17 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
             .unwrap()
     );
     assert_eq!(visible_repositories(db, member, 50).await, [public]);
+    let metadata = db::repositories::access::readable_repositories_by_ids(
+        db.pool(),
+        member,
+        &previously_readable,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        metadata.iter().map(|repo| repo.id).collect::<Vec<_>>(),
+        [public]
+    );
 
     // An account that cannot use the site sees nothing.
     db::users::transitions::change_ban(db.pool(), site, member, true)
@@ -1479,18 +1502,25 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     use tower::ServiceExt;
 
     async fn get(router: &Router, session: &str, path: &str) -> Vec<u8> {
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .uri(path)
-                    .header(header::COOKIE, format!("session_id={session}"))
-                    .header(header::ACCEPT, MODEL_CONTENT_TYPE)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let request = |path: &str| {
+            Request::builder()
+                .uri(path)
+                .header(header::COOKIE, format!("session_id={session}"))
+                .header(header::ACCEPT, MODEL_CONTENT_TYPE)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let mut response = router.clone().oneshot(request(path)).await.unwrap();
+        if path.starts_with("/ci?") {
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+            let location = response.headers()[header::LOCATION].to_str().unwrap();
+            assert!(
+                location.starts_with("/log_page_owner/logs/actions?"),
+                "{location}"
+            );
+            assert!(location.contains("job="));
+            response = router.clone().oneshot(request(location)).await.unwrap();
+        }
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), MAX_PAGE_MODEL_BYTES)
             .await
@@ -2057,6 +2087,82 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
     assert_eq!(next.id, third.id);
 }
 
+async fn commit_status_descriptions_redact_runner_messages(db: &Database) {
+    let w = world(db, "status_redaction").await;
+    for (message, expected) in [
+        (
+            Some("credentials=private /srv/runner/private"),
+            "The runner recorded an error",
+        ),
+        (
+            Some("The run exceeded its time limit"),
+            "The run exceeded its time limit",
+        ),
+        (None, "CI run completed"),
+    ] {
+        let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
+        db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
+            .await
+            .unwrap()
+            .unwrap();
+        db::ci::finish_ci_run(db.pool(), run.id, WORKER, "failed", message)
+            .await
+            .unwrap()
+            .unwrap();
+        let statuses = db::repositories::protection::list_commit_statuses(
+            db.pool(),
+            w.repo,
+            run.head_sha.as_deref().unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].description.as_deref(), Some(expected));
+        assert_eq!(db.run(run.run_id).await.error_message.as_deref(), message);
+    }
+}
+
+async fn log_batches_preserve_line_order_and_totals(db: &Database) {
+    use codeyard::backend::ci::queue::LogLine;
+    let w = world(db, "batch_order").await;
+    let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
+        .await
+        .unwrap()
+        .unwrap();
+    let lines: Vec<_> = (0..64)
+        .map(|i| LogLine {
+            stage: format!("stage-{i}"),
+            line: format!("line-{i}"),
+            level: "info".into(),
+        })
+        .collect();
+    db::ci::append_ci_logs(db.pool(), run.id, WORKER, &lines)
+        .await
+        .unwrap();
+    let stored = db::ci::list_ci_logs(db.pool(), run.id, 100).await.unwrap();
+    assert_eq!(stored.len(), lines.len());
+    for (stored, expected) in stored.iter().zip(&lines) {
+        assert_eq!(stored.stage, expected.stage);
+        assert_eq!(stored.line, expected.line);
+        assert_eq!(stored.level, expected.level);
+    }
+    assert_eq!(
+        db.count("SELECT log_lines FROM ci_runs WHERE id=$1", &[run.id])
+            .await,
+        64
+    );
+    let bytes = lines
+        .iter()
+        .map(|line| line.stage.len() + line.line.len())
+        .sum::<usize>() as i64;
+    assert_eq!(
+        db.count("SELECT log_bytes FROM ci_runs WHERE id=$1", &[run.id])
+            .await,
+        bytes
+    );
+}
+
 // ---- A cluster claim needs its node to be an active actions worker ----
 
 /// A claim as `node_key` must fail and leave the run queued with no worker.
@@ -2191,6 +2297,8 @@ on_both_engines!(
     queued_pull_request_inputs_survive_base_and_title_changes,
     a_person_starts_a_new_attempt_once_the_last_one_has_finished,
     a_retried_claim_gets_back_the_run_its_worker_holds,
+    commit_status_descriptions_redact_runner_messages,
+    log_batches_preserve_line_order_and_totals,
     cluster_claim_needs_an_active_actions_worker_node,
 );
 
@@ -2287,6 +2395,51 @@ mod interleaved {
             trusted,
         )
         .await
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn overlapping_claims_for_one_worker_return_the_same_run() {
+        let mut db = Database::new(true).await;
+        let w = world(&db, "overlapping_claims").await;
+        let first = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
+        let second = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
+        let mut gate = fixture(&db).raw.begin().await.unwrap();
+        let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *gate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
+            .bind(w.repo)
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+        let pool = db.pool().clone();
+        let claiming =
+            tokio::spawn(
+                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner]).await },
+            );
+        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        let pool = db.pool().clone();
+        let retrying =
+            tokio::spawn(
+                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner]).await },
+            );
+        wait_until_blocked_by(&fixture(&db).raw, holder, 2).await;
+        gate.commit().await.unwrap();
+        let claimed = promptly("first claim", claiming)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let retried = promptly("overlapping retry", retrying)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.id, first.id);
+        assert_eq!(retried.id, first.id);
+        assert_eq!(db.run(second.run_id).await.status, "queued");
+        db.close().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

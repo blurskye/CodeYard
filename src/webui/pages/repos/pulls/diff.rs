@@ -40,6 +40,8 @@ pub struct Diff {
 pub struct Viewed {
     pub csrf: String,
     pub action: String,
+    pub head: String,
+    pub base: String,
     pub paths: std::collections::BTreeSet<String>,
 }
 
@@ -99,8 +101,10 @@ pub fn diff_page(
     let listed = |path: &str| diff.files.iter().any(|file| file.filename == path);
     let unplaced: Vec<&Thread> = threads.iter().filter(|t| !listed(&t.path)).collect();
     // A reply draft is drawn inside its thread, so only a new line comment takes a composer here.
-    let loose_composer =
-        composer.filter(|draft| draft.in_reply_to.is_none() && !listed(&draft.path));
+    let loose_composer = composer.filter(|draft| match draft.in_reply_to {
+        Some(root) => !threads.iter().any(|thread| thread.root.id == root),
+        None => !listed(&draft.path),
+    });
     repos::chrome::chrome(
         &repo.chrome,
         rsx! {
@@ -219,6 +223,32 @@ fn FileToggles(count: usize) -> Element {
     }
 }
 
+const MAX_DIFF_ROWS: usize = 4000;
+const MAX_DIFF_HTML_BYTES: usize = 8 * 1024 * 1024;
+
+// A line repeats its encoded path in up to four links in split view. Reserve room for
+// escaped text and row markup too, before constructing any of the row components.
+fn renderable_files(diff: &Diff) -> Vec<bool> {
+    let mut rows_left = MAX_DIFF_ROWS;
+    let mut bytes_left = MAX_DIFF_HTML_BYTES;
+    diff.files
+        .iter()
+        .map(|file| {
+            let rows = file.patch.lines().count();
+            let bytes = file.patch.len().saturating_mul(6).saturating_add(
+                rows.saturating_mul(2048 + 4 * encode_component(&file.filename).len()),
+            );
+            if rows > rows_left || bytes > bytes_left {
+                false
+            } else {
+                rows_left -= rows;
+                bytes_left -= bytes;
+                true
+            }
+        })
+        .collect()
+}
+
 /// Each file as a section that a reader can collapse. The Viewed mark sits in the file's header.
 fn file_cards(
     lines: Option<&Lines<'_>>,
@@ -228,6 +258,7 @@ fn file_cards(
     viewed: Option<&Viewed>,
     split: bool,
 ) -> Element {
+    let renderable = renderable_files(diff);
     rsx! {
         for (index, file) in diff.files.iter().enumerate() {
             if let Some(marks) = viewed {
@@ -235,6 +266,9 @@ fn file_cards(
                 form { id: format!("viewed-form-{index}"), class: "collaboration-viewed-form", method: "post", action: marks.action.clone(),
                     input { r#type: "hidden", name: "csrf_token", value: marks.csrf.clone() }
                     input { r#type: "hidden", name: "path", value: file.filename.clone() }
+                    input { r#type: "hidden", name: "expected_head", value: marks.head.clone() }
+                    input { r#type: "hidden", name: "expected_base", value: marks.base.clone() }
+                    input { r#type: "hidden", name: "index", value: index.to_string() }
                 }
             }
             details { id: format!("diff-file-{index}"), open: !viewed.is_some_and(|marks| marks.paths.contains(&file.filename)), class: "collaboration-panel collaboration-diff-file",
@@ -251,13 +285,19 @@ fn file_cards(
                             csrf: marks.csrf.clone(),
                             action: marks.action.clone(),
                             path: file.filename.clone(),
+                            head: marks.head.clone(),
+                            base: marks.base.clone(),
                             form_id: format!("viewed-form-{index}"),
                             file_id: format!("diff-file-{index}"),
                             viewed: marks.paths.contains(&file.filename),
                         }
                     }
                 }
-                {file_body(lines, file, threads, composer, split)}
+                if renderable[index] {
+                    {file_body(lines, file, threads, composer, split)}
+                } else {
+                    p { class: "collaboration-diff-notice", role: "status", "This patch is too large to display. Use git diff locally to view the complete changes." }
+                }
             }
         }
     }
@@ -320,6 +360,8 @@ fn ViewedBox(
     csrf: String,
     action: String,
     path: String,
+    head: String,
+    base: String,
     form_id: String,
     file_id: String,
     viewed: bool,
@@ -336,10 +378,10 @@ fn ViewedBox(
                 browser::set_mark(&file_id, next);
                 #[cfg(target_arch = "wasm32")]
                 {
-                    spawn(save_mark(action.clone(), csrf.clone(), path.clone(), next, marked, file_id.clone()));
+                    spawn(save_mark(action.clone(), csrf.clone(), (path.clone(), head.clone(), base.clone()), next, marked, file_id.clone()));
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                let _ = (&action, &csrf, &path);
+                let _ = (&action, &csrf, &path, &head, &base);
             },
             "Viewed"
         }
@@ -351,7 +393,7 @@ fn ViewedBox(
 async fn save_mark(
     action: String,
     csrf: String,
-    path: String,
+    (path, head, base): (String, String, String),
     viewed: bool,
     mut marked: Signal<bool>,
     file_id: String,
@@ -360,9 +402,13 @@ async fn save_mark(
     serializer
         .append_pair("csrf_token", &csrf)
         .append_pair("path", &path)
+        .append_pair("expected_head", &head)
+        .append_pair("expected_base", &base)
+        .append_pair("background", "yes")
         .append_pair("viewed", if viewed { "yes" } else { "no" });
     let request = gloo_net::http::Request::post(&action)
         .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "application/json")
         .credentials(web_sys::RequestCredentials::SameOrigin)
         .body(serializer.finish());
     let saved = match request {
@@ -718,5 +764,46 @@ fn split_cell(
             {gutter(lines, path, side, number)}
             span { class: row.class, "{row.text}" }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn blank_line_patches_and_long_paths_cannot_expand_without_limit() {
+        let file = |filename: String, patch: String| DiffFile {
+            filename,
+            patch,
+            status: "added".into(),
+            additions: 0,
+            deletions: 0,
+            owners: vec![],
+        };
+        let diff = Diff {
+            files: vec![
+                file("a".repeat(3072), "+\n".repeat(100_000)),
+                file("small".into(), "@@ -0,0 +1 @@\n+ok".into()),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(renderable_files(&diff), vec![false, true]);
+        let html =
+            crate::webui::tests::in_scope(|| dioxus_ssr::render_element(diff_view(&diff, false)));
+        assert!(html.contains("This patch is too large to display"));
+        assert!(html.len() < 100_000);
+        let diff = Diff {
+            files: (0..10)
+                .map(|i| file(i.to_string(), "+\n".repeat(1000)))
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(
+            renderable_files(&diff)
+                .iter()
+                .filter(|shown| **shown)
+                .count(),
+            4
+        );
     }
 }

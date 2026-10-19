@@ -72,7 +72,7 @@ fn keys(action: &str) -> &'static [&'static str] {
         "delete-organization" => &["confirm"],
         "team" => &["slug", "name", "description", "privacy"],
         "team-edit" => &["team_id", "name", "description", "privacy"],
-        "team-delete" => &["team_id"],
+        "team-delete" => &["team_id", "confirmation"],
         "team-member" => &["team_id", "username", "role"],
         "remove-team-member" => &["team_id", "user_id", "confirm"],
         "grant" => &["team_id", "repo_id", "permission"],

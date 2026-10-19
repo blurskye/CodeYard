@@ -25,18 +25,24 @@ jobs:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: gitserv_test
         ports:
-          - 5432:5432
+          - 5432
         options: >-
           --health-cmd "pg_isready -U postgres -d gitserv_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-    env:
-      GITSERV_TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/gitserv_test
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Configure PostgreSQL
+        run: |
+          if [[ -f /.dockerenv || -f /run/.containerenv ]]; then
+            address=postgres:5432
+          else
+            address=127.0.0.1:${{ job.services.postgres.ports[5432] }}
+          fi
+          echo "GITSERV_TEST_DATABASE_URL=postgres://postgres:postgres@$address/gitserv_test" >> "$GITHUB_ENV"
       - name: Install Rust
         # The project is checked with one Rust version. Runner images ship a newer one whose Clippy
         # has more lints, so install the pinned version and make it the default.

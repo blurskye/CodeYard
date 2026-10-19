@@ -14,7 +14,9 @@ const TIMEFRAMES: [i32; 4] = [7, 30, 90, 180];
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Admin {
     pub current_user_id: i64,
+    /// At most five recent signups, newest first.
     pub accounts: Vec<Account>,
+    pub totals: (usize, usize, i64),
     pub activity: Vec<Activity>,
     pub days: i32,
     pub manage_access: bool,
@@ -174,17 +176,9 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
             )
         })
         .collect();
-    let users = model.accounts.len();
-    let banned = model
-        .accounts
-        .iter()
-        .filter(|account| account.banned)
-        .count();
+    let (users, banned, storage_used) = model.totals;
     let requests = model.requests.len();
-    let storage_used: i64 = model.accounts.iter().map(|account| account.bytes).sum();
-    let mut newest: Vec<&Account> = model.accounts.iter().collect();
-    newest.sort_by(|a, b| b.created.cmp(&a.created));
-    newest.truncate(5);
+    let newest = &model.accounts;
     rsx! {
         style { dangerous_inner_html: include_str!("../account.css") }
         div { class: "identity-settings identity-admin page-shell",

@@ -160,9 +160,7 @@ fn workflow_files_in_commit(
             tracing::warn!(commit = %commit.id(), "workflow with non-UTF-8 file name skipped");
             continue;
         };
-        if !matches!(entry.filemode(), 0o100644 | 0o100755)
-            || !(name.ends_with(".yml") || name.ends_with(".yaml"))
-        {
+        if !matches!(entry.filemode(), 0o100644 | 0o100755) || !is_ci_workflow_filename(name) {
             continue;
         }
         let path = format!(".github/workflows/{name}");
@@ -188,6 +186,15 @@ fn workflow_files_in_commit(
     }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(files)
+}
+
+pub(crate) fn is_ci_workflow_filename(name: &str) -> bool {
+    name.len() + ".github/workflows/".len() <= 255
+        && (name.ends_with(".yml") || name.ends_with(".yaml"))
+        && !name.contains("..")
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
 fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {

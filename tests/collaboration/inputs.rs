@@ -1158,6 +1158,26 @@ async fn assert_form_comments_land_on_their_page(alice: &Client, main: &str) {
         let (status, page) = alice.page(target).await;
         assert_eq!(status, StatusCode::OK, "{location}");
         assert!(page.contains("Thirty-first from the form"), "{location}");
+        let comment_id = fragment.strip_prefix("comment-").unwrap();
+        let preview = alice
+            .form_reply(
+                &format!("{form_path}/{comment_id}/edit"),
+                &[("body", "Preview only on page two"), ("intent", "preview")],
+            )
+            .await;
+        assert_eq!(preview.status, StatusCode::OK, "{}", preview.text());
+        let html = preview.text();
+        let edit_form = html
+            .split(&format!("id=\"edit-comment-{comment_id}\""))
+            .nth(1)
+            .unwrap();
+        assert!(edit_form.contains("Preview only on page two"));
+        let composer = html
+            .split("collaboration-comment-form collaboration-composer")
+            .nth(1)
+            .unwrap();
+        let composer = composer.split("</form>").next().unwrap();
+        assert!(!composer.contains("Preview only on page two"));
     }
 }
 

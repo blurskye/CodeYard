@@ -152,7 +152,7 @@ pub(crate) fn page_tree(envelope: PageEnvelope) -> Element {
     // retains component state, whose controls still need proper local handlers.
     // Drafts belong to the signed-in account, so another account's drafts are dropped first.
     components::draft_text::keep_for_account(envelope.chrome.username.as_deref());
-    let location = &envelope.location;
+    let location = format!("{:?}:{}", envelope.chrome.username, envelope.location);
     let repo = envelope.page.repo_chrome().cloned();
     let located = !matches!(envelope.page, Page::Error { repo: None, .. });
     let body = rsx! { PageBody { key: "{location}", page: envelope.page } };
@@ -232,11 +232,23 @@ mod tests {
         assert!(!retained.contains("new-revision"));
         // Only URL identity changes: the repository editor's own key is identical.
         next.location.push_str("?preview=1");
-        dom.in_runtime(|| current.set(next));
+        dom.in_runtime(|| current.set(next.clone()));
         dom.render_immediate_to_vec();
         let reset = dioxus_ssr::render(&dom);
         assert!(reset.contains("new authorized content"));
         assert!(reset.contains("new-revision"));
         assert!(!reset.contains("original-revision"));
+        next.chrome.username = Some("bob".into());
+        if let Page::Repositories(RepositoryPage::Editor { editor, .. }) = &mut next.page {
+            editor.content = "bob's content".into();
+        }
+        dom.in_runtime(|| current.set(next));
+        dom.render_immediate_to_vec();
+        let changed_account = dioxus_ssr::render(&dom);
+        assert!(
+            changed_account.contains("bob&#39;s content")
+                || changed_account.contains("bob's content")
+        );
+        assert!(!changed_account.contains("new authorized content"));
     }
 }

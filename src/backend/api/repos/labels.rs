@@ -190,6 +190,7 @@ pub(crate) struct LabelsQuery {
     q: String,
     #[serde(default)]
     sort: String,
+    page: Option<usize>,
 }
 
 /// The labels page. Anyone who can read the repository sees its labels; the forms that change them
@@ -203,17 +204,31 @@ pub(crate) async fn native_index(
 ) -> ResultPage<Response> {
     let ctx = PageContext::load(state, headers, &uri).await?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let items = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(&ctx))?
-        .into_iter()
-        .map(label)
-        .collect();
+    let page_number = query.page.unwrap_or(1);
+    let (offset, limit) = super::chrome::page_window(page_number, 100)
+        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid label page."))?;
+    let mut items: Vec<_> = db::labels::list_repo_labels_page(
+        &ctx.state.pool,
+        repo.record.id,
+        &query.q,
+        &query.sort,
+        (limit + 1) as i64,
+        offset as i64,
+    )
+    .await
+    .map_err(|_| unavailable(&ctx))?
+    .into_iter()
+    .map(label)
+    .collect();
+    let has_next =
+        super::chrome::has_next_page(page_number, items.len(), limit, super::chrome::MAX_PAGE);
+    items.truncate(limit);
     let usage: std::collections::BTreeMap<i64, i64> =
         db::labels::list_label_usage(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(&ctx))?
             .into_iter()
+            .filter(|(id, _)| items.iter().any(|item| item.id == *id))
             .collect();
     Ok(ctx.page_model(
         "Labels",
@@ -223,6 +238,8 @@ pub(crate) async fn native_index(
             usage,
             query: query.q,
             sort: query.sort,
+            page_number,
+            has_next,
         }),
     ))
 }

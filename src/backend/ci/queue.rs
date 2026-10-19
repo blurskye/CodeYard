@@ -235,6 +235,13 @@ impl RunQueue {
                             db::secrets::decrypt_repository_secrets(pool, encryptor, run.repo_id)
                                 .await?
                         }
+                        None if !run.is_fork => {
+                            ensure!(
+                                !db::secrets::repository_has_secrets(pool, run.repo_id).await?,
+                                "repository secrets cannot be decrypted without SECRETS_MASTER_KEY"
+                            );
+                            Vec::new()
+                        }
                         _ => Vec::new(),
                     };
                     // The whole set goes out in one RPC reply and into one secret file, so it
@@ -360,6 +367,8 @@ impl RunQueue {
         let Self::Remote { context, peers } = self else {
             unreachable!()
         };
+        // Log appends are not idempotent. Once sent, a lost reply must not replay the batch.
+        let replay_safe = !matches!(operation, Operation::Logs { .. });
         let header = serde_json::to_vec(&Request {
             worker: worker.into(),
             operation,
@@ -412,8 +421,18 @@ impl RunQueue {
                     }
                     Err(error) => return Err(anyhow::Error::msg(error)),
                 },
-                Ok(Err(error)) => last = error,
-                Err(_) => last = anyhow::anyhow!("core node request timed out"),
+                Ok(Err(error)) => {
+                    if !replay_safe {
+                        return Err(error);
+                    }
+                    last = error;
+                }
+                Err(_) => {
+                    last = anyhow::anyhow!("core node request timed out");
+                    if !replay_safe {
+                        return Err(last);
+                    }
+                }
             }
         }
         Err(last)

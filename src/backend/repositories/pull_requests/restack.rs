@@ -3,7 +3,6 @@
 //! transaction after all layers have replayed, so a conflict or a failed check moves nothing.
 
 use super::merge::{open_chain, prepare_error};
-use super::workflows::MOVED_CI_WAIT;
 use super::{actor, branches_moved, require_write, OperationError};
 use crate::backend::ci::{CiRuns, RefUpdate};
 use crate::backend::db;
@@ -134,33 +133,21 @@ pub async fn rebase_stack(
         )
         .await
         .map_err(publish_failure)?;
-    // The refs have moved, so the follow-up is best effort: the moved heads get the refresh and the
-    // push workflows of a push, within the budget a merge gives its own queueing. A refresh that does
-    // not finish is caught up by the next one.
-    let follow_up = tokio::time::timeout(MOVED_CI_WAIT, async {
-        branches_moved(pool, &repository, ci, actor_id).await;
-        for restack in &moves {
-            ci.queue_push_runs(
-                &repository,
-                &owner,
-                actor_id,
-                RefUpdate {
-                    reference: format!("refs/heads/{}", restack.branch),
-                    old: Some(restack.old.clone()),
-                    new: restack.new.clone(),
-                    changed_paths: None,
-                },
-            )
-            .await;
-        }
-    })
-    .await;
-    if follow_up.is_err() {
-        tracing::warn!(
-            repo_id = repository.id,
-            count = moves.len(),
-            "the follow-up of a rebase did not finish in time"
-        );
+    // Finish admission after recording the heads; an unchanged refresh cannot retry it.
+    branches_moved(pool, &repository, ci, actor_id).await;
+    for restack in &moves {
+        ci.queue_push_runs(
+            &repository,
+            &owner,
+            actor_id,
+            RefUpdate {
+                reference: format!("refs/heads/{}", restack.branch),
+                old: Some(restack.old.clone()),
+                new: restack.new.clone(),
+                changed_paths: None,
+            },
+        )
+        .await;
     }
     Ok(RestackResponse {
         rebased: moves.len(),
@@ -308,7 +295,10 @@ async fn own_commits_base(
     }
     Ok(match merged_below {
         Some(merged) => merged.head_sha.clone(),
-        None => layer.base_sha.clone(),
+        None => match &layer.fork_sha {
+            Some(fork) if !is_ancestor(store, &layer.base_sha, head).await? => fork.clone(),
+            _ => layer.base_sha.clone(),
+        },
     })
 }
 
@@ -445,12 +435,14 @@ fn publish_failure(error: RepoError) -> OperationError {
             code: "storage_unavailable",
             message: "storage node unavailable".into(),
         }
-    } else {
+    } else if error.kind == ErrorKind::Conflict {
         OperationError::Conflict {
             code: "revision_conflict",
             message: "A branch changed while rebasing. Reload the pull request and try again."
                 .into(),
         }
+    } else {
+        git_unavailable(error)
     }
 }
 
@@ -465,5 +457,31 @@ fn git_unavailable<E>(_error: E) -> OperationError {
     OperationError::Unavailable {
         code: "git_unavailable",
         message: "Repository storage is unavailable; rebase denied.".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn publication_errors_keep_conflicts_denials_and_outages_distinct() {
+        assert!(matches!(
+            publish_failure(RepoError::authority_unavailable()),
+            OperationError::Unavailable { .. }
+        ));
+        assert!(matches!(
+            publish_failure(RepoError::protected_branch()),
+            OperationError::Denied {
+                code: "branch_protection",
+                ..
+            }
+        ));
+        assert!(matches!(
+            publish_failure(RepoError::new(ErrorKind::Conflict, "moved")),
+            OperationError::Conflict {
+                code: "revision_conflict",
+                ..
+            }
+        ));
     }
 }

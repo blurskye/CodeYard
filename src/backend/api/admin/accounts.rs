@@ -111,6 +111,23 @@ pub(crate) async fn require_admin_user(
     Ok(user)
 }
 
+fn overview_accounts(
+    mut accounts: Vec<db::models::AdminAccountSummary>,
+) -> (Vec<Account>, (usize, usize, i64)) {
+    let totals = (
+        accounts.len(),
+        accounts.iter().filter(|account| account.is_banned).count(),
+        accounts.iter().map(|account| account.total_bytes).sum(),
+    );
+    accounts.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    accounts.truncate(5);
+    (accounts.into_iter().map(account_row).collect(), totals)
+}
+
 /// The account as the admin pages show it.
 pub(crate) fn account_row(account: db::models::AdminAccountSummary) -> Account {
     Account {
@@ -138,17 +155,16 @@ pub(crate) async fn load_admin(
     let admin = require_account(ctx, true)?;
     let manage_access = private_access(ctx).await?;
     // Reads persisted facts only: repository sizes are recorded after pushes, never by a GET.
-    let accounts = db::users::accounts::list_admin_account_summaries(&ctx.state.pool)
-        .await
-        .map_err(|_| {
-            ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load account statistics.",
-            )
-        })?
-        .into_iter()
-        .map(account_row)
-        .collect();
+    let (accounts, totals) = overview_accounts(
+        db::users::accounts::list_admin_account_summaries(&ctx.state.pool)
+            .await
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load account statistics.",
+                )
+            })?,
+    );
     let activity = db::users::accounts::list_admin_activity_points(&ctx.state.pool, days)
         .await
         .map_err(|_| {
@@ -188,6 +204,7 @@ pub(crate) async fn load_admin(
     Ok(Admin {
         current_user_id: admin.id,
         accounts,
+        totals,
         activity,
         days,
         manage_access,
@@ -261,5 +278,35 @@ pub(crate) async fn access_result<T>(
         }
     } else {
         settings_result(ctx, "access", form, result, saved).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn overview_transfers_only_five_recent_accounts_with_full_totals() {
+        let rows = (0..1000)
+            .map(|id| db::models::AdminAccountSummary {
+                id,
+                username: format!("user-{id}"),
+                email: None,
+                is_admin: false,
+                is_banned: id % 2 == 0,
+                must_change_password: false,
+                two_factor_enabled: false,
+                created_at: chrono::DateTime::from_timestamp(id, 0).unwrap(),
+                total_files: 0,
+                total_bytes: 10,
+                commits_total: 0,
+                pushes_total: 0,
+                contributions_total: 0,
+            })
+            .collect();
+        let (recent, totals) = overview_accounts(rows);
+        assert_eq!(totals, (1000, 500, 10_000));
+        assert_eq!(recent.len(), 5);
+        assert_eq!(recent[0].id, 999);
+        assert_eq!(recent[4].id, 995);
     }
 }

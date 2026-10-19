@@ -105,7 +105,7 @@ pub fn refs(
                                 div { class: "repo-ref-row-icon", {icon(if tags { "tags" } else { "branches" })} }
                                 div { class: "repo-ref-row-content",
                                     div { class: "repo-ref-row-title",
-                                        NavLink { href: file_url(&base, "tree", &row.name, ""), "{row.name}" }
+                                        NavLink { href: file_url(&base, "tree", &if tags { format!("refs/tags/{}", row.name) } else { row.name.clone() }, ""), "{row.name}" }
                                         if row.is_default { span { class: "repo-label-neutral", "Default" } }
                                         if let Some(pull) = &row.pull {
                                             NavLink { class: "repo-ref-pull", href: format!("{base}/pulls/{}", pull.number), title: Some(pull.title.clone()), {icon("pulls")} "#{pull.number}" }
@@ -131,7 +131,7 @@ pub fn refs(
                                         a { class: "repo-icon-button", href: format!("{base}/archive/{}.zip", crate::webui::encode_component(&format!("refs/tags/{}", row.name))), title: "Download ZIP", "aria-label": "Download {row.name} as ZIP", {icon("download")} }
                                     }
                                     if let Some(default) = default_branch.as_deref().filter(|_| !row.is_default) {
-                                        NavLink { class: "btn btn-secondary btn-sm", href: compare_url(&base, default, &row.name), "Compare" }
+                                        NavLink { class: "btn btn-secondary btn-sm", href: compare_url(&base, default, &if tags { format!("refs/tags/{}", row.name) } else { row.name.clone() }), "Compare" }
                                     }
                                     if repo.can_write && !row.is_default {
                                         details { class: "native-menu repo-delete-menu",
@@ -140,6 +140,7 @@ pub fn refs(
                                             // the backdrop reload the list, which closes it without JavaScript.
                                             {confirm_dialog(None, &format!("Delete {kind} {}", row.name), &list_url, &repo.action(&format!("delete-{kind}")), rsx! {
                                                 {csrf(&repo.csrf_token)}
+                                                input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
                                                 input { r#type: "hidden", name: "name", value: row.name.clone() }
                                                 strong { "Delete {kind} {row.name}?" }
                                                 p { "This cannot be undone." }
@@ -190,6 +191,7 @@ fn CreateRefForm(repo: RepoChrome, tags: bool, branches: Vec<RefRow>) -> Element
     rsx! {
         form { method: "post", action: repo.action(&format!("create-{kind}")), class: "repo-settings-section panel",
             {csrf(&repo.csrf_token)}
+            input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
             header { class: "repo-section-heading",
                 div { h3 { "Create a {kind}" } p { "Start from an existing branch." } }
             }
@@ -200,5 +202,39 @@ fn CreateRefForm(repo: RepoChrome, tags: bool, branches: Vec<RefRow>) -> Element
                 button { class: "btn btn-primary", r#type: "submit", "Create {kind}" }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn a_tag_row_browses_its_object_not_a_same_named_branch() {
+        let row = RefRow {
+            name: "main".into(),
+            sha: "a".repeat(40),
+            message: None,
+            is_default: false,
+            ahead_behind: None,
+            updated: None,
+            pull: None,
+        };
+        let html = crate::webui::tests::in_scope(|| {
+            dioxus_ssr::render_element(refs(
+                &RepoChrome {
+                    owner: "u".into(),
+                    name: "r".into(),
+                    ..Default::default()
+                },
+                &[row],
+                true,
+                &[],
+                "",
+                "",
+                0,
+            ))
+        });
+        assert!(html.contains("href=\"/u/r/tree/refs/tags/main\""));
+        assert!(!html.contains("href=\"/u/r/tree/main\""));
     }
 }

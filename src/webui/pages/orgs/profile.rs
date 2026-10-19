@@ -15,6 +15,7 @@ pub struct OrganizationProfile {
     pub organization: Organization,
     /// Already filtered by the server to the repositories this viewer may see.
     pub repositories: Vec<Repository>,
+    pub repository_count: i64,
     /// Members, counted only for readers who may see them; `None` hides the count and the
     /// People and Teams tabs.
     pub member_count: Option<i64>,
@@ -38,6 +39,7 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
     let OrganizationProfile {
         organization: org,
         repositories,
+        repository_count,
         member_count,
         team_count,
         manage,
@@ -54,14 +56,18 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
         .unwrap_or_else(|| org.name.clone());
     let path = format!("/{}", crate::webui::encode_component(&org.name));
     let manage_href = format!("/settings/organizations/{}", org.id);
-    let repository_count = count_label(repositories.len(), "repository", "repositories");
+    let repository_label = count_label(
+        repository_count.max(0) as usize,
+        "repository",
+        "repositories",
+    );
     // Readers who may not see the member count get the same two-part line, not a bare count.
     let meta = match member_count {
         Some(count) => format!(
-            "{repository_count} · {}",
+            "{repository_label} · {}",
             count_label(count.max(0) as usize, "member", "members")
         ),
-        None => format!("{repository_count} · Public organization"),
+        None => format!("{repository_label} · Public organization"),
     };
     // Owners and admins are the people who may create repositories in the organization.
     let empty = if manage {
@@ -73,7 +79,7 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
     let members_visible = member_count.is_some();
     let member_total = member_count.unwrap_or_default();
     let team_total = team_count.unwrap_or_default();
-    let repository_total = repositories.len();
+    let repository_total = repository_count;
     let current = |active: bool| active.then(|| "page".to_owned());
     rsx! {
         // Trusted static CSS: the repository list reuses the profile styles.
@@ -144,7 +150,8 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
                         }
                     }
                 } else {
-                    ProfileRepositories { key: "{path}", path, repositories, own: false }
+                    ProfileRepositories { key: "{path}", path: path.clone(), repositories, own: false }
+                    if more { NavLink { href: format!("{path}?tab=repositories&after={after}"), class: "org-pagination", "Next" } }
                 }
             }
         }

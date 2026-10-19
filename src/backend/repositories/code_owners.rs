@@ -1,12 +1,11 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
 
-use crate::backend::ci::workflows::github_glob_matches;
+use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMatchBudget};
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use crate::backend::db::models::Repository;
-use crate::backend::repositories::access::can_write;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::repositories::store::{repo_store, BlobRange, ErrorKind, RepoError};
 use std::collections::HashMap;
 
 /// Where GitHub looks, in its order. The first file found is the one used.
@@ -15,6 +14,7 @@ const LOCATIONS: [&str; 3] = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNE
 const MAX_BYTES: usize = 3 * 1024 * 1024;
 /// Lines past this one are ignored.
 const MAX_LINES: usize = 5_000;
+const MAX_PATTERN_BYTES: usize = 1024;
 
 /// One line of the file: a compiled path pattern and the owners it names.
 struct Entry {
@@ -37,25 +37,30 @@ impl Rules {
     }
 
     /// The owners of `path`, from the last line whose pattern matches it.
-    pub fn owners_for(&self, path: &str) -> &[String] {
-        match self.entries.iter().rev().find(|entry| entry.matches(path)) {
-            Some(entry) => &entry.owners,
-            None => &[],
+    pub fn owners_for<'a>(
+        &'a self,
+        path: &str,
+        budget: &mut WorkflowMatchBudget,
+    ) -> anyhow::Result<&'a [String]> {
+        for entry in self.entries.iter().rev() {
+            if entry.matches(path, budget)? {
+                return Ok(&entry.owners);
+            }
         }
+        Ok(&[])
     }
 
     /// Each changed path that has owners, with those owners as written.
-    pub fn owned_paths(&self, changed: &[String]) -> Vec<(String, Vec<String>)> {
-        if self.is_empty() {
-            return Vec::new();
+    pub fn owned_paths(&self, changed: &[String]) -> anyhow::Result<Vec<(String, Vec<String>)>> {
+        let mut budget = WorkflowMatchBudget::new();
+        let mut paths = Vec::new();
+        for path in changed {
+            let owners = self.owners_for(path, &mut budget)?;
+            if !owners.is_empty() {
+                paths.push((path.clone(), owners.to_vec()));
+            }
         }
-        changed
-            .iter()
-            .filter_map(|path| {
-                let owners = self.owners_for(path);
-                (!owners.is_empty()).then(|| (path.clone(), owners.to_vec()))
-            })
-            .collect()
+        Ok(paths)
     }
 }
 
@@ -88,56 +93,88 @@ impl Entry {
     }
 
     /// A pattern matches a file, or a directory that holds it: `docs` names everything under docs.
-    fn matches(&self, path: &str) -> bool {
+    fn matches(&self, path: &str, budget: &mut WorkflowMatchBudget) -> anyhow::Result<bool> {
         let parts: Vec<&str> = path.split('/').collect();
         let longest = if self.dir_only {
             parts.len() - 1
         } else {
             parts.len()
         };
-        (1..=longest).any(|len| segments_match(&self.segments, &parts[..len]))
+        for len in 1..=longest {
+            if segments_match(&self.segments, &parts[..len], budget)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
 /// Whether the pattern segments match the whole path segments. `**` takes zero or more of them.
 /// Work is the product of the two lengths, so a long pattern cannot blow up.
-fn segments_match(pattern: &[String], path: &[&str]) -> bool {
+fn segments_match(
+    pattern: &[String],
+    path: &[&str],
+    budget: &mut WorkflowMatchBudget,
+) -> anyhow::Result<bool> {
     let mut next = vec![false; path.len() + 1];
     next[path.len()] = true;
     for segment in pattern.iter().rev() {
         let mut row = vec![false; path.len() + 1];
         for index in (0..=path.len()).rev() {
+            code_owner_glob_matches_bounded("", "", budget)?;
             row[index] = if segment == "**" {
                 next[index] || (index < path.len() && row[index + 1])
             } else {
-                index < path.len() && github_glob_matches(segment, path[index]) && next[index + 1]
+                index < path.len()
+                    && next[index + 1]
+                    && code_owner_glob_matches_bounded(segment, path[index], budget)?
             };
         }
         next = row;
     }
-    next[0]
+    Ok(next[0])
 }
 
 /// Reads a CODEOWNERS file. A line with no owners removes them, and a line that names no path is
 /// skipped. Owners are the tokens with an `@` in them, before any `#` that starts a comment.
-pub fn parse(text: &str) -> Rules {
-    let entries = text
+pub fn parse(text: &str) -> anyhow::Result<Rules> {
+    let mut entries = Vec::new();
+    for line in text
         .lines()
         .take(MAX_LINES)
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .filter_map(|line| {
-            let mut tokens = line.split_whitespace();
-            let pattern = tokens.next()?;
-            let owners = tokens
-                .take_while(|token| !token.starts_with('#'))
-                .filter(|token| token.contains('@'))
-                .map(str::to_owned)
-                .collect();
-            Entry::compile(pattern, owners)
-        })
-        .collect();
-    Rules { entries }
+    {
+        let mut escaped = false;
+        let end = line
+            .char_indices()
+            .find_map(|(index, ch)| {
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch.is_whitespace() {
+                    return Some(index);
+                }
+                None
+            })
+            .unwrap_or(line.len());
+        let pattern = &line[..end];
+        anyhow::ensure!(
+            pattern.len() <= MAX_PATTERN_BYTES,
+            "CODEOWNERS pattern exceeds its size limit"
+        );
+        let owners = line[end..]
+            .split_whitespace()
+            .take_while(|token| !token.starts_with('#'))
+            .filter(|token| token.contains('@'))
+            .map(str::to_owned)
+            .collect();
+        if let Some(entry) = Entry::compile(pattern, owners) {
+            entries.push(entry);
+        }
+    }
+    Ok(Rules { entries })
 }
 
 /// The CODEOWNERS of `commit`, or no rules when the repository has none.
@@ -148,12 +185,27 @@ pub async fn load_rules(
 ) -> Result<Rules, RepoError> {
     let store = repo_store(repository, cluster);
     for location in LOCATIONS {
-        match store.blob_bytes(commit, location).await {
+        match store
+            .blob_range(
+                commit,
+                location,
+                BlobRange::Window {
+                    offset: 0,
+                    length: MAX_BYTES as u64,
+                },
+            )
+            .await
+        {
             Ok(blob) => {
                 let end = blob.bytes.len().min(MAX_BYTES);
-                return Ok(parse(&String::from_utf8_lossy(&blob.bytes[..end])));
+                return parse(&String::from_utf8_lossy(&blob.bytes[..end])).map_err(|_| {
+                    RepoError::new(
+                        ErrorKind::Invalid,
+                        "CODEOWNERS pattern exceeds its size limit",
+                    )
+                });
             }
-            Err(error) if error.kind == ErrorKind::NotFound => continue,
+            Err(error) if error.kind == ErrorKind::MissingPath => continue,
             Err(error) => return Err(error),
         }
     }
@@ -190,15 +242,33 @@ pub async fn resolve_owners<'a>(
         } else if let Some(user) = db::users::accounts::get_user_by_email(pool, owner).await? {
             ids.push(user.id);
         }
-        let mut writers = Vec::new();
-        for id in ids {
-            if let Some(user) = db::users::accounts::get_user_by_id(pool, id).await? {
-                if can_write(pool, &user, repository).await? {
-                    writers.push(user.id);
+        resolved.insert(owner.to_owned(), ids);
+    }
+    let mut ids: Vec<i64> = resolved.values().flatten().copied().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut writers = std::collections::HashSet::new();
+    if !repository.is_archived {
+        for ids in ids.chunks(500) {
+            let levels: HashMap<_, _> =
+                db::repositories::access::get_users_repo_access(pool, ids, repository.id)
+                    .await?
+                    .into_iter()
+                    .collect();
+            for user in db::users::accounts::get_users_by_ids(pool, ids).await? {
+                if !user.is_banned
+                    && !user.must_change_password
+                    && ((repository.owner_kind == "user"
+                        && (user.is_admin || repository.is_personal_owner(user.id)))
+                        || levels.get(&user.id).is_some_and(|level| level.can_write()))
+                {
+                    writers.insert(user.id);
                 }
             }
         }
-        resolved.insert(owner.to_owned(), writers);
+    }
+    for ids in resolved.values_mut() {
+        ids.retain(|id| writers.contains(id));
     }
     Ok(resolved)
 }
@@ -208,7 +278,11 @@ mod tests {
     use super::*;
 
     fn owners_of(text: &str, path: &str) -> Vec<String> {
-        parse(text).owners_for(path).to_vec()
+        parse(text)
+            .unwrap()
+            .owners_for(path, &mut WorkflowMatchBudget::new())
+            .unwrap()
+            .to_vec()
     }
 
     #[test]
@@ -293,11 +367,32 @@ mod tests {
     }
 
     #[test]
+    fn escaped_spaces_and_wildcards_match_literal_path_characters() {
+        let text = r"/docs/Project\ Plan.md @bob
+/docs/literal\*.md @carol";
+        assert_eq!(owners_of(text, "docs/Project Plan.md"), ["@bob"]);
+        assert_eq!(owners_of(text, "docs/literal*.md"), ["@carol"]);
+        assert!(owners_of(text, "docs/literalX.md").is_empty());
+    }
+
+    #[test]
+    fn oversized_patterns_are_errors_not_missing_owners() {
+        assert!(parse(&format!("{} @bob", "x".repeat(MAX_PATTERN_BYTES + 1))).is_err());
+    }
+
+    #[test]
+    fn all_paths_share_a_match_budget_and_exhaustion_is_an_error() {
+        let text = format!("{}Z @bob\n", "*x".repeat(200));
+        let rules = parse(&text).unwrap();
+        assert!(rules.owned_paths(&vec!["x".repeat(255); 1000]).is_err());
+    }
+
+    #[test]
     fn owned_paths_lists_only_changed_files_with_owners() {
-        let rules = parse("/src/ @dev\n");
+        let rules = parse("/src/ @dev\n").unwrap();
         let changed = vec!["src/a.rs".to_owned(), "README.md".to_owned()];
         assert_eq!(
-            rules.owned_paths(&changed),
+            rules.owned_paths(&changed).unwrap(),
             vec![("src/a.rs".to_owned(), vec!["@dev".to_owned()])]
         );
     }

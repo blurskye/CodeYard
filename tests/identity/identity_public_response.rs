@@ -96,6 +96,47 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
     }
 }
 
+#[tokio::test]
+async fn setup_rejects_nul_email_on_both_engines() {
+    use codeyard::backend::identity::{
+        credentials::PasswordAccount,
+        sessions::{InitiatingSession, SessionContext},
+        setup::{self, SetupError, SetupInput},
+    };
+    for pg in [false, true] {
+        let mut database = crate::support::database::Database::new(pg).await;
+        let fresh = native::token();
+        let result = setup::complete_setup(
+            database.pool(),
+            SetupInput {
+                account: PasswordAccount {
+                    username: "setup-owner",
+                    email: Some("bad\0@example.test"),
+                    password: "correct-password",
+                },
+                node_mode: "public",
+                admin_secret: None,
+            },
+            None,
+            SessionContext {
+                initiating: InitiatingSession::Missing,
+                fresh_id: &fresh,
+                user_agent: None,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            },
+        )
+        .await;
+        assert!(matches!(result, Err(SetupError::InputBounds)));
+        assert!(
+            db::users::accounts::get_user_by_username(database.pool(), "setup-owner")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        database.finish().await;
+    }
+}
+
 #[test]
 fn author_display_preserves_public_user_wire_fields() {
     let avatar = uuid::Uuid::from_u128(1);

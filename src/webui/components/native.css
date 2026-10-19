@@ -580,9 +580,8 @@ body {
 @container (min-width: 356px) { .repo-tabs-secondary > .repo-tab:nth-child(1) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(1) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(1)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
 @container (min-width: 423px) { .repo-tabs-secondary > .repo-tab:nth-child(2) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(2) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(2)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
 @container (min-width: 492px) { .repo-tabs-secondary > .repo-tab:nth-child(3) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(3) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(3)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 505px) { .repo-tab-strip:not(:has(.repo-tabs-secondary > :nth-child(5))) .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tab-strip:not(:has(.repo-tabs-secondary > :nth-child(5))) .repo-tabs-more { display: none; } }
 @container (min-width: 532px) { .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(4) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(4)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 566px) { .repo-tabs-secondary > .repo-tab:nth-child(5) { display: inline-flex; } .repo-tabs-more { display: none; } }
+@container (min-width: 626px) { .repo-tabs-secondary > .repo-tab:nth-child(5) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(5) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(5)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
 }
 @media (max-width: 640px) {
   .site-header .repo-tabs { gap: 0; padding-left: 12px; padding-right: 0; }
@@ -795,6 +794,8 @@ body {
     left: auto;
     right: 12px;
     max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 72px);
+    overflow-y: auto;
   }
   /* The phone menu is a sheet under the header: bounded by the viewport, with a backdrop. Its
      header icon becomes the close button, which stays above the backdrop. */
@@ -1122,9 +1123,6 @@ a.patch-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px;
   .collaboration-timeline { padding-left: 28px; }
 }
 @media (max-width: 639px) {
-  /* On a phone the editor wraps long lines instead of scrolling the page sideways. The highlight
-     layer wraps the same way, so its text stays under the field's text. */
-  .repo-content textarea.repo-editor-textarea, .repo-editor-highlight { white-space: pre-wrap; overflow-wrap: anywhere; }
   .repo-ref-row { grid-template-columns: 22px minmax(0, 1fr); align-items: start; }
   .repo-ref-actions { grid-column: 2; justify-content: flex-start; }
   .repo-delete-menu > summary { text-align: left; }

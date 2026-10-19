@@ -130,7 +130,7 @@ pub async fn enqueue_ci_run(
             }
         };
         let context_sql = format!(
-            "SELECT head_repo_id IS NOT repo_id, COALESCE(workflows_approved_sha = head_sha, 0), json_object('number', number, 'title', title, 'head_ref', head_branch, 'base_ref', base_branch, 'base_sha', base_sha) FROM pull_requests WHERE id = ?1 AND repo_id = ?2 AND head_sha = ?3 AND {} AND state = 'open' AND NOT is_draft",
+            "SELECT head_repo_id IS NOT repo_id, COALESCE(workflows_approved_sha = head_sha, 0), json_object('number', number, 'title', title, 'head_ref', head_branch, 'base_ref', ?4, 'base_sha', CASE WHEN base_branch = ?4 THEN base_sha ELSE (SELECT trunk_layer.base_sha FROM pull_requests trunk_layer WHERE trunk_layer.repo_id = pull_requests.repo_id AND trunk_layer.stack_id = pull_requests.stack_id AND trunk_layer.state = 'open' AND trunk_layer.base_branch = ?4 AND NOT EXISTS (SELECT 1 FROM pull_requests below WHERE below.repo_id = trunk_layer.repo_id AND below.stack_id = trunk_layer.stack_id AND below.state = 'open' AND below.head_branch = trunk_layer.base_branch) ORDER BY trunk_layer.id LIMIT 1) END) FROM pull_requests WHERE id = ?1 AND repo_id = ?2 AND head_sha = ?3 AND {} AND state = 'open' AND NOT is_draft",
             branch_or_trunk_sql("?4")
         );
         let context: Option<(bool, bool, String)> = sqlx::query_as(&context_sql)
@@ -386,7 +386,14 @@ async fn finish_in_tx(
     } else {
         "failure"
     };
-    ci_commit_status(tx, run, state, message.unwrap_or("CI run completed")).await?;
+    let description = crate::backend::ci::visible_run_error(message);
+    ci_commit_status(
+        tx,
+        run,
+        state,
+        description.as_deref().unwrap_or("CI run completed"),
+    )
+    .await?;
     // Only a failed run tells its starter. Successes and cancellations stay quiet.
     let notifications = if let Some(actor) = run.triggered_by_id.filter(|_| status == "failed") {
         let (title, body) = crate::backend::ci::failure_notification(run, message);

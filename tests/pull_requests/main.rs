@@ -1,3 +1,4 @@
+mod audit_regressions;
 mod code_owners;
 mod compare;
 mod diff_view;

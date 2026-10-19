@@ -3,6 +3,7 @@
 import argparse
 import dataclasses
 import fnmatch
+import fcntl
 import glob
 import json
 import os
@@ -569,6 +570,20 @@ class Changes:
 def apply(o, h):
     if os.geteuid() != 0:
         raise Refusal("--apply requires root; the app never elevates or installs automatically.")
+    # All installations share the root-owned SSH configuration directory.
+    root_path(h.ssh_include_base, directory=True)
+    lock = os.open(h.ssh_include_base, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise Refusal("Another OpenSSH installation is running; retry after it finishes.") from error
+        return install(o, h)
+    finally:
+        os.close(lock)
+
+
+def install(o, h):
     service, desired, main_state, original, backup = preflight(o, h)
     main = main_state[0]
     unit = active_service(o, h)

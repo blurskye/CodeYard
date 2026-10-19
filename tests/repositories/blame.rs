@@ -169,7 +169,7 @@ async fn blame_contract(pg: bool) {
         .page("/blame_owner/public/blob/main/docs/guide.txt")
         .await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(html.contains("href=\"/blame_owner/public/blame/main/docs/guide.txt\""));
+    assert!(html.contains("href=\"/blame_owner/public/blame/refs/heads/main/docs/guide.txt\""));
     let (status, html) = anonymous
         .page("/blame_owner/public/blob/main/docs/image.bin")
         .await;

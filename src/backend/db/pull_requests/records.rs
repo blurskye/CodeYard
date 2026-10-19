@@ -95,6 +95,7 @@ pub enum ReadyOutcome {
     Denied,
     NotOpen,
     NotDraft,
+    Changed,
 }
 
 // Checks who is asking and the state of the pull request in the same transaction as
@@ -105,7 +106,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::approve_
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::mark_pull_request_ready,
     crate::backend::db::sqlite::pull_requests::records::mark_pull_request_ready,
-    fn mark_pull_request_ready(pool: &DbPool, pr_id: i64, actor_id: i64) -> Result<ReadyOutcome>);
+    fn mark_pull_request_ready(pool: &DbPool, pr_id: i64, actor_id: i64, expected: Option<&str>) -> Result<ReadyOutcome>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::create_pull_request,
     crate::backend::db::sqlite::pull_requests::records::create_pull_request,

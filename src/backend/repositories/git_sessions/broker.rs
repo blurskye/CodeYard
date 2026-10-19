@@ -2,13 +2,8 @@ use super::protocol::{self, Request, CHUNK, EOF, STDERR, STDIN, STDOUT};
 use super::validation::{self, RefUpdate};
 use super::{private_files, ReceiveCredential};
 use crate::backend::ci::CiRuns;
-use crate::backend::db::{
-    self,
-    models::{AccessLevel, Repository, User, UserWithKey},
-    DbPool,
-};
+use crate::backend::db::{self, models::Repository, DbPool};
 use crate::backend::git::repository::process as git_process;
-use crate::backend::repositories::deploy_keys;
 use crate::backend::repositories::store::{
     begin_ref_change, repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
 };
@@ -420,24 +415,6 @@ impl Gateway {
         Ok(())
     }
 
-    async fn live_key(&self, key_id: i64) -> Result<UserWithKey> {
-        ensure!(key_id > 0, "invalid key ID");
-        let identity = db::users::ssh_keys::get_user_by_ssh_key_id(&self.pool, key_id)
-            .await?
-            .context("key unavailable")?;
-        ensure!(
-            !identity.user.is_banned && !identity.user.must_change_password,
-            "identity unavailable"
-        );
-        let canonical =
-            validation::canonical_db_key(&identity.key.public_key, &identity.key.key_type)?;
-        ensure!(
-            db::users::ssh_keys::calculate_fingerprint(&canonical)? == identity.key.fingerprint,
-            "stored key fingerprint mismatch"
-        );
-        Ok(identity)
-    }
-
     async fn keys(
         &self,
         user: &str,
@@ -474,38 +451,6 @@ impl Gateway {
             "restrict,command=\"{helper} {}\" {canonical}\n",
             identity.key.id
         )))
-    }
-
-    pub(super) async fn authorize(
-        &self,
-        credential: ReceiveCredential,
-        repo: &Repository,
-        write: bool,
-    ) -> Result<(User, AccessLevel)> {
-        let identity = match credential {
-            ReceiveCredential::SshKey(id) => self.live_key(id).await?.user,
-            // A deploy key carries its own repository and write checks.
-            ReceiveCredential::DeployKey(id) => {
-                return deploy_keys::authorize(&self.pool, id, repo, write).await
-            }
-            ReceiveCredential::Token(id) => db::users::tokens::token_user(&self.pool, id, write)
-                .await?
-                .context("token unavailable")?,
-        };
-        let access =
-            db::repositories::access::get_user_repo_access(&self.pool, identity.id, repo.id)
-                .await?;
-        ensure!(
-            access
-                >= if write {
-                    AccessLevel::Write
-                } else {
-                    AccessLevel::Read
-                },
-            "repository access denied"
-        );
-        ensure!(!write || !repo.is_archived, "repository archived");
-        Ok((identity, access))
     }
 
     /// Where `repo` really is on disk, if that is a bare repository inside the
@@ -545,7 +490,8 @@ impl Gateway {
             db::repositories::records::get_repository(&self.pool, &command.owner, &command.repo)
                 .await?
                 .context("repository unavailable")?;
-        self.authorize(ReceiveCredential::SshKey(key_id), &repo, command.write)
+        ReceiveCredential::SshKey(key_id)
+            .authorize(&self.pool, &repo, command.write)
             .await?;
         let path = self.bare_path(&repo).await?;
         let _slot = slot;
@@ -603,7 +549,7 @@ impl Gateway {
     ) -> Result<std::process::ExitStatus> {
         let write = options.service == GitService::ReceivePack;
         let credential = options.credential.context("Git credential required")?;
-        self.authorize(credential, repo, write).await?;
+        credential.authorize(&self.pool, repo, write).await?;
         let token = uuid::Uuid::new_v4().simple().to_string();
         let hooks = self.make_hooks(credential.id(), repo.id, write)?;
         let operation = Arc::new(Operation {

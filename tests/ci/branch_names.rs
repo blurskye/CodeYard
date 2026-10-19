@@ -368,6 +368,10 @@ fn only_branches_lose_their_ref_prefix() {
     assert_eq!(branch_name("refs/heads/feature/x"), "feature/x");
     assert_eq!(branch_name("main"), "main");
     assert_eq!(branch_name("refs/tags/v1"), "refs/tags/v1");
+    assert_eq!(
+        branch_name("refs/heads/refs/tags/v1"),
+        "refs/heads/refs/tags/v1"
+    );
 }
 
 #[tokio::test]

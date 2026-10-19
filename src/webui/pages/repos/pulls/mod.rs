@@ -5,7 +5,7 @@ pub(super) mod commits;
 pub(super) mod diff;
 pub(super) mod review;
 
-pub use checks::checks_page;
+pub use checks::{checks_page, CheckStatus};
 pub use commits::{commits_page, MAX_LISTED_COMMITS};
 pub use diff::{diff_page, Diff, DiffFile, Viewed};
 pub use review::{

@@ -80,7 +80,7 @@ pub async fn create_tag(
         &state.ci_runs,
         actor.id,
         &owner,
-        &repo,
+        super::repository_id(&state, &owner, &repo).await?,
         &req.name,
         &req.sha,
         req.message.as_deref(),
@@ -104,8 +104,7 @@ pub async fn delete_tag(
         &state.pool,
         state.cluster.as_ref(),
         actor.id,
-        &owner,
-        &repo,
+        super::repository_id(&state, &owner, &repo).await?,
         &name,
     )
     .await

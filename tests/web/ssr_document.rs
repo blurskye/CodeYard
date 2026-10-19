@@ -83,7 +83,7 @@ fn editor_initial_document_has_native_fallback_controls_and_safe_text() {
     assert!(html.ends_with("</html>"));
     // A GET at the form URL (a reload of a rejected save) returns to this editor.
     assert!(html.contains(
-        "action=\"/fixture-owner/fixture-repo/_forms/write-file?from=%2Ffixture-owner%2Ffixture-repo%2Fedit%2Fmain%2Ffile.md\""
+        "action=\"/fixture-owner/fixture-repo/_forms/write-file?from=%2Ffixture-owner%2Ffixture-repo%2Fedit%2Frefs%2Fheads%2Fmain%2Ffile.md\""
     ));
     assert!(html.contains("name=\"expected_revision\""));
     assert!(html.contains("name=\"content\""));

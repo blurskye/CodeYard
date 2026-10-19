@@ -642,6 +642,134 @@ async fn prepared_merge_contract(pg: bool) {
     f.finish().await;
 }
 
+async fn retained_history_and_merge_hook_contract(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    let main = app.alice.save("main", "README.md", "unborn").await;
+    let branch = "refs/pull/99/head";
+    app.alice.branch(branch, &main).await;
+    let first = app.alice.save(branch, "one.txt", &main).await;
+    app.alice.open_pull("Nested branch", branch, "main").await;
+    let head = app.alice.save(branch, "two.txt", &first).await;
+    let git = git2::Repository::open_bare(&app.repository.disk_path).unwrap();
+    assert_eq!(
+        git.refname_to_id("refs/pull/1/head").unwrap().to_string(),
+        head
+    );
+    let hook = db::webhooks::insert_webhook(
+        f.pool(),
+        db::webhooks::HookOwner::Repository(app.repository.id),
+        app.owner,
+        &db::webhooks::WebhookFields {
+            payload_url: "invalid://test".into(),
+            content_type: "application/json".into(),
+            events: "pull_request".into(),
+            active: true,
+            ssl_verify: true,
+        },
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let (status, result) = merge(&app.alice, 1, Some("squash")).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let deliveries = db::webhooks::list_deliveries(f.pool(), hook).await.unwrap();
+        if let Some(delivery) = deliveries
+            .iter()
+            .find(|delivery| delivery.action.as_deref() == Some("closed"))
+        {
+            let payload: Value = serde_json::from_str(&delivery.request_body).unwrap();
+            assert_eq!(payload["pull_request"]["state"], "closed");
+            assert_eq!(payload["pull_request"]["merged"], true);
+            assert_eq!(payload["pull_request"]["merge_commit_sha"], result["sha"]);
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "merge webhook missing"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    git.find_reference(&format!("refs/heads/{branch}"))
+        .unwrap()
+        .delete()
+        .unwrap();
+    let replica = root.path().join("replica.git");
+    let copied = std::process::Command::new("git")
+        .args(["clone", "--mirror", "--no-local"])
+        .arg(&app.repository.disk_path)
+        .arg(&replica)
+        .output()
+        .unwrap();
+    assert!(
+        copied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&copied.stderr)
+    );
+    let replica = git2::Repository::open_bare(replica).unwrap();
+    assert!(replica.find_commit(oid(&head)).is_ok());
+    assert_eq!(
+        replica
+            .refname_to_id("refs/pull/1/head")
+            .unwrap()
+            .to_string(),
+        head
+    );
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_nested_branch_merge_retains_history_and_emits_closed() {
+    retained_history_and_merge_hook_contract(false).await;
+}
+#[tokio::test]
+async fn postgres_nested_branch_merge_retains_history_and_emits_closed() {
+    retained_history_and_merge_hook_contract(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_merge_queues_push_ci_when_marking_fails() {
+    let mut f = Database::new(false).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    f.execute(
+        "UPDATE users SET is_admin = TRUE WHERE id = $1",
+        &[app.owner],
+    )
+    .await;
+    let main = app.alice.save("main", "README.md", "unborn").await;
+    let main = save_text(
+        &app.alice,
+        "main",
+        ".github/workflows/ci.yml",
+        "on: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
+        &main,
+    )
+    .await;
+    app.alice.branch("feature", &main).await;
+    app.alice.save("feature", "one.txt", &main).await;
+    app.alice.open_pull("One", "feature", "main").await;
+    f.execute("CREATE TRIGGER refuse_merge_mark BEFORE UPDATE ON pull_requests WHEN NEW.state = 'merged' BEGIN SELECT RAISE(IGNORE); END", &[]).await;
+    let (status, result) = merge(&app.alice, 1, Some("squash")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{result}");
+    let sha = main_tip(&app.repository.disk_path);
+    assert_ne!(sha, main);
+    let runs = db::ci::list_ci_runs_for_repo(f.pool(), app.repository.id, 100)
+        .await
+        .unwrap();
+    assert!(
+        runs.iter().any(|run| run.event == "push"
+            && run.branch == "main"
+            && run.head_sha.as_deref() == Some(&sha)),
+        "{runs:?}"
+    );
+    f.finish().await;
+}
+
 /// Rebases the stack that pull request `number` is in, from `number` up, through the JSON API.
 async fn rebase(client: &Client, number: i64) -> (StatusCode, Value) {
     client

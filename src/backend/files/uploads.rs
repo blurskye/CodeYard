@@ -205,10 +205,13 @@ pub async fn confirm_upload(
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
         .filter(|file| file.user_id == Some(actor_id))
         .ok_or(ConfirmationError::NotFound)?;
-    let _file_lock = store
-        .lock_file(&first.object_key)
-        .await
-        .map_err(|_| ConfirmationError::StorageUnavailable)?;
+    let _file_lock = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        store.lock_file(&first.object_key),
+    )
+    .await
+    .map_err(|_| ConfirmationError::StorageUnavailable)?
+    .map_err(|_| ConfirmationError::StorageUnavailable)?;
     let file = files_db::get_file_by_id(pool, file_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?

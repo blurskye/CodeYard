@@ -389,6 +389,16 @@ pub(crate) async fn create(
         Err(response) => return response,
     };
     let draft = submitted_draft(&form);
+    if form
+        .get("repository_id")
+        .and_then(|id| id.parse::<i64>().ok())
+        != Some(repo.id)
+    {
+        return ctx.error(
+            StatusCode::CONFLICT,
+            "The repository changed. Reload the page and try again.",
+        );
+    }
     if draft.preview {
         return new_form(&ctx, &repo, draft, None).await;
     }

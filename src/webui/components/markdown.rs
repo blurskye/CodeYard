@@ -1612,17 +1612,18 @@ impl LinkBase {
             append_html(&mut out, &html[pos..start])?;
             pos = start;
             let end = html[pos..].find('"').map_or(html.len(), |end| pos + end);
-            let value = &html[pos..end];
+            let serialized = &html[pos..end];
+            let value = decode_references(serialized).0;
             let mut in_page = value.starts_with('#');
             if srcset {
-                append_html(&mut out, &self.resolve_srcset(value))?;
+                append_html(&mut out, &escape_html(&self.resolve_srcset(&value)))?;
             } else {
-                match self.resolve(value, image) {
+                match self.resolve(&value, image) {
                     Some(target) => {
-                        append_html(&mut out, &target)?;
+                        append_html(&mut out, &escape_html(&target))?;
                         in_page = true;
                     }
-                    None => append_html(&mut out, value)?,
+                    None => append_html(&mut out, serialized)?,
                 }
             }
             pos = end;
@@ -1657,13 +1658,17 @@ pub fn RepoMarkdown(
     base: LinkBase,
     #[props(default)] references: References,
 ) -> Element {
-    let html = base
-        .rewrite(&parse_document(&content, &references))
-        .unwrap_or_else(|| plain_text_preview(&content));
+    let html = document_html(&content, &references, &base);
 
     rsx! {
         div { class: "markdown-body leading-relaxed text-foreground", dangerous_inner_html: "{html}" }
     }
+}
+
+/// Render once; callers with an outline read it from this same HTML.
+pub fn document_html(content: &str, references: &References, base: &LinkBase) -> String {
+    base.rewrite(&parse_document(content, references))
+        .unwrap_or_else(|| plain_text_preview(content))
 }
 
 /// One heading of a Markdown file, for the outline menu.
@@ -1680,7 +1685,7 @@ pub fn document_outline(content: &str, references: &References) -> Vec<OutlineEn
     outline_of_html(&parse_document(content, references))
 }
 
-fn outline_of_html(html: &str) -> Vec<OutlineEntry> {
+pub fn outline_of_html(html: &str) -> Vec<OutlineEntry> {
     let mut entries = Vec::new();
     let mut rest = html;
     while let Some(start) = rest.find("<h") {
@@ -1754,6 +1759,30 @@ mod tests {
 
     fn bounded_markdown(text: &str, document: bool) -> Option<String> {
         super::bounded_markdown(text, document, &References::default())
+    }
+
+    #[test]
+    fn repository_urls_decode_entities_before_resolving_fragments() {
+        let base = LinkBase {
+            blob: "/u/r/blob/main".into(),
+            tree: "/u/r/tree/main".into(),
+            raw: "/u/r/raw/main".into(),
+            directory: String::new(),
+        };
+        let html = super::document_html(
+            "# Usage\n\n[guide](guide.md?name=O'Reilly&x=1#usage)",
+            &References::default(),
+            &base,
+        );
+        assert!(
+            html.contains(
+                "href=\"/u/r/blob/main/guide.md?name=O&#39;Reilly&amp;x=1#user-content-usage\""
+            ),
+            "{html}"
+        );
+        assert!(!html.contains("&amp;#39;"));
+        let outline = super::outline_of_html(&html);
+        assert_eq!(outline[0].id, "user-content-usage");
     }
 
     #[test]
@@ -1834,7 +1863,7 @@ mod tests {
         assert!(normal
             .rewrite(&html)
             .unwrap()
-            .contains("href=\"/alice/demo/blob/main/docs/guide.md\""));
+            .contains("href=\"/alice/demo/blob/refs/heads/main/docs/guide.md\""));
     }
 
     #[test]

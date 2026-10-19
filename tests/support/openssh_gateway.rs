@@ -3,6 +3,7 @@
 use super::*;
 use crate::backend::{
     ci::{queue::RunQueue, CiWorkers},
+    db::models::AccessLevel,
     notifications::NotificationBroadcaster,
 };
 use base64::Engine;
@@ -41,6 +42,8 @@ impl Drop for Database {
                 sqlx::raw_sql("SET lock_timeout = '5s'; SET statement_timeout = '10s'")
                     .execute(&admin)
                     .await?;
+                sqlx::query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name=$1 AND pid<>pg_backend_pid()")
+                    .bind(&schema).execute(&admin).await?;
                 let result = sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
                     .execute(&admin)
                     .await;
@@ -95,8 +98,8 @@ async fn database() -> Database {
     fixture.native = sqlx::postgres::PgPoolOptions::new()
         .max_connections(8)
         .connect(&format!(
-            "{}?options=-csearch_path%3D{}",
-            fixture.url, fixture.schema
+            "{}?options=-csearch_path%3D{}%20-capplication_name%3D{}",
+            fixture.url, fixture.schema, fixture.schema
         ))
         .await
         .unwrap();
@@ -1519,6 +1522,7 @@ async fn sqlite_push_database() -> (TempDir, DbPool) {
 async fn disconnected_http_push_drains_postgres() {
     let database = database().await;
     disconnected_push_drains(database.pool.clone(), false).await;
+    database.pool.close().await;
 }
 
 #[tokio::test]
@@ -1532,6 +1536,7 @@ async fn disconnected_http_push_drains_sqlite() {
 async fn disconnected_builtin_ssh_push_drains_postgres() {
     let database = database().await;
     disconnected_push_drains(database.pool.clone(), true).await;
+    database.pool.close().await;
 }
 
 #[tokio::test]
@@ -1545,6 +1550,7 @@ async fn disconnected_builtin_ssh_push_drains_sqlite() {
 async fn concurrent_first_pushes_postgres() {
     let database = database().await;
     concurrent_first_pushes(database.pool.clone()).await;
+    database.pool.close().await;
 }
 
 #[tokio::test]

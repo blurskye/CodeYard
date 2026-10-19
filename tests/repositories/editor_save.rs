@@ -461,7 +461,7 @@ async fn contract(pg: bool) {
         );
         assert!(body.contains(draft));
         // The appearance switch returns to the editor's GET page, not to this POST-only form.
-        let return_to = "/editor_boundary/save/edit/main/latin1.txt";
+        let return_to = "/editor_boundary/save/edit/refs/heads/main/latin1.txt";
         assert!(body.contains(&format!("name=\"return_to\" value=\"{return_to}\"")));
         assert!(body.contains(&format!("name=\"expected_revision\" value=\"{tip}\"")));
         assert_eq!(blob_bytes(&repo, "latin1.txt"), latin1);
@@ -1452,6 +1452,37 @@ async fn commit_target_contract(pg: bool) {
     assert!(!editor.protected);
     assert_eq!(editor.new_branch, "commit_target-patch-1");
 
+    // Native Preview keeps a voluntary new-branch destination on an unprotected branch.
+    let preview = client
+        .form_reply(
+            save,
+            &[
+                ("branch", "main"),
+                ("path", "README.md"),
+                ("intent", "preview"),
+                ("repository_id", &repository_id),
+                ("expected_revision", &first),
+                ("commit_target", "new_branch"),
+                ("new_branch", "preview-branch"),
+                ("content", "draft"),
+            ],
+        )
+        .await;
+    assert_eq!(preview.status, StatusCode::OK, "{}", preview.text());
+    assert!(
+        preview.text().contains("value=\"new_branch\" checked"),
+        "{}",
+        preview.text()
+    );
+    assert_eq!(
+        repo.find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap()
+            .to_string(),
+        first
+    );
+
     // A direct commit moves main, and its description becomes the body of the message.
     let direct = client
         .form_reply(
@@ -1473,7 +1504,7 @@ async fn commit_target_contract(pg: bool) {
     assert_eq!(direct.status, StatusCode::SEE_OTHER, "{}", direct.text());
     assert_eq!(
         direct.location.as_deref(),
-        Some("/commit_target/save/blob/main/README.md")
+        Some("/commit_target/save/blob/refs/heads/main/README.md")
     );
     let tidied = branch_tip(&repo, "main");
     assert_eq!(tidied.parent_id(0).unwrap().to_string(), first);

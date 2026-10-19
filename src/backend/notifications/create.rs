@@ -19,6 +19,8 @@ pub enum CreateError {
     /// The recipient ignores the repository, so nothing is created.
     #[error("The recipient ignores this repository")]
     Ignored,
+    #[error("Notification is no longer needed")]
+    Suppressed,
 }
 
 pub async fn create_and_broadcast_notification(
@@ -48,7 +50,13 @@ pub async fn create_and_broadcast_notification(
         },
     )
     .await
-    .map_err(|_| CreateError::Unavailable)?;
+    .map_err(|error| {
+        if error.is::<records::NotificationSuppressed>() {
+            CreateError::Suppressed
+        } else {
+            CreateError::Unavailable
+        }
+    })?;
     // Delivery reloads the count under the recipient's current authority.
     broadcaster
         .send(super::NotificationEvent::Created {

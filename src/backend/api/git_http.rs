@@ -21,6 +21,9 @@ use std::{io::Read, sync::Arc};
 use tokio::sync::oneshot;
 use tokio_util::io::{ReaderStream, StreamReader};
 
+#[cfg(test)]
+mod tests;
+
 const UPLOAD_REQUEST_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Deserialize)]
@@ -148,10 +151,13 @@ async fn authorize_repository(
         };
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
-    let access =
-        db::repositories::access::get_user_repo_access(&state.pool, token.user_id, repo.id)
-            .await
-            .map_err(|_| unavailable())?;
+    let user = db::users::tokens::token_user(&state.pool, token.id, false)
+        .await
+        .map_err(|_| unavailable())?
+        .ok_or_else(challenge)?;
+    let access = crate::backend::repositories::access::user_access(&state.pool, &user, &repo)
+        .await
+        .map_err(|_| unavailable())?;
     if access < AccessLevel::Read {
         // A repository its user cannot read does not exist as far as they can tell.
         return Err(StatusCode::NOT_FOUND.into_response());
@@ -181,6 +187,9 @@ pub async fn info_refs(
         Ok(repo) => repo,
         Err(response) => return response,
     };
+    let Ok(permit) = state.repository_downloads.clone().try_acquire_owned() else {
+        return unavailable();
+    };
     let refs = match repo_store(&repo, state.cluster.as_ref())
         .advertise_refs(service)
         .await
@@ -201,7 +210,10 @@ pub async fn info_refs(
     let line = format!("# service={service}\n");
     let mut body = format!("{:04x}{line}0000", line.len() + 4).into_bytes();
     body.extend(refs);
-    git_response(&format!("application/x-{service}-advertisement"), body)
+    git_response(
+        &format!("application/x-{service}-advertisement"),
+        super::http::middleware::buffered_download_body(body, permit),
+    )
 }
 
 fn git_response(content_type: &str, body: impl Into<Body>) -> Response {
@@ -314,14 +326,14 @@ async fn rpc(
         },
         true,
     );
+    options.credential = token_id.map(ReceiveCredential::Token);
     if write {
-        options.credential = Some(ReceiveCredential::Token(
-            token_id.expect("write authentication"),
-        ));
         options.owner = owner;
     }
     let (mut output, reader) = tokio::io::duplex(git_process::CHUNK);
     let (finished, result) = oneshot::channel();
+    let response_state = state.clone();
+    let repository_id = repo.id;
     // The task owns the input body and hooks. Dropping the response only closes
     // output; Git rejects incomplete packs and finishes hooks for complete ones.
     let git_tasks = state.git_tasks.clone();
@@ -352,6 +364,24 @@ async fn rpc(
     }
     let mut reader = ReaderStream::with_capacity(reader, git_process::CHUNK);
     let first = reader.next().await;
+    // Remote storage may have waited for its own session slot. Do not disclose even the
+    // first bytes until the original credential and repository have been checked again.
+    if !write {
+        let found = match db::repositories::records::get_repository_by_id(
+            &response_state.pool,
+            repository_id,
+        )
+        .await
+        {
+            Ok(found) => found,
+            Err(_) => return unavailable(),
+        };
+        if let Err(response) =
+            authorize_repository(&response_state, found, &parts.headers, false).await
+        {
+            return response;
+        }
+    }
     if first.is_none() {
         return match result.await {
             Ok(Ok(())) => git_response(

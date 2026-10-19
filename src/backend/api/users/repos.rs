@@ -2,7 +2,7 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_optional_user;
 use crate::backend::api::repos::responses::{repository_topics, RepoResponse};
 use crate::backend::app::AppState;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
 use std::sync::Arc;
@@ -10,13 +10,15 @@ use std::sync::Arc;
 pub async fn list_user_repos(
     State(state): State<Arc<AppState>>,
     Path(username): Path<String>,
+    Query(query): Query<super::activity::ActivityQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<RepoResponse>>, (StatusCode, Json<ApiError>)> {
     let current_user = get_optional_user(&state.pool, &headers).await?;
-    let (_, repos) = crate::backend::identity::profiles::repositories_on_profile(
+    let (_, _, repos) = crate::backend::identity::profiles::repositories_on_profile(
         &state.pool,
         &username,
         current_user.map(|user| user.id),
+        query.page.unwrap_or(1),
     )
     .await
     .map_err(|error| match error {

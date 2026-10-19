@@ -8,7 +8,7 @@ use crate::webui::pages::repos::{
 use crate::webui::{
     components::{
         code::{language_of_path, themed_highlight_lines},
-        count_label, document_outline,
+        count_label, document_html, outline_of_html,
         references::References,
         CopyButton, OutlineEntry,
     },
@@ -114,11 +114,23 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
         })
         .collect::<String>();
     let markdown = page.renders_markdown();
-    let outline = if markdown {
-        document_outline(&page.content, &page.references)
-    } else {
-        Vec::new()
-    };
+    let markdown_html = markdown.then(|| {
+        document_html(
+            &page.content,
+            &page.references,
+            &link_base(
+                &base,
+                &page.reference,
+                page.path
+                    .rsplit_once('/')
+                    .map_or("", |(directory, _)| directory),
+            ),
+        )
+    });
+    let outline = markdown_html
+        .as_deref()
+        .map(outline_of_html)
+        .unwrap_or_default();
     let views = file_views(page, &url, &blame);
     let copy_label = if page.truncated {
         "Copy preview"
@@ -143,9 +155,9 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     } else {
         "repo-blob border border-border rounded-md bg-card"
     };
-    let body = if markdown {
+    let body = if let Some(html) = markdown_html {
         rsx! {
-            div { class: "repo-readme-body", crate::webui::components::RepoMarkdown { content: page.content.clone(), base: link_base(&base, &page.reference, page.path.rsplit_once('/').map_or("", |(directory, _)| directory)), references: page.references.clone() } }
+            div { class: "repo-readme-body", div { class: "markdown-body leading-relaxed text-foreground", dangerous_inner_html: html } }
         }
     } else if page.binary && is_inline_image(&page.path) {
         rsx! { div { class: "repo-image", img { src: raw.clone(), alt: "{name}" } } }
@@ -217,8 +229,8 @@ pub(in crate::webui::pages::repos) fn file_layout(
 ) -> Element {
     let base = repo.base();
     let directory = path.rsplit_once('/').map_or("", |(parent, _)| parent);
-    let branch_options = ref_options(&base, "blob", path, branches);
-    let tag_options = ref_options(&base, "blob", path, tags);
+    let branch_options = ref_options(&base, "blob", path, branches, "");
+    let tag_options = ref_options(&base, "blob", path, tags, "refs/tags/");
     rsx! {
         div { class: "repo-blob-layout",
             input { r#type: "checkbox", id: "repo-files-toggle", class: "repo-sr-only repo-files-toggle" }

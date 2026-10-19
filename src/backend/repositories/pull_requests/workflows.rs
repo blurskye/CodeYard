@@ -13,14 +13,8 @@ use crate::backend::db::models::Repository;
 use crate::backend::db::DbPool;
 use crate::backend::repositories::store::repo_store;
 use anyhow::Context;
-use std::time::Duration;
-
-/// How long a saved change waits to queue the workflows of the pull requests it moved. The change
-/// is already final, so a slow admission check or storage node must not hold up its response.
-pub(super) const MOVED_CI_WAIT: Duration = Duration::from_secs(5);
-
-/// Queues the workflows that `pulls` now need on their new base, for at most `MOVED_CI_WAIT`.
-/// Queueing still running when the wait ends is abandoned and logged.
+/// Queues the workflows that `pulls` now need on their new base.
+/// Let admission finish: cancelling it after a saved revision would lose these runs.
 pub async fn queue_moved_pull_requests_ci(
     pool: &DbPool,
     ci: &CiRuns,
@@ -28,18 +22,8 @@ pub async fn queue_moved_pull_requests_ci(
     pulls: &[PullRequest],
     actor_id: i64,
 ) {
-    let queued = tokio::time::timeout(MOVED_CI_WAIT, async {
-        for pull in pulls {
-            let _ = queue_pull_request_ci(pool, ci, repository, pull, actor_id, false).await;
-        }
-    })
-    .await;
-    if queued.is_err() {
-        tracing::warn!(
-            repo_id = repository.id,
-            count = pulls.len(),
-            "queueing workflows for moved pull requests did not finish in time"
-        );
+    for pull in pulls {
+        let _ = queue_pull_request_ci(pool, ci, repository, pull, actor_id, false).await;
     }
 }
 

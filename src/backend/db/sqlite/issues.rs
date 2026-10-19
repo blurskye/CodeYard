@@ -347,6 +347,7 @@ pub async fn edit_issue_comment(
     issue_id: i64,
     comment_id: i64,
     body: &str,
+    expected_body: &str,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let author: Option<i64> = sqlx::query_scalar(
@@ -365,10 +366,11 @@ pub async fn edit_issue_comment(
     }
     let comment = sqlx::query_as::<_, IssueComment>(
         "UPDATE issue_comments SET body = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
-         WHERE id = ?1 RETURNING *",
+         WHERE id = ?1 AND body = ?3 RETURNING *",
     )
     .bind(comment_id)
     .bind(body)
+    .bind(expected_body)
     .fetch_optional(&mut *tx)
     .await?;
     tx.commit().await?;

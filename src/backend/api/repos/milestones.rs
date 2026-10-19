@@ -26,6 +26,7 @@ use std::sync::Arc;
 
 pub(crate) fn milestone_view(summary: MilestoneSummary) -> view::Milestone {
     view::Milestone {
+        id: summary.milestone.id,
         number: summary.milestone.number,
         title: summary.milestone.title,
         description: summary.milestone.description,
@@ -334,25 +335,20 @@ async fn milestone_page(
         row.body.clear();
         items.push(row);
     }
-    // A merged pull request is closed, so the state tabs are applied here, not in the query.
+    // Filter before the limit; merged pull requests belong to the closed tab.
     let pulls = db::pull_requests::records::list_repo_pull_requests(
         &ctx.state.pool,
         repo.record.id,
         &ListFilter {
+            state: issue_state,
+            include_merged: true,
             milestone: Pick::Is(milestone_id),
             ..Default::default()
         },
         100,
     )
     .await
-    .map_err(|_| unavailable(ctx))?
-    .into_iter()
-    .filter(|value| match tab {
-        "all" => true,
-        "open" => value.pull_request.state == "open",
-        _ => value.pull_request.state != "open",
-    })
-    .collect::<Vec<_>>();
+    .map_err(|_| unavailable(ctx))?;
     let pull_ids = pulls
         .iter()
         .map(|value| value.pull_request.id)
@@ -362,9 +358,10 @@ async fn milestone_page(
         .map_err(|_| unavailable(ctx))?;
     let mut pull_assignees = listed_assignees(ctx, &pull_ids, true).await?;
     let mut pull_items = Vec::new();
+    let mut heads = HashMap::new();
     for value in pulls {
         let author = value.author.username;
-        let head = listed_head(ctx, value.head_repository).await?;
+        let head = listed_head(ctx, repo.record.id, &mut heads, value.head_repository).await?;
         let id = value.pull_request.id;
         let mut row =
             pull_item(ctx, repo, value.pull_request, author, head).map_err(|response| *response)?;
@@ -528,7 +525,22 @@ pub(crate) async fn native_delete(
         ));
     }
     let actor = ctx.require_user()?.id;
-    match db::milestones::delete_milestone(&ctx.state.pool, actor, repo.record.id, number).await {
+    let expected_id = field(&form, "milestone_id").parse::<i64>().unwrap_or(0);
+    if field(&form, "repository_id").parse::<i64>().ok() != Some(repo.record.id) {
+        return Err(ctx.error(
+            StatusCode::CONFLICT,
+            "The repository changed. Reload the page and try again.",
+        ));
+    }
+    match db::milestones::delete_milestone(
+        &ctx.state.pool,
+        actor,
+        repo.record.id,
+        number,
+        expected_id,
+    )
+    .await
+    {
         Ok(()) => Ok(ctx.redirect(&format!("{}/milestones", repo.view.url()))),
         Err(error) => Err(api_error(&ctx, milestone_write_error(error))),
     }

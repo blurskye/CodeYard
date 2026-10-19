@@ -258,6 +258,7 @@ async fn query_narrowing(
     };
     Ok(ListFilter {
         state: None,
+        include_merged: false,
         search: None,
         author_id,
         assignee,
@@ -443,9 +444,11 @@ pub(crate) async fn native_index(
             let checks = db::ci::list_pull_request_check_statuses(&ctx.state.pool, &ids)
                 .await
                 .map_err(|_| unavailable(&ctx))?;
+            let mut heads = HashMap::new();
             for value in pulls {
                 let author = value.author.username;
-                let head = listed_head(&ctx, value.head_repository).await?;
+                let head =
+                    listed_head(&ctx, repo.record.id, &mut heads, value.head_repository).await?;
                 let id = value.pull_request.id;
                 let head_sha = value.pull_request.head_sha.clone();
                 let milestone = value

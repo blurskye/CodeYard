@@ -22,6 +22,7 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
     #[props(default)] references: References,
     // The page's revision, which the save checks. See `DraftTextarea`.
     #[props(default)] revision: Option<String>,
+    #[props(default)] on_revision: Option<EventHandler<Option<String>>>,
 ) -> Element {
     let mut text = use_signal(|| initial.clone());
     let mut showing = use_signal(|| initial_preview);
@@ -46,7 +47,7 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
             MarkdownToolbar { target: id.clone() }
             DraftTextarea {
                 id: Some(id), name: "body", initial_value: initial, required,
-                maxlength: Some(65536), rows: rows as u32, placeholder, revision,
+                maxlength: Some(65536), rows: rows as u32, placeholder, revision, on_revision,
                 class: "collaboration-textarea",
                 on_value: move |value| text.set(value),
             }

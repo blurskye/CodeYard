@@ -153,6 +153,7 @@ coverage/
 
 # Environment files
 .env
+.env.local
 .env.*.local
 "#;
 
@@ -208,6 +209,7 @@ go.work.sum
 const JAVA_GITIGNORE: &str = r#"# Compiled class files and archives
 *.class
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 *.ear
 
@@ -346,6 +348,7 @@ Carthage/Build/
 const KOTLIN_GITIGNORE: &str = r#"# Compiled output
 *.class
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 build/
 out/
 .gradle/
@@ -1698,6 +1701,29 @@ For more information, please refer to <http://unlicense.org/>
 mod tests {
     use super::*;
     use crate::webui::pages::discovery::{GITIGNORE_CHOICES, LICENSE_CHOICES};
+
+    #[test]
+    fn templates_ignore_local_secrets_but_keep_gradle_wrappers() {
+        let root = tempfile::tempdir().unwrap();
+        git2::Repository::init(root.path()).unwrap();
+        for (template, path, ignored) in [
+            (NODE_GITIGNORE, ".env.local", true),
+            (NODE_GITIGNORE, ".env.production.local", true),
+            (JAVA_GITIGNORE, "gradle/wrapper/gradle-wrapper.jar", false),
+            (KOTLIN_GITIGNORE, "gradle/wrapper/gradle-wrapper.jar", false),
+            (JAVA_GITIGNORE, "library.jar", true),
+            (KOTLIN_GITIGNORE, "library.jar", true),
+        ] {
+            std::fs::write(root.path().join(".gitignore"), template).unwrap();
+            let repo = git2::Repository::open(root.path()).unwrap();
+            assert_eq!(
+                repo.status_should_ignore(std::path::Path::new(path))
+                    .unwrap(),
+                ignored,
+                "{path}"
+            );
+        }
+    }
 
     #[test]
     fn every_template_is_offered_and_every_offered_name_has_a_template() {

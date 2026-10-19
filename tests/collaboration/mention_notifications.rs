@@ -187,6 +187,59 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
         .await;
     assert!(removed.status.is_redirection(), "{}", removed.text());
     assert!(mentions(&world, world.bob_id).await.is_empty());
+
+    let deleted_issue_comment = comment;
+    world.alice.branch("topic", &world.base).await;
+    world.alice.save("topic", "topic.txt", &world.base).await;
+    let pull = world.alice.open_pull("Thread", "topic", "main").await;
+    let number = pull["number"].as_i64().unwrap();
+    let comment = world
+        .alice
+        .expect(
+            "POST",
+            &format!("/api/repos/alice/proj/pulls/{number}/comments"),
+            json!({"body":"Private text for @bob"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let id = comment["id"].as_i64().unwrap();
+    let notices = notices(&world, world.bob_id, "mention").await;
+    assert_eq!(notices.len(), 1);
+    let metadata = &notices[0].metadata;
+    assert_eq!(metadata["pull_request_comment_id"], id);
+    assert!(metadata["comment_id"].is_null());
+    let removed = world
+        .alice
+        .form_reply(
+            &format!("/alice/proj/pulls/{number}/comments/{id}/delete"),
+            &[],
+        )
+        .await;
+    assert!(removed.status.is_redirection(), "{}", removed.text());
+    assert!(mentions(&world, world.bob_id).await.is_empty());
+    // A delayed recipient from the original fan-out cannot recreate the deleted text.
+    let repo = db::repositories::records::get_repository(world.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let delayed = db::notifications::records::create_notification(
+        world.pool(),
+        db::notifications::records::NewNotification {
+            user_id: world.bob_id,
+            actor_id: Some(world.alice_id),
+            repo_id: Some(repo.id),
+            kind: "mention",
+            title: "delayed",
+            body: Some("Over to @bob"),
+            link: None,
+            metadata: &json!({"comment_id": deleted_issue_comment}),
+        },
+    )
+    .await;
+    assert!(delayed
+        .unwrap_err()
+        .is::<db::notifications::records::NotificationSuppressed>());
+    assert!(mentions(&world, world.bob_id).await.is_empty());
     world.close().await;
 }
 
@@ -408,10 +461,11 @@ async fn edit_mentions_the_pull_request_author(pg: bool) {
         .expect(
             "POST",
             "/api/repos/alice/proj/pulls/1/comments",
-            json!({"body": "Plain text"}),
+            json!({"body": "Plain text @bob"}),
             StatusCode::CREATED,
         )
         .await;
+    assert_eq!(mentions(&world, world.bob_id).await.len(), 1);
     assert!(mentions(&world, world.alice_id).await.is_empty());
     let comment_id = comment["id"].as_i64().unwrap();
     let reply = world
@@ -423,6 +477,16 @@ async fn edit_mentions_the_pull_request_author(pg: bool) {
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
     assert_eq!(mentions(&world, world.alice_id).await.len(), 1);
+    let deleted = world
+        .carol
+        .form_reply(
+            &format!("/alice/proj/pulls/1/comments/{comment_id}/delete"),
+            &[],
+        )
+        .await;
+    assert!(deleted.status.is_redirection(), "{}", deleted.text());
+    assert!(mentions(&world, world.bob_id).await.is_empty());
+    assert!(mentions(&world, world.alice_id).await.is_empty());
     world.close().await;
 }
 

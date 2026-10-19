@@ -29,13 +29,23 @@ impl NodeContext {
     ) -> anyhow::Result<(Value, std::process::ExitStatus)> {
         use std::os::unix::process::ExitStatusExt;
         let receive = matches!(&request.operation, Operation::GitSession(session) if session.service == GitService::ReceivePack);
-        let mut opened = self.open_session(node_id, &request).await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        let mut opened = self.open_session(node_id, &request, deadline).await;
         if opened.is_err() && request.operation.is_read_only() {
-            for (copy, moved) in self.read_copies(request.repository, node_id).await {
+            let copies =
+                tokio::time::timeout_at(deadline, self.read_copies(request.repository, node_id))
+                    .await
+                    .map_err(|_| unavailable())?;
+            for (copy, moved) in copies {
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
                 if copy == self.node_id {
                     // Admission comes first, so a copy this node cannot serve leaves the
                     // streams untouched for the next one.
-                    if let Ok(store) = self.own_copy(&request).await {
+                    if let Ok(Ok(store)) =
+                        tokio::time::timeout_at(deadline, self.own_copy(&request)).await
+                    {
                         let Operation::GitSession(session) = request.operation else {
                             return Err(unavailable().into());
                         };
@@ -45,7 +55,7 @@ impl NodeContext {
                     }
                     continue;
                 }
-                let answer = self.open_session(copy, &request).await;
+                let answer = self.open_session(copy, &request, deadline).await;
                 if !cannot_serve(answer.as_ref().ok().map(|(_, reply)| reply), moved) {
                     log_failover(request.repository, node_id, copy);
                     opened = answer;
@@ -114,31 +124,62 @@ impl NodeContext {
         let (store, _) = RpcHandler::new(self.clone())
             .authorize_request(request, self.key.public_key())
             .await?;
+        readable(&store).await?;
         Ok(store)
     }
 
     /// Connects to `node_id`, sends the request and reads the first reply. `Err` means the
     /// node gave no reply at all. A reply that refuses the session comes back in `Ok`.
-    async fn open_session(&self, node_id: i64, request: &Request) -> Result<Opened, RepoError> {
-        let mut link = self.dial(node_id, transport::ALPN_RPC).await?;
-        let opened = tokio::time::timeout(TIMEOUT, async {
+    async fn open_session(
+        &self,
+        node_id: i64,
+        request: &Request,
+        deadline: tokio::time::Instant,
+    ) -> Result<Opened, RepoError> {
+        let opened = tokio::time::timeout_at(deadline, async {
+            let mut link = self.dial(node_id, transport::ALPN_RPC).await?;
             write_frame(&mut link.writer, &serde_json::to_vec(request)?, MAX_JSON).await?;
             let reply: Reply =
                 serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
-            Ok::<_, anyhow::Error>(reply)
+            Ok::<_, anyhow::Error>((link, reply))
         })
         .await;
         match opened {
-            Ok(Ok(reply)) => Ok((link, reply)),
+            Ok(Ok(opened)) => Ok(opened),
             _ => Err(unavailable()),
         }
     }
 }
 
+/// Check Git before admission, while failover can still try another node.
+async fn readable(store: &RepoStore) -> Result<(), RepoError> {
+    let path = store.local_path_for_spawning_git()?.to_owned();
+    let permit = git_process::operation_slot(TIMEOUT)
+        .await
+        .map_err(RepoError::from)?;
+    let opens = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        crate::backend::git::repository::opens_as_repository(&path)
+    })
+    .await
+    .map_err(|_| unavailable())?
+    .map_err(|_| unavailable())?;
+    if opens {
+        Ok(())
+    } else {
+        Err(unavailable())
+    }
+}
+
 impl RpcHandler {
-    pub(super) async fn serve_session(&self, request: Request, mut link: Link) -> Result<()> {
+    pub(super) async fn serve_session(
+        &self,
+        request: Request,
+        mut link: Link,
+        deadline: tokio::time::Instant,
+    ) -> Result<()> {
         let caller = link.peer;
-        let prepared = async {
+        let prepared = tokio::time::timeout_at(deadline, async {
             self.authorize_request(&request, caller).await?;
             let permit = git_process::session_permit()
                 .await
@@ -146,6 +187,7 @@ impl RpcHandler {
             // The wait for the slot can outlast the membership or copy this request was
             // admitted on, so the same check runs again now.
             let (store, _) = self.authorize_request(&request, caller).await?;
+            readable(&store).await?;
             let (admission, targets) = match &request.operation {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.
@@ -174,8 +216,8 @@ impl RpcHandler {
                 None
             };
             Ok::<_, RepoError>((store, admission, targets, receive, permit))
-        }
-        .await;
+        })
+        .await.unwrap_or_else(|_| Err(unavailable()));
         let (store, admission, targets, receive, _permit) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
@@ -184,8 +226,8 @@ impl RpcHandler {
             }
         };
         // The permit is held while the reply is written, so the write has a deadline too.
-        tokio::time::timeout(
-            TIMEOUT,
+        tokio::time::timeout_at(
+            deadline,
             write_frame(
                 &mut link.writer,
                 &serde_json::to_vec(&Reply {

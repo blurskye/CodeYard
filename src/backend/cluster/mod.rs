@@ -235,6 +235,7 @@ pub struct Cluster {
     tcp_advertised: Vec<SocketAddr>,
     /// Admits the repository sessions this node serves. `None` on a node without storage.
     sessions: Option<rpc::SessionGate>,
+    events: ci::CiHandler,
     pub context: NodeContext,
 }
 
@@ -317,6 +318,7 @@ impl Cluster {
     /// The clear is best effort: after `WITHDRAW_TIMEOUT` shutdown goes on without it.
     /// Repository sessions from other nodes are refused from here on.
     pub async fn withdraw(&self) {
+        self.events.stop_claiming();
         if let Some(sessions) = &self.sessions {
             sessions.close();
         }
@@ -490,7 +492,7 @@ pub async fn start(
                 pool: pool.clone(),
                 pairing,
                 rpc,
-                events,
+                events: events.clone(),
             };
             let listener = tcp::bind(bind_address, &key, services).await?;
             let advertised = if settings.tcp_advertise.is_empty() {
@@ -510,6 +512,7 @@ pub async fn start(
         storage_path,
         tcp_advertised,
         sessions,
+        events,
         context,
     })
 }

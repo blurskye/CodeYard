@@ -122,8 +122,8 @@ async fn contract(pg: bool) {
     ));
     let client = http::Client::anonymous(&router);
     let tree_path = "/readme_owner/preview";
-    let file_path = "/readme_owner/preview/blob/main/ReadMe.md";
-    let raw_path = "/readme_owner/preview/raw/main/ReadMe.md";
+    let file_path = "/readme_owner/preview/blob/refs/heads/main/ReadMe.md";
+    let raw_path = "/readme_owner/preview/raw/refs/heads/main/ReadMe.md";
     let small =
         "# Hello\r\n**bold 雪**\n<script>unsafe-marker</script>\n[link](https://example.invalid)";
     let tip = save(
@@ -213,6 +213,10 @@ async fn contract(pg: bool) {
         let (status, html) = client.page(tree_path).await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains(&ceiling));
+        assert!(html.contains("/readme_owner/preview/tree/refs/tags/main"));
+        let (tag_page, _) = model(&client, "/readme_owner/preview/tree/refs/tags/main").await;
+        assert_eq!(tag_page.reference, "refs/tags/main");
+        assert_eq!(tag_page.latest_commit.unwrap().sha, previous);
         let (status, html) = client
             .page("/readme_owner/preview/blob/main/notes.txt")
             .await;
@@ -375,8 +379,9 @@ async fn contract(pg: bool) {
         assert!(html.len() < 2 * 1024 * 1024);
         assert!(html.contains("&lt;script&gt;budget-marker&lt;/script&gt;"));
         assert!(!html.contains("<script>budget-marker</script>"));
-        let href = format!("href=\"/readme_owner/preview/blob/main/{deep_directory}/x\"");
-        let src = format!("src=\"/readme_owner/preview/raw/main/{deep_directory}/x\"");
+        let href =
+            format!("href=\"/readme_owner/preview/blob/refs/heads/main/{deep_directory}/x\"");
+        let src = format!("src=\"/readme_owner/preview/raw/refs/heads/main/{deep_directory}/x\"");
         if count == 1 {
             assert!(!html.contains("showing a plain-text preview"));
             assert!(html.contains(&href));
@@ -734,7 +739,7 @@ async fn revision_and_chrome_contract(pg: bool) {
     assert!(repo_store(&repository, None).commit_count().await.is_err());
     let (page, _) = model(&client, "/browse_owner/browse").await;
     assert_eq!(page.latest_commit.unwrap().sha, tip.to_string());
-    let raw_path = "/browse_owner/browse/raw/main/README.md";
+    let raw_path = "/browse_owner/browse/raw/refs/heads/main/README.md";
     let raw = client.exchange("GET", raw_path, "", Vec::new()).await;
     assert_eq!(raw.status, StatusCode::OK);
     assert_eq!(raw.body, b"child snapshot\n");
@@ -1169,6 +1174,133 @@ async fn sqlite_merge_resolution_tree_history() {
 #[tokio::test]
 async fn postgres_merge_resolution_tree_history() {
     merge_tree_contract(true).await;
+}
+
+async fn ref_identity_and_sidebar_contract(pg: bool) {
+    let (mut f, _root, repository, client) = browse_fixture(pg).await;
+    let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
+    let tagged = browse_commit(
+        &git,
+        None,
+        1_700_000_000,
+        "tag snapshot",
+        &[("README.md", b"tag content\n", 0o100644)],
+    );
+    let branch = browse_commit(
+        &git,
+        Some(tagged),
+        1_700_000_001,
+        "branch snapshot",
+        &[("README.md", b"branch content\n", 0o100644)],
+    );
+    git.reference("refs/heads/main", branch, true, "fixture")
+        .unwrap();
+    git.reference("refs/heads/release", branch, true, "fixture")
+        .unwrap();
+    git.reference("refs/tags/release", tagged, true, "fixture")
+        .unwrap();
+    for (reference, text) in [
+        ("release", "branch content"),
+        ("refs/tags/release", "tag content"),
+    ] {
+        let (status, html) = client
+            .page(&format!("/browse_owner/browse/blob/{reference}/README.md"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{html}");
+        assert!(html.contains(text), "{html}");
+        assert!(html.contains("/blob/refs/tags/release/README.md"), "{html}");
+    }
+
+    // Reading a tiny file still works when the optional root sidebar is too wide.
+    let names: Vec<_> = (0..1001).map(|index| format!("entry-{index}")).collect();
+    let mut files: Vec<_> = names
+        .iter()
+        .map(|name| (name.as_str(), &b"x\n"[..], 0o100644))
+        .collect();
+    files.push(("README.md", b"small readable file\n", 0o100644));
+    let wide = browse_commit(
+        &git,
+        Some(branch),
+        1_700_000_002,
+        "wide tree commit",
+        &files,
+    );
+    git.reference("refs/heads/main", wide, true, "fixture")
+        .unwrap();
+    for kind in ["blob", "blame"] {
+        let (status, html) = client
+            .page(&format!("/browse_owner/browse/{kind}/main/README.md"))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{html}");
+        assert!(html.contains("small readable file"), "{html}");
+    }
+
+    // A deep sidebar has one aggregate budget and carries no sibling history.
+    let blob = git.blob(b"nested file\n").unwrap();
+    let mut tree = git.treebuilder(None).unwrap();
+    tree.insert("README.md", blob, 0o100644).unwrap();
+    let mut child = tree.write().unwrap();
+    for depth in (0..12).rev() {
+        let mut tree = git.treebuilder(None).unwrap();
+        for index in 0..600 {
+            tree.insert(format!("file-{index}"), blob, 0o100644)
+                .unwrap();
+        }
+        tree.insert(format!("d{depth}"), child, 0o040000).unwrap();
+        child = tree.write().unwrap();
+    }
+    let signature = git2::Signature::now("Browse", "browse@example.invalid").unwrap();
+    let tip = git
+        .commit(
+            None,
+            &signature,
+            &signature,
+            "nested header",
+            &git.find_tree(child).unwrap(),
+            &[],
+        )
+        .unwrap();
+    git.reference("refs/heads/main", tip, true, "fixture")
+        .unwrap();
+    let path = format!(
+        "{}/README.md",
+        (0..12)
+            .map(|i| format!("d{i}"))
+            .collect::<Vec<_>>()
+            .join("/")
+    );
+    let (status, page) = client
+        .model(&format!("/browse_owner/browse/blob/main/{path}"))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let Page::Repositories(view::page::Page::Blob { page, .. }) = page else {
+        panic!("blob page")
+    };
+    assert!(page.folders.len() < 13);
+    assert!(
+        page.folders
+            .iter()
+            .map(|folder| folder.entries.len())
+            .sum::<usize>()
+            <= 5000
+    );
+    assert!(page
+        .folders
+        .iter()
+        .flat_map(|folder| &folder.entries)
+        .all(|entry| entry.last_commit.is_none()));
+    assert_eq!(page.latest_commit.unwrap().sha, tip.to_string());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_refs_and_optional_sidebars() {
+    ref_identity_and_sidebar_contract(false).await;
+}
+
+#[tokio::test]
+async fn postgres_refs_and_optional_sidebars() {
+    ref_identity_and_sidebar_contract(true).await;
 }
 
 #[tokio::test]

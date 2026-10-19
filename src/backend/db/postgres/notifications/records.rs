@@ -15,6 +15,40 @@ pub async fn create_notification(
     pool: &PgPool,
     input: NewNotification<'_>,
 ) -> Result<Notification> {
+    use crate::backend::db::notifications::records::NotificationSuppressed;
+    let mut tx = pool.begin().await?;
+    lock_membership_shared(&mut tx).await?;
+    if input.kind == "user_followed" {
+        let _: Option<i64> =
+            sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
+                .bind(input.user_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND actor_id=$2 AND kind='user_followed' AND created_at>clock_timestamp()-INTERVAL '1 day')")
+            .bind(input.user_id).bind(input.actor_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(!recent, NotificationSuppressed);
+    }
+    if matches!(input.kind, "issue_comment" | "mention") {
+        if let Some(comment_id) = input
+            .metadata
+            .get("comment_id")
+            .and_then(serde_json::Value::as_i64)
+        {
+            sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
+                .bind(input.repo_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+            let comment: Option<i64> = sqlx::query_scalar(
+                "SELECT c.id FROM issue_comments c JOIN issues i ON i.id=c.issue_id
+                 WHERE c.id=$1 AND i.repo_id=$2 FOR SHARE OF c",
+            )
+            .bind(comment_id)
+            .bind(input.repo_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            anyhow::ensure!(comment.is_some(), NotificationSuppressed);
+        }
+    }
     let notification = sqlx::query_as::<_, Notification>(
         r#"
         INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id)
@@ -30,9 +64,9 @@ pub async fn create_notification(
     .bind(input.body)
     .bind(input.link)
     .bind(input.metadata)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
-
+    tx.commit().await?;
     Ok(notification)
 }
 

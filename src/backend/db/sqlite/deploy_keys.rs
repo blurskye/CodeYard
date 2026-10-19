@@ -31,8 +31,31 @@ pub async fn get_deploy_key_by_fingerprint(
         .await?)
 }
 
-pub async fn insert_deploy_key(pool: &SqlitePool, key: &NewDeployKey) -> Result<DeployKey> {
+async fn require_admin(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    repo: i64,
+    session: &str,
+) -> Result<()> {
+    let access =
+        super::repositories::access::user_repo_access_in_transaction(tx, actor, repo).await?;
+    let site_admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND r.owner_kind='user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password)")
+        .bind(actor).bind(repo).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(
+        (access.can_admin() || site_admin)
+            && super::users::transitions::live_session(tx, actor, session).await?,
+        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+    );
+    Ok(())
+}
+
+pub async fn insert_deploy_key(
+    pool: &SqlitePool,
+    key: &NewDeployKey,
+    session: &str,
+) -> Result<DeployKey> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_admin(&mut tx, key.created_by_id, key.repo_id, session).await?;
     let used: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = ?1) OR EXISTS(SELECT 1 FROM deploy_keys WHERE fingerprint = ?1)",
     )
@@ -63,12 +86,21 @@ pub async fn insert_deploy_key(pool: &SqlitePool, key: &NewDeployKey) -> Result<
     Ok(row)
 }
 
-pub async fn delete_deploy_key(pool: &SqlitePool, repo_id: i64, key_id: i64) -> Result<bool> {
+pub async fn delete_deploy_key(
+    pool: &SqlitePool,
+    repo_id: i64,
+    key_id: i64,
+    actor: i64,
+    session: &str,
+) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_admin(&mut tx, actor, repo_id, session).await?;
     let result = sqlx::query("DELETE FROM deploy_keys WHERE id = ?1 AND repo_id = ?2")
         .bind(key_id)
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 

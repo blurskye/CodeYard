@@ -2,7 +2,7 @@
 //! `repositories::deploy_keys`, and both need repository admin access.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::http::session::{extract_session_id, get_current_user};
 use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::api::repos::repository::{checkbox, field, settings_model, settings_response};
 use crate::backend::app::AppState;
@@ -84,8 +84,9 @@ async fn repository_for(
     state: &AppState,
     owner: &str,
     repo: &str,
+    headers: &axum::http::HeaderMap,
 ) -> Result<Repository, (StatusCode, Json<ApiError>)> {
-    db::repositories::records::get_repository(&state.pool, owner, repo)
+    let repository = db::repositories::records::get_repository(&state.pool, owner, repo)
         .await
         .map_err(|_| {
             (
@@ -101,7 +102,9 @@ async fn repository_for(
                 StatusCode::NOT_FOUND,
                 Json(ApiError::new("not_found", "Repository not found")),
             )
-        })
+        })?;
+    super::access::check_repo_read_access(&state.pool, &repository, headers).await?;
+    Ok(repository)
 }
 
 pub async fn list_keys(
@@ -110,7 +113,7 @@ pub async fn list_keys(
     Path((owner, repo)): Path<(String, String)>,
 ) -> Result<Json<Vec<DeployKeyResponse>>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let repository = repository_for(&state, &owner, &repo).await?;
+    let repository = repository_for(&state, &owner, &repo, &headers).await?;
     let keys = keys::list_keys(&state.pool, &actor, &repository)
         .await
         .map_err(json_error)?;
@@ -126,10 +129,11 @@ pub async fn create_key(
     Json(req): Json<CreateDeployKeyRequest>,
 ) -> Result<(StatusCode, Json<DeployKeyResponse>), (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let repository = repository_for(&state, &owner, &repo).await?;
+    let repository = repository_for(&state, &owner, &repo, &headers).await?;
     let key = keys::add_key(
         &state.pool,
         &actor,
+        &extract_session_id(&headers).unwrap_or_default(),
         &repository,
         &req.title,
         &req.key,
@@ -146,10 +150,16 @@ pub async fn delete_key(
     Path((owner, repo, key_id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let repository = repository_for(&state, &owner, &repo).await?;
-    keys::remove_key(&state.pool, &actor, &repository, key_id)
-        .await
-        .map_err(json_error)?;
+    let repository = repository_for(&state, &owner, &repo, &headers).await?;
+    keys::remove_key(
+        &state.pool,
+        &actor,
+        &extract_session_id(&headers).unwrap_or_default(),
+        &repository,
+        key_id,
+    )
+    .await
+    .map_err(json_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -211,6 +221,7 @@ pub(super) async fn form(
         keys::add_key(
             pool,
             actor,
+            &extract_session_id(&ctx.headers).unwrap_or_default(),
             repository,
             &field(form, "title"),
             &field(form, "key"),
@@ -220,9 +231,15 @@ pub(super) async fn form(
         .map(|_| "added")
     } else {
         match field(form, "key_id").parse::<i64>() {
-            Ok(key_id) => keys::remove_key(pool, actor, repository, key_id)
-                .await
-                .map(|()| "deleted"),
+            Ok(key_id) => keys::remove_key(
+                pool,
+                actor,
+                &extract_session_id(&ctx.headers).unwrap_or_default(),
+                repository,
+                key_id,
+            )
+            .await
+            .map(|()| "deleted"),
             Err(_) => Err(DeployKeyError::NotFound),
         }
     };

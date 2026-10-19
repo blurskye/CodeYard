@@ -713,6 +713,38 @@ async fn start_pending_comment(bob: &Client, page: &str, head: &str, body: &str)
     .await
 }
 
+#[tokio::test]
+async fn sqlite_committed_review_succeeds_when_notification_comments_cannot_be_read() {
+    let mut world = World::new(false).await;
+    let (number, head) = open_pull(&world.alice, "topic", &world.base).await;
+    let started =
+        start_pending_comment(&world.bob, &web_pull(number), &head, "Pending thought").await;
+    assert!(started.status.is_redirection(), "{}", started.text());
+    // A malformed stored timestamp makes the optional post-submit comment read fail decoding.
+    world
+        .database
+        .execute("UPDATE pr_comments SET created_at = 'invalid'", &[])
+        .await;
+    let review = world
+        .bob
+        .expect(
+            "POST",
+            &reviews(number),
+            json!({"state": "approved"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let saved = db::pull_requests::reviews::get_pull_request_review_by_id(
+        world.database.pool(),
+        review["id"].as_i64().unwrap(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(saved.state, "approved");
+    world.database.finish().await;
+}
+
 /// A pending review is its author's alone. Its comment reaches the discussion only when the
 /// review is submitted, and then the comment sits under the review in the Conversation.
 async fn pending_review_is_private_until_submitted(pg: bool) {

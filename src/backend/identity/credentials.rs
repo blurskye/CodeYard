@@ -34,7 +34,14 @@ pub(crate) fn validate_username(username: &str) -> Result<(), AccountInputError>
 pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), AccountInputError> {
     validate_username(input.username)?;
     validate_new_password(input.password)?;
-    if input.email.is_some_and(|email| email.len() > 255) {
+    if let Some(email) = input.email {
+        validate_email(email)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_email(email: &str) -> Result<(), AccountInputError> {
+    if email.len() > 255 || email.contains('\0') {
         return Err(AccountInputError::EmailBounds);
     }
     Ok(())
@@ -59,6 +66,15 @@ pub(crate) fn validate_new_password(password: &str) -> Result<(), AccountInputEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn email_validation_rejects_nul() {
+        assert_eq!(
+            validate_email("a\0@example.test"),
+            Err(AccountInputError::EmailBounds)
+        );
+        assert_eq!(validate_email("alice@example.test"), Ok(()));
+    }
 
     #[test]
     fn account_validation_preserves_unicode_and_byte_password_bounds() {

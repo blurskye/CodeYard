@@ -34,6 +34,7 @@ pub fn authorize_operation(
         Operation::Info => ("Info", false),
         Operation::CommitCount => ("CommitCount", false),
         Operation::Tree { .. } => ("Tree", false),
+        Operation::SidebarTrees { .. } => ("SidebarTrees", false),
         Operation::WorkflowFiles { .. } => ("WorkflowFiles", false),
         Operation::Blob { .. } => ("Blob", false),
         Operation::BlobBytes { .. } => ("BlobBytes", false),
@@ -246,6 +247,33 @@ impl RpcHandler {
                 return Err(invalid("repository RPC requires a running CI claim for this repository and worker node"));
             }
         }
+        if let Operation::GitSession(session) = &request.operation {
+            let repo = db::repositories::records::get_repository_by_id(
+                pool,
+                repo_id.ok_or_else(unavailable)?,
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+            if let Some(credential) = session.credential {
+                credential
+                    .authorize(
+                        pool,
+                        &repo,
+                        session.service
+                            == crate::backend::repositories::store::GitService::ReceivePack,
+                    )
+                    .await
+                    .map_err(|_| {
+                        RepoError::new(
+                            crate::backend::repositories::store::ErrorKind::Unavailable,
+                            "Git credential or repository access denied",
+                        )
+                    })?;
+            } else if request.ci_run.is_none() && repo.is_private {
+                return Err(invalid("Git credential required"));
+            }
+        }
         Ok((store_at(&directory, self.context.node_id)?, repo_id))
     }
 
@@ -323,6 +351,7 @@ impl RpcHandler {
                     let source = store_at(&path, self.context.node_id)?;
                     json!(store.initialize_fork(
                         pool,
+                        repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                         source_repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                         actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
                         &source,
@@ -358,7 +387,20 @@ impl RpcHandler {
             Operation::Refs | Operation::PrimaryRefs => json!(store.refs()),
             Operation::Info => json!(store.info()),
             Operation::CommitCount => json!(store.commit_count()),
-            Operation::Tree { git_ref, path } => json!(store.tree(&git_ref, &path)),
+            Operation::Tree {
+                git_ref,
+                path,
+                metadata_only,
+            } => {
+                if metadata_only {
+                    json!(store.tree_metadata(&git_ref, &path))
+                } else {
+                    json!(store.tree(&git_ref, &path))
+                }
+            }
+            Operation::SidebarTrees { git_ref, paths } => {
+                json!(store.sidebar_trees(&git_ref, &paths))
+            }
             Operation::WorkflowFiles { revision } => {
                 let files = store.workflow_files(&revision).await?;
                 let mut manifest = Vec::with_capacity(files.len());
@@ -443,8 +485,16 @@ impl RpcHandler {
                 head_ref,
                 path,
             } => json!(store.diff_file(&base_ref, &head_ref, &path)),
-            Operation::ChangedPaths { base_ref, head_ref } => {
-                json!(store.changed_paths(&base_ref, &head_ref))
+            Operation::ChangedPaths {
+                base_ref,
+                head_ref,
+                endpoints,
+            } => {
+                if endpoints {
+                    json!(store.push_changed_paths(&base_ref, &head_ref))
+                } else {
+                    json!(store.changed_paths(&base_ref, &head_ref))
+                }
             }
             Operation::DiffFrom {
                 source,

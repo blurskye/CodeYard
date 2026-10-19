@@ -41,6 +41,104 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[tokio::test]
+async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
+    let f = Fixture::open().await;
+    for index in 0..12 {
+        sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) VALUES(?,?)")
+            .bind(format!("uploads/stalled-{index}"))
+            .bind(two_days_ago())
+            .execute(&f.raw)
+            .await
+            .unwrap();
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let storage = Arc::new(
+        ObjectStore::open(
+            f.temporary.path(),
+            Some(S3Config {
+                endpoint,
+                public_endpoint: None,
+                access_key: "test".into(),
+                secret_key: "test-secret".into(),
+                bucket: "uploads".into(),
+                region: "us-east-1".into(),
+            }),
+        )
+        .await
+        .unwrap(),
+    );
+    let (sent, mut requests) = tokio::sync::mpsc::unbounded_channel();
+    let server = tokio::spawn(async move {
+        let mut connections = tokio::task::JoinSet::new();
+        loop {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let sent = sent.clone();
+            connections.spawn(async move {
+                let mut bytes = [0; 4096];
+                let count = socket.read(&mut bytes).await.unwrap();
+                assert!(count > 0);
+                sent.send(()).unwrap();
+                std::future::pending::<()>().await;
+            });
+        }
+    });
+    let pool = f.pool.clone();
+    let cleanup = tokio::spawn(async move { files::remove_expired_uploads(&pool, &storage).await });
+    for _ in 0..4 {
+        tokio::time::timeout(Duration::from_secs(3), requests.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), requests.recv())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(8), cleanup)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap(),
+        0
+    );
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pending_object_deletions")
+        .fetch_one(&f.raw)
+        .await
+        .unwrap();
+    assert_eq!(count, 12);
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn confirmations_refuse_a_busy_file_instead_of_queueing_behind_a_put() {
+    let f = Fixture::open().await;
+    let reservation = f
+        .reserve(
+            b"hello",
+            "text/plain",
+            FileReason::Other,
+            FileVisibility::Owner,
+        )
+        .await;
+    let file = files_db::get_file_by_id(&f.pool, reservation.file_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let lock = f.storage.lock_file(&file.object_key).await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), f.confirm(reservation.file_id))
+        .await
+        .unwrap();
+    assert_eq!(result, Err(ConfirmationError::StorageUnavailable));
+    drop(lock);
+    f.put(&reservation, b"hello", "text/plain").await.unwrap();
+    f.confirm(reservation.file_id).await.unwrap();
+}
+
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 fn digest(bytes: &[u8]) -> String {

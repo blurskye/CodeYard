@@ -10,8 +10,9 @@ use crate::webui::pages::repos::{
 };
 use crate::webui::{
     components::{
-        count_label, document_outline,
+        count_label, document_html,
         languages::{language_bar, LanguageShare},
+        outline_of_html,
         references::References,
         CopyButton, DraftInput, DraftTextarea,
     },
@@ -75,10 +76,16 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
         .iter()
         .find(|entry| entry.kind == "file" && entry.name.eq_ignore_ascii_case("readme.md"))
         .map(|entry| entry.path.clone());
-    let outline = page
-        .readme
+    let readme_html = page.readme.as_deref().map(|readme| {
+        document_html(
+            readme,
+            &page.references,
+            &link_base(&base, &page.reference, &page.path),
+        )
+    });
+    let outline = readme_html
         .as_deref()
-        .map(|readme| document_outline(readme, &page.references))
+        .map(outline_of_html)
         .unwrap_or_default();
     let mut entries: Vec<_> = page.entries.iter().collect();
     entries.sort_by(|a, b| {
@@ -147,7 +154,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
                     }
                 }
             }
-            if let Some(readme) = &page.readme {
+            if let Some(html) = &readme_html {
                 section { id: "readme", class: "repo-readme border border-border rounded-md bg-card",
                     div { class: "repo-readme-header",
                         h2 { class: "repo-readme-title", {icon("readme")} "README" }
@@ -160,7 +167,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
                             }
                         }
                     }
-                    div { class: "repo-readme-body", crate::webui::components::RepoMarkdown { content: readme.clone(), base: link_base(&base, &page.reference, &page.path), references: (*page.references).clone() } }
+                    div { class: "repo-readme-body", div { class: "markdown-body leading-relaxed text-foreground", dangerous_inner_html: html.clone() } }
                 }
             } else if let Some(entry) = oversized_readme {
                 section { id: "readme", class: "repo-readme border border-border rounded-md bg-card",
@@ -182,8 +189,8 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
             }
         }
     } else {
-        let branch_options = ref_options(&base, "tree", &page.path, &page.branches);
-        let tag_options = ref_options(&base, "tree", &page.path, &page.tags);
+        let branch_options = ref_options(&base, "tree", &page.path, &page.branches, "");
+        let tag_options = ref_options(&base, "tree", &page.path, &page.tags, "refs/tags/");
         rsx! {
             div { class: "repo-blob-layout",
                 if !page.empty {
@@ -269,8 +276,8 @@ fn code_menu(repo: &RepoChrome, page: &TreePage) -> Element {
 /// menu or search, only the counts and Code.
 fn home_toolbar(repo: &RepoChrome, page: &TreePage) -> Element {
     let base = repo.base();
-    let branch_options = ref_options(&base, "tree", &page.path, &page.branches);
-    let tag_options = ref_options(&base, "tree", &page.path, &page.tags);
+    let branch_options = ref_options(&base, "tree", &page.path, &page.branches, "");
+    let tag_options = ref_options(&base, "tree", &page.path, &page.tags, "refs/tags/");
     rsx! {
         div { class: "repo-home-toolbar",
             div { class: "repo-home-refs",
@@ -377,15 +384,21 @@ fn parent_of(path: &str) -> &str {
     path.rsplit_once('/').map_or("", |(parent, _)| parent)
 }
 
+fn shell_argument(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 /// Setup for an empty repository: the URL with an HTTPS or SSH choice, a line on what to add
 /// first, then the commands as plain preformatted text. The first command makes the commit from
 /// whatever the folder holds, since an empty repository has no README yet.
 fn quick_setup(http: &str, ssh: &str, branch: &str) -> Element {
+    let quoted_http = shell_argument(http);
+    let branch = shell_argument(branch);
     let new_repository = format!(
-        "git init\ngit add .\ngit commit -m \"first commit\"\ngit branch -M {branch}\ngit remote add origin {http}\ngit push -u origin {branch}"
+        "git init\ngit add .\ngit commit -m \"first commit\"\ngit branch -M {branch}\ngit remote add origin {quoted_http}\ngit push -u origin {branch}"
     );
     let existing_repository = format!(
-        "git remote add origin {http}\ngit branch -M {branch}\ngit push -u origin {branch}"
+        "git remote add origin {quoted_http}\ngit branch -M {branch}\ngit push -u origin {branch}"
     );
     rsx! {
         div { class: "repo-quick-setup",
@@ -456,6 +469,18 @@ pub(in crate::webui::pages::repos) fn breadcrumbs(
 #[cfg(test)]
 mod tests {
     use super::website_host;
+
+    #[test]
+    fn setup_arguments_are_single_shell_words() {
+        assert_eq!(
+            super::shell_argument("main;touch${IFS}proof;#"),
+            "'main;touch${IFS}proof;#'"
+        );
+        assert_eq!(
+            super::shell_argument("https://example/a'b.git"),
+            "'https://example/a'\\''b.git'"
+        );
+    }
 
     #[test]
     fn the_about_link_names_the_host_of_its_address() {

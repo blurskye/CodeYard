@@ -361,6 +361,7 @@ pub(in crate::backend::api::repos) fn editor_from(
         references: Default::default(),
         protected: false,
         new_branch: field(form, "new_branch"),
+        commit_to_new_branch: field(form, "commit_target") == "new_branch",
         description: field(form, "description"),
     }
 }
@@ -536,6 +537,7 @@ async fn delete_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<R
         expected_revision: expected,
         error: None,
         protected,
+        commit_to_new_branch: protected,
     };
     Ok(ctx.page_model(
         "Delete file",
@@ -563,6 +565,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
         message: field(form, "message"),
         expected_revision: field(form, "expected_revision"),
         new_branch: field(form, "new_branch"),
+        commit_to_new_branch: field(form, "commit_target") == "new_branch",
         branch: branch.clone(),
         path: path.clone(),
         error: None,

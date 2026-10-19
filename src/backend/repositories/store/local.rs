@@ -177,6 +177,7 @@ async fn record_branch_update(
 ) {
     languages::refresh_default_branch(pool.clone(), repo_id, path.to_owned(), branch.to_owned());
     let reference = format!("refs/heads/{branch}");
+    emit_ref_move(pool, repo_id, actor, path, &reference, old, Some(new)).await;
     let count = match git::count_pushed_commits(path, old, new, &reference).await {
         Ok(count) => i32::try_from(count).unwrap_or(i32::MAX),
         Err(error) => {
@@ -193,6 +194,33 @@ async fn record_branch_update(
             repo_id,
             "gave up recording a branch update on a busy database"
         ),
+    }
+}
+
+async fn emit_ref_move(
+    pool: &db::DbPool,
+    repo_id: i64,
+    actor: i64,
+    path: &Path,
+    reference: &str,
+    old: Option<&str>,
+    new: Option<&str>,
+) {
+    if let Ok(Some(repository)) =
+        db::repositories::records::get_repository_by_id(pool, repo_id).await
+    {
+        let zero = "0".repeat(40);
+        crate::backend::webhooks::ref_changes::emit_ref_moves(
+            pool,
+            &repository,
+            actor,
+            path,
+            &[(
+                reference.to_owned(),
+                old.unwrap_or(&zero).to_owned(),
+                new.unwrap_or(&zero).to_owned(),
+            )],
+        );
     }
 }
 
@@ -402,6 +430,7 @@ impl LocalStore {
     pub(super) async fn initialize_fork(
         &self,
         pool: &db::DbPool,
+        repo_id: i64,
         source_repo_id: i64,
         actor: i64,
         source: &LocalStore,
@@ -423,7 +452,14 @@ impl LocalStore {
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
         tokio::fs::rename(temporary.path(), self.path())
             .await
-            .map_err(|error| RepoError::from(anyhow::Error::from(error)))
+            .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+        languages::refresh_default_branch(
+            pool.clone(),
+            repo_id,
+            self.path().to_owned(),
+            default_branch.to_owned(),
+        );
+        Ok(())
     }
 
     pub(super) async fn remove(&self) -> Result<(), RepoError> {
@@ -482,8 +518,22 @@ impl LocalStore {
         &self,
         git_ref: &str,
         path: &str,
+        metadata_only: bool,
     ) -> Result<Vec<TreeEntry>, RepoError> {
-        git::list_tree(self.path(), git_ref, path)
+        if metadata_only {
+            git::list_tree_with_history(self.path(), git_ref, path, false).await
+        } else {
+            git::list_tree(self.path(), git_ref, path).await
+        }
+        .map_err(RepoError::from)
+    }
+
+    pub(super) async fn sidebar_trees(
+        &self,
+        git_ref: &str,
+        paths: &[String],
+    ) -> Result<Vec<(String, Vec<TreeEntry>)>, RepoError> {
+        git::repository::list_sidebar_trees(self.path(), git_ref, paths)
             .await
             .map_err(RepoError::from)
     }
@@ -676,8 +726,9 @@ impl LocalStore {
         &self,
         base_ref: &str,
         head_ref: &str,
+        endpoints: bool,
     ) -> Result<Vec<String>, RepoError> {
-        git::changed_paths(self.path(), base_ref, head_ref, false)
+        git::changed_paths(self.path(), base_ref, head_ref, endpoints)
             .await
             .map_err(RepoError::from)
     }
@@ -725,9 +776,9 @@ impl LocalStore {
     }
 
     pub(super) async fn blame(&self, git_ref: &str, path: &str) -> Result<FileBlame, RepoError> {
-        let (git_ref, path) = (git_ref.to_owned(), path.to_owned());
-        self.blocking(move |repo| git::blame_file(repo, &git_ref, &path))
+        git::blame_file(self.path(), git_ref, path)
             .await
+            .map_err(RepoError::from)
     }
 
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
@@ -855,7 +906,8 @@ impl LocalStore {
         }
 
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        let prepared = git::repository::prepare_pull_head(source.path(), head)
+        live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        let prepared = git::repository::prepare_pull_head(self.path(), source.path(), head)
             .await
             .map_err(RepoError::from)?;
         self.publish_fetched_pull_head(
@@ -956,6 +1008,16 @@ impl LocalStore {
         git::publish_ref_create(self.path(), &reference, &target)
             .await
             .map_err(RepoError::from)?;
+        emit_ref_move(
+            pool,
+            repo_id,
+            actor,
+            self.path(),
+            &reference,
+            None,
+            Some(&target),
+        )
+        .await;
         let defaults = self.synchronize_default_branch(pool, repo_id).await;
         defaults?;
         Ok(target)
@@ -1005,6 +1067,16 @@ impl LocalStore {
         git::publish_ref_delete(self.path(), &reference, &old)
             .await
             .map_err(RepoError::from)?;
+        emit_ref_move(
+            pool,
+            repo_id,
+            actor,
+            self.path(),
+            &reference,
+            Some(&old),
+            None,
+        )
+        .await;
         Ok(())
     }
 
@@ -1061,6 +1133,16 @@ impl LocalStore {
         git::publish_ref_create(self.path(), &reference, &tag.sha)
             .await
             .map_err(RepoError::from)?;
+        emit_ref_move(
+            pool,
+            repo_id,
+            actor,
+            self.path(),
+            &reference,
+            None,
+            Some(&tag.sha),
+        )
+        .await;
         Ok(tag)
     }
 
@@ -1091,6 +1173,16 @@ impl LocalStore {
         git::publish_ref_delete(self.path(), &reference, &old)
             .await
             .map_err(RepoError::from)?;
+        emit_ref_move(
+            pool,
+            repo_id,
+            actor,
+            self.path(),
+            &reference,
+            Some(&old),
+            None,
+        )
+        .await;
         Ok(())
     }
 
@@ -1504,10 +1596,37 @@ impl LocalStore {
         Ok(())
     }
 
-    /// Makes this copy's refs exactly `refs`, in one ref transaction. The objects they
-    /// name must already be stored.
+    /// Makes this copy's refs exactly `refs`. Obsolete namespace blockers are removed
+    /// first: Git's files backend cannot lock both `topic` and `topic/sub` in one transaction.
+    /// The objects they name must already be stored.
     pub(super) async fn set_refs(&self, refs: &HashMap<String, String>) -> Result<(), RepoError> {
-        let current = self.mirror_refs().await?;
+        let mut current = self.mirror_refs().await?;
+        let names: std::collections::BTreeSet<&str> = refs.keys().map(String::as_str).collect();
+        let blockers: Vec<String> = current
+            .keys()
+            .filter(|name| {
+                if refs.contains_key(*name) {
+                    return false;
+                }
+                let prefix = format!("{name}/");
+                names
+                    .range(prefix.as_str()..)
+                    .next()
+                    .is_some_and(|new| new.starts_with(&prefix))
+                    || name
+                        .match_indices('/')
+                        .any(|(at, _)| refs.contains_key(&name[..at]))
+            })
+            .cloned()
+            .collect();
+        for name in blockers {
+            let old = &current[&name];
+            let (status, _) = self.git(&["update-ref", "-d", &name, old]).await?;
+            if !status.success() {
+                return Err(unavailable("Git could not remove an obsolete replica ref"));
+            }
+            current.remove(&name);
+        }
         let mut script = String::from("start\n");
         for (name, sha) in refs {
             if !name.starts_with("refs/") || !git2::Reference::is_valid_name(name) {

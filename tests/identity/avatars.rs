@@ -811,6 +811,46 @@ async fn contract(pg: bool) {
     assert_eq!(generated.status, StatusCode::OK);
     assert!(generated.text().starts_with("<svg"), "{}", generated.text());
 
+    // Deleting an organization removes its selected picture and queues the bytes.
+    let deleted_picture = upload(&carol, "org_avatar", PNG, true).await;
+    let file = db::files::get_file_by_id(f.pool(), uuid(&deleted_picture))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        organizations::set_organization_avatar(f.pool(), ids[2], org, Some(uuid(&deleted_picture)))
+            .await
+            .unwrap(),
+        OrganizationOutcome::Applied(_)
+    ));
+    assert!(matches!(
+        organizations::delete_organization(f.pool(), ids[2], org)
+            .await
+            .unwrap(),
+        OrganizationOutcome::Applied(())
+    ));
+    assert_eq!(
+        download(&nobody, &deleted_picture).await,
+        StatusCode::NOT_FOUND
+    );
+    let sql = "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)";
+    let queued: bool = match f.pool() {
+        db::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+            .bind(&file.object_key)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        db::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+            .bind(&file.object_key)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+    };
+    assert!(
+        queued,
+        "the existing upload grace period may delay cleanup, but the work must be queued"
+    );
+
     // Picture types are recognized by their bytes.
     assert_eq!(avatars::picture_type(PNG), Some("image/png"));
     assert_eq!(

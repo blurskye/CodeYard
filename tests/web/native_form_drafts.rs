@@ -88,6 +88,8 @@ fn unrelated_actions_model_refresh_emits_no_branch_draft_value_setters() {
         selected: None,
         dispatch_branch: branch.into(),
         can_dispatch: true,
+        can_manage_runs: true,
+        workflow_warning: None,
         run_limit: 50,
         log_limit: 2000,
     };

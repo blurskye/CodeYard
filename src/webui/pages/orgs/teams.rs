@@ -258,7 +258,7 @@ fn management(page: &Page, target: &str, detail: &super::TeamDetail) -> Element 
     // reopens its dialog.
     let refused = page.draft.get("action").is_some_and(|v| v == "team-delete");
     let confirmation = if refused {
-        page.draft.get("team_id").cloned().unwrap_or_default()
+        page.draft.get("confirmation").cloned().unwrap_or_default()
     } else {
         String::new()
     };
@@ -317,8 +317,9 @@ fn management(page: &Page, target: &str, detail: &super::TeamDetail) -> Element 
                 {confirm_dialog(Some("team-delete-dialog"), &format!("Delete team {}", detail.team.name), target, target, rsx! {
                     div { class: "org-form",
                         strong { "Delete team {detail.team.name}?" }
+                        input { r#type: "hidden", name: "team_id", value: "{detail.team.id}" }
                         label { span { "Type the team ID to confirm" }
-                            DraftInput { class: FIELD, name: "team_id", initial_value: confirmation, placeholder: detail.team.id.to_string(), maxlength: Some(32) }
+                            DraftInput { class: FIELD, name: "confirmation", initial_value: confirmation, placeholder: detail.team.id.to_string(), maxlength: Some(32) }
                         }
                         {fields::hidden_controls(page, "team-delete")}
                     }

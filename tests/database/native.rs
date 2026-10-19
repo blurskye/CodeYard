@@ -226,10 +226,12 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         "stale",
         "new",
         true,
-        true
+        true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     assert!(db::users::sessions::get_session(&fixture.pool, &session)
         .await
         .unwrap()
@@ -240,10 +242,12 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         "hash",
         "new",
         true,
-        true
+        true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     assert!(db::users::sessions::get_session(&fixture.pool, &session)
         .await
         .unwrap()
@@ -500,10 +504,12 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         "fixture-hash",
         "replacement",
         true,
-        true
+        true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     assert!(sessions::get_browser_session(&fixture.pool, &fresh)
         .await
         .unwrap()
@@ -1511,7 +1517,13 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
             tokio::time::timeout(std::time::Duration::from_secs(30), async {
                 tokio::join!(
                     db::issues::edit_issue_comment(
-                        pool, owner.id, repo.id, issue.id, comment.id, "second"
+                        pool,
+                        owner.id,
+                        repo.id,
+                        issue.id,
+                        comment.id,
+                        "second",
+                        &comment.body
                     ),
                     db::pull_requests::reviews::delete_pull_request_comment(
                         pool,

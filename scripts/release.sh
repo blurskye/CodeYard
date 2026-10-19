@@ -16,7 +16,20 @@ if [[ $TAG == latest ]]; then
     exit 1
 fi
 
-if [[ -n $(git status --porcelain) && ${ALLOW_DIRTY:-} != 1 ]]; then
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    revision=$(git rev-parse --verify HEAD) || exit 1
+    source_status=$(git status --porcelain) || exit 1
+    dirty=0
+    [[ -z $source_status ]] || dirty=1
+else
+    revision=${CODEYARD_SOURCE_REVISION:-}
+    dirty=${CODEYARD_SOURCE_DIRTY:-}
+fi
+[[ $revision =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ && $dirty =~ ^[01]$ ]] || {
+    echo "Release requires Git metadata or valid CODEYARD_SOURCE_REVISION and CODEYARD_SOURCE_DIRTY from scripts/vps." >&2
+    exit 1
+}
+if [[ $dirty == 1 && ${ALLOW_DIRTY:-} != 1 ]]; then
     echo "The working tree has uncommitted changes; commit them or set ALLOW_DIRTY=1." >&2
     exit 1
 fi
@@ -53,7 +66,7 @@ tar -czf dist/release/runtime-nix.tar.gz --owner=0 --group=0 --numeric-owner \
 
 echo "== Build the image $IMAGE:$TAG"
 podman build -f Containerfile \
-    --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
+    --label "org.opencontainers.image.revision=$revision" \
     -t "$IMAGE:$TAG" .
 # The binary has to start inside the image. A /nix/store path or library that the image lacks
 # fails here, before the image is tagged latest.

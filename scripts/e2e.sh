@@ -51,7 +51,7 @@ E2E_BUILD_ONLY=${E2E_BUILD_ONLY:-0}
 E2E_KEEP=${E2E_KEEP:-0}
 E2E_VERBOSE=${E2E_VERBOSE:-0}
 ACT=${E2E_ACT_BINARY:-$(command -v act || true)}
-TARGET_DIR=${CARGO_TARGET_DIR:-$ROOT/target}
+TARGET_DIR=$(realpath -m -- "${CARGO_TARGET_DIR:-$ROOT/target}")
 export WEBUI_DIST=${WEBUI_DIST:-$ROOT/dist/webui}
 
 case $E2E_PROFILE in
@@ -86,8 +86,8 @@ STARTED=$SECONDS
 drop_pg() {
     [[ -n $PG_DB ]] || return 0
     local dropdb
-    dropdb=$(pg_tool dropdb) && "$dropdb" --if-exists --force \
-        --maintenance-db="$GITSERV_TEST_DATABASE_URL" "$PG_DB" >/dev/null 2>&1
+    dropdb=$(pg_tool dropdb) && pg_command "$GITSERV_TEST_DATABASE_URL" \
+        "$dropdb" --maintenance-db --if-exists --force "$PG_DB" >/dev/null 2>&1
     PG_DB=''
     return 0
 }
@@ -204,6 +204,31 @@ pg_tool() {
     if [[ -n ${PG_BIN:-} && -x $PG_BIN/$1 ]]; then echo "$PG_BIN/$1"; else command -v "$1"; fi
 }
 
+# Keep passwords out of libpq tools' argv; Python reads the URL from its environment.
+pg_command() {
+    local url=$1
+    shift
+    E2E_PG_URL=$url "$PYTHON" -I - "$@" <<'PY'
+import os, subprocess, sys, urllib.parse as u
+parts = u.urlsplit(os.environ.pop("E2E_PG_URL"))
+password = u.unquote(parts.password) if parts.password is not None else None
+query = []
+for key, value in u.parse_qsl(parts.query, keep_blank_values=True):
+    if key == "password":
+        password = value
+    else:
+        query.append((key, value))
+netloc = parts.netloc
+if parts.password is not None:
+    user, host = netloc.rsplit("@", 1)
+    netloc = user.split(":", 1)[0] + "@" + host
+url = parts._replace(netloc=netloc, query=u.urlencode(query)).geturl()
+if password is not None:
+    os.environ["PGPASSWORD"] = password
+sys.exit(subprocess.call([sys.argv[1], sys.argv[2] + "=" + url, *sys.argv[3:]]))
+PY
+}
+
 # ---------------------------------------------------------------- build -----
 
 check_css() {
@@ -248,10 +273,10 @@ prepare_database() {
             local createdb
             createdb=$(pg_tool createdb) || { echo "createdb not found" >&2; return 1; }
             PG_DB=gitserv_e2e_$(date +%s)_$$
-            "$createdb" --maintenance-db="$GITSERV_TEST_DATABASE_URL" "$PG_DB" || return 1
-            DATABASE_URL=$("$PYTHON" -I -c 'import sys, urllib.parse as u
-parts = u.urlsplit(sys.argv[1])
-print(parts._replace(path="/" + sys.argv[2]).geturl())' "$GITSERV_TEST_DATABASE_URL" "$PG_DB") || return 1
+            pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$PG_DB" || return 1
+            DATABASE_URL=$(E2E_PG_DATABASE="$PG_DB" "$PYTHON" -I -c 'import os, urllib.parse as u
+parts = u.urlsplit(os.environ["GITSERV_TEST_DATABASE_URL"])
+print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"]).geturl())') || return 1
             echo "PostgreSQL database $PG_DB"
             ;;
         *) echo "unknown database '$ROUND'" >&2; return 1 ;;
@@ -267,6 +292,7 @@ configure_node() {
     local node=$1 roles=web,storage,ssh,actions-worker
     NODE_DIR=$(server_dir "$node")
     mkdir -p "$NODE_DIR/home" "$NODE_DIR/repos"
+    : >"$RUN/.env"
     case $node in
         web1) roles=web,ssh ;;
         store1 | store2) roles=storage ;;
@@ -1564,7 +1590,7 @@ pg_query() {
     local psql
     psql=$(pg_tool psql) || return 1
     PGCONNECT_TIMEOUT=5 PGOPTIONS='-c statement_timeout=10000' \
-        "$psql" -X -qAt --no-password --dbname="$DATABASE_URL" -v ON_ERROR_STOP=1 -c "$1"
+        pg_command "$DATABASE_URL" "$psql" --dbname -X -qAt --no-password -v ON_ERROR_STOP=1 -c "$1"
 }
 
 prepare_cluster() { # inline: distinct localhost ports, disks and declared identity
@@ -1579,6 +1605,7 @@ prepare_cluster() { # inline: distinct localhost ports, disks and declared ident
         mkdir -p "$(server_dir "$node")" || return 1
         index=$((index + 1))
     done
+    : >"$RUN/.env"
     keys=$(cd "$RUN" && env -i "PATH=$PATH" "$BIN" cluster keygen) || return 1
     put store2_key "$(awk -F= '/^NODE_KEY=/{print $2}' <<<"$keys")"
     put store2_public "$(awk -F= '/^NODE_PUBLIC_KEY=/{print $2}' <<<"$keys")"

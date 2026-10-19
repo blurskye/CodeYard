@@ -315,6 +315,47 @@ async fn actions(
     } else {
         None
     };
+    // A global selection uses the repository's native action routes after authorization.
+    if repository.is_none() {
+        if let Some(job) = query.get("job") {
+            let run_id = match uuid::Uuid::parse_str(job) {
+                Ok(id) => id,
+                Err(_) => {
+                    return ctx.error(StatusCode::BAD_REQUEST, "Run identifier must be a UUID.")
+                }
+            };
+            let run = match db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await {
+                Ok(Some(run)) => run,
+                Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Run not found."),
+                Err(_) => return unavailable(&ctx),
+            };
+            let repo =
+                match db::repositories::records::get_repository_by_id(&ctx.state.pool, run.repo_id)
+                    .await
+                {
+                    Ok(Some(repo)) => repo,
+                    Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
+                    Err(_) => return unavailable(&ctx),
+                };
+            if let Err((status, _)) = super::ensure_repo_read_access(&ctx.state, user, &repo).await
+            {
+                return read_error(&ctx, status);
+            }
+            let owner =
+                match db::repositories::records::repository_owner_name(&ctx.state.pool, repo.id)
+                    .await
+                {
+                    Ok(Some(owner)) => owner,
+                    _ => return unavailable(&ctx),
+                };
+            let path = format!(
+                "/{}/{}/actions",
+                crate::webui::encode_component(&owner),
+                crate::webui::encode_component(&repo.name)
+            );
+            return ctx.redirect(&view_actions::query_url(&path, &query, &[]));
+        }
+    }
     let (base_path, title) = scope
         .as_ref()
         .map(|(owner, repo)| {
@@ -329,7 +370,8 @@ async fn actions(
         })
         .unwrap_or_else(|| ("/ci".into(), "CI/CD runs".into()));
     let mut workflows = Vec::new();
-    let mut can_dispatch = false;
+    let mut can_manage_runs = false;
+    let mut workflow_warning = None;
     let mut dispatch_branch = "main".to_string();
     if let Some(repository) = &repository {
         dispatch_branch = query
@@ -354,29 +396,21 @@ async fn actions(
         {
             Ok(definitions) => definitions,
             Err(_) => {
-                return ctx.error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Workflow definitions could not be read from this ref.",
-                )
+                workflow_warning = Some("Workflow definitions could not be read from this ref. Run history and logs are still available; workflow dispatch is disabled.".to_owned());
+                Vec::new()
             }
         };
         workflows = definitions.into_iter().map(workflow_view).collect();
-        if repository.owner_kind == "user"
-            && (user.is_admin || repository.is_personal_owner(user.id))
+        can_manage_runs = match crate::backend::repositories::access::can_write(
+            &ctx.state.pool,
+            user,
+            repository,
+        )
+        .await
         {
-            can_dispatch = true;
-        } else {
-            can_dispatch = match db::repositories::access::get_user_repo_access(
-                &ctx.state.pool,
-                user.id,
-                repository.id,
-            )
-            .await
-            {
-                Ok(access) => access.can_write(),
-                Err(_) => return unavailable(&ctx),
-            };
-        }
+            Ok(allowed) => allowed,
+            Err(_) => return unavailable(&ctx),
+        };
     }
     let persisted_runs = match &repository {
         Some(repository) => {
@@ -389,34 +423,28 @@ async fn actions(
         Err(_) => return unavailable(&ctx),
     };
     let mut runs = Vec::new();
-    // A formerly triggered private run is not a continuing grant after access revocation.
-    let mut authorized_repositories: HashMap<i64, Option<db::models::Repository>> = HashMap::new();
-    if let Some(repository) = &repository {
-        authorized_repositories.insert(repository.id, Some(repository.clone()));
-    }
-    for run in persisted_runs {
-        if let std::collections::hash_map::Entry::Vacant(entry) =
-            authorized_repositories.entry(run.repo_id)
+    // Recheck current visibility for the bounded set in one database snapshot.
+    let authorized_repositories: HashMap<_, _> = if let Some(repository) = &repository {
+        HashMap::from([(repository.id, repository.clone())])
+    } else {
+        let ids: Vec<_> = persisted_runs
+            .iter()
+            .map(|run| run.repo_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        match db::repositories::access::readable_repositories_by_ids(&ctx.state.pool, user.id, &ids)
+            .await
         {
-            let repo =
-                match db::repositories::records::get_repository_by_id(&ctx.state.pool, run.repo_id)
-                    .await
-                {
-                    Ok(repo) => repo,
-                    Err(_) => return unavailable(&ctx),
-                };
-            let authorized = if let Some(repo) = repo {
-                match super::ensure_repo_read_access(&ctx.state, user, &repo).await {
-                    Ok(()) => Some(repo),
-                    Err((StatusCode::NOT_FOUND, _)) | Err((StatusCode::FORBIDDEN, _)) => None,
-                    Err((status, _)) => return read_error(&ctx, status),
-                }
-            } else {
-                None
-            };
-            entry.insert(authorized);
+            Ok(repositories) => repositories
+                .into_iter()
+                .map(|repo| (repo.id, repo))
+                .collect(),
+            Err(_) => return unavailable(&ctx),
         }
-        if let Some(Some(repo)) = authorized_repositories.get(&run.repo_id) {
+    };
+    for run in persisted_runs {
+        if let Some(repo) = authorized_repositories.get(&run.repo_id) {
             runs.push(map_run(run, repo));
         }
     }
@@ -472,7 +500,6 @@ async fn actions(
         let fetched_lines = persisted_logs.len();
         let logs = persisted_logs
             .into_iter()
-            .filter(|line| !crate::backend::ci::logs::is_internal_runner_log_line(&line.line))
             .map(|line| LogLine {
                 id: line.id,
                 stage: crate::backend::ci::logs::normalize_stage_name(&line.stage),
@@ -525,7 +552,9 @@ async fn actions(
         workflows,
         selected,
         dispatch_branch,
-        can_dispatch,
+        can_dispatch: can_manage_runs && workflow_warning.is_none(),
+        can_manage_runs,
+        workflow_warning,
         run_limit,
         log_limit,
     };

@@ -220,6 +220,158 @@ async fn refresh_leaves_a_closed_pull_request_alone_and_still_follows_an_open_on
 }
 
 #[tokio::test]
+async fn refresh_recovers_a_published_head_after_the_fork_is_deleted() {
+    let forks = forks().await;
+    let fork = git2::Repository::open_bare(&forks.fork.disk_path).unwrap();
+    let first = commit(&fork, "feature", Some(forks.main), "a.txt", "first\n");
+    let pull = open(&forks, "feature").await;
+    let second = commit(&fork, "feature", Some(first), "b.txt", "second\n");
+    repo_store(&forks.base, None)
+        .fetch_pull_head(
+            &forks.pool,
+            forks.base.id,
+            forks.fork.id,
+            forks.bob,
+            &repo_store(&forks.fork, None),
+            pull.number,
+            &second.to_string(),
+            Some(&first.to_string()),
+        )
+        .await
+        .unwrap();
+    let db::DbPool::Sqlite(pool) = &forks.pool else {
+        unreachable!()
+    };
+    sqlx::query("DELETE FROM repositories WHERE id = ?1")
+        .bind(forks.fork.id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let captured = revisions(row(&forks, pull.id).await).unwrap();
+    assert_eq!(captured.head_repo_id, None);
+    assert!(refresh_one(
+        &forks.pool,
+        &forks.base,
+        &forks.ci,
+        forks.alice,
+        &mut ListedRefs::new(),
+        captured
+    )
+    .await
+    .unwrap());
+    assert_eq!(row(&forks, pull.id).await.head_sha, second.to_string());
+}
+
+#[tokio::test]
+async fn creation_catches_a_head_push_that_finished_after_the_initial_ref_read() {
+    let forks = forks().await;
+    let fork = git2::Repository::open_bare(&forks.fork.disk_path).unwrap();
+    let first = commit(&fork, "feature", Some(forks.main), "a.txt", "first\n");
+    let lock = crate::backend::git::locks::lock(std::path::Path::new(&forks.base.disk_path)).await;
+    let create = open(&forks, "feature");
+    let push = async {
+        loop {
+            if db::pull_requests::records::get_pull_request(&forks.pool, forks.base.id, 1)
+                .await
+                .unwrap()
+                .is_some()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let second = commit(&fork, "feature", Some(first), "b.txt", "second\n");
+        drop(lock);
+        second
+    };
+    let (created, second) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        tokio::join!(create, push)
+    })
+    .await
+    .unwrap();
+    assert_eq!(created.head_sha, second.to_string());
+    assert_eq!(pull_head(&forks.base, created.number), second);
+}
+
+#[tokio::test]
+async fn existing_owner_requests_do_not_take_a_write_lock() {
+    let forks = forks().await;
+    db::repositories::access::grant_repo_access(
+        &forks.pool,
+        forks.bob,
+        forks.base.id,
+        db::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    let base = git2::Repository::open_bare(&forks.base.disk_path).unwrap();
+    let main = {
+        let parent = base.find_commit(forks.main).unwrap();
+        let mut github = base.treebuilder(None).unwrap();
+        github
+            .insert("CODEOWNERS", base.blob(b"* @bob\n").unwrap(), 0o100644)
+            .unwrap();
+        let mut root = base.treebuilder(Some(&parent.tree().unwrap())).unwrap();
+        root.insert(".github", github.write().unwrap(), 0o040000)
+            .unwrap();
+        let tree = base.find_tree(root.write().unwrap()).unwrap();
+        let who = git2::Signature::now("alice", "alice@example.invalid").unwrap();
+        base.commit(
+            Some("refs/heads/main"),
+            &who,
+            &who,
+            "Owners",
+            &tree,
+            &[&parent],
+        )
+        .unwrap()
+    };
+    commit(&base, "feature", Some(main), "a.txt", "change\n");
+    let pull = mutations::create_pull_request(
+        &forks.pool,
+        &forks.ci,
+        &forks.broadcaster,
+        forks.alice,
+        "alice".into(),
+        "proj".into(),
+        mutations::CreatePullRequestRequest {
+            head_repo_id: Some(forks.base.id),
+            title: "Owned".into(),
+            body: None,
+            head_branch: "feature".into(),
+            base_branch: "main".into(),
+            is_draft: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db::pull_requests::reviews::list_pull_request_reviewers(&forks.pool, pull.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    let db::DbPool::Sqlite(pool) = &forks.pool else {
+        unreachable!()
+    };
+    let lock = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        crate::backend::repositories::pull_requests::code_owners::request_code_owner_reviews(
+            &forks.pool,
+            &forks.ci,
+            &forks.base,
+            &pull,
+            forks.alice,
+        ),
+    )
+    .await
+    .expect("existing requests should need only reads");
+    lock.rollback().await.unwrap();
+}
+
+#[tokio::test]
 async fn refresh_records_a_published_head_before_publishing_a_newer_one() {
     let forks = forks().await;
     let fork = git2::Repository::open_bare(&forks.fork.disk_path).unwrap();

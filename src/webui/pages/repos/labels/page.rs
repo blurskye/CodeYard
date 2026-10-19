@@ -48,7 +48,7 @@ fn label_fields(name: String, color: String, description: String) -> Element {
         div { class: "collaboration-label-fields",
             label { span { "Name" } DraftInput { name: "name", required: true, maxlength: Some(50), initial_value: name, placeholder: "Label name" } }
             label { span { "Color" } LabelColorInput { initial_value: color } }
-            label { span { "Description" } DraftInput { name: "description", initial_value: description, placeholder: "What is this label for?" } }
+            label { span { "Description" } DraftInput { name: "description", maxlength: Some(1024), initial_value: description, placeholder: "What is this label for?" } }
         }
     }
 }
@@ -102,19 +102,15 @@ pub fn list(
     query: &str,
     sort: &str,
     usage: &BTreeMap<i64, i64>,
+    page_number: usize,
+    has_next: bool,
 ) -> Element {
     let can_admin = repo.can_admin;
     let url = format!("{}/labels", repo.url());
     let sort = if sort.is_empty() { "name" } else { sort };
     let needle = query.trim().to_lowercase();
-    let mut shown: Vec<&Label> = items
-        .iter()
-        .filter(|label| {
-            needle.is_empty()
-                || label.name.to_lowercase().contains(&needle)
-                || label.description.to_lowercase().contains(&needle)
-        })
-        .collect();
+    // The server filters the complete label set before paging it.
+    let mut shown: Vec<&Label> = items.iter().collect();
     match sort {
         "newest" => shown.sort_by_key(|label| std::cmp::Reverse(label.id)),
         "oldest" => shown.sort_by_key(|label| label.id),
@@ -126,7 +122,7 @@ pub fn list(
         }),
         _ => shown.sort_by_key(|label| label.name.to_lowercase()),
     }
-    let none_match = !items.is_empty() && shown.is_empty();
+    let none_match = !needle.is_empty() && shown.is_empty();
     let count = count_label(shown.len(), "label", "labels");
     let sorts = [
         ("name", "Name"),
@@ -144,6 +140,16 @@ pub fn list(
         &repo.chrome,
         rsx! {
             section { class: "collaboration-page collaboration-labels-page", aria_label: "Labels",
+                if page_number > 1 || has_next {
+                    nav { class: "repo-pagination", aria_label: "Label pages",
+                        if page_number > 1 {
+                            crate::webui::navigation::NavLink { href: format!("{}&page={}", sort_href(sort), page_number - 1), "Previous" }
+                        }
+                        if has_next {
+                            crate::webui::navigation::NavLink { href: format!("{}&page={}", sort_href(sort), page_number + 1), "Next" }
+                        }
+                    }
+                }
                 div { class: "collaboration-toolbar",
                     div { class: "collaboration-title-block",
                         h2 { "Labels" }

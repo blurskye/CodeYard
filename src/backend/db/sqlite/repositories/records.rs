@@ -107,6 +107,16 @@ pub async fn list_user_repositories(pool: &SqlitePool, user_id: i64) -> Result<V
     Ok(repos)
 }
 
+pub async fn list_profile_repositories(
+    pool: &SqlitePool,
+    user_id: i64,
+    include_private: bool,
+    offset: i64,
+) -> Result<Vec<Repository>> {
+    Ok(sqlx::query_as("SELECT * FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND (?2 OR NOT is_private) ORDER BY name,id LIMIT 30 OFFSET ?3")
+        .bind(user_id).bind(include_private).bind(offset).fetch_all(pool).await?)
+}
+
 /// How many repositories `user_id` owns that a profile lists. Private ones are counted only when
 /// `include_private` is set, which is the owner's own view.
 pub async fn count_user_repositories(
@@ -355,12 +365,17 @@ pub async fn delete_repository(
             .await?,
         Refusal::Denied
     );
+    let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=?1 ORDER BY a.file_id")
+        .bind(repo_id).fetch_all(&mut *tx).await?;
     let deleted =
         sqlx::query_as::<_, Repository>("DELETE FROM repositories WHERE id=?1 RETURNING *")
             .bind(repo_id)
             .fetch_optional(&mut *tx)
             .await?;
     let deleted = deleted.ok_or(Refusal::Denied)?;
+    for file in files {
+        crate::backend::db::sqlite::files::delete_unlinked_release_file(&mut tx, file).await?;
+    }
     tx.commit().await?;
     Ok(deleted)
 }
@@ -468,19 +483,27 @@ pub(crate) async fn repository_owner_names(
     Ok(query.build_query_as().fetch_all(pool).await?)
 }
 
-/// Archives or unarchives the repository. Its callers check that the actor may administer it.
+/// Archives or unarchives under current administrator authority, including archived rows.
 pub async fn set_repository_archived(
     pool: &SqlitePool,
+    actor_id: i64,
     repo_id: i64,
     archived: bool,
 ) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(
+        crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor_id, repo_id)
+            .await?,
+        crate::backend::db::repositories::records::RepositorySettingsRefusal::Denied
+    );
     let result = sqlx::query(
         "UPDATE repositories SET is_archived = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND is_archived <> ?1",
     )
     .bind(archived)
     .bind(repo_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }
 

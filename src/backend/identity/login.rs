@@ -147,22 +147,35 @@ pub async fn second_factor_login(
     admission::admit_login(pool, Some(user.id), &user.username)
         .await
         .map_err(LoginError::Admission)?;
-    let valid = two_factor::verify_sign_in_code(pool, encryptor, user.id, code, now)
-        .await
-        .map_err(|error| match error {
-            TwoFactorError::KeyUnavailable => LoginError::TwoFactorUnavailable,
-            _ => LoginError::AccountUnavailable,
-        })?;
-    if !valid {
+    let normalized = two_factor::normalize_code(code);
+    let recovery = (!normalized.is_empty()
+        && !(normalized.len() == 6 && normalized.bytes().all(|b| b.is_ascii_digit())))
+    .then(|| two_factor::recovery_code_hash(&normalized));
+    if recovery.is_none()
+        && !two_factor::verify_totp_code(pool, encryptor, user.id, code, now)
+            .await
+            .map_err(|error| match error {
+                TwoFactorError::KeyUnavailable => LoginError::TwoFactorUnavailable,
+                _ => LoginError::AccountUnavailable,
+            })?
+    {
         return Err(LoginError::InvalidTwoFactorCode);
     }
-    let session_id = sessions::issue_authenticated_session(
-        pool,
-        session,
-        user.id,
-        user.password_hash.as_deref(),
-    )
-    .await
-    .map_err(LoginError::Session)?;
+    let credential = db::users::sessions::SessionCredential::SecondFactor {
+        password: user
+            .password_hash
+            .as_deref()
+            .ok_or(LoginError::PendingLoginExpired)?,
+        recovery_hash: recovery.as_deref(),
+    };
+    let session_id = sessions::issue_authenticated_session(pool, session, user.id, credential)
+        .await
+        .map_err(|error| {
+            if error == SessionIssueError::Denied {
+                LoginError::InvalidTwoFactorCode
+            } else {
+                LoginError::Session(error)
+            }
+        })?;
     Ok(AuthenticatedAccount { user, session_id })
 }

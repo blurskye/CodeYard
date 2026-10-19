@@ -794,7 +794,7 @@ async fn protection_contract(pg: bool) {
         .await;
     assert!(saved["sha"].is_string(), "{saved}");
     // The editor save is a branch update in the owner's activity, next to pushes.
-    let activity = db::activity::list_user_activity(f.pool(), owner, 50, 0)
+    let activity = db::activity::list_user_activity(f.pool(), owner, Some(owner), 50, 0)
         .await
         .unwrap();
     assert!(

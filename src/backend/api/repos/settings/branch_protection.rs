@@ -89,41 +89,56 @@ pub(in crate::backend::api::repos) async fn rule_response(
     pool: &db::DbPool,
     rule: db::models::BranchProtectionRule,
 ) -> Result<BranchProtectionRuleResponse, (StatusCode, Json<ApiError>)> {
-    let push_allowances = allowance_names(pool, &rule.push_allowances).await?;
-    let force_push_allowances = allowance_names(pool, &rule.force_push_allowances).await?;
-    Ok(BranchProtectionRuleResponse {
-        pattern: rule.pattern,
-        require_pull_request: rule.require_pull_request,
-        required_approving_reviews: rule.required_approving_reviews,
-        dismiss_stale_reviews: rule.dismiss_stale_reviews,
-        require_status_checks: rule.require_status_checks,
-        required_status_checks: rule.required_status_checks,
-        require_up_to_date_branch: rule.require_up_to_date_branch,
-        require_linear_history: rule.require_linear_history,
-        require_conversation_resolution: rule.require_conversation_resolution,
-        require_code_owner_reviews: rule.require_code_owner_review,
-        enforce_admins: rule.enforce_admins,
-        allow_force_pushes: !rule.block_force_pushes,
-        allow_deletions: !rule.block_deletions,
-        restrict_pushes: rule.restrict_pushes,
-        push_allowances,
-        force_push_allowances,
-    })
+    Ok(rule_responses(pool, vec![rule]).await?.remove(0))
 }
 
-/// The usernames of `ids`, in the order given. A deleted account has no name to show, so it is
-/// left out.
-async fn allowance_names(
+pub(in crate::backend::api::repos) async fn rule_responses(
     pool: &db::DbPool,
-    ids: &[i64],
-) -> Result<Vec<String>, (StatusCode, Json<ApiError>)> {
-    let users = db::users::accounts::get_users_by_ids(pool, ids)
+    rules: Vec<db::models::BranchProtectionRule>,
+) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
+    let mut ids: Vec<_> = rules
+        .iter()
+        .flat_map(|rule| {
+            rule.push_allowances
+                .iter()
+                .chain(&rule.force_push_allowances)
+        })
+        .copied()
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let users = db::users::accounts::get_users_by_ids(pool, &ids)
         .await
         .map_err(|_| unavailable())?;
-    Ok(ids
-        .iter()
-        .filter_map(|id| users.iter().find(|user| user.id == *id))
-        .map(|user| user.username.clone())
+    let users: std::collections::HashMap<_, _> = users
+        .into_iter()
+        .map(|user| (user.id, user.username))
+        .collect();
+    let names = |ids: &[i64]| ids.iter().filter_map(|id| users.get(id)).cloned().collect();
+    Ok(rules
+        .into_iter()
+        .map(|rule| {
+            let push_allowances = names(&rule.push_allowances);
+            let force_push_allowances = names(&rule.force_push_allowances);
+            BranchProtectionRuleResponse {
+                pattern: rule.pattern,
+                require_pull_request: rule.require_pull_request,
+                required_approving_reviews: rule.required_approving_reviews,
+                dismiss_stale_reviews: rule.dismiss_stale_reviews,
+                require_status_checks: rule.require_status_checks,
+                required_status_checks: rule.required_status_checks,
+                require_up_to_date_branch: rule.require_up_to_date_branch,
+                require_linear_history: rule.require_linear_history,
+                require_conversation_resolution: rule.require_conversation_resolution,
+                require_code_owner_reviews: rule.require_code_owner_review,
+                enforce_admins: rule.enforce_admins,
+                allow_force_pushes: !rule.block_force_pushes,
+                allow_deletions: !rule.block_deletions,
+                restrict_pushes: rule.restrict_pushes,
+                push_allowances,
+                force_push_allowances,
+            }
+        })
         .collect())
 }
 
@@ -165,11 +180,7 @@ pub async fn list_branch_protection_rules(
                 )
             })?;
 
-    let mut responses = Vec::with_capacity(rules.len());
-    for rule in rules {
-        responses.push(rule_response(&state.pool, rule).await?);
-    }
-    Ok(Json(responses))
+    Ok(Json(rule_responses(&state.pool, rules).await?))
 }
 
 pub async fn upsert_branch_protection_rule(

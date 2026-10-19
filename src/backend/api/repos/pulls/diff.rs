@@ -20,6 +20,45 @@ use axum::response::Response;
 use axum::Json;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+/// Bound the actual envelope, including drafts, pending threads, references and JSON escaping.
+pub(crate) fn bound_thread_projection(
+    envelope: &mut crate::webui::app::PageEnvelope,
+) -> Result<(), serde_json::Error> {
+    use crate::webui::app::Page;
+    let Page::Collaboration(model) = &mut envelope.page else {
+        return Ok(());
+    };
+    let view::Page::Diff { threads, .. } = model.as_mut() else {
+        return Ok(());
+    };
+    let entries = std::mem::take(threads);
+    let mut bytes = serde_json::to_vec(envelope)?.len();
+    let Page::Collaboration(model) = &mut envelope.page else {
+        unreachable!()
+    };
+    let view::Page::Diff {
+        threads, truncated, ..
+    } = model.as_mut()
+    else {
+        unreachable!()
+    };
+    if bytes > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES {
+        return Err(serde::ser::Error::custom(
+            "Diff page exceeds its size limit",
+        ));
+    }
+    for thread in entries {
+        let size = serde_json::to_vec(&thread)?.len() + usize::from(!threads.is_empty());
+        if bytes.saturating_add(size) > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES {
+            *truncated = true;
+            break;
+        }
+        bytes += size;
+        threads.push(thread);
+    }
+    Ok(())
+}
+
 pub async fn get_pull_request_diff(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, number)): Path<(String, String, i32)>,
@@ -116,7 +155,7 @@ async fn viewed_marks(
     ctx: &PageContext,
     repo: &RepositoryData,
     pull_id: i64,
-    number: i32,
+    pull: &db::models::PullRequest,
     user_id: i64,
     files: &[DiffFileInfo],
 ) -> ResultPage<pulls::Viewed> {
@@ -136,7 +175,13 @@ async fn viewed_marks(
         .collect();
     Ok(pulls::Viewed {
         csrf: repo.view.csrf.clone(),
-        action: format!("{}/{number}/viewed", repo.view.family_url(Kind::Pull)),
+        action: format!(
+            "{}/{}/viewed",
+            repo.view.family_url(Kind::Pull),
+            pull.number
+        ),
+        head: pull.head_sha.clone(),
+        base: pull.base_sha.clone(),
         paths,
     })
 }
@@ -193,11 +238,16 @@ pub(crate) async fn render_diff(
     error: Option<&str>,
     status: StatusCode,
 ) -> ResultPage<Response> {
-    let pull =
+    let mut pull =
         db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, value.number)
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
+    // Keep the patch, thread state and form fields on the item's revision snapshot.
+    if let Some(compare) = &value.comparison {
+        pull.head_sha.clone_from(&compare.head_sha);
+        pull.base_sha.clone_from(&compare.base_sha);
+    }
     let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
         .diff(&pull.base_sha, &pull.head_sha)
         .await
@@ -252,9 +302,7 @@ pub(crate) async fn render_diff(
     )
     .await;
     let viewed = match ctx.user.as_ref() {
-        Some(user) => {
-            Some(viewed_marks(ctx, repo, pull.id, value.number, user.id, &diff.files).await?)
-        }
+        Some(user) => Some(viewed_marks(ctx, repo, pull.id, &pull, user.id, &diff.files).await?),
         None => None,
     };
     let mut diff = diff_model(diff, viewed);
@@ -262,8 +310,18 @@ pub(crate) async fn render_diff(
     let rules = load_rules(&repo.record, ctx.state.cluster.as_ref(), &pull.base_sha)
         .await
         .unwrap_or_default();
+    let paths: Vec<String> = diff
+        .files
+        .iter()
+        .map(|file| file.filename.clone())
+        .collect();
+    let owned: HashMap<String, Vec<String>> = rules
+        .owned_paths(&paths)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     for file in &mut diff.files {
-        file.owners = rules.owners_for(&file.filename).to_vec();
+        file.owners = owned.get(&file.filename).cloned().unwrap_or_default();
     }
     Ok(with_status(
         ctx.page_model(

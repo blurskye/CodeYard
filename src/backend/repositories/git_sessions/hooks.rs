@@ -136,7 +136,10 @@ impl Gateway {
             .context("repository unavailable")?;
         let path = self.bare_path(&repo).await?;
         ensure!(path == operation.path, "repository location changed");
-        let (identity, _) = self.authorize(operation.credential, &repo, true).await?;
+        let (identity, _) = operation
+            .credential
+            .authorize(&self.pool, &repo, true)
+            .await?;
         if !post {
             let quarantine = match quarantine {
                 Some(claimed) => quarantine_directory(&path, claimed).await,
@@ -282,8 +285,9 @@ impl Gateway {
         let current_repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
             .await?
             .context("repository unavailable")?;
-        let (current_identity, _) = self
-            .authorize(operation.credential, &current_repo, true)
+        let (current_identity, _) = operation
+            .credential
+            .authorize(&self.pool, &current_repo, true)
             .await?;
         ensure!(current_identity.id == identity.id, "identity changed");
         ensure!(
@@ -441,8 +445,9 @@ impl Gateway {
                     db::repositories::records::get_repository_by_id(&self.pool, repo.id)
                         .await?
                         .context("repository unavailable")?;
-                let (fresh_identity, access) = self
-                    .authorize(operation.credential, &fresh_repo, true)
+                let (fresh_identity, access) = operation
+                    .credential
+                    .authorize(&self.pool, &fresh_repo, true)
                     .await?;
                 if pipeline.includes_cd() && access < AccessLevel::Admin {
                     failed = true;

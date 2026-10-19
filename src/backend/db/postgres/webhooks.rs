@@ -182,6 +182,26 @@ pub async fn list_deliveries(pool: &PgPool, webhook_id: i64) -> Result<Vec<Webho
         .await?)
 }
 
+pub async fn latest_delivery_status(pool: &PgPool, webhook_id: i64) -> Result<Option<Option<i32>>> {
+    Ok(sqlx::query_scalar(
+        "SELECT status_code FROM webhook_deliveries WHERE webhook_id=$1 ORDER BY id DESC LIMIT 1",
+    )
+    .bind(webhook_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn list_delivery_summaries(
+    pool: &PgPool,
+    webhook_id: i64,
+) -> Result<Vec<WebhookDelivery>> {
+    Ok(sqlx::query_as(
+        "SELECT id,webhook_id,guid,event,action,status_code,duration_ms,error,
+         '' AS request_headers,'' AS request_body,NULL::text AS response_headers,NULL::text AS response_body,delivered_at
+         FROM webhook_deliveries WHERE webhook_id=$1 ORDER BY id DESC LIMIT 100",
+    ).bind(webhook_id).fetch_all(pool).await?)
+}
+
 pub async fn get_delivery(
     pool: &PgPool,
     webhook_id: i64,

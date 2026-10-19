@@ -139,20 +139,15 @@ fn input_lines(text: &str) -> Result<BTreeMap<String, serde_json::Value>, &'stat
 /// once the repository chrome has loaded, which checked that the viewer may read the repository.
 async fn refusal_workflows(
     ctx: &PageContext,
-    owner: &str,
-    name: &str,
+    repository: &crate::backend::db::models::Repository,
     branch: &str,
 ) -> anyhow::Result<Vec<view_actions::Workflow>> {
     anyhow::ensure!(
         crate::backend::ci::admission::is_safe_ref(branch),
         "unsafe ref"
     );
-    let repository =
-        crate::backend::db::repositories::records::get_repository(&ctx.state.pool, owner, name)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("repository not found"))?;
     let store =
-        crate::backend::repositories::store::repo_store(&repository, ctx.state.cluster.as_ref());
+        crate::backend::repositories::store::repo_store(repository, ctx.state.cluster.as_ref());
     let definitions = crate::backend::ci::list_workflows_for_ref(&store, branch).await?;
     Ok(definitions
         .into_iter()
@@ -170,34 +165,32 @@ async fn dispatch_error(
 ) -> Response {
     // Only repository routes can supply chrome. Global drafts are untrusted input,
     // not authority to disclose a repository header. Do not load on accepted runs.
-    let repo_chrome = if let Some((owner, name)) = scope {
-        match crate::backend::api::repos::chrome::load_chrome(ctx, owner, name).await {
-            Ok(chrome) => Some(Box::new(chrome)),
+    let loaded = if let Some((owner, name)) = scope {
+        match crate::backend::api::repos::chrome::load_metadata(ctx, owner, name).await {
+            Ok(loaded) => Some(loaded),
             Err(response) => return response,
         }
     } else {
         None
     };
     let mut message = message.to_string();
-    let workflows = match scope {
-        Some((owner, name)) if repo_chrome.is_some() => {
-            match refusal_workflows(ctx, owner, name, &draft.branch).await {
-                Ok(workflows) => workflows,
-                Err(_) => {
-                    message.push_str(
+    let workflows = match &loaded {
+        Some(loaded) => match refusal_workflows(ctx, &loaded.repository, &draft.branch).await {
+            Ok(workflows) => workflows,
+            Err(_) => {
+                message.push_str(
                         " The workflows of this branch could not be read; open the repository's Actions page and run it from there.",
                     );
-                    Vec::new()
-                }
+                Vec::new()
             }
-        }
+        },
         _ => Vec::new(),
     };
     ctx.page_model_status(
         status,
         "Run was not accepted",
         crate::webui::app::Page::Actions(view::Page::DispatchRecovery {
-            repo_chrome,
+            repo_chrome: loaded.map(|loaded| Box::new(loaded.chrome)),
             base_path: base_path.to_string(),
             csrf_token: ctx.csrf_token.clone(),
             message,
@@ -224,11 +217,17 @@ async fn dispatch(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    // The global form's inputs box holds several `name=value` lines.
-    if form
-        .iter()
-        .any(|(key, value)| value.len() > if key == "inputs" { 8192 } else { 2048 })
-    {
+    // Allow every individually valid input, including name=value and CRLF overhead.
+    use crate::backend::ci::dispatch_inputs::{MAX_INPUTS, MAX_NAME_BYTES, MAX_VALUE_BYTES};
+    const MAX_INPUT_LINES_BYTES: usize = MAX_INPUTS * (MAX_NAME_BYTES + 1 + MAX_VALUE_BYTES + 2);
+    if form.iter().any(|(key, value)| {
+        value.len()
+            > if key == "inputs" {
+                MAX_INPUT_LINES_BYTES
+            } else {
+                MAX_VALUE_BYTES
+            }
+    }) {
         return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
     }
     let draft = draft(&form, scope.as_ref());
@@ -362,6 +361,98 @@ mod tests {
             assert!(crate::backend::ci::is_supported_event(event), "{event}");
         }
     }
+    #[tokio::test]
+    async fn refusal_discovery_keeps_the_authorized_repository_after_alias_reuse() {
+        use crate::backend::{db, repositories::lifecycle, storage::ObjectStore};
+        let native = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let pool = db::DbPool::from(native.clone());
+        db::run_migrations(&pool).await.unwrap();
+        db::node_config::upsert_node_configuration(&pool, "public", true)
+            .await
+            .unwrap();
+        let owner = db::users::accounts::create_user(&pool, "alice", None)
+            .await
+            .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let original = lifecycle::provision(
+            (&pool, None),
+            root.path(),
+            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            "project",
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let private = lifecycle::provision(
+            (&pool, None),
+            root.path(),
+            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            "private",
+            None,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        for (repository, name) in [(&original, "Allowed"), (&private, "Secret")] {
+            let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
+            let blob = git.blob(format!("name: {name}\non: workflow_dispatch\njobs: {{test: {{steps: [{{run: echo ok}}]}}}}\n").as_bytes()).unwrap();
+            let mut workflows = git.treebuilder(None).unwrap();
+            workflows.insert("ci.yml", blob, 0o100644).unwrap();
+            let mut github = git.treebuilder(None).unwrap();
+            github
+                .insert("workflows", workflows.write().unwrap(), 0o040000)
+                .unwrap();
+            let mut tree = git.treebuilder(None).unwrap();
+            tree.insert(".github", github.write().unwrap(), 0o040000)
+                .unwrap();
+            let tree = git.find_tree(tree.write().unwrap()).unwrap();
+            let sig = git2::Signature::now("Alice", "alice@example.test").unwrap();
+            git.commit(Some("refs/heads/main"), &sig, &sig, "workflow", &tree, &[])
+                .unwrap();
+        }
+        let state = AppState::new(
+            pool.clone(),
+            root.path().to_owned(),
+            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
+            None,
+            crate::backend::ci::CiConfig::default(),
+            None,
+        );
+        let ctx = PageContext::load(
+            Arc::new(state),
+            HeaderMap::new(),
+            &"/alice/project/actions".parse().unwrap(),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("page context"));
+        let loaded = crate::backend::api::repos::chrome::load_metadata(&ctx, "alice", "project")
+            .await
+            .unwrap_or_else(|_| panic!("public metadata"));
+        sqlx::query("UPDATE repositories SET name='renamed' WHERE id=?1")
+            .bind(original.id)
+            .execute(&native)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE repositories SET name='project' WHERE id=?1")
+            .bind(private.id)
+            .execute(&native)
+            .await
+            .unwrap();
+        let workflows = refusal_workflows(&ctx, &loaded.repository, "main")
+            .await
+            .unwrap();
+        assert_eq!(workflows.len(), 1);
+        assert_eq!(workflows[0].name, "Allowed");
+        pool.close().await;
+    }
+
     #[test]
     fn repository_dispatch_uses_route_identity_not_hidden_fields() {
         let form = HashMap::from([

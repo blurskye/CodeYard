@@ -88,21 +88,33 @@ pub async fn contracts(f: &Fixture) {
             f.org,
         )
         .await;
-    let owner = public_profile(&f.get(&f.owner, "/native_org").await);
-    assert_eq!(ours(&owner), ["closed-tools", "open-tools"]);
+    let owner_pages = every_page(f, &f.owner, "repositories").await;
+    let owner = &owner_pages[0];
+    assert_eq!(
+        owner_pages.iter().flat_map(ours).collect::<Vec<_>>(),
+        ["closed-tools", "open-tools"]
+    );
     assert!(owner.manage);
     assert_eq!(owner.member_count, Some(members));
 
     // An ordinary member has no read grant on the private repository and cannot manage the
     // organization, but may see its member count.
-    let member = public_profile(&f.get(&f.member, "/native_org").await);
-    assert_eq!(ours(&member), ["open-tools"]);
+    let member_pages = every_page(f, &f.member, "repositories").await;
+    let member = &member_pages[0];
+    assert_eq!(
+        member_pages.iter().flat_map(ours).collect::<Vec<_>>(),
+        ["open-tools"]
+    );
     assert!(!member.manage);
     assert_eq!(member.member_count, Some(members));
 
     // A site administrator who is not a member reads the public page only.
-    let outsider = public_profile(&f.get(&f.outsider, "/native_org").await);
-    assert_eq!(ours(&outsider), ["open-tools"]);
+    let outsider_pages = every_page(f, &f.outsider, "repositories").await;
+    let outsider = &outsider_pages[0];
+    assert_eq!(
+        outsider_pages.iter().flat_map(ours).collect::<Vec<_>>(),
+        ["open-tools"]
+    );
     assert!(!outsider.manage);
     assert_eq!(outsider.member_count, None);
 
@@ -164,6 +176,10 @@ pub async fn tabs(f: &Fixture) {
     assert_eq!(ids.len() as i64, members);
     assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
 
+    assert!(
+        pages.iter().all(|page| page.repositories.is_empty()),
+        "People pages load no repository rows"
+    );
     // Secret teams reach the owner, and an ordinary member sees only the visible ones.
     let owner_teams: Vec<String> = every_page(f, &f.owner, "teams")
         .await
@@ -228,6 +244,23 @@ pub async fn tabs(f: &Fixture) {
         .body
         .contains("href=\"/native_org?tab=teams\""));
     assert!(!outsider_html.body.contains("ordinary_member"));
+
+    for index in 0..35 {
+        f.database
+            .organization_repository(f.org, &format!("paged-{index:02}"), false)
+            .await;
+    }
+    let repository_pages = every_page(f, &f.owner, "repositories").await;
+    assert!(repository_pages.len() > 1);
+    assert!(repository_pages
+        .iter()
+        .all(|page| page.repositories.len() <= 30));
+    let names: Vec<_> = repository_pages
+        .iter()
+        .flat_map(|page| page.repositories.iter().map(|repo| repo.name.clone()))
+        .collect();
+    assert_eq!(names.len() as i64, repository_pages[0].repository_count);
+    assert_eq!(names.iter().collect::<HashSet<_>>().len(), names.len());
 
     // A malformed cursor is refused for the member tabs, which read it.
     for path in [

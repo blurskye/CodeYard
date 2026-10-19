@@ -59,7 +59,7 @@ pub fn DeployKeySection(panel: DeployKeyPanel) -> Element {
                 } else {
                     ul { class: "deploy-key-list",
                         for key in panel.keys.iter() {
-                            DeployKeyItem { panel: panel.clone(), entry: key.clone() }
+                            DeployKeyItem { base: panel.base.clone(), action: panel.action("deploy-key-delete"), csrf_token: panel.csrf_token.clone(), repository_id: panel.repository_id, entry: key.clone() }
                         }
                     }
                 }
@@ -80,7 +80,13 @@ pub fn DeployKeySection(panel: DeployKeyPanel) -> Element {
 }
 
 #[component]
-fn DeployKeyItem(panel: DeployKeyPanel, entry: DeployKeyRow) -> Element {
+fn DeployKeyItem(
+    base: String,
+    action: String,
+    csrf_token: String,
+    repository_id: i64,
+    entry: DeployKeyRow,
+) -> Element {
     let used = match &entry.last_used {
         Some(used) => format!("Last used {}", compact_date(used)),
         None => "Never used".to_owned(),
@@ -99,13 +105,30 @@ fn DeployKeyItem(panel: DeployKeyPanel, entry: DeployKeyRow) -> Element {
             }
             span { class: "deploy-key-badge", "{access}" }
             a { class: "btn btn-danger btn-sm", href: format!("#deploy-key-delete-{}", entry.id), "Delete" span { class: "site-sr-only", " deploy key {entry.title}" } }
-            {confirm_dialog(Some(&format!("deploy-key-delete-{}", entry.id)), &format!("Delete deploy key {}", entry.title), &panel.base, &panel.action("deploy-key-delete"), rsx! {
-                input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
-                input { r#type: "hidden", name: "repository_id", value: panel.repository_id.to_string() }
+            {confirm_dialog(Some(&format!("deploy-key-delete-{}", entry.id)), &format!("Delete deploy key {}", entry.title), &base, &action, rsx! {
+                input { r#type: "hidden", name: "csrf_token", value: csrf_token }
+                input { r#type: "hidden", name: "repository_id", value: repository_id.to_string() }
                 input { r#type: "hidden", name: "key_id", value: entry.id.to_string() }
                 strong { "Delete this deploy key?" }
                 label { class: "repo-check-label", input { r#type: "checkbox", required: true, name: "confirm", value: "yes" } " The server loses access to this repository." }
             }, "Delete deploy key")}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn one_key_row_needs_no_copy_of_the_key_catalogue() {
+        crate::webui::tests::in_scope(|| {
+            let html = dioxus_ssr::render_element(rsx! { DeployKeyItem {
+                base: "/u/r/settings/keys", action: "/u/r/_forms/deploy-key-delete", csrf_token: "token", repository_id: 12,
+                entry: DeployKeyRow { id: 9, title: "build".into(), ..Default::default() }
+            } });
+            assert!(html.contains("value=\"12\""));
+            assert!(html.contains("name=\"key_id\" value=\"9\""));
+            assert!(html.contains("Delete deploy key build"));
+        });
     }
 }

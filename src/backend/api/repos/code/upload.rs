@@ -27,7 +27,7 @@ pub const ROUTE: &str = "/:owner/:repo/upload/*ref_path";
 /// multipart framing.
 pub const BODY_LIMIT: usize = MAX_UPLOAD_BYTES + 64 * 1024;
 /// Text fields are the commit message, its description and the form's own hidden fields.
-const MAX_FIELDS: usize = 8;
+const MAX_FIELDS: usize = 9;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 /// How long an upload may take to arrive. Large files over a slow connection need minutes.
 const READ_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -152,6 +152,7 @@ async fn target(
         ));
     }
     let mut form = view::editor::UploadForm {
+        repository_id: loaded.repository.id,
         expected_revision: loaded
             .refs
             .get(&reference)
@@ -293,6 +294,17 @@ pub(in crate::backend::api::repos) async fn post(
     form.description = field(&parts.fields, "description");
     form.expected_revision = field(&parts.fields, "expected_revision");
     form.new_branch = field(&parts.fields, "new_branch");
+    form.commit_to_new_branch = field(&parts.fields, "commit_target") == "new_branch";
+    form.repository_id = field(&parts.fields, "repository_id").parse().unwrap_or(0);
+    if form.repository_id != loaded.repository.id {
+        return refusal(
+            &ctx,
+            &loaded,
+            form,
+            StatusCode::CONFLICT,
+            "This repository was replaced after the upload form opened. Nothing was uploaded.",
+        );
+    }
     // The choice of a protected branch: the files land on a new branch, which starts there.
     let new_branch =
         (field(&parts.fields, "commit_target") == "new_branch").then(|| form.new_branch.clone());

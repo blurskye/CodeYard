@@ -241,10 +241,12 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     prepare_state_directory(&cli.state_dir)?;
     let database_url = match configured_database_url {
         Some(url) => url,
-        None => format!(
-            "sqlite://{}?mode=rwc",
-            std::path::absolute(cli.state_dir.join("gitserv.db"))?.display()
-        ),
+        None => {
+            let path = std::path::absolute(cli.state_dir.join("gitserv.db"))?;
+            let file_url = url::Url::from_file_path(path)
+                .map_err(|_| anyhow::anyhow!("invalid state directory path"))?;
+            format!("sqlite://{}?mode=rwc", file_url.path())
+        }
     };
     let pool = db::init_db(&database_url)
         .await

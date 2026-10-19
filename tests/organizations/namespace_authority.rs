@@ -521,7 +521,7 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
     )
     .await
     .unwrap();
-    for administrator in [None, Some((admin, "namespace-admin"))] {
+    for administrator in [None, Some((admin, "namespace-admin", false))] {
         assert!(matches!(
             transitions::register_password(
                 &database.pool,
@@ -550,7 +550,7 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
             "admin_created",
             None,
             "hash",
-            Some((admin, "namespace-admin")),
+            Some((admin, "namespace-admin", false)),
         )
         .await
         .unwrap(),
@@ -793,7 +793,7 @@ async fn managed_account_sessions(database: &Database) {
             "before_logout",
             None,
             "hash",
-            Some((admin.id, "original")),
+            Some((admin.id, "original", false)),
         )
         .await
         .unwrap(),
@@ -809,7 +809,7 @@ async fn managed_account_sessions(database: &Database) {
                 "denied",
                 None,
                 "hash",
-                Some((admin.id, session)),
+                Some((admin.id, session, false)),
             )
             .await
             .unwrap(),
@@ -827,7 +827,7 @@ async fn managed_account_sessions(database: &Database) {
             "before_password_change",
             None,
             "hash",
-            Some((admin.id, "replacement")),
+            Some((admin.id, "replacement", false)),
         )
         .await
         .unwrap(),
@@ -839,9 +839,11 @@ async fn managed_account_sessions(database: &Database) {
         "new-hash",
         false,
         true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     assert!(accounts::get_user_by_id(&database.pool, created.id)
         .await
         .unwrap()
@@ -852,7 +854,7 @@ async fn managed_account_sessions(database: &Database) {
             "after_password_change",
             None,
             "hash",
-            Some((admin.id, "replacement")),
+            Some((admin.id, "replacement", false)),
         )
         .await
         .unwrap(),
@@ -874,7 +876,7 @@ async fn managed_account_sessions(database: &Database) {
             "queued",
             None,
             "hash",
-            Some((admin.id, change)),
+            Some((admin.id, change, false)),
         );
         tokio::pin!(registration);
         match &database.raw {
@@ -1004,7 +1006,7 @@ async fn managed_account_sessions(database: &Database) {
             "inserting",
             None,
             "hash",
-            Some((admin.id, "insertion")),
+            Some((admin.id, "insertion", false)),
         );
         tokio::pin!(registration);
         let creator = tokio::select! {

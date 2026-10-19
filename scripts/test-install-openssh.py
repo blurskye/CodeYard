@@ -28,6 +28,14 @@ class Fixture(unittest.TestCase):
         self.stack = contextlib.ExitStack()
         self.addCleanup(self.stack.close)
         self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        # The builder forbids setting setid bits. Model those metadata bits only;
+        # fixture executables are never run, and policy still checks every mode.
+        setid = {}
+        original_chmod = Path.chmod
+        def fixture_chmod(path, mode, **kwargs):
+            setid[path] = mode & 0o6000
+            return original_chmod(path, mode & ~0o6000, **kwargs)
+        self.stack.enter_context(mock.patch.object(Path, "chmod", fixture_chmod))
         self.calls = []
         self.fail_syntax = False
         self.fail_reload = False
@@ -75,9 +83,13 @@ class Fixture(unittest.TestCase):
         ancestors = set(self.root.parents)
         def fixture_lstat(path, *args, **kwargs):
             info = original_lstat(path, *args, **kwargs)
+            if setid.get(path):
+                values = list(info)
+                values[0] |= setid[path]
+                info = os.stat_result(values)
             if path in ancestors:
                 values = list(info)
-                values[0] &= ~0o022
+                values[0] = (values[0] & ~0o022) | 0o111
                 values[4], values[5] = os.getuid(), os.getgid()
                 return os.stat_result(values)
             return info
@@ -344,6 +356,37 @@ class Fixture(unittest.TestCase):
         target.chmod(0o777)
         with self.assertRaises(installer.Refusal):
             installer.preflight(self.o, self.h)
+
+    def test_apply_holds_the_installation_lock_through_preflight_and_rollback(self):
+        def assert_locked():
+            descriptor = os.open(self.h.ssh_include_base, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    installer.fcntl.flock(descriptor, installer.fcntl.LOCK_EX | installer.fcntl.LOCK_NB)
+            finally:
+                os.close(descriptor)
+        preflight = installer.preflight
+        def checked_preflight(*args):
+            assert_locked()
+            return preflight(*args)
+        self.fail_reload = True
+        self.on_reload_failure = assert_locked
+        with mock.patch.object(installer, "preflight", side_effect=checked_preflight):
+            with self.assertRaises(installer.Refusal):
+                installer.apply(self.o, self.h)
+        # The descriptor closes on failure, so the next installation can proceed.
+        self.fail_reload = False
+        installer.apply(self.o, self.h)
+
+    def test_competing_apply_is_refused_before_preflight(self):
+        descriptor = os.open(self.h.ssh_include_base, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            installer.fcntl.flock(descriptor, installer.fcntl.LOCK_EX)
+            with self.assertRaisesRegex(installer.Refusal, "Another OpenSSH installation"):
+                installer.apply(self.o, self.h)
+            self.assertEqual(self.calls, [])
+        finally:
+            os.close(descriptor)
 
     def test_apply_and_repeat_are_idempotent_with_manifest_written_last(self):
         unit = installer.apply(self.o, self.h)

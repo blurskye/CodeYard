@@ -18,6 +18,8 @@ const UPLOAD_INPUT_ID: &str = "repository-upload-files";
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct UploadForm {
+    pub repository_id: i64,
+    pub commit_to_new_branch: bool,
     pub branch: String,
     /// The directory the files land in; empty for the root.
     pub directory: String,
@@ -56,6 +58,7 @@ pub fn upload_page(repo: &RepoChrome, form: &UploadForm) -> Element {
                 if let Some(error) = &form.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { "Files were not uploaded" } p { "{error}" } } }
                 form { method: "post", action: form_action, class: "repo-upload-form", "enctype": "multipart/form-data",
                     {csrf(&repo.csrf_token)}
+                    input { r#type: "hidden", name: "repository_id", value: "{form.repository_id}" }
                     input { r#type: "hidden", name: "expected_revision", value: form.expected_revision.clone() }
                     section { class: "repo-upload-panel panel",
                         header { class: "repo-section-heading", div { h3 { "Files" } p { "Up to 100 files become one commit on the branch." } } }
@@ -67,7 +70,7 @@ pub fn upload_page(repo: &RepoChrome, form: &UploadForm) -> Element {
                     section { class: "repo-commit-box panel",
                         header { class: "repo-section-heading", div { h3 { "Commit changes" } p { "The files are added to the branch in one commit." } } }
                         div { class: "repo-form-body",
-                            {commit_target(&form.branch, &form.new_branch, form.protected)}
+                            {commit_target(&form.branch, &form.new_branch, form.protected, form.commit_to_new_branch)}
                             label { class: "repo-field", span { "Commit message" } DraftInput { name: "message", initial_value: form.message.clone(), maxlength: Some(4096), placeholder: UPLOAD_MESSAGE } }
                             label { class: "repo-field", span { "Extended description" } DraftTextarea { name: "description", initial_value: form.description.clone(), rows: 4, maxlength: Some(4096) } }
                             div { class: "repo-form-actions",
@@ -226,6 +229,8 @@ mod tests {
             ..Default::default()
         };
         let form = UploadForm {
+            repository_id: 17,
+            commit_to_new_branch: true,
             branch: "main".into(),
             directory: "docs".into(),
             expected_revision: "abc".into(),
@@ -244,6 +249,8 @@ mod tests {
         assert!(html.contains("name=\"csrf_token\""));
         assert!(html.contains("csrf-fixture"));
         assert!(html.contains("name=\"expected_revision\""));
+        assert!(html.contains("name=\"repository_id\" value=\"17\""));
+        assert!(html.contains("value=\"new_branch\" checked"));
         assert!(html.contains("Drag files here or choose files"));
         assert!(html.contains("id=\"repository-upload-files\""));
         assert!(html.contains("class=\"repo-upload-zone\""));

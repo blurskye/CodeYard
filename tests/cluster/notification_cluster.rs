@@ -77,11 +77,12 @@ async fn sqlite_delivery_needs_no_remote_listener() {
         .await
         .unwrap()
         .unwrap();
+    // Local subscribers receive hints too; delivery reloads the authoritative count.
     assert!(matches!(
         event,
         NotificationEvent::ReadAll {
             user_id: 42,
-            unread_count: 7
+            unread_count: 0
         }
     ));
     tokio::time::timeout(Duration::from_secs(1), broadcaster.shutdown())

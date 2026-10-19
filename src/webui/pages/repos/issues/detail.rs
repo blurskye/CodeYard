@@ -698,6 +698,7 @@ fn comment_controls(
     url: &str,
     comment: &Comment,
     references: &References,
+    page: usize,
 ) -> Element {
     let id = comment.id;
     let action = format!("{url}/comments/{id}");
@@ -712,7 +713,7 @@ fn comment_controls(
             if comment.can_edit {
                 details { class: "collaboration-comment-edit", open,
                     summary { class: "btn btn-secondary btn-sm", title: "Edit this comment", "Edit" }
-                    form { method: "post", action: format!("{action}/edit"), class: "collaboration-comment-edit-form",
+                    form { method: "post", action: format!("{action}/edit?page={page}"), class: "collaboration-comment-edit-form",
                         {csrf(&repo.csrf)}
                         MarkdownEditor { id: format!("edit-comment-{id}"), initial: body, rows: 8usize, required: true, initial_preview: preview, references: references.clone() }
                         div { class: "collaboration-form-actions",
@@ -767,10 +768,11 @@ pub(in crate::webui::pages::repos) fn comment_entry(
                 form { id: form_id.clone(), method: "post", action: format!("{url}/tasks"), hidden: true,
                     {csrf(&repo.csrf)}
                     input { r#type: "hidden", name: "comment", value: comment.id.to_string() }
+                    input { r#type: "hidden", name: "comment_revision", value: comment.body.clone() }
                 }
             }
             {reaction_bar(repo, &react_action(url, page), Some(("comment", comment.id)), &comment.reactions)}
-            if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references)} }
+            if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references, page)} }
             if let Some(conversation) = &comment.conversation {
                 if conversation.can_resolve { {review::resolve_form(repo, url, comment.id, conversation, false, page)} }
             }
@@ -1038,7 +1040,9 @@ pub fn detail(
                             form { method: "post", action: format!("{url}/workflows"), class: "collaboration-panel collaboration-action-row",
                                 {csrf(&repo.csrf)}
                                 input { r#type: "hidden", name: "expected_head", value: item.comparison.as_ref().unwrap().head_sha.clone() }
-                                p { class: "collaboration-muted", "Fork workflows need approval for each head commit and run without repository or organization secrets." }
+                                if item.comparison.as_ref().is_some_and(|compare| compare.head_label != compare.head) {
+                                    p { class: "collaboration-muted", "Fork workflows need approval for each head commit and run without repository or organization secrets." }
+                                }
                                 button { r#type: "submit", class: "btn btn-primary", "Run workflows" }
                             }
                         }

@@ -28,6 +28,8 @@ pub struct Outgoing {
     pub guid: String,
     pub content_type: String,
     pub body: String,
+    /// Automatic events obey the active flag and subscription; manual redelivery does not.
+    pub automatic: bool,
 }
 
 enum Attempt {
@@ -45,8 +47,9 @@ enum Attempt {
 /// Sends `outgoing` to the hook, retrying up to three times, and records the final attempt.
 /// Errors are logged, never returned: a delivery is a background effect.
 pub async fn send(pool: &DbPool, hook: &Webhook, outgoing: &Outgoing) {
-    let record = match transmit(hook, outgoing).await {
-        Ok(record) => record,
+    let record = match transmit(pool, hook, outgoing).await {
+        Ok(Some(record)) => record,
+        Ok(None) => return,
         Err(error) => failed_record(outgoing, 0, error),
     };
     if let Err(error) = hooks::insert_delivery(pool, hook.id, &record).await {
@@ -68,10 +71,37 @@ pub fn redelivery(recorded: &WebhookDelivery) -> Outgoing {
         guid: uuid::Uuid::new_v4().to_string(),
         content_type,
         body: recorded.request_body.clone(),
+        automatic: false,
     }
 }
 
-async fn transmit(hook: &Webhook, outgoing: &Outgoing) -> Result<NewDelivery, &'static str> {
+async fn current_hook(pool: &DbPool, hook: &Webhook, outgoing: &Outgoing) -> bool {
+    let owner = match (hook.repo_id, hook.org_id) {
+        (Some(id), None) => hooks::HookOwner::Repository(id),
+        (None, Some(id)) => hooks::HookOwner::Organization(id),
+        _ => return false,
+    };
+    let Ok(Some(current)) = hooks::get_webhook(pool, owner, hook.id).await else {
+        return false;
+    };
+    current.payload_url == hook.payload_url
+        && current.content_type == hook.content_type
+        && current.encrypted_secret == hook.encrypted_secret
+        && current.secret_nonce == hook.secret_nonce
+        && current.ssl_verify == hook.ssl_verify
+        && current.updated_at == hook.updated_at
+        && (!outgoing.automatic
+            || (current.active && super::events::subscribes(&current.events, &outgoing.event)))
+}
+
+async fn transmit(
+    pool: &DbPool,
+    hook: &Webhook,
+    outgoing: &Outgoing,
+) -> Result<Option<NewDelivery>, &'static str> {
+    if !current_hook(pool, hook, outgoing).await {
+        return Ok(None);
+    }
     let secret = open_secret(hook)?;
     let url = outbound::validate_url(&hook.payload_url, outbound::allow_private())
         .map_err(refusal_text)?;
@@ -92,6 +122,9 @@ async fn transmit(hook: &Webhook, outgoing: &Outgoing) -> Result<NewDelivery, &'
     }
     let mut retries = RETRY_DELAYS.iter();
     let attempt = loop {
+        if !current_hook(pool, hook, outgoing).await {
+            return Ok(None);
+        }
         let started_attempt = Instant::now();
         let attempt = attempt(&url, hook.ssl_verify, &headers, &outgoing.body).await;
         let retry = match &attempt {
@@ -109,7 +142,7 @@ async fn transmit(hook: &Webhook, outgoing: &Outgoing) -> Result<NewDelivery, &'
     let (attempt, elapsed) = attempt;
     let request_headers = join_headers(headers.iter().map(|(name, value)| (*name, value.as_str())));
     let duration_ms = i32::try_from(elapsed.as_millis()).unwrap_or(i32::MAX);
-    Ok(match attempt {
+    Ok(Some(match attempt {
         Attempt::Responded {
             status,
             headers,
@@ -131,10 +164,28 @@ async fn transmit(hook: &Webhook, outgoing: &Outgoing) -> Result<NewDelivery, &'
             request_headers,
             ..failed_record(outgoing, duration_ms, error)
         },
-    })
+    }))
 }
 
 async fn attempt(url: &Url, ssl_verify: bool, headers: &[(&str, String)], body: &str) -> Attempt {
+    bounded_attempt(attempt_inner(url, ssl_verify, headers, body)).await
+}
+
+async fn bounded_attempt(future: impl std::future::Future<Output = Attempt>) -> Attempt {
+    tokio::time::timeout(TIMEOUT, future)
+        .await
+        .unwrap_or(Attempt::Failed {
+            error: "The request timed out after 10 seconds",
+            retry: true,
+        })
+}
+
+async fn attempt_inner(
+    url: &Url,
+    ssl_verify: bool,
+    headers: &[(&str, String)],
+    body: &str,
+) -> Attempt {
     let addresses = match outbound::resolve(url, outbound::allow_private()).await {
         Ok(addresses) => addresses,
         Err(refusal) => {
@@ -186,7 +237,7 @@ async fn attempt(url: &Url, ssl_verify: bool, headers: &[(&str, String)], body: 
             .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or(""))),
     );
     let body = match read_limited(&mut response).await {
-        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Ok(bytes) => response_text(&bytes),
         Err(_) => String::new(),
     };
     Attempt::Responded {
@@ -194,6 +245,10 @@ async fn attempt(url: &Url, ssl_verify: bool, headers: &[(&str, String)], body: 
         headers,
         body,
     }
+}
+
+fn response_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).replace('\0', "\\0")
 }
 
 /// The client for one attempt. A domain name is pinned to the addresses that were just
@@ -276,7 +331,7 @@ fn failed_record(outgoing: &Outgoing, duration_ms: i32, error: &str) -> NewDeliv
         status_code: None,
         duration_ms,
         error: Some(error.to_owned()),
-        request_headers: String::new(),
+        request_headers: format!("Content-Type: {}\n", outgoing.content_type),
         request_body: outgoing.body.clone(),
         response_headers: None,
         response_body: None,
@@ -308,6 +363,35 @@ pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn timeout_covers_the_whole_attempt_and_is_retryable() {
+        let result = bounded_attempt(std::future::pending()).await;
+        assert!(matches!(result, Attempt::Failed { retry: true, .. }));
+    }
+
+    #[test]
+    fn binary_response_text_is_database_safe() {
+        assert_eq!(response_text(b"ok\0\xff"), "ok\\0\u{fffd}");
+    }
+
+    #[test]
+    fn preflight_failure_preserves_content_type() {
+        let outgoing = Outgoing {
+            event: "push".into(),
+            action: None,
+            guid: "id".into(),
+            content_type: "application/x-www-form-urlencoded".into(),
+            body: "payload=%7B%7D".into(),
+            automatic: true,
+        };
+        let failed = failed_record(&outgoing, 0, "The secret key is not configured");
+        assert_eq!(
+            failed.request_headers,
+            format!("Content-Type: {}\n", outgoing.content_type)
+        );
+        assert_eq!(failed.request_body, outgoing.body);
+    }
 
     #[test]
     fn hmac_matches_rfc_4231_vectors() {

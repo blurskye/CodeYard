@@ -217,6 +217,7 @@ pub struct Reaction {
 /// A milestone as its pages and the milestone choices show it.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Milestone {
+    pub id: i64,
     pub number: i32,
     pub title: String,
     pub description: Option<String>,
@@ -463,6 +464,8 @@ pub enum Page {
         usage: BTreeMap<i64, i64>,
         query: String,
         sort: String,
+        page_number: usize,
+        has_next: bool,
     },
     MilestoneNew {
         repository: Repository,
@@ -526,6 +529,8 @@ pub enum Page {
         repository: Repository,
         item: Item,
         runs: Vec<Run>,
+        #[serde(default)]
+        statuses: Vec<pulls::CheckStatus>,
     },
 }
 
@@ -626,7 +631,17 @@ pub fn render(page: Page) -> Element {
             usage,
             query,
             sort,
-        } => labels::list(&repository, &items, &query, &sort, &usage),
+            page_number,
+            has_next,
+        } => labels::list(
+            &repository,
+            &items,
+            &query,
+            &sort,
+            &usage,
+            page_number,
+            has_next,
+        ),
         Page::MilestoneNew {
             repository,
             draft,
@@ -700,6 +715,7 @@ pub fn render(page: Page) -> Element {
             repository,
             item,
             runs,
-        } => pulls::checks_page(&repository, &item, &runs),
+            statuses,
+        } => pulls::checks_page(&repository, &item, &runs, &statuses),
     }
 }

@@ -1,5 +1,5 @@
 use crate::backend::db::models::{SignupRequest, User};
-use crate::backend::db::users::signup_requests::ReviewError;
+use crate::backend::db::users::{signup_requests::ReviewError, transitions::AdministratorActor};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -64,10 +64,12 @@ pub async fn get_pending_signup_request_by_identity(
 pub async fn approve_signup_request(
     pool: &SqlitePool,
     request_id: i64,
-    reviewer_user_id: i64,
+    reviewer: impl Into<AdministratorActor>,
 ) -> Result<User> {
+    let reviewer = reviewer.into();
+    let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_private_reviewer(&mut tx, reviewer_user_id).await?;
+    require_private_reviewer(&mut tx, &reviewer).await?;
 
     let signup_request =
         sqlx::query_as::<_, SignupRequest>("SELECT * FROM signup_requests WHERE id = ?1")
@@ -114,10 +116,12 @@ pub async fn approve_signup_request(
 pub async fn reject_signup_request(
     pool: &SqlitePool,
     request_id: i64,
-    reviewer_user_id: i64,
+    reviewer: impl Into<AdministratorActor>,
 ) -> Result<()> {
+    let reviewer = reviewer.into();
+    let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_private_reviewer(&mut tx, reviewer_user_id).await?;
+    require_private_reviewer(&mut tx, &reviewer).await?;
     let result = sqlx::query(
         "UPDATE signup_requests SET status = 'rejected', reviewed_by = ?1, reviewed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND status = 'pending'",
     )
@@ -135,7 +139,7 @@ pub async fn reject_signup_request(
 
 async fn require_private_reviewer(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    actor: i64,
+    actor: &AdministratorActor,
 ) -> Result<()> {
     let private = sqlx::query_scalar::<_, bool>(
         "SELECT setup_completed AND node_mode='private' FROM node_configuration WHERE id=1",
@@ -143,7 +147,7 @@ async fn require_private_reviewer(
     .fetch_optional(&mut **tx)
     .await?
     .unwrap_or(false);
-    if !private || !super::transitions::active_admin(tx, actor).await? {
+    if !private || !super::transitions::active_admin_session(tx, actor).await? {
         return Err(ReviewError::Denied.into());
     }
     Ok(())

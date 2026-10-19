@@ -95,6 +95,12 @@ pub(crate) async fn profile_response(
     // repositories and the activity feed.
     let stars_tab = ctx.query.get("tab").map(String::as_str) == Some("stars");
     let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
+    let repository_page = ctx
+        .query
+        .get("repo_page")
+        .and_then(|page| page.parse::<i64>().ok())
+        .unwrap_or(1)
+        .clamp(1, 10_000);
     let listing = if stars_tab {
         crate::backend::identity::profiles::repository_count_on_profile(
             &ctx.state.pool,
@@ -108,9 +114,9 @@ pub(crate) async fn profile_response(
             &ctx.state.pool,
             username,
             viewer,
+            repository_page,
         )
         .await
-        .map(|(target, repositories)| (target, repositories.len(), repositories))
     };
     let (target, repository_count, repositories) = match listing {
         Ok(value) => value,
@@ -202,6 +208,8 @@ pub(crate) async fn profile_response(
             profile: profile_model(&target),
             repositories,
             repository_count,
+            repository_next: (!stars_tab && (repository_page as usize) * 30 < repository_count)
+                .then_some(repository_page as usize + 1),
             csrf_token: ctx.csrf_token.clone(),
             own,
             authenticated: ctx.user.is_some(),

@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
@@ -19,9 +22,8 @@ use tracing::warn;
 
 /// act names a job's container after the workflow's name and the job alone, so two runs of one
 /// workflow on one engine, from two pushes or from two repositories, would fight over the name.
-/// The second run gets its short run id added to the workflow name, which `github.workflow`
-/// shows too. A name nothing else is using stays as the workflow wrote it. The name is kept until
-/// the run's containers are gone.
+/// Every run gets its full UUID added, including across worker processes sharing an engine.
+/// The local set also distinguishes workflows with the same name within one run.
 #[derive(Default)]
 pub struct WorkflowNames {
     active: Arc<Mutex<std::collections::HashSet<String>>>,
@@ -40,16 +42,12 @@ impl Drop for WorkflowName {
 
 impl WorkflowNames {
     fn take(&self, name: &str, run_id: uuid::Uuid) -> WorkflowName {
-        let short = &run_id.simple().to_string()[..8];
+        let id = run_id.simple();
         let mut active = self.active.lock().unwrap();
-        let mut candidate = name.to_owned();
-        let mut attempt = 1;
+        let mut candidate = format!("{name} ({id})");
+        let mut attempt = 2;
         while !active.insert(candidate.clone()) {
-            candidate = if attempt == 1 {
-                format!("{name} ({short})")
-            } else {
-                format!("{name} ({short}-{attempt})")
-            };
+            candidate = format!("{name} ({id}-{attempt})");
             attempt += 1;
         }
         WorkflowName {
@@ -89,11 +87,13 @@ const SHUTDOWN_CLAIM_GRACE: Duration = Duration::from_secs(2);
 
 /// Output lines reach the core in batches of at most this many lines (the core's limit per
 /// call) or bytes. A waiting batch goes out after `LOG_BATCH_INTERVAL` at the latest, and the
-/// command may print `LOG_QUEUE_LINES` lines ahead of the sender before it waits.
+/// command may print `LOG_QUEUE_LINES` lines ahead of the sender. A stalled remote sender
+/// gets one short wait before overflow becomes lossy.
 const LOG_BATCH_LINES: usize = 64;
 const LOG_BATCH_BYTES: usize = 64 * 1024;
 const LOG_BATCH_INTERVAL: Duration = Duration::from_millis(250);
 const LOG_QUEUE_LINES: usize = 256;
+const LOG_FLUSH_GRACE: Duration = Duration::from_secs(1);
 
 /// Claims and executes runs until `stop` is set.
 pub(super) async fn run(service: CiWorkers, worker: String, mut stop: watch::Receiver<bool>) {
@@ -201,13 +201,14 @@ async fn execute(
 ) -> bool {
     let run = &claim.run;
     // Publish the locked cleanup record before act can create anything in the host engine.
-    let ownership = if service.config.mode == CiExecutionMode::Podman {
-        match ContainerOwnership::create(
-            &service.cleanup_dir,
-            &service.config.podman_socket,
-            run.run_id,
-        ) {
-            Ok(ownership) => Some(ownership),
+    let ownership = {
+        let socket = if service.config.mode == CiExecutionMode::Podman {
+            service.config.podman_socket.as_str()
+        } else {
+            ""
+        };
+        match ContainerOwnership::create(&service.cleanup_dir, socket, run.run_id) {
+            Ok(ownership) => ownership,
             Err(error) => {
                 warn!(%error, "could not persist CI container ownership");
                 record_result(
@@ -222,17 +223,16 @@ async fn execute(
                 return false;
             }
         }
-    } else {
-        None
     };
     // A run handed back by a retried claim may have been cancelled since the first claim.
-    let (cancel_tx, cancel) = watch::channel(run.cancel_requested);
+    let (cancel_tx, cancel) = watch::channel(run.cancel_requested || *stop.borrow());
+    let mut heartbeat_stop = stop.clone();
     let heartbeat = async {
         let mut shutdown = false;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(HEARTBEAT) => {}
-                _ = stop.changed(), if !shutdown => {
+                _ = heartbeat_stop.changed(), if !shutdown => {
                     shutdown = true;
                     let _ = cancel_tx.send(true);
                     continue;
@@ -247,67 +247,82 @@ async fn execute(
             }
         }
     };
-    let (cleaned, cleanup) = oneshot::channel();
-    let mut names = Vec::new();
-    let result = tokio::select! {
-        result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names) => result,
-        _ = heartbeat => unreachable!("heartbeat loop never ends"),
-    };
-    let shutting_down = *stop.borrow();
-    let (status, message) = match &result {
-        Ok(true) => ("success", None),
-        Ok(false) => ("failed", Some("A workflow job failed".to_owned())),
-        Err(error) => match error.downcast_ref::<Stopped>() {
-            Some(Stopped::Cancelled) if shutting_down => (
-                "failed",
-                Some("The CI worker shut down during the run".to_owned()),
-            ),
-            Some(Stopped::Cancelled) => ("cancelled", Some("Cancelled".to_owned())),
-            Some(Stopped::TimedOut) => {
-                ("failed", Some("The run exceeded its time limit".to_owned()))
+    let work = async {
+        let (cleaned, cleanup) = oneshot::channel();
+        let mut names = Vec::new();
+        let result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names).await;
+        let shutting_down = *stop.borrow();
+        let (status, message) = match &result {
+            Ok(true) => ("success", None),
+            Ok(false) => ("failed", Some("A workflow job failed".to_owned())),
+            Err(error) => match error.downcast_ref::<Stopped>() {
+                Some(Stopped::Cancelled) if shutting_down => (
+                    "failed",
+                    Some("The CI worker shut down during the run".to_owned()),
+                ),
+                Some(Stopped::Cancelled) => ("cancelled", Some("Cancelled".to_owned())),
+                Some(Stopped::TimedOut) => {
+                    ("failed", Some("The run exceeded its time limit".to_owned()))
+                }
+                None => {
+                    let message: String = format!("CI could not run: {error:#}")
+                        .chars()
+                        .take(RESULT_MESSAGE_CHARS)
+                        .collect();
+                    let _ = send_log_lines(
+                        service,
+                        worker,
+                        run,
+                        &[LogLine {
+                            stage: "setup".into(),
+                            line: message.clone(),
+                            level: "error".into(),
+                        }],
+                    )
+                    .await;
+                    ("failed", Some(message))
+                }
+            },
+        };
+        // A slot waits for its own cleanup to recover instead of permanently losing capacity.
+        let mut reuse_slot = true;
+        let mut delay = Duration::from_secs(1);
+        while let Err(error) = ownership.remove_containers().await {
+            warn!(%error, run = %run.run_id, "could not remove CI run files or containers");
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                _ = stop.wait_for(|stopped| *stopped) => {
+                    reuse_slot = false;
+                    break;
+                }
             }
-            None => {
-                let message: String = format!("CI could not run: {error:#}")
-                    .chars()
-                    .take(RESULT_MESSAGE_CHARS)
-                    .collect();
-                let _ = send_log_lines(
-                    service,
-                    worker,
-                    run,
-                    &[LogLine {
-                        stage: "setup".into(),
-                        line: message.clone(),
-                        level: "error".into(),
-                    }],
-                )
-                .await;
-                ("failed", Some(message))
-            }
-        },
-    };
-    // act leaves its containers behind when it is killed. A slot that cannot remove them
-    // stops claiming work rather than piling up containers.
-    let mut reuse_slot = true;
-    if let Some(ownership) = ownership {
-        if let Err(error) = ownership.remove().await {
-            warn!(%error, run = %run.run_id, "could not remove CI containers");
-            reuse_slot = false;
+            delay = (delay * 2).min(FINISH_RETRY_MAX);
         }
+        drop(names);
+        record_result(
+            &service.queue,
+            worker,
+            run,
+            status,
+            message.as_deref(),
+            &mut stop,
+        )
+        .await;
+        // Recording the result must not wait for the blocking directory cleanup. Shutdown
+        // retains that cleanup even when the blocking pool is busy.
+        let _ = cleanup.await;
+        if reuse_slot {
+            if let Err(error) = ownership.remove_workspace().await {
+                warn!(%error, run = %run.run_id, "could not remove CI workspace; recovery will retry");
+            }
+        }
+        reuse_slot
+    };
+    // Cleanup and result retries are still part of the running run.
+    tokio::select! {
+        reuse_slot = work => reuse_slot,
+        _ = heartbeat => unreachable!("heartbeat loop never ends"),
     }
-    drop(names);
-    record_result(
-        &service.queue,
-        worker,
-        run,
-        status,
-        message.as_deref(),
-        &mut stop,
-    )
-    .await;
-    // Do not let a fast runner accumulate unfinished directory removals in this slot.
-    let _ = cleanup.await;
-    reuse_slot
 }
 
 /// Sends the final state of a run, and keeps trying until it is recorded or the worker stops.
@@ -351,8 +366,11 @@ async fn run_workflows(
     let store = service.queue.store(claim)?;
     // A run still preparing when shutdown starts stops here, not after the checkout, and
     // the checkout counts against the run's time limit.
+    let workspace_directory = service
+        .cleanup_dir
+        .join(format!("{}.workspace", run.run_id));
     let workspace = tokio::select! {
-        prepared = Workspace::prepare(&store, run, service.cleanups.clone(), cleaned) => prepared?,
+        prepared = Workspace::prepare(&store, run, &workspace_directory, service.cleanups.clone(), cleaned) => prepared?,
         _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
         _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => {
             return Err(Stopped::TimedOut.into());
@@ -396,6 +414,9 @@ async fn run_workflows(
         ensure!(!remaining.is_zero(), Stopped::TimedOut);
         let stage = workflow.to_owned();
         let (lines_tx, lines_rx) = mpsc::channel(LOG_QUEUE_LINES);
+        let stalled = Arc::new(AtomicBool::new(false));
+        let remote = matches!(&service.queue, RunQueue::Remote { .. });
+        let (output_done, output_ended) = oneshot::channel();
         let running = async {
             let status = process::run(command, remaining, cancel.clone(), |line, stderr| {
                 let level = if stderr { log_level(&line) } else { "info" };
@@ -405,20 +426,27 @@ async fn run_workflows(
                     level: level.to_owned(),
                 };
                 let lines_tx = lines_tx.clone();
-                async move {
-                    lines_tx
-                        .send(line)
-                        .await
-                        .map_err(|_| anyhow::anyhow!("CI log batches stopped"))
-                }
+                let stalled = stalled.clone();
+                async move { enqueue_log_line(&lines_tx, line, remote, &stalled).await }
             })
             .await;
             // The batches end once the last sender is gone, which is when the output ends.
             drop(lines_tx);
+            let _ = output_done.send(());
             status
         };
-        let (status, sent) =
-            tokio::join!(running, send_log_batches(service, worker, run, lines_rx));
+        let sending = async {
+            tokio::select! {
+                sent = send_log_batches(service, worker, run, lines_rx) => sent,
+                _ = process::cancelled(cancel.clone()), if remote => Ok(()),
+                _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())), if remote => Ok(()),
+                _ = async {
+                    let _ = output_ended.await;
+                    tokio::time::sleep(LOG_FLUSH_GRACE).await;
+                }, if remote => Ok(()),
+            }
+        };
+        let (status, sent) = tokio::join!(running, sending);
         sent?;
         if !status?.success() {
             return Ok(false);
@@ -667,12 +695,28 @@ impl ContainerOwnership {
         })
     }
 
-    async fn remove(self) -> Result<()> {
-        remove_run_containers(
-            &self.record.socket,
-            &run_container_label(self.record.run_id),
-        )
-        .await?;
+    async fn remove(&self) -> Result<()> {
+        self.remove_containers().await?;
+        self.remove_workspace().await
+    }
+
+    async fn remove_containers(&self) -> Result<()> {
+        if !self.record.socket.is_empty() {
+            remove_run_containers(
+                &self.record.socket,
+                &run_container_label(self.record.run_id),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn remove_workspace(&self) -> Result<()> {
+        match tokio::fs::remove_dir_all(self.path.with_extension("workspace")).await {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         std::fs::remove_file(&self.path)?;
         std::fs::File::open(self.path.parent().unwrap())?.sync_all()?;
         Ok(())
@@ -781,6 +825,30 @@ async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
     Ok(())
 }
 
+/// Preserve ordinary delivery, but spend at most one short wait on a stalled remote queue.
+async fn enqueue_log_line(
+    sender: &mpsc::Sender<LogLine>,
+    line: LogLine,
+    remote: bool,
+    stalled: &AtomicBool,
+) -> Result<()> {
+    if !remote {
+        return sender
+            .send(line)
+            .await
+            .map_err(|_| anyhow::anyhow!("CI log batches stopped"));
+    }
+    if stalled.load(Ordering::Relaxed) {
+        let _ = sender.try_send(line);
+    } else if tokio::time::timeout(LOG_FLUSH_GRACE, sender.send(line))
+        .await
+        .is_err()
+    {
+        stalled.store(true, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
 /// Stores output lines. The Actions pages read the stored lines.
 async fn send_log_lines(
     service: &CiWorkers,
@@ -876,11 +944,13 @@ impl Workspace {
     async fn prepare(
         store: &RepoStore,
         run: &CiRun,
+        directory: &Path,
         cleanups: Arc<Mutex<JoinSet<()>>>,
         cleaned: oneshot::Sender<()>,
     ) -> Result<Self> {
+        tokio::fs::create_dir_all(directory).await?;
         let workspace = Self {
-            temp: Some(tempfile::tempdir().context("could not create a CI workspace")?),
+            temp: Some(tempfile::tempdir_in(directory).context("could not create a CI workspace")?),
             cleanups,
             cleaned: Some(cleaned),
         };
@@ -1032,23 +1102,26 @@ mod tests {
     }
 
     #[test]
-    fn a_second_run_of_a_workflow_name_gets_its_run_id_added() {
+    fn workflow_names_are_unique_across_runs_and_worker_processes() {
         let names = WorkflowNames::default();
         let first = names.take("CI", uuid::Uuid::from_u128(1));
-        assert_eq!(first.name, "CI");
+        assert_eq!(first.name, "CI (00000000000000000000000000000001)");
         let second = names.take("CI", uuid::Uuid::from_u128(2));
-        assert_eq!(second.name, "CI (00000000)");
-        // Another workflow keeps its name, and a name frees up when its run is over.
+        assert_eq!(second.name, "CI (00000000000000000000000000000002)");
+        let another_process = WorkflowNames::default();
+        let third = another_process.take("CI", uuid::Uuid::from_u128(3));
+        assert_ne!(first.name, third.name);
+        assert_ne!(second.name, third.name);
         assert_eq!(
             names.take("Deploy", uuid::Uuid::from_u128(3)).name,
-            "Deploy"
+            "Deploy (00000000000000000000000000000003)"
         );
         drop(first);
         let fourth = names.take("CI", uuid::Uuid::from_u128(4));
-        assert_eq!(fourth.name, "CI");
+        assert_eq!(fourth.name, "CI (00000000000000000000000000000004)");
         // Two workflows of one run with the same name still differ.
         let other = names.take("CI", uuid::Uuid::from_u128(2));
-        assert_eq!(other.name, "CI (00000000-2)");
+        assert_eq!(other.name, "CI (00000000000000000000000000000002-2)");
     }
 
     fn secret_workspace() -> Workspace {
@@ -1376,6 +1449,9 @@ jobs:
             let (directory, socket, run): (PathBuf, String, uuid::Uuid) =
                 serde_json::from_str(&input).unwrap();
             let _ownership = ContainerOwnership::create(&directory, &socket, run).unwrap();
+            let workspace = directory.join(format!("{run}.workspace"));
+            std::fs::create_dir(&workspace).unwrap();
+            std::fs::write(workspace.join("secrets.env"), "TOKEN=private").unwrap();
             unsafe { libc::kill(libc::getpid(), libc::SIGKILL) };
             unreachable!("SIGKILL does not return");
         }
@@ -1390,7 +1466,10 @@ jobs:
         .await;
         let live = uuid::Uuid::new_v4();
         let _ownership = ContainerOwnership::create(records.path(), &socket, live).unwrap();
+        let live_workspace = records.path().join(format!("{live}.workspace"));
+        std::fs::create_dir(&live_workspace).unwrap();
         reconcile_containers(records.path()).await.unwrap();
+        assert!(live_workspace.exists());
         assert!(
             requests.try_recv().is_err(),
             "a live worker must not be cleaned"
@@ -1410,7 +1489,10 @@ jobs:
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(stored.run_id, run);
         assert_eq!(stored.socket, socket);
+        let workspace = path.with_extension("workspace");
+        assert!(workspace.join("secrets.env").exists());
         assert!(reconcile_containers(records.path()).await.is_err());
+        assert!(workspace.exists());
         assert!(
             path.exists(),
             "engine failures must keep durable cleanup work"
@@ -1426,6 +1508,8 @@ jobs:
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         assert!(!path.exists());
+        assert!(!workspace.exists());
+        assert!(live_workspace.exists());
         assert!(records.path().join(format!("{live}.json")).exists());
         server.await.unwrap();
         for _ in 0..2 {
@@ -1436,6 +1520,50 @@ jobs:
                 container_filters(&run_container_label(run))
             );
         }
+    }
+
+    #[tokio::test]
+    async fn local_run_recovery_removes_abandoned_workspaces() {
+        let records = tempfile::tempdir().unwrap();
+        let run = uuid::Uuid::new_v4();
+        let ownership = ContainerOwnership::create(records.path(), "", run).unwrap();
+        let workspace = ownership.path.with_extension("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::write(workspace.join("secrets.env"), "TOKEN=private").unwrap();
+        reconcile_containers(records.path()).await.unwrap();
+        assert!(workspace.exists());
+        drop(ownership);
+        reconcile_containers(records.path()).await.unwrap();
+        assert!(!workspace.exists());
+    }
+
+    #[tokio::test]
+    async fn stalled_remote_log_buffer_drops_overflow_without_repeated_waits() {
+        let (sender, mut receiver) = mpsc::channel(1);
+        let line = || LogLine {
+            stage: "ci".into(),
+            line: "output".into(),
+            level: "info".into(),
+        };
+        let stalled = AtomicBool::new(false);
+        enqueue_log_line(&sender, line(), true, &stalled)
+            .await
+            .unwrap();
+        enqueue_log_line(&sender, line(), true, &stalled)
+            .await
+            .unwrap();
+        assert!(stalled.load(Ordering::Relaxed));
+        tokio::time::timeout(Duration::from_millis(100), async {
+            for _ in 0..1000 {
+                enqueue_log_line(&sender, line(), true, &stalled)
+                    .await
+                    .unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(receiver.recv().await.unwrap().line, "output");
+        assert!(receiver.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -1550,9 +1678,16 @@ jobs:
 
         let cleanups = Arc::new(Mutex::new(JoinSet::new()));
         let (cleaned, cleanup) = oneshot::channel();
-        let workspace = Workspace::prepare(&store, &run, cleanups.clone(), cleaned)
-            .await
-            .unwrap();
+        let workspace_parent = tempfile::tempdir().unwrap();
+        let workspace = Workspace::prepare(
+            &store,
+            &run,
+            workspace_parent.path(),
+            cleanups.clone(),
+            cleaned,
+        )
+        .await
+        .unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

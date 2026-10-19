@@ -86,6 +86,57 @@ pub enum ReceiveCredential {
 }
 
 impl ReceiveCredential {
+    /// Rechecks the live key or token and the repository's current access policy.
+    pub(crate) async fn authorize(
+        self,
+        pool: &DbPool,
+        repo: &crate::backend::db::models::Repository,
+        write: bool,
+    ) -> Result<(
+        crate::backend::db::models::User,
+        crate::backend::db::models::AccessLevel,
+    )> {
+        use crate::backend::{
+            db,
+            repositories::{access, deploy_keys},
+        };
+        let identity = match self {
+            Self::SshKey(id) => {
+                anyhow::ensure!(id > 0, "invalid key ID");
+                let identity = db::users::ssh_keys::get_user_by_ssh_key_id(pool, id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("key unavailable"))?;
+                anyhow::ensure!(
+                    !identity.user.is_banned && !identity.user.must_change_password,
+                    "identity unavailable"
+                );
+                let canonical =
+                    validation::canonical_db_key(&identity.key.public_key, &identity.key.key_type)?;
+                anyhow::ensure!(
+                    db::users::ssh_keys::calculate_fingerprint(&canonical)?
+                        == identity.key.fingerprint,
+                    "stored key fingerprint mismatch"
+                );
+                identity.user
+            }
+            Self::DeployKey(id) => return deploy_keys::authorize(pool, id, repo, write).await,
+            Self::Token(id) => db::users::tokens::token_user(pool, id, write)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("token unavailable"))?,
+        };
+        let level = access::user_access(pool, &identity, repo).await?;
+        anyhow::ensure!(
+            if write {
+                level.can_write()
+            } else {
+                level.can_read()
+            },
+            "repository access denied"
+        );
+        anyhow::ensure!(!write || !repo.is_archived, "repository archived");
+        Ok((identity, level))
+    }
+
     pub(crate) fn id(self) -> i64 {
         match self {
             Self::SshKey(id) | Self::DeployKey(id) | Self::Token(id) => id,

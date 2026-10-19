@@ -591,17 +591,13 @@ fn force_push_picker(rule: &BranchRule, viewer: &str, suggestions: &[Collaborato
     let listed = |name: &str| {
         rule.force_push_allowances
             .iter()
-            .any(|allowed| allowed.eq_ignore_ascii_case(name))
+            .any(|allowed| allowed == name)
     };
-    let suggested = |name: &str| {
-        suggestions
-            .iter()
-            .any(|person| person.username.eq_ignore_ascii_case(name))
-    };
+    let suggested = |name: &str| suggestions.iter().any(|person| person.username == name);
     let unsuggested: Vec<&String> = rule
         .force_push_allowances
         .iter()
-        .filter(|name| !name.eq_ignore_ascii_case(viewer) && !suggested(name))
+        .filter(|name| name.as_str() != viewer && !suggested(name))
         .collect();
     rsx! {
         div { class: "repo-rule-nested",
@@ -792,6 +788,20 @@ pub fn rejected_form(
                     div { class: "repo-form-body",
                         if action == "merge-methods" {
                             {merge_method_checks(checked("allow_merge_commit"), checked("allow_squash_merge"), checked("allow_rebase_merge"))}
+                        } else if action == "watch-level" {
+                            label { class: "repo-field", span { "Watch level" }
+                                select { name: "level",
+                                    for level in ["participating", "watching", "custom", "ignoring"] {
+                                        option { value: level, selected: values.get("level").is_some_and(|value| value == level), "{level}" }
+                                    }
+                                }
+                            }
+                            for event in ["issues", "pulls", "releases"] {
+                                label { class: "repo-check-label",
+                                    input { r#type: "checkbox", name: "events_{event}", value: "yes", checked: values.get(&format!("events_{event}")).is_some_and(|value| matches!(value.as_str(), "on" | "yes" | "true" | "1")) }
+                                    "{event}"
+                                }
+                            }
                         } else {
                             for (name, value) in fields { label { key: "{name}", class: "repo-field", span { "{field_label(name)}" } DraftTextarea { name: name.clone(), initial_value: value.clone(), rows: 2 } } }
                         }
@@ -809,7 +819,35 @@ pub fn rejected_form(
 
 #[cfg(test)]
 mod tests {
-    use super::{join_status_checks, split_status_checks};
+    use super::*;
+
+    #[test]
+    fn watch_retry_has_selected_level_and_event_controls() {
+        let values = std::collections::HashMap::from([
+            ("level".into(), "custom".into()),
+            ("events_issues".into(), "yes".into()),
+        ]);
+        let html = crate::webui::tests::in_scope(|| {
+            dioxus_ssr::render_element(rejected_form(
+                &RepoChrome::default(),
+                "watch-level",
+                "Retry",
+                &values,
+            ))
+        });
+        let selected = html
+            .split("<option")
+            .map(|part| part.split('>').next().unwrap())
+            .find(|part| part.contains("value=\"custom\""))
+            .unwrap();
+        assert!(selected.contains("selected"), "{html}");
+        let event = html
+            .split("<input")
+            .map(|part| part.split('>').next().unwrap())
+            .find(|part| part.contains("name=\"events_issues\""))
+            .unwrap();
+        assert!(event.contains("checked"), "{html}");
+    }
 
     #[test]
     fn status_check_names_round_trip_through_the_form_field() {

@@ -91,10 +91,47 @@ impl DbPool {
     }
 
     pub async fn close(&self) {
-        match self {
-            Self::Postgres(pool) => pool.close().await,
-            Self::Sqlite(pool) => pool.close().await,
+        // SQLx waits for checked-out connections. A stuck request must not prevent the
+        // process from reaching its runtime shutdown deadline.
+        if tokio::time::timeout(Duration::from_secs(10), async {
+            match self {
+                Self::Postgres(pool) => pool.close().await,
+                Self::Sqlite(pool) => pool.close().await,
+            }
+        })
+        .await
+        .is_err()
+        {
+            tracing::warn!("database connections did not return during shutdown");
         }
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn pool_close_has_a_deadline_even_when_a_connection_is_checked_out() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = init_db(&format!(
+            "sqlite://{}",
+            directory.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        let DbPool::Sqlite(raw) = &pool else {
+            unreachable!()
+        };
+        let held = raw.acquire().await.unwrap();
+        tokio::time::pause();
+        let start = tokio::time::Instant::now();
+        pool.close().await;
+        assert!(pool.is_closed());
+        assert!(
+            (Duration::from_secs(10)..=Duration::from_millis(10_002)).contains(&start.elapsed())
+        );
+        drop(held);
     }
 }
 

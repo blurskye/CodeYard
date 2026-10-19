@@ -85,6 +85,98 @@ async fn administrator_roles(pg: bool) {
         BanChange::Denied
     ));
 
+    // Browser operations keep the initiating session, not just the administrator ID.
+    f.execute("INSERT INTO node_configuration(id,node_mode,setup_completed) VALUES(1,'private',TRUE) ON CONFLICT(id) DO UPDATE SET node_mode='private',setup_completed=TRUE", &[]).await;
+    db::users::sessions::create_session(
+        pool,
+        "admin-original",
+        admin,
+        None,
+        None,
+        Utc::now() + Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let created = db::users::transitions::register_password(
+        pool,
+        "managed-admin",
+        None,
+        "temporary-hash",
+        Some((admin, "admin-original", true)),
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(created, db::users::transitions::AccountAdmission::User(user) if user.is_admin && user.must_change_password)
+    );
+    db::users::sessions::delete_session(pool, "admin-original")
+        .await
+        .unwrap();
+    assert!(matches!(
+        db::users::transitions::change_admin_role(
+            pool,
+            (admin, "admin-original".to_owned()),
+            second,
+            true
+        )
+        .await
+        .unwrap(),
+        RoleChange::Denied
+    ));
+    assert!(matches!(
+        db::users::transitions::change_ban(
+            pool,
+            (admin, "admin-original".to_owned()),
+            member,
+            true
+        )
+        .await
+        .unwrap(),
+        BanChange::Denied
+    ));
+    assert!(matches!(
+        db::users::transitions::register_password(
+            pool,
+            "not-created",
+            None,
+            "hash",
+            Some((admin, "admin-original", true))
+        )
+        .await
+        .unwrap(),
+        db::users::transitions::AccountAdmission::Denied
+    ));
+    assert!(
+        db::users::accounts::get_user_by_username(pool, "not-created")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let pending = db::users::signup_requests::create_signup_request(pool, "pending", None, "hash")
+        .await
+        .unwrap();
+    assert!(db::users::signup_requests::approve_signup_request(
+        pool,
+        pending.id,
+        (admin, "admin-original".to_owned())
+    )
+    .await
+    .is_err());
+    assert!(db::users::signup_requests::reject_signup_request(
+        pool,
+        pending.id,
+        (admin, "admin-original".to_owned())
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        db::users::signup_requests::list_signup_requests(pool, "pending")
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
     f.finish().await;
 }
 
@@ -144,6 +236,16 @@ async fn email_changes(pg: bool) {
             pool,
             Some("email-session"),
             "correct-password",
+            "bad\0@example.test"
+        )
+        .await,
+        Err(EmailChangeError::InvalidEmail)
+    ));
+    assert!(matches!(
+        identity::accounts::change_email(
+            pool,
+            Some("email-session"),
+            "correct-password",
             "not-an-address"
         )
         .await,
@@ -169,6 +271,70 @@ async fn email_changes(pg: bool) {
     .await
     .unwrap();
     assert_eq!(saved.email.as_deref(), Some("new@example.test"));
+    // A request that verified a snapshot must retain its original credentials and session.
+    db::users::sessions::delete_session(pool, "email-session")
+        .await
+        .unwrap();
+    assert!(matches!(
+        db::users::transitions::change_email(
+            pool,
+            user.id,
+            "stale@example.test",
+            &hash,
+            "email-session"
+        )
+        .await
+        .unwrap(),
+        db::users::transitions::EmailChange::Missing
+    ));
+    assert!(db::users::transitions::compare_exchange_password(
+        pool,
+        user.id,
+        &hash,
+        "replacement",
+        true,
+        true,
+        Some("email-session")
+    )
+    .await
+    .unwrap()
+    .is_none());
+    db::users::sessions::create_session(
+        pool,
+        "replacement-session",
+        user.id,
+        None,
+        None,
+        Utc::now() + Duration::days(1),
+    )
+    .await
+    .unwrap();
+    let changed = db::users::transitions::compare_exchange_password(
+        pool,
+        user.id,
+        &hash,
+        "replacement",
+        true,
+        true,
+        Some("replacement-session"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(changed.password_hash.as_deref(), Some("replacement"));
+    assert!(!changed.must_change_password);
+    assert!(matches!(
+        db::users::transitions::change_email(
+            pool,
+            user.id,
+            "stale@example.test",
+            &hash,
+            "replacement-session"
+        )
+        .await
+        .unwrap(),
+        db::users::transitions::EmailChange::Missing
+    ));
 
     f.finish().await;
 }

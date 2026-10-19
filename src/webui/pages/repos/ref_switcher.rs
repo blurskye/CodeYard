@@ -28,9 +28,13 @@ pub fn RefSwitcher(
     let shown_branches = matching(&branches, &query);
     let shown_tags = matching(&tags, &query);
     let nothing_shown = shown_branches.is_empty() && shown_tags.is_empty();
+    let display = current
+        .strip_prefix("refs/tags/")
+        .or_else(|| current.strip_prefix("refs/heads/"))
+        .unwrap_or(&current);
     rsx! {
         details { class: "native-menu repo-menu repo-ref-menu",
-            summary { class: "btn btn-secondary", {icon("branches")} span { class: "repo-ref-name", "{current}" } {icon("chevron")} }
+            summary { class: "btn btn-secondary", {icon("branches")} span { class: "repo-ref-name", "{display}" } {icon("chevron")} }
             div { class: "repo-menu-panel repo-ref-panel",
                 h2 { class: "repo-menu-heading", "Switch branches or tags" }
                 div { class: "repo-ref-filter-box",
@@ -49,12 +53,18 @@ pub fn RefSwitcher(
 
 /// One option per name. Each option links to `path` on that ref, or to the ref's root when the
 /// path is missing there, so a ref switch keeps the reader where they are when it can.
-pub fn ref_options(base: &str, kind: &str, path: &str, names: &[String]) -> Vec<RefOption> {
+pub fn ref_options(
+    base: &str,
+    kind: &str,
+    path: &str,
+    names: &[String],
+    prefix: &str,
+) -> Vec<RefOption> {
     names
         .iter()
         .map(|name| RefOption {
             name: name.clone(),
-            href: ref_switch_url(base, kind, name, path),
+            href: ref_switch_url(base, kind, &format!("{prefix}{name}"), path),
         })
         .collect()
 }
@@ -80,14 +90,21 @@ fn ref_group(
         return rsx! {};
     }
     let count = options.len();
+    let selected = |name: &str| {
+        if title == "Tags" {
+            current == format!("refs/tags/{name}")
+        } else {
+            current == name || current == format!("refs/heads/{name}")
+        }
+    };
     rsx! {
         section { class: "repo-ref-group",
             h3 { class: "repo-ref-group-title", "{title}" span { class: "repo-ref-group-count", "{count}" } }
             ul { class: "repo-ref-list",
                 for option in options {
                     li { key: "{option.name}",
-                        NavLink { class: (if option.name == current { "repo-menu-item repo-ref-selected" } else { "repo-menu-item" }).to_owned(), href: option.href.clone(),
-                            span { class: "repo-ref-check", "aria-hidden": "true", if option.name == current { {icon("check")} } }
+                        NavLink { class: (if selected(&option.name) { "repo-menu-item repo-ref-selected" } else { "repo-menu-item" }).to_owned(), href: option.href.clone(),
+                            span { class: "repo-ref-check", "aria-hidden": "true", if selected(&option.name) { {icon("check")} } }
                             span { class: "repo-ref-option-name", "{option.name}" }
                             if default_branch == Some(option.name.as_str()) {
                                 span { class: "repo-label-neutral repo-ref-default", "default" }

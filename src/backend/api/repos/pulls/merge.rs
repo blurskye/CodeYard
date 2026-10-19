@@ -3,8 +3,9 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::app::AppState;
+use crate::backend::db;
 use crate::backend::repositories::pull_requests;
-use crate::backend::repositories::pull_requests::branches_moved;
+use crate::backend::repositories::pull_requests::branches::refresh_open_pull_request;
 use crate::backend::repositories::pull_requests::merge::MergeRequest;
 use crate::backend::repositories::pull_requests::merge::MergeResponse;
 use crate::backend::repositories::store::MergeMethod;
@@ -53,11 +54,17 @@ pub(crate) async fn native_merge(
     // Catch up with the branches first, so a stale form shows the pull request as it is
     // now. Only a writer may start that refresh; everyone else is refused below.
     if repo.view.can_write {
-        branches_moved(
+        let pull =
+            db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number)
+                .await
+                .map_err(|_| unavailable(&ctx))?
+                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
+        let _ = refresh_open_pull_request(
             &ctx.state.pool,
             &repo.record,
             &ctx.state.ci_runs,
             ctx.require_user()?.id,
+            pull.id,
         )
         .await;
     }

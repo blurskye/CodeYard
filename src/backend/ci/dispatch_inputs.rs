@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 /// GitHub's limits: ten inputs per workflow and 25 options per choice.
 pub const MAX_INPUTS: usize = 10;
+pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_OPTIONS: usize = 25;
 /// Longest accepted value; a form value is capped at the same size.
 pub const MAX_VALUE_BYTES: usize = 2048;
@@ -35,7 +36,7 @@ pub struct DispatchInput {
 /// be run.
 pub fn check_declaration(input: &DispatchInput) -> Result<(), &'static str> {
     if input.name.is_empty()
-        || input.name.len() > 64
+        || input.name.len() > MAX_NAME_BYTES
         || !input
             .name
             .bytes()
@@ -82,6 +83,9 @@ pub fn validate_inputs(
         let given = submitted_value.filter(|value| !value.is_empty());
         match given.or(input.default.as_ref()) {
             Some(value) => {
+                if input.required && value.is_empty() {
+                    return Err("a required workflow input is empty");
+                }
                 check_value(input, value)?;
                 values.insert(input.name.clone(), value.clone());
             }
@@ -177,6 +181,16 @@ mod tests {
             validate_inputs(&declared, &submitted(&[])).unwrap(),
             submitted(&[("env", "staging")])
         );
+    }
+
+    #[test]
+    fn required_inputs_refuse_empty_defaults() {
+        let mut target = input("target", InputKind::Text);
+        target.required = true;
+        target.default = Some(String::new());
+        assert!(check_declaration(&target).is_ok());
+        assert!(validate_inputs(&[target.clone()], &BTreeMap::new()).is_err());
+        assert!(validate_inputs(&[target], &submitted(&[("target", "prod")])).is_ok());
     }
 
     #[test]

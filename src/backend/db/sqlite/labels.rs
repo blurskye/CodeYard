@@ -82,6 +82,28 @@ pub async fn list_repo_labels(pool: &SqlitePool, repo_id: i64) -> Result<Vec<Lab
     Ok(labels)
 }
 
+pub async fn list_repo_labels_page(
+    pool: &SqlitePool,
+    repo_id: i64,
+    query: &str,
+    sort: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Label>> {
+    anyhow::ensure!(
+        (1..=101).contains(&limit) && offset >= 0,
+        "Invalid label page"
+    );
+    let order = match sort {
+        "newest" => "l.id DESC",
+        "oldest" => "l.id ASC",
+        "most-used" => "((SELECT COUNT(*) FROM issue_labels il WHERE il.label_id=l.id) + (SELECT COUNT(*) FROM pr_labels pl WHERE pl.label_id=l.id)) DESC, LOWER(l.name), l.id",
+        _ => "LOWER(l.name), l.id",
+    };
+    Ok(sqlx::query_as(&format!(r"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at FROM labels l WHERE l.repo_id=?1 AND (LOWER(l.name) LIKE LOWER(?2) ESCAPE '\' OR LOWER(COALESCE(l.description,'')) LIKE LOWER(?2) ESCAPE '\') ORDER BY {order} LIMIT ?3 OFFSET ?4"))
+        .bind(repo_id).bind(crate::backend::db::discussions::contains_pattern(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
+}
+
 /// Each label of the repository with the number of issues and pull requests it is on, as
 /// `(label id, count)`. The association tables are keyed by item, not by label, so the counts
 /// start from the repository's issues and pull requests, which are indexed by repository.

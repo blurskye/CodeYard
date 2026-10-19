@@ -2,7 +2,7 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::chrome::{self, page_window};
+use crate::backend::api::repos::chrome;
 use crate::backend::api::repos::milestones::milestone_view;
 use crate::backend::api::repos::pulls::review_forms;
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
@@ -451,6 +451,7 @@ pub(crate) fn issue_item(
 }
 /// A pull request's head repository as this viewer may see it. The current name and
 /// link are shown only to a viewer who can read that repository.
+#[derive(Clone)]
 pub(crate) enum HeadRepository {
     Readable(db::pull_requests::records::PullRequestHeadDisplay),
     /// It exists, but this viewer cannot read it.
@@ -491,22 +492,33 @@ async fn head_for_viewer(
 /// name; the viewer's read access decides whether it is shown.
 pub(crate) async fn listed_head(
     ctx: &PageContext,
+    base_id: i64,
+    cache: &mut HashMap<i64, HeadRepository>,
     head: Option<db::pull_requests::records::PullRequestHeadDisplay>,
 ) -> ResultPage<HeadRepository> {
     let Some(head) = head else {
         return Ok(HeadRepository::Deleted);
     };
+    if head.id == base_id {
+        return Ok(HeadRepository::Deleted); // Same-repository heads use the base's display data.
+    }
+    if let Some(shown) = cache.get(&head.id) {
+        return Ok(shown.clone());
+    }
+    let id = head.id;
     let Some(record) = db::repositories::records::get_repository_by_id(&ctx.state.pool, head.id)
         .await
         .map_err(|_| unavailable(ctx))?
     else {
         return Ok(HeadRepository::Deleted);
     };
-    if can_view_head(ctx, &record).await? {
-        Ok(HeadRepository::Readable(head))
+    let shown = if can_view_head(ctx, &record).await? {
+        HeadRepository::Readable(head)
     } else {
-        Ok(HeadRepository::Unreadable)
-    }
+        HeadRepository::Unreadable
+    };
+    cache.insert(id, shown.clone());
+    Ok(shown)
 }
 
 /// The assignees of each listed issue or pull request, by item id, in name order.
@@ -578,11 +590,8 @@ pub(crate) fn pull_item(
                 .trusted_actor_ids
                 .contains(&user.id)
     });
-    let can_run_workflows = repo.view.can_write
-        && may_execute
-        && pull.state == "open"
-        && !pull.is_draft
-        && pull.head_repo_id != Some(repo.record.id);
+    let can_run_workflows =
+        repo.view.can_write && may_execute && pull.state == "open" && !pull.is_draft;
     // Presentation only: the review handler checks the write right and the author again.
     let can_vote = repo.view.can_write
         && ctx
@@ -675,11 +684,9 @@ pub(crate) async fn named_milestone(
         return Ok(None);
     };
     Ok(
-        db::milestones::list_repo_milestones(&ctx.state.pool, repo.record.id, None)
+        db::milestones::get_milestone_by_id(&ctx.state.pool, repo.record.id, id)
             .await
             .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .find(|summary| summary.milestone.id == id)
             .map(milestone_view),
     )
 }
@@ -814,21 +821,24 @@ pub(crate) async fn item(
             // count is left out, so the tab shows no number instead of a wrong one.
             let commit_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .commits_between(&compare.base_sha, &compare.head_sha, MAX_LISTED_COMMITS)
+                    .branch_statuses(&compare.base_sha, std::slice::from_ref(&compare.head_sha))
                     .await
                     .ok()
-                    .map(|commits| commits.len() as i64),
+                    .and_then(|heads| {
+                        heads
+                            .first()
+                            .map(|head| head.ahead.min(MAX_LISTED_COMMITS) as i64)
+                    }),
                 None => None,
             };
             view_item.commit_count = commit_count;
-            // The Files changed tab counts the files of the pull request. As with the commits, the count
-            // is left out when Git cannot diff the two revisions.
+            // Tab counts use metadata only; their full payloads are loaded by the selected tab.
             let file_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .diff(&compare.base_sha, &compare.head_sha)
+                    .changed_paths(&compare.base_sha, &compare.head_sha)
                     .await
                     .ok()
-                    .map(|diff| i64::from(diff.changed_files)),
+                    .map(|paths| paths.len() as i64),
                 None => None,
             };
             view_item.file_count = file_count;
@@ -921,15 +931,20 @@ pub(crate) async fn discussion(
     repo: &RepositoryData,
     kind: Kind,
     number: i32,
+    edit_page: Option<usize>,
 ) -> ResultPage<view::CommentPage> {
-    let page = chrome::number(ctx, "page", 1, MAX_COMMENT_PAGE)?;
+    let page = match edit_page {
+        Some(page) => page,
+        None => chrome::number(ctx, "page", 1, MAX_COMMENT_PAGE)?,
+    };
     if page == 0 {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Page numbers start at 1."));
     }
-    let (offset, _) = page_window(page, COMMENTS_PER_PAGE)
+    let offset = (page - 1)
+        .checked_mul(COMMENTS_PER_PAGE)
+        .and_then(|offset| i64::try_from(offset).ok())
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment page."))?;
     let fetch = (COMMENTS_PER_PAGE + 1) as i64;
-    let offset = offset as i64;
     let mut comments = Vec::new();
     let mut reviews = Vec::new();
     let has_more: bool;
@@ -946,7 +961,7 @@ pub(crate) async fn discussion(
                 .await
                 .map_err(|_| unavailable(ctx))?;
             let rights = CommentRights::load(ctx, repo, !issue.locked).await?;
-            has_more = chrome::has_next_page(page, rows.len(), COMMENTS_PER_PAGE);
+            has_more = chrome::has_next_page(page, rows.len(), COMMENTS_PER_PAGE, MAX_COMMENT_PAGE);
             subject = (db::timeline::Subject::Issue, issue.id);
             span = (
                 (page > 1)
@@ -999,7 +1014,7 @@ pub(crate) async fn discussion(
             )
             .await
             .map_err(|_| unavailable(ctx))?;
-            has_more = chrome::has_next_page(page, rows.len(), COMMENTS_PER_PAGE);
+            has_more = chrome::has_next_page(page, rows.len(), COMMENTS_PER_PAGE, MAX_COMMENT_PAGE);
             let first = rows.first().map(DiscussionItem::created_at);
             span = (
                 (page > 1).then_some(first).flatten(),
@@ -1064,7 +1079,32 @@ pub(crate) async fn render_detail(
 ) -> ResultPage<Response> {
     let mut value = shown.clone();
     fill_merge_blockers(ctx, repo, kind, draft, &mut value).await;
-    let mut comments = discussion(ctx, repo, kind, value.number).await?;
+    let edit_page = match draft.editing {
+        Some(id) => {
+            let position = match kind {
+                Kind::Issue => db::issues::issue_comment_position(&ctx.state.pool, id).await,
+                Kind::Pull => match db::pull_requests::reviews::get_pull_request_comment_by_id(
+                    &ctx.state.pool,
+                    id,
+                )
+                .await
+                {
+                    Ok(Some(comment)) => {
+                        db::pull_requests::reviews::count_discussion_items_through(
+                            &ctx.state.pool,
+                            comment.pull_request_id,
+                            db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
+                        )
+                        .await
+                    }
+                    _ => Err(anyhow::anyhow!("Comment not found")),
+                },
+            };
+            Some(crate::backend::issues::discussion_page(position))
+        }
+        None => None,
+    };
+    let mut comments = discussion(ctx, repo, kind, value.number, edit_page).await?;
     // A comment whose edit was previewed or refused keeps the text the author typed.
     if let Some(id) = draft.editing {
         if let Some(comment) = comments

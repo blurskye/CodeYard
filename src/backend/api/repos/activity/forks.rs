@@ -206,20 +206,31 @@ pub async fn list_forks(
     } else {
         None
     };
-    let mut visible_forks = Vec::new();
-    // Authorize only this bounded candidate page; public rows need no reload.
-    for fork in forks {
-        if crate::backend::repositories::access::can_read(&state.pool, user.as_ref(), &fork)
-            .await
-            .map_err(|_| {
-                crate::backend::api::repos::access::access_error(
-                    crate::backend::repositories::access::AccessError::Unavailable,
-                )
-            })?
-        {
-            visible_forks.push(fork);
-        }
-    }
+    // Preserve candidate-page pagination, but authorize the private candidates together.
+    let private_ids: Vec<_> = forks
+        .iter()
+        .filter(|fork| fork.is_private)
+        .map(|fork| fork.id)
+        .collect();
+    let readable = if private_ids.is_empty() || user.is_none() {
+        Vec::new()
+    } else {
+        db::repositories::access::readable_repository_ids(
+            &state.pool,
+            user.as_ref().map(|user| user.id),
+            &private_ids,
+        )
+        .await
+        .map_err(|_| {
+            super::super::access::access_error(
+                crate::backend::repositories::access::AccessError::Unavailable,
+            )
+        })?
+    };
+    let visible_forks: Vec<_> = forks
+        .into_iter()
+        .filter(|fork| !fork.is_private || readable.contains(&fork.id))
+        .collect();
     let ids = std::iter::once(repository.id)
         .chain(visible_forks.iter().map(|fork| fork.id))
         .collect::<Vec<_>>();

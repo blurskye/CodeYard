@@ -328,6 +328,77 @@ async fn pull_request_comment_rules(pg: bool) {
     world.database.finish().await;
 }
 
+async fn late_notifications_and_long_discussions(pg: bool) {
+    let mut world = setup(pg).await;
+    let issue = world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/issues",
+            json!({"title": "Long discussion"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let issue_id = issue["id"].as_i64().unwrap();
+    let pool = world.database.pool();
+    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let alice_id = repo.owner_user_id.unwrap();
+    let comment_id = comment(&world.bob, "issues/1", "deleted private text").await;
+    let metadata = json!({"comment_id": comment_id});
+    let input = |kind| db::notifications::records::NewNotification {
+        user_id: alice_id,
+        actor_id: None,
+        repo_id: Some(repo.id),
+        kind,
+        title: "A comment",
+        body: Some("deleted private text"),
+        link: None,
+        metadata: &metadata,
+    };
+    db::notifications::records::create_notification(pool, input("mention"))
+        .await
+        .unwrap();
+    assert!(
+        db::issues::delete_issue_comment(pool, alice_id, repo.id, issue_id, comment_id)
+            .await
+            .unwrap()
+    );
+    for kind in ["issue_comment", "mention"] {
+        assert!(
+            db::notifications::records::create_notification(pool, input(kind))
+                .await
+                .is_err(),
+            "late {kind} resurrected a deleted comment"
+        );
+    }
+    world
+        .database
+        .execute(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<30000)
+         INSERT INTO issue_comments(issue_id,author_id,body) SELECT $1,$2,'Earlier comment' FROM n",
+            &[issue_id, alice_id],
+        )
+        .await;
+    let last = comment(&world.bob, "issues/1", "Comment beyond thirty thousand").await;
+    let (status, page) = world.alice.page("/alice/proj/issues/1?page=1000").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("page=1001"));
+    let (status, page) = world.alice.page("/alice/proj/issues/1?page=1001").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Comment beyond thirty thousand"));
+    assert!(page.contains(&format!("comment-{last}")));
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn late_notifications_and_long_discussions_on_both_engines() {
+    late_notifications_and_long_discussions(false).await;
+    late_notifications_and_long_discussions(true).await;
+}
+
 #[tokio::test]
 async fn postgres_edit_and_delete_rules() {
     edit_and_delete_rules(true).await;

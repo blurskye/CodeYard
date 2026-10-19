@@ -24,8 +24,8 @@ pub use forms::{
     SelectOption,
 };
 pub use markdown::{
-    document_outline, escape_html, markdown_tab_class, parse_markdown, LinkBase, Markdown,
-    OutlineEntry, RepoMarkdown,
+    document_html, document_outline, escape_html, markdown_tab_class, outline_of_html,
+    parse_markdown, LinkBase, Markdown, OutlineEntry, RepoMarkdown,
 };
 pub use markdown_toolbar::MarkdownToolbar;
 pub use shell::{shell, shell_at, SiteSearch};

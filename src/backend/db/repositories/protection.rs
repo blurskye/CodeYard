@@ -12,6 +12,10 @@ pub enum ProtectionWriteRefusal {
     Denied,
     #[error("Use a branch name or a pattern with *, ** or ?")]
     InvalidPattern,
+    #[error("Commit status metadata exceeds its limit")]
+    InvalidStatusMetadata,
+    #[error("A commit can have at most 1024 external status contexts")]
+    StatusLimit,
 }
 
 /// One rule as an administrator saves it. `Default` is the strictest rule, which is what
@@ -60,6 +64,24 @@ impl Default for BranchProtectionRuleUpsert<'_> {
             require_code_owner_review: false,
         }
     }
+}
+
+pub fn validate_status_metadata(
+    input: &CommitStatusUpsert<'_>,
+) -> std::result::Result<(), ProtectionWriteRefusal> {
+    if input.context.is_empty()
+        || input.context.len() > 255
+        || input.context.contains('\0')
+        || input
+            .description
+            .is_some_and(|value| value.len() > 1024 || value.contains('\0'))
+        || input
+            .target_url
+            .is_some_and(|value| value.len() > 2048 || value.contains('\0'))
+    {
+        return Err(ProtectionWriteRefusal::InvalidStatusMetadata);
+    }
+    Ok(())
 }
 
 pub struct CommitStatusUpsert<'a> {
@@ -144,6 +166,14 @@ native_operation!(crate::backend::db::postgres::repositories::protection::list_c
     repo_id: i64,
     sha: &str,
 ) -> Result<Vec<CommitStatus>>);
+
+native_operation!(crate::backend::db::postgres::repositories::protection::list_commit_statuses_page,
+    crate::backend::db::sqlite::repositories::protection::list_commit_statuses_page,
+    fn list_commit_statuses_page(pool: &DbPool, repo_id: i64, sha: &str, offset: i64, limit: i64) -> Result<Vec<CommitStatus>>);
+
+native_operation!(crate::backend::db::postgres::repositories::protection::commit_status_counts,
+    crate::backend::db::sqlite::repositories::protection::commit_status_counts,
+    fn commit_status_counts(pool: &DbPool, repo_id: i64, sha: &str) -> Result<Vec<(String, i64)>>);
 
 #[cfg(test)]
 mod tests {

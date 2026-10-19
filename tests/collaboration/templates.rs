@@ -274,10 +274,20 @@ async fn pull_request_comment_task_ticks(pg: bool) {
         )
         .await;
     let comment_id = comment["id"].as_i64().unwrap();
+    let revision =
+        db::pull_requests::reviews::get_pull_request_comment_by_id(database.pool(), comment_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .body;
     let reply = alice
         .form_reply(
             &format!("/alice/proj/pulls/{number}/tasks"),
-            &[("comment", &comment_id.to_string()), ("task", "0")],
+            &[
+                ("comment", &comment_id.to_string()),
+                ("task", "0"),
+                ("comment_revision", &revision),
+            ],
         )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
@@ -292,10 +302,45 @@ async fn pull_request_comment_task_ticks(pg: bool) {
             .unwrap()
             .unwrap();
     assert_eq!(saved.body, "Next:\n\n- [x] ship\n");
+    let stale = alice
+        .form_reply(
+            &format!("/alice/proj/pulls/{number}/tasks"),
+            &[
+                ("comment", &comment_id.to_string()),
+                ("task", "0"),
+                ("comment_revision", "old"),
+            ],
+        )
+        .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    let repository = db::repositories::records::get_repository(database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let refused = db::pull_requests::reviews::edit_pull_request_comment(
+        database.pool(),
+        saved.author_id,
+        repository.id,
+        saved.pull_request_id,
+        comment_id,
+        "overwritten",
+        "not the current body",
+    )
+    .await
+    .unwrap();
+    assert!(refused.is_none());
+    assert_eq!(
+        db::pull_requests::reviews::get_pull_request_comment_by_id(database.pool(), comment_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .body,
+        saved.body
+    );
 }
 
 async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
-    let (_database, _root, alice, bob) = setup(pg).await;
+    let (database, _root, alice, bob) = setup(pg).await;
     let created = alice
         .expect(
             "POST",
@@ -379,8 +424,31 @@ async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
         )
         .await;
     let comment_id = comment["id"].as_i64().unwrap().to_string();
+    let stored = db::issues::get_issue_comment(database.pool(), comment_id.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    let revision = stored.body.clone();
+    let stale = alice
+        .form_reply(
+            &toggle,
+            &[
+                ("comment", &comment_id),
+                ("task", "0"),
+                ("comment_revision", "old"),
+            ],
+        )
+        .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
     let reply = alice
-        .form_reply(&toggle, &[("comment", &comment_id), ("task", "0")])
+        .form_reply(
+            &toggle,
+            &[
+                ("comment", &comment_id),
+                ("task", "0"),
+                ("comment_revision", &revision),
+            ],
+        )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
     let comments = alice

@@ -100,7 +100,10 @@ pub async fn run_web_server(
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let git_tasks = state.git_tasks.clone();
-    let app = create_router(state);
+    let app = create_router(state).layer(axum::middleware::from_fn_with_state(
+        stop.clone(),
+        cancel_on_shutdown,
+    ));
     info!("Git HTTP server starting on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let mut listener_stop = stop.clone();
@@ -123,6 +126,23 @@ pub async fn run_web_server(
         }
     }
     Ok(())
+}
+
+/// Axum's connection tasks outlive the listener future. Cancel their unfinished handlers
+/// after the drain grace, releasing any database connection held by a blocked query.
+async fn cancel_on_shutdown(
+    axum::extract::State(mut stop): axum::extract::State<tokio::sync::watch::Receiver<bool>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    tokio::select! {
+        response = next.run(request) => response,
+        () = async {
+            wait_for_stop(&mut stop).await;
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        } => axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
 }
 
 /// Resolves once `stop` is set. It returns nothing, so no watch guard is held in the

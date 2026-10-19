@@ -64,15 +64,24 @@ pub async fn worker_context(
     let mut peers = Vec::new();
     for (public_key, host) in &settings.peers {
         // `tcp://host:port` selects TCP for this core node; any other entry uses iroh.
-        let address = match host.strip_prefix("tcp://") {
-            Some(target) => NodeAddress {
-                tcp: resolve(target).await?,
+        let target = host.strip_prefix("tcp://").unwrap_or(host);
+        let addresses = match resolve(target).await {
+            Ok(addresses) if !addresses.is_empty() => addresses,
+            result => {
+                tracing::warn!(host, error = ?result.err(), "core address unavailable; trying other peers");
+                continue;
+            }
+        };
+        let address = if host.starts_with("tcp://") {
+            NodeAddress {
+                tcp: addresses,
                 ..Default::default()
-            },
-            None => NodeAddress {
-                addrs: resolve(host).await?,
+            }
+        } else {
+            NodeAddress {
+                addrs: addresses,
                 ..Default::default()
-            },
+            }
         };
         peers.push(CorePeer {
             public_key: public_key.clone(),
@@ -119,4 +128,37 @@ pub async fn worker_context(
         },
         peers,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn one_failed_resolution_keeps_usable_configured_and_saved_cores() {
+        let root = tempfile::tempdir().unwrap();
+        let key = super::super::NodeKey::generate().public_hex();
+        let settings = Settings::from_lookup(&|name| {
+            (name == "CLUSTER_PEERS")
+                .then(|| format!("{key}@missing-port,{key}@tcp://127.0.0.1:7444"))
+        })
+        .unwrap()
+        .unwrap();
+        let saved = CorePeer {
+            public_key: key.clone(),
+            address: NodeAddress {
+                tcp: vec!["127.0.0.1:7445".parse().unwrap()],
+                ..Default::default()
+            },
+        };
+        std::fs::write(
+            root.path().join("cluster-peer.json"),
+            serde_json::to_vec(&saved).unwrap(),
+        )
+        .unwrap();
+        let (_, peers) = worker_context(root.path(), settings).await.unwrap();
+        assert_eq!(peers.len(), 2);
+        assert_eq!(peers[0].address.tcp[0].port(), 7444);
+        assert_eq!(peers[1].address.tcp[0].port(), 7445);
+    }
 }

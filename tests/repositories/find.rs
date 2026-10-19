@@ -133,7 +133,9 @@ async fn find_contract(pg: bool) {
         "docs/guide-old.txt",
     ] {
         assert!(
-            html.contains(&format!("href=\"/find_owner/public/blob/main/{path}\"")),
+            html.contains(&format!(
+                "href=\"/find_owner/public/blob/refs/heads/main/{path}\""
+            )),
             "{path}: {html}"
         );
     }
@@ -144,11 +146,11 @@ async fn find_contract(pg: bool) {
         .page("/find_owner/public/find/main?q=GUIDE%20md")
         .await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(html.contains("href=\"/find_owner/public/blob/main/docs/Guide.md\""));
+    assert!(html.contains("href=\"/find_owner/public/blob/refs/heads/main/docs/Guide.md\""));
     assert!(html.contains("1 file<"), "{html}");
     assert!(html.contains("Go to file on"), "{html}");
-    assert!(!html.contains("/find_owner/public/blob/main/docs/guide-old.txt"));
-    assert!(!html.contains("/find_owner/public/blob/main/README.md"));
+    assert!(!html.contains("/find_owner/public/blob/refs/heads/main/docs/guide-old.txt"));
+    assert!(!html.contains("/find_owner/public/blob/refs/heads/main/README.md"));
     assert!(html.contains("class=\"repo-find-first\""));
     let (status, html) = anonymous
         .page("/find_owner/public/find/main?q=nothing-here")

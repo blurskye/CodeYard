@@ -15,6 +15,30 @@ pub async fn create_notification(
     pool: &SqlitePool,
     input: NewNotification<'_>,
 ) -> Result<Notification> {
+    use crate::backend::db::notifications::records::NotificationSuppressed;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if input.kind == "user_followed" {
+        let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=?1 AND actor_id=?2 AND kind='user_followed' AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))")
+            .bind(input.user_id).bind(input.actor_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(!recent, NotificationSuppressed);
+    }
+    if matches!(input.kind, "issue_comment" | "mention") {
+        if let Some(comment_id) = input
+            .metadata
+            .get("comment_id")
+            .and_then(serde_json::Value::as_i64)
+        {
+            let comment: Option<i64> = sqlx::query_scalar(
+                "SELECT c.id FROM issue_comments c JOIN issues i ON i.id=c.issue_id
+                 WHERE c.id=?1 AND i.repo_id=?2",
+            )
+            .bind(comment_id)
+            .bind(input.repo_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            anyhow::ensure!(comment.is_some(), NotificationSuppressed);
+        }
+    }
     let notification = sqlx::query_as::<_, Notification>(
         r#"
         INSERT INTO notifications (user_id, actor_id, repo_id, kind, title, body, link, metadata, scope_repository_id)
@@ -30,9 +54,9 @@ pub async fn create_notification(
     .bind(input.body)
     .bind(input.link)
     .bind(serde_json::to_string(input.metadata)?)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
-
+    tx.commit().await?;
     Ok(notification)
 }
 

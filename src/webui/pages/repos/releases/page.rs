@@ -360,6 +360,7 @@ fn form(
             }
             form { method: "post", action: action.clone(), class: "releases-form", id: "release-form",
                 {csrf(&repo.csrf_token)}
+                input { r#type: "hidden", name: "repository_id", value: repo.id.to_string() }
                 div { class: "collaboration-form-fields",
                     if editing.is_some() {
                         p { class: "releases-tag-fixed", {icon("tags")} " Tag " code { "{draft.tag}" } }

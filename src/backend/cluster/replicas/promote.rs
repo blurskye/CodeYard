@@ -64,23 +64,35 @@ pub async fn promote(
         .context("the repository does not exist")?;
     let from = primary.context("the repository has no primary node")?;
     let nodes = db::cluster::list_nodes(pool).await?;
+    let mut members = members_on(&family, from);
     let to = match to {
         Some(node) => node,
         // Only a node that is reporting in can take the repository, so the default skips the
         // others. The transaction checks again, in case a node stops in between.
-        None => db::cluster::list_replicas(pool, repository)
-            .await?
-            .into_iter()
-            .filter(|(id, _)| is_reporting_storage(&nodes, *id))
-            .max_by_key(|(id, applied)| (*applied, Reverse(*id)))
-            .map(|(id, _)| id)
-            .context("no copy of the repository is on a storage node that is reporting in")?,
+        None => {
+            let mut candidates = db::cluster::list_replicas(pool, repository).await?;
+            candidates.sort_by_key(|(id, applied)| (Reverse(*applied), *id));
+            let mut selected = None;
+            for (node, _) in candidates {
+                if is_reporting_storage(&nodes, node)
+                    && (force
+                        || blocking_member(pool, &members, node, false)
+                            .await?
+                            .is_none())
+                {
+                    selected = Some(node);
+                    break;
+                }
+            }
+            selected.context(
+                "no eligible copy of the fork family is on a storage node that is reporting in",
+            )?
+        }
     };
     ensure!(
         is_storage(&nodes, to),
         "that node is not an active storage node"
     );
-    let mut members = members_on(&family, from);
     if force {
         // The operator accepts a split family: a member with no copy on `to` stays on the old
         // primary, to be promoted from its own copy. Without this a primary lost while its
@@ -121,6 +133,14 @@ pub async fn promote(
             "{name} {problem}; {} repositories of its fork family had already moved to the new primary. Run promote for {name} again to move the rest",
             promoted.len()
         );
+    }
+    if !force
+        && db::cluster::list_fork_family(pool, repository)
+            .await?
+            .iter()
+            .any(|(_, primary, _)| *primary == Some(from))
+    {
+        bail!("the fork family changed during promotion; {} repositories had already moved. Run promote again to move the rest", promoted.len());
     }
     Ok(promoted)
 }

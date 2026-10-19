@@ -1,7 +1,7 @@
 //! Code owners on pull requests: the review requests a pull request gets when it opens or its head
 //! moves, and the approvals that a branch rule with `require_code_owner_review` waits for.
 
-use super::reviews::add_review_request;
+use super::reviews::notify_review_request;
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
 use crate::backend::db::models::{PullRequest, Repository};
@@ -9,7 +9,7 @@ use crate::backend::repositories::code_owners::{load_rules, resolve_owners};
 use crate::backend::repositories::store::repo_store;
 
 /// A changed file with owners who can review it. `owners` are the written names that have such a
-/// user, and `writers` their users. The author is left out: nobody approves their own change.
+/// user, and `writers` their users, including the author. Self-review is excluded separately.
 struct OwnedFile {
     owners: Vec<String>,
     writers: Vec<i64>,
@@ -21,7 +21,6 @@ async fn owned_files(
     repository: &Repository,
     base_sha: &str,
     head_sha: &str,
-    author_id: i64,
 ) -> anyhow::Result<Vec<OwnedFile>> {
     let cluster = ci.cluster.as_ref();
     let rules = load_rules(repository, cluster, base_sha).await?;
@@ -31,7 +30,7 @@ async fn owned_files(
     let changed = repo_store(repository, cluster)
         .changed_paths(base_sha, head_sha)
         .await?;
-    let paths = rules.owned_paths(&changed);
+    let paths = rules.owned_paths(&changed)?;
     let names: Vec<&str> = paths
         .iter()
         .flat_map(|(_, owners)| owners.iter().map(String::as_str))
@@ -48,7 +47,6 @@ async fn owned_files(
                     .into_iter()
                     .flatten()
                     .copied()
-                    .filter(|id| *id != author_id)
                     .collect();
                 if !ids.is_empty() {
                     named.push(owner);
@@ -76,16 +74,7 @@ pub async fn request_code_owner_reviews(
     if pull.state != "open" || pull.is_draft {
         return;
     }
-    let files = match owned_files(
-        pool,
-        ci,
-        repository,
-        &pull.base_sha,
-        &pull.head_sha,
-        pull.author_id,
-    )
-    .await
-    {
+    let files = match owned_files(pool, ci, repository, &pull.base_sha, &pull.head_sha).await {
         Ok(files) => files,
         Err(error) => {
             tracing::warn!(repo_id = repository.id, pull_number = pull.number, %error, "code owners unavailable for pull request");
@@ -95,6 +84,7 @@ pub async fn request_code_owner_reviews(
     let mut wanted: Vec<i64> = files
         .iter()
         .flat_map(|file| file.writers.iter().copied())
+        .filter(|id| *id != pull.author_id)
         .collect();
     wanted.sort_unstable();
     wanted.dedup();
@@ -112,6 +102,22 @@ pub async fn request_code_owner_reviews(
             return;
         }
     };
+    let requested = match db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id)
+        .await
+    {
+        Ok(requested) => requested,
+        Err(error) => {
+            tracing::warn!(pull_request_id = pull.id, %error, "review requests unavailable for code owners");
+            return;
+        }
+    };
+    wanted.retain(|id| {
+        !decided.iter().any(|review| review.author_id == *id)
+            && !requested.iter().any(|reviewer| reviewer.id == *id)
+    });
+    if wanted.is_empty() {
+        return;
+    }
     let owner = match db::ci::ci_repository_owner(pool, repository.id).await {
         Ok(Some(owner)) => owner,
         _ => return,
@@ -120,14 +126,19 @@ pub async fn request_code_owner_reviews(
         Ok(Some(requester)) => requester,
         _ => return,
     };
-    for id in wanted {
-        if decided.iter().any(|decision| decision.author_id == id) {
-            continue;
+    let targets = match db::pull_requests::reviews::request_code_owner_reviews(
+        pool, pull, actor_id, &wanted,
+    )
+    .await
+    {
+        Ok(targets) => targets,
+        Err(error) => {
+            tracing::warn!(pull_request_id = pull.id, %error, "could not request code owner reviews");
+            return;
         }
-        let Ok(Some(target)) = db::users::accounts::get_user_by_id(pool, id).await else {
-            continue;
-        };
-        if let Err(error) = add_review_request(
+    };
+    for target in targets {
+        notify_review_request(
             pool,
             ci.notifications(),
             &requester,
@@ -136,15 +147,7 @@ pub async fn request_code_owner_reviews(
             pull,
             &target,
         )
-        .await
-        {
-            tracing::warn!(
-                repo_id = repository.id,
-                pull_number = pull.number,
-                ?error,
-                "could not request a code owner review"
-            );
-        }
+        .await;
     }
 }
 
@@ -159,18 +162,14 @@ pub(super) async fn missing_owner_approvals(
     pull: &PullRequest,
     approvers: &[i64],
 ) -> anyhow::Result<Vec<String>> {
-    let files = owned_files(
-        pool,
-        ci,
-        repository,
-        base_sha,
-        &pull.head_sha,
-        pull.author_id,
-    )
-    .await?;
+    let files = owned_files(pool, ci, repository, base_sha, &pull.head_sha).await?;
     let mut missing: Vec<String> = Vec::new();
     for file in files {
-        if file.writers.iter().any(|id| approvers.contains(id)) {
+        if file
+            .writers
+            .iter()
+            .any(|id| *id != pull.author_id && approvers.contains(id))
+        {
             continue;
         }
         for owner in file.owners {

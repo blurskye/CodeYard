@@ -152,7 +152,7 @@ async fn pull_head_publication_is_retryable_and_rejects_a_stale_expected_ref() {
     let first = f.first.to_string();
     let second = f.second.to_string();
 
-    let prepared = crate::backend::git::repository::prepare_pull_head(path, &first)
+    let prepared = crate::backend::git::repository::prepare_pull_head(path, path, &first)
         .await
         .unwrap();
     crate::backend::git::repository::publish_pull_head(path, 1, &first, None, &prepared)
@@ -164,13 +164,13 @@ async fn pull_head_publication_is_retryable_and_rejects_a_stale_expected_ref() {
         .await
         .unwrap();
 
-    let prepared = crate::backend::git::repository::prepare_pull_head(path, &second)
+    let prepared = crate::backend::git::repository::prepare_pull_head(path, path, &second)
         .await
         .unwrap();
     crate::backend::git::repository::publish_pull_head(path, 1, &second, Some(&first), &prepared)
         .await
         .unwrap();
-    let prepared = crate::backend::git::repository::prepare_pull_head(path, &first)
+    let prepared = crate::backend::git::repository::prepare_pull_head(path, path, &first)
         .await
         .unwrap();
     let error = crate::backend::git::repository::publish_pull_head(
@@ -241,6 +241,7 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
 
     let head = private_head.to_string();
     let prepared = crate::backend::git::repository::prepare_pull_head(
+        std::path::Path::new(base.store.location()),
         std::path::Path::new(source.store.location()),
         &head,
     )
@@ -2377,7 +2378,7 @@ async fn every_ref_change_moves_the_write_version() {
     // An archived repository refuses the change before it counts as a write.
     let before = write_version(&authority).await;
     assert!(
-        db::repositories::records::set_repository_archived(pool, repo_id, true)
+        db::repositories::records::set_repository_archived(pool, actor, repo_id, true)
             .await
             .unwrap()
     );
@@ -2845,13 +2846,12 @@ async fn a_repository_past_the_ref_limit_stays_readable_and_repairable() {
         None,
         Arc::new(NotificationBroadcaster::new(pool)),
     );
-    let (owner, repo) = ("store_actor", "store-tests");
-    let refused = delete_branch(pool, None, &ci, actor, owner, repo, "main").await;
+    let refused = delete_branch(pool, None, &ci, actor, repo_id, "main").await;
     assert!(matches!(
         refused,
         Err(RefError::Invalid("Cannot delete the default branch"))
     ));
-    delete_branch(pool, None, &ci, actor, owner, repo, "topic-1")
+    delete_branch(pool, None, &ci, actor, repo_id, "topic-1")
         .await
         .unwrap();
     assert_eq!(f.store.refs().await.unwrap().len(), total - 1);

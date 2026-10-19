@@ -107,14 +107,12 @@ fn draft_of(hook: &Webhook) -> HookDraft {
 }
 
 async fn hook_row(pool: &DbPool, place: &Place<'_>, hook: &Webhook) -> Result<HookRow, HookError> {
-    let last = hooks::list_deliveries(pool, hook.id)
+    let last = hooks::latest_delivery_status(pool, hook.id)
         .await
-        .map_err(|_| HookError::Unavailable)?
-        .into_iter()
-        .next();
+        .map_err(|_| HookError::Unavailable)?;
     let last = match last {
         None => "No deliveries yet".to_owned(),
-        Some(delivery) => match delivery.status_code {
+        Some(status_code) => match status_code {
             Some(code) => format!("Last delivery {code}"),
             None => "Last delivery failed".to_owned(),
         },
@@ -143,7 +141,7 @@ async fn detail(
     hook: &Webhook,
     query: &HashMap<String, String>,
 ) -> Result<HookDetail, HookError> {
-    let recorded = hooks::list_deliveries(pool, hook.id)
+    let recorded = hooks::list_delivery_summaries(pool, hook.id)
         .await
         .map_err(|_| HookError::Unavailable)?;
     let deliveries = recorded
@@ -164,14 +162,14 @@ async fn detail(
         })
         .collect();
     let open = match query.get("delivery").and_then(|id| id.parse::<i64>().ok()) {
-        Some(id) => recorded
-            .iter()
-            .find(|delivery| delivery.id == id)
+        Some(id) => hooks::get_delivery(pool, hook.id, id)
+            .await
+            .map_err(|_| HookError::Unavailable)?
             .map(|delivery| DeliveryDetail {
                 id: delivery.id,
                 guid: delivery.guid.clone(),
-                summary: format!("{} · {}", status_text(delivery), label(delivery)),
-                status: status_text(delivery),
+                summary: format!("{} · {}", status_text(&delivery), label(&delivery)),
+                status: status_text(&delivery),
                 error: delivery.error.clone().unwrap_or_default(),
                 request_headers: delivery.request_headers.clone(),
                 request_body: delivery.request_body.clone(),

@@ -467,6 +467,7 @@ mod tests {
 
     fn milestone(number: i32, title: &str, state: &str) -> Milestone {
         Milestone {
+            id: i64::from(number),
             number,
             title: title.into(),
             description: None,

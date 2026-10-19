@@ -481,7 +481,7 @@ pub fn settings_tab(raw: Option<&str>) -> &'static str {
 }
 
 /// Two-factor sign-in: the state, the one-time recovery codes, and the forms that change it. Each
-/// change asks for the current password, except the setup confirmation, which asks for a code.
+/// change asks for the current password; setup also asks for a code.
 fn two_factor_section(two_factor: &TwoFactor, token: &str) -> Element {
     rsx! {
         section { class: "identity-settings-section", aria_labelledby: "settings-two-factor-title",
@@ -529,6 +529,7 @@ fn two_factor_section(two_factor: &TwoFactor, token: &str) -> Element {
                 form { method: "post", action: "/settings/two-factor/enable", class: "identity-form",
                     {csrf(token)}
                     input { r#type: "hidden", name: "setup", value: setup.token.clone() }
+                    {password_field("current_password", "Current password", false)}
                     {text_field("code", "Code from your app", String::new(), "text", true, 16)}
                     div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Turn on" } }
                 }

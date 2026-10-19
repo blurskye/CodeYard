@@ -1,6 +1,6 @@
 use crate::backend::ci::CiRuns;
 use crate::backend::db::models::{AccessLevel, Repository, User};
-use crate::backend::db::repositories::{access::get_user_repo_access, records::get_repository};
+use crate::backend::db::repositories::records::get_repository;
 use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
 use crate::backend::db::DbPool;
 use crate::backend::git::repository::process as git_process;
@@ -131,7 +131,6 @@ impl GitSshHandler {
             let _ = session.channel_failure(channel);
             return Ok(None);
         };
-        let access = get_user_repo_access(&self.pool, user.id, repo.id).await?;
         let required_access = if write {
             AccessLevel::Write
         } else {
@@ -142,11 +141,18 @@ impl GitSshHandler {
             .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?;
         let current_key =
             crate::backend::db::users::ssh_keys::get_user_by_ssh_key_id(&self.pool, key_id).await?;
-        let current = current_key.is_some_and(|identity| {
+        let current = current_key.as_ref().is_some_and(|identity| {
             identity.user.id == user.id
                 && !identity.user.is_banned
                 && !identity.user.must_change_password
         });
+        let access = match current_key {
+            Some(identity) => {
+                crate::backend::repositories::access::user_access(&self.pool, &identity.user, repo)
+                    .await?
+            }
+            None => AccessLevel::None,
+        };
         if !current || access < required_access || (write && repo.is_archived) {
             let msg = Self::repository_denial_message(Some((repo.is_private, access)), write);
             let _ = session.data(channel, Bytes::from(msg));

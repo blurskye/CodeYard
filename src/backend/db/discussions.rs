@@ -169,6 +169,8 @@ pub(crate) const SHOWN_PR_COMMENT: &str =
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ListFilter<'a> {
     pub state: Option<&'a str>,
+    /// Include merged pull requests in the closed milestone tab.
+    pub include_merged: bool,
     pub search: Option<&'a str>,
     pub author_id: Option<i64>,
     pub assignee: Pick,

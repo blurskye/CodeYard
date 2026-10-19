@@ -458,10 +458,12 @@ async fn session_enrollment_contract(pg: bool) {
         "old-hash",
         "new-hash",
         false,
-        true
+        true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     assert!(ssh_keys::get_user_by_ssh_key_id(f.pool(), key.id)
         .await
         .unwrap()

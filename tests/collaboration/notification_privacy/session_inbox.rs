@@ -25,7 +25,7 @@ fn actions(notification_id: i64) -> [Action; 3] {
     ]
 }
 
-async fn session(pool: &db::DbPool, user: i64) -> String {
+pub(super) async fn session(pool: &db::DbPool, user: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string().repeat(2);
     db::users::sessions::create_session(
         pool,
@@ -1297,15 +1297,27 @@ async fn done_marks_are_announced(pg: bool) {
     let pool = fixture.pool();
     let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(pool);
     let mut events = broadcaster.subscribe();
-    let announced = |events: &mut tokio::sync::broadcast::Receiver<
-        codeyard::backend::notifications::NotificationEvent,
-    >| match events.try_recv().unwrap() {
-        codeyard::backend::notifications::NotificationEvent::UnreadCount {
-            user_id,
-            unread_count,
-        } => (user_id, unread_count),
-        other => panic!("expected an unread count, got {other:?}"),
-    };
+    async fn announced(
+        pool: &db::DbPool,
+        session: &str,
+        user: i64,
+        events: &mut tokio::sync::broadcast::Receiver<
+            codeyard::backend::notifications::NotificationEvent,
+        >,
+    ) -> (i64, i64) {
+        let hint = events.try_recv().unwrap();
+        match codeyard::backend::notifications::current_event(pool, session, user, &hint)
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            codeyard::backend::notifications::NotificationEvent::UnreadCount {
+                user_id,
+                unread_count,
+            } => (user_id, unread_count),
+            other => panic!("expected an unread count, got {other:?}"),
+        }
+    }
 
     let done_first = Action::Done {
         notification_id: first,
@@ -1314,7 +1326,10 @@ async fn done_marks_are_announced(pg: bool) {
     codeyard::backend::notifications::inbox::inbox(pool, &broadcaster, &original, user, done_first)
         .await
         .unwrap();
-    assert_eq!(announced(&mut events), (user, 1));
+    assert_eq!(
+        announced(pool, &original, user, &mut events).await,
+        (user, 1)
+    );
 
     let again = Action::Done {
         notification_id: first,
@@ -1334,7 +1349,10 @@ async fn done_marks_are_announced(pg: bool) {
     codeyard::backend::notifications::inbox::inbox(pool, &broadcaster, &original, user, all)
         .await
         .unwrap();
-    assert_eq!(announced(&mut events), (user, 0));
+    assert_eq!(
+        announced(pool, &original, user, &mut events).await,
+        (user, 0)
+    );
     fixture.close().await;
 }
 

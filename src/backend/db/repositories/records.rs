@@ -39,6 +39,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_user
     crate::backend::db::sqlite::repositories::records::list_user_repositories,
     fn list_user_repositories(pool: &DbPool, user_id: i64) -> Result<Vec<Repository>>);
 
+native_operation!(crate::backend::db::postgres::repositories::records::list_profile_repositories,
+    crate::backend::db::sqlite::repositories::records::list_profile_repositories,
+    fn list_profile_repositories(pool: &DbPool, user_id: i64, include_private: bool, offset: i64) -> Result<Vec<Repository>>);
+
 native_operation!(crate::backend::db::postgres::repositories::records::count_user_repositories,
     crate::backend::db::sqlite::repositories::records::count_user_repositories,
     fn count_user_repositories(pool: &DbPool, user_id: i64, include_private: bool) -> Result<i64>);
@@ -186,7 +190,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_repos
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_archived,
     crate::backend::db::sqlite::repositories::records::set_repository_archived,
-    fn set_repository_archived(pool: &DbPool, repo_id: i64, archived: bool) -> Result<bool>);
+    fn set_repository_archived(pool: &DbPool, actor_id: i64, repo_id: i64, archived: bool) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_default_branch_and_size,
     crate::backend::db::sqlite::repositories::records::update_repo_default_branch_and_size,

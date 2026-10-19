@@ -11,6 +11,7 @@ use iroh::{
 };
 pub use repository::{authorize_operation, repository_uuid};
 use std::{
+    collections::HashMap,
     future::Future,
     sync::{Arc, Mutex},
 };
@@ -87,6 +88,7 @@ impl SessionGate {
 pub struct RpcHandler {
     context: NodeContext,
     slots: Arc<Semaphore>,
+    headers: Arc<Mutex<HashMap<iroh::PublicKey, Arc<Semaphore>>>>,
     sessions: SessionGate,
 }
 
@@ -95,6 +97,7 @@ impl RpcHandler {
         Self {
             context,
             slots: Arc::new(Semaphore::new(16)),
+            headers: Default::default(),
             sessions: SessionGate::default(),
         }
     }
@@ -104,13 +107,30 @@ impl RpcHandler {
         self.sessions.clone()
     }
 
+    fn header_slot(&self, peer: iroh::PublicKey) -> Result<tokio::sync::OwnedSemaphorePermit> {
+        let slots = {
+            let mut headers = self
+                .headers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            headers.retain(|_, slots| Arc::strong_count(slots) > 1);
+            headers
+                .entry(peer)
+                .or_insert_with(|| Arc::new(Semaphore::new(4)))
+                .clone()
+        };
+        Ok(slots.try_acquire_owned()?)
+    }
+
     /// Serves one request stream. An error ends the connection the stream came on.
     pub(crate) async fn serve_link(&self, mut link: Link) -> Result<()> {
-        let slot = tokio::time::timeout(TIMEOUT, self.slots.acquire()).await??;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        let slot = self.slots.try_acquire()?;
         let peer = link.peer;
+        let header_slot = self.header_slot(peer)?;
         // Membership is checked before reading headers, also on reused connections.
         // A bad request gets an error reply; an oversized or broken frame ends the connection.
-        let request = tokio::time::timeout(TIMEOUT, async {
+        let request = tokio::time::timeout_at(deadline, async {
             if !transport::active_member(self.context.database()?, peer)
                 .await
                 .map_err(|_| unavailable())?
@@ -124,6 +144,7 @@ impl RpcHandler {
             )
         })
         .await??;
+        drop(header_slot);
         let request = match request {
             Ok(request) => request,
             Err(error) => {
@@ -138,19 +159,22 @@ impl RpcHandler {
             drop(slot);
             // A session that arrives after shutdown began is refused. Its connection closes
             // unanswered, which the peer reports as unavailable.
-            let Some(session) = self.sessions.admit(self.serve_session(request, link)) else {
+            let Some(session) = self
+                .sessions
+                .admit(self.serve_session(request, link, deadline))
+            else {
                 return Ok(());
             };
             return session.await;
         }
         let body_limit = wire::operation_body_limit(&request.operation);
-        if body_limit > 0 {
-            if let Err(error) = self.authorize_body_request(&request, peer).await {
-                refuse(&mut link, error).await?;
-                return Ok(());
+        tokio::time::timeout_at(deadline, async {
+            if body_limit > 0 {
+                if let Err(error) = self.authorize_body_request(&request, peer).await {
+                    refuse(&mut link, error).await?;
+                    return Ok(());
+                }
             }
-        }
-        tokio::time::timeout(TIMEOUT, async {
             let body = read_frame(&mut link.reader, body_limit).await?;
             // This second pass is intentionally live: authority can change while an
             // allowed editor upload is still arriving.
@@ -187,6 +211,9 @@ impl ProtocolHandler for RpcHandler {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod regression_tests;
 
 #[cfg(test)]
 mod tests {

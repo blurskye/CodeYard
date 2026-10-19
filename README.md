@@ -152,8 +152,21 @@ argument.
 server image is built from [Containerfile](Containerfile),
 which packages a release prepared in `dist/release/` (see the top of that file);
 `scripts/release.sh` builds the release and the image. Set `PUBLIC_URL`,
-`SECRETS_MASTER_KEY`, `S3_ACCESS_KEY` and `S3_SECRET_KEY` in `.env` before starting it.
-The server creates the bucket on first start.
+`SECRETS_MASTER_KEY`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `DATABASE_URL` and
+`S3_PUBLIC_ENDPOINT` in `.env` before starting it. Set PostgreSQL's `POSTGRES_USER`,
+`POSTGRES_PASSWORD` and `POSTGRES_DB` as needed, and supply the matching `DATABASE_URL`
+using hostname `postgres` and percent-encoded credentials (literal password `p%40ss`
+becomes `p%2540ss` in the URL). The server creates the bucket on first start.
+
+For production, use separate HTTPS hostnames for the forge and object API, such as
+`PUBLIC_URL=https://forge.example.com` and `S3_PUBLIC_ENDPOINT=https://objects.example.net`.
+Proxy the latter to RustFS's API port (`RUSTFS_API_PORT`, default 11002), not its console.
+The object hostname must be outside the session cookie scope and reachable by browsers;
+`http://objects.localhost:11002` is only suitable for local development.
+
+Container HTTP and SSH listeners stay on ports 3000 and 2222. Change the published host
+ports with `API_HTTP_PORT` and `SSH_PORT` (and bind interfaces with `API_HTTP_BIND` and
+`SSH_BIND`), not `HTTP_ADDR` or `SSH_ADDR`.
 
 The file mounts the Podman socket that runs CI jobs (`CI_PODMAN_SOCKET`, default
 `/run/user/1000/podman/podman.sock`), so the socket must exist even when you use

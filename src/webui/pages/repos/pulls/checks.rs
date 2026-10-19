@@ -12,7 +12,20 @@ use dioxus::prelude::*;
 
 /// The Checks tab: the workflow runs on the head commit of a pull request. Each run is the Actions
 /// page's run row, linked to the run's logs there.
-pub fn checks_page(repo: &Repository, item: &Item, runs: &[Run]) -> Element {
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CheckStatus {
+    pub context: String,
+    pub state: String,
+    pub description: Option<String>,
+    pub target_url: Option<String>,
+}
+
+pub fn checks_page(
+    repo: &Repository,
+    item: &Item,
+    runs: &[Run],
+    statuses: &[CheckStatus],
+) -> Element {
     let url = format!("{}/{}", repo.family_url(Kind::Pull), item.number);
     let actions_url = format!("{}/actions", repo.url());
     // A workflow file goes on the head branch, because the checks run on that branch's commit. Only
@@ -31,7 +44,7 @@ pub fn checks_page(repo: &Repository, item: &Item, runs: &[Run]) -> Element {
                     {pull_summary(repo, item, Kind::Pull)}
                     {pull_tabs(&url, item, PullTab::Checks)}
                 }
-                if runs.is_empty() {
+                if runs.is_empty() && statuses.is_empty() {
                     p { class: "collaboration-panel collaboration-muted collaboration-checks-empty",
                         "No workflow runs have started on this commit."
                         if let Some(href) = &add_workflow {
@@ -39,7 +52,8 @@ pub fn checks_page(repo: &Repository, item: &Item, runs: &[Run]) -> Element {
                             NavLink { href: href.clone(), "Add a workflow file" }
                         }
                     }
-                } else {
+                }
+                if !runs.is_empty() {
                     // The Actions page scopes its run row styles to this class.
                     div { class: "actions-page",
                         section { class: "actions-runs", aria_label: "Workflow runs on this commit",
@@ -47,6 +61,23 @@ pub fn checks_page(repo: &Repository, item: &Item, runs: &[Run]) -> Element {
                                 for run in runs {
                                     li { key: "{run.id}",
                                         {actions::run_row(run, actions::workflow_name(&run.workflow_path), format!("{actions_url}?job={}&view=logs", run.id), false)}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !statuses.is_empty() {
+                    section { class: "collaboration-panel", aria_label: "External checks on this commit",
+                        h3 { "External checks" }
+                        ul {
+                            for status in statuses {
+                                li {
+                                    strong { "{status.context}" }
+                                    " · {status.state}"
+                                    if let Some(description) = &status.description { p { "{description}" } }
+                                    if let Some(href) = status.target_url.as_ref().filter(|href| url::Url::parse(href).is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host_str().is_some())) {
+                                        a { href: href.clone(), rel: "noopener noreferrer", "Details" }
                                     }
                                 }
                             }

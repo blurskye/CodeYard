@@ -1,4 +1,4 @@
-use crate::backend::db::models::{Release, ReleaseAsset, ReleaseRow};
+use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
 use crate::backend::db::releases::{NewReleaseAsset, ReleaseFields, ReleaseRefusal};
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
@@ -139,7 +139,7 @@ pub async fn delete_release(
     actor_id: i64,
     repo_id: i64,
     release_id: i64,
-) -> Result<Vec<Uuid>> {
+) -> Result<Vec<File>> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     release_in_repo(&mut tx, repo_id, release_id).await?;
     let files: Vec<Uuid> =
@@ -151,8 +151,14 @@ pub async fn delete_release(
         .bind(release_id)
         .execute(&mut *tx)
         .await?;
+    let mut removed = Vec::new();
+    for id in files {
+        if let Some(file) = delete_asset_file(&mut tx, id).await? {
+            removed.push(file);
+        }
+    }
     tx.commit().await?;
-    Ok(files)
+    Ok(removed)
 }
 
 pub async fn add_release_asset(
@@ -171,6 +177,16 @@ pub async fn add_release_asset(
             .fetch_optional(&mut *tx)
             .await?;
     anyhow::ensure!(taken.is_none(), ReleaseRefusal::AssetNameTaken);
+    let activated = sqlx::query(
+        "UPDATE files SET is_active=TRUE, upload_expires_at=NULL
+         WHERE id=?1 AND user_id=?2 AND reason='release_asset' AND NOT is_active
+           AND confirmed_at IS NOT NULL AND upload_expires_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
+    )
+    .bind(asset.file_id)
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+    anyhow::ensure!(activated.rows_affected() == 1, ReleaseRefusal::NotFound);
     let asset = sqlx::query_as::<_, ReleaseAsset>(&format!(
         "INSERT INTO release_assets (release_id, file_id, name, label, content_type, size)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING {ASSET_COLUMNS}"
@@ -193,7 +209,7 @@ pub async fn delete_release_asset(
     repo_id: i64,
     release_id: i64,
     asset_id: i64,
-) -> Result<Uuid> {
+) -> Result<Option<File>> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     release_in_repo(&mut tx, repo_id, release_id).await?;
     let file: Option<Uuid> = sqlx::query_scalar(
@@ -204,7 +220,26 @@ pub async fn delete_release_asset(
     .fetch_optional(&mut *tx)
     .await?;
     let file = file.ok_or(ReleaseRefusal::NotFound)?;
+    let removed = delete_asset_file(&mut tx, file).await?;
     tx.commit().await?;
+    Ok(removed)
+}
+
+async fn delete_asset_file(tx: &mut Transaction<'_, Sqlite>, id: Uuid) -> Result<Option<File>> {
+    let file = sqlx::query_as::<_, File>(
+        "SELECT * FROM files WHERE id=?1 AND reason='release_asset'
+         AND NOT EXISTS(SELECT 1 FROM release_assets WHERE file_id=?1)",
+    )
+    .bind(id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(file) = &file {
+        super::files::queue_deletion(tx, file).await?;
+        sqlx::query("DELETE FROM files WHERE id=?1")
+            .bind(id)
+            .execute(&mut **tx)
+            .await?;
+    }
     Ok(file)
 }
 

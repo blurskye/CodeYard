@@ -15,6 +15,51 @@ use crate::webui::pages::repos::{self, ref_path::file_url};
 use crate::webui::pages::repos::{labels, milestones};
 use dioxus::prelude::*;
 
+#[test]
+fn refused_orphaned_replies_keep_their_text_in_a_recovery_composer() {
+    let draft = LineComment {
+        in_reply_to: Some(999),
+        body: "keep this orphaned reply".into(),
+        ..Default::default()
+    };
+    let html = dioxus_ssr::render_element(diff_page(
+        &repository(),
+        &item(),
+        &Diff::default(),
+        &[],
+        false,
+        Some(&draft),
+        None,
+        0,
+        Some("Parent comment not found"),
+        &References::default(),
+        false,
+    ));
+    assert!(html.contains("keep this orphaned reply"));
+    assert!(html.contains("name=\"in_reply_to\" value=\"999\""));
+}
+
+#[test]
+fn label_url_changes_do_not_copy_the_available_catalogues() {
+    let filters = ListFilters {
+        labels: vec![Label {
+            id: 1,
+            name: "bug".into(),
+            color: "ff0000".into(),
+            description: "large description".repeat(100),
+        }],
+        authors: vec!["alice".into()],
+        assignees: vec!["bob".into()],
+        selected_labels: vec!["chosen".into()],
+        author: "alice".into(),
+        ..Default::default()
+    };
+    let next = super::list::toggle_label(&filters, "bug");
+    assert!(next.labels.is_empty() && next.authors.is_empty() && next.assignees.is_empty());
+    assert_eq!(next.selected_labels, vec!["chosen", "bug"]);
+    assert_eq!(next.author, "alice");
+}
+
 /// The list page without filter choices, which most of these tests do not render.
 fn list(
     repo: &Repository,
@@ -305,6 +350,7 @@ fn page_modes() -> Vec<Page> {
         repository: repository_at(Kind::Pull, "/7/checks"),
         item: item(),
         runs: vec![run_fixture("<script>run</script>", "success")],
+        statuses: Vec::new(),
     });
     let hostile = "<script>alert(1)</script>";
     modes.push(Page::Milestones {
@@ -325,6 +371,8 @@ fn page_modes() -> Vec<Page> {
         usage: Default::default(),
         query: String::new(),
         sort: String::new(),
+        page_number: 1,
+        has_next: false,
     });
     modes.push(Page::MilestoneNew {
         repository: repository(),
@@ -384,7 +432,17 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     usage,
                     query,
                     sort,
-                } => labels::list(repository, items, query, sort, usage),
+                    page_number,
+                    has_next,
+                } => labels::list(
+                    repository,
+                    items,
+                    query,
+                    sort,
+                    usage,
+                    *page_number,
+                    *has_next,
+                ),
                 Page::MilestoneNew {
                     repository,
                     draft,
@@ -513,7 +571,8 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     repository,
                     item,
                     runs,
-                } => checks_page(repository, item, runs),
+                    statuses,
+                } => checks_page(repository, item, runs, statuses),
             };
             let html = dioxus_ssr::render_element(render(decoded));
             assert_eq!(html, dioxus_ssr::render_element(plain));
@@ -1934,6 +1993,8 @@ fn review(id: i64, state: &str, created: &str) -> Review {
         stale: false,
         dismissed_reason: None,
         comments: Vec::new(),
+        comments_more: None,
+        comments_start: None,
         reactions: Vec::new(),
     }
 }
@@ -2108,7 +2169,7 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
         ))
     });
     assert!(
-        html.contains("action=\"/alice/repo/issues/7/comments/31/edit\""),
+        html.contains("action=\"/alice/repo/issues/7/comments/31/edit?page=1\""),
         "{html}"
     );
     assert!(
@@ -2686,6 +2747,7 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             repository: repository_at(Kind::Pull, "/7/checks"),
             item: shown.clone(),
             runs: vec![run_fixture("real-run", "success")],
+            statuses: Vec::new(),
         }));
         assert_eq!(html.matches("class=\"actions-run-row\"").count(), 1);
         assert!(html.contains("/alice/repo/actions?job=real-run"));
@@ -2694,20 +2756,38 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             repository: repository_at(Kind::Pull, "/7/checks"),
             item: shown,
             runs: Vec::new(),
+            statuses: Vec::new(),
         }));
         assert!(empty.contains("No workflow runs have started on this commit."));
         assert!(!empty.contains("actions-run-row"));
         // A writer can add the workflow file on the head branch, where the checks run.
-        assert!(empty.contains("href=\"/alice/repo/new/topic/.github/workflows\""));
+        assert!(empty.contains("href=\"/alice/repo/new/refs/heads/topic/.github/workflows\""));
         let mut reader = repository_at(Kind::Pull, "/7/checks");
         reader.can_write = false;
         let read_only = dioxus_ssr::render_element(render(Page::PullChecks {
             repository: reader,
             item: item(),
             runs: Vec::new(),
+            statuses: Vec::new(),
         }));
         assert!(read_only.contains("No workflow runs have started on this commit."));
         assert!(!read_only.contains(".github/workflows"));
+        let external = dioxus_ssr::render_element(render(Page::PullChecks {
+            repository: repository_at(Kind::Pull, "/7/checks"),
+            item: item(),
+            runs: Vec::new(),
+            statuses: vec![crate::webui::pages::repos::pulls::CheckStatus {
+                context: "external/compiler".into(),
+                state: "failure".into(),
+                description: Some("<script>blocked</script>".into()),
+                target_url: Some("javascript:alert(1)".into()),
+            }],
+        }));
+        assert!(external.contains("external/compiler"));
+        assert!(external.contains("failure"));
+        assert!(!external.contains("javascript:"));
+        assert!(!external.contains("<script>blocked"));
+        assert!(!external.contains("No workflow runs have started"));
     });
 }
 
@@ -2905,6 +2985,8 @@ fn files_list_each_file_and_offer_viewed_marks_to_signed_in_viewers() {
         let marks = Viewed {
             csrf: "csrf-sentinel".into(),
             action: "/acme/widgets/pulls/7/viewed".into(),
+            head: "head-sentinel".into(),
+            base: "base-sentinel".into(),
             paths: ["docs/new.md".to_string()].into_iter().collect(),
         };
         let diff = Diff {
@@ -3134,6 +3216,7 @@ fn files_changed_puts_its_tree_behind_a_toggle_and_draws_no_script_only_controls
 
 fn milestone(number: i32, title: &str, open: i64, closed: i64) -> Milestone {
     Milestone {
+        id: i64::from(number),
         number,
         title: title.into(),
         description: Some("Ship it".into()),
@@ -3237,6 +3320,8 @@ fn new_label_opens_a_panel_under_its_trigger_with_a_cancel_link() {
             "",
             "name",
             &Default::default(),
+            1,
+            false,
         ));
         assert!(
             html.contains("native-menu collaboration-label-new"),
@@ -3264,6 +3349,8 @@ fn labels_sort_by_most_used_and_count_the_items_on_each_label() {
             "",
             "most-used",
             &usage,
+            1,
+            false,
         ));
         assert!(html.contains("2 labels"), "{html}");
         assert!(html.contains("3 issues and pull requests"), "{html}");
@@ -3288,6 +3375,8 @@ fn label_delete_asks_in_a_centred_dialog_with_cancel() {
             "",
             "name",
             &Default::default(),
+            1,
+            false,
         ));
         assert!(
             html.contains("aria-label=\"Delete label wontfix\""),
@@ -3630,6 +3719,7 @@ fn new_issue_offers_assignees_labels_and_a_milestone_to_writers_only() {
             description: String::new(),
         }],
         milestones: vec![Milestone {
+            id: 1,
             number: 1,
             title: "v1".into(),
             description: None,

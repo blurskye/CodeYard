@@ -197,6 +197,67 @@ async fn languages_contract(pool: &db::DbPool) {
 }
 
 #[tokio::test]
+async fn first_language_reader_retries_when_the_default_changes_during_publication() {
+    let fixture = native::NativeDatabase::new().await;
+    let owner = db::users::accounts::create_user(&fixture.pool, "language_race", None)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let disk = root.path().join("race.git");
+    let record = db::repositories::records::create_repository(
+        &fixture.pool,
+        owner.id,
+        "race",
+        None,
+        false,
+        disk.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let git = git2::Repository::init_bare(&disk).unwrap();
+    let signature = git2::Signature::now("test", "test@example.invalid").unwrap();
+    for (branch, name) in [("main", "lib.rs"), ("topic", "app.py")] {
+        let mut tree = git.treebuilder(None).unwrap();
+        tree.insert(name, git.blob(b"some source\n").unwrap(), 0o100644)
+            .unwrap();
+        git.commit(
+            Some(&format!("refs/heads/{branch}")),
+            &signature,
+            &signature,
+            "source",
+            &git.find_tree(tree.write().unwrap()).unwrap(),
+            &[],
+        )
+        .unwrap();
+    }
+    git.set_head("refs/heads/main").unwrap();
+    let tx = fixture.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let pool = fixture.pool.clone();
+    let store = codeyard::backend::repositories::store::repo_store(&record, None);
+    let task = tokio::spawn(async move {
+        codeyard::backend::repositories::languages::compute_and_store(
+            &pool, &store, record.id, "main",
+        )
+        .await
+        .unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !task.is_finished(),
+        "publication waits for the database writer"
+    );
+    git.set_head("refs/heads/topic").unwrap();
+    tx.commit().await.unwrap();
+    let languages = task.await.unwrap();
+    assert_eq!(languages[0].language, "Python");
+    let stored = db::repository_stats::get_repo_languages(&fixture.pool, record.id)
+        .await
+        .unwrap();
+    assert_eq!(stored[0].language, "Python");
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn sqlite_repository_languages_from_git() {
     let fixture = native::NativeDatabase::new().await;
     languages_contract(&fixture.pool).await;

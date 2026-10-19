@@ -166,7 +166,17 @@ pub fn commits(
         href: format!("{}{}", history_url(&base, name, path), filter_query(filter)),
     };
     let branch_options: Vec<RefOption> = branches.iter().map(&option).collect();
-    let tag_options: Vec<RefOption> = tags.iter().map(&option).collect();
+    let tag_options: Vec<RefOption> = tags
+        .iter()
+        .map(|name| RefOption {
+            name: name.clone(),
+            href: format!(
+                "{}{}",
+                history_url(&base, &format!("refs/tags/{name}"), path),
+                filter_query(filter)
+            ),
+        })
+        .collect();
     let heading = if path.is_empty() {
         "Commits".to_owned()
     } else {
@@ -376,7 +386,7 @@ pub fn commit_detail(
                     if !branches.is_empty() || !tags.is_empty() {
                         div { class: "repo-commit-refs", "aria-label": "Branches and tags at this commit",
                             for name in branches.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: file_url(&base, "tree", name, ""), {icon("branches")} "{name}" } }
-                            for name in tags.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: file_url(&base, "tree", name, ""), {icon("tags")} "{name}" } }
+                            for name in tags.iter() { NavLink { class: "repo-ref-pill".to_owned(), href: file_url(&base, "tree", &format!("refs/tags/{name}"), ""), {icon("tags")} "{name}" } }
                         }
                     }
                 }

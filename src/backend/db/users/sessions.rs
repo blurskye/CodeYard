@@ -70,17 +70,60 @@ native_operation!(crate::backend::db::postgres::users::sessions::get_browser_ses
     crate::backend::db::sqlite::users::sessions::get_browser_session,
     fn get_browser_session(pool: &DbPool, id: &str) -> Result<Option<BrowserSession>>);
 
-native_operation!(crate::backend::db::postgres::users::sessions::rotate_authenticated_session,
-    crate::backend::db::sqlite::users::sessions::rotate_authenticated_session,
-    fn rotate_authenticated_session(
+/// The proof used to issue a session. Recovery codes are consumed with the session insert.
+#[derive(Clone, Copy)]
+pub enum SessionCredential<'a> {
+    Password(&'a str),
+    SecondFactor {
+        password: &'a str,
+        recovery_hash: Option<&'a str>,
+    },
+    OAuth,
+}
+
+impl<'a> From<Option<&'a str>> for SessionCredential<'a> {
+    fn from(password: Option<&'a str>) -> Self {
+        match password {
+            Some(password) => Self::Password(password),
+            None => Self::OAuth,
+        }
+    }
+}
+
+impl<'a> SessionCredential<'a> {
+    pub(crate) fn password(self) -> Option<&'a str> {
+        match self {
+            Self::Password(password) | Self::SecondFactor { password, .. } => Some(password),
+            Self::OAuth => None,
+        }
+    }
+}
+
+pub async fn rotate_authenticated_session<'a>(
     pool: &DbPool,
     old: Option<&str>,
     fresh: &str,
     user_id: i64,
-    expected_password: Option<&str>,
+    credential: impl Into<SessionCredential<'a>>,
     user_agent: Option<&str>,
     expires_at: DateTime<Utc>,
-) -> Result<Option<BrowserSession>>);
+) -> Result<Option<BrowserSession>> {
+    let credential = credential.into();
+    match pool {
+        DbPool::Postgres(pool) => {
+            crate::backend::db::postgres::users::sessions::rotate_authenticated_session(
+                pool, old, fresh, user_id, credential, user_agent, expires_at,
+            )
+            .await
+        }
+        DbPool::Sqlite(pool) => {
+            crate::backend::db::sqlite::users::sessions::rotate_authenticated_session(
+                pool, old, fresh, user_id, credential, user_agent, expires_at,
+            )
+            .await
+        }
+    }
+}
 
 // The account's sessions that have not expired.
 native_operation!(crate::backend::db::postgres::users::sessions::list_user_sessions,

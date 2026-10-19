@@ -42,6 +42,10 @@ pub struct ActionsPage {
     pub selected: Option<SelectedRun>,
     pub dispatch_branch: String,
     pub can_dispatch: bool,
+    #[serde(default)]
+    pub can_manage_runs: bool,
+    #[serde(default)]
+    pub workflow_warning: Option<String>,
     pub run_limit: usize,
     pub log_limit: usize,
 }
@@ -390,13 +394,18 @@ pub fn actions_page(model: ActionsPage) -> Element {
         events.insert(model.value("event"));
     }
     // A repository with no workflows shows the heading and the get-started panel only.
-    let needs_setup = model.workflows.is_empty() && model.repository.is_some();
+    let needs_setup = model.workflows.is_empty()
+        && model.repository.is_some()
+        && model.workflow_warning.is_none();
     // The Run workflow menu only appears when a workflow can be started by hand.
     let can_run =
         model.can_dispatch && model.workflows.iter().any(|workflow| workflow.dispatchable);
     // The fetched runs are capped at run_limit, so only a full page can have older runs behind it.
     let body = rsx! {
         div { class: "actions-page", "aria-label": model.title.clone(),
+            if let Some(warning) = &model.workflow_warning {
+                p { role: "alert", "{warning}" }
+            }
             if let Some(selected) = &model.selected {
                 {selected_run(&model, selected)}
             } else {

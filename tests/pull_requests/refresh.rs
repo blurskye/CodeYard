@@ -101,7 +101,11 @@ async fn contract(pg: bool) {
         let (status, page) = alice
             .form(
                 "/alice/proj/_forms/create-branch",
-                &[("name", alias), ("sha", main0.as_str())],
+                &[
+                    ("repository_id", &repository.id.to_string()),
+                    ("name", alias),
+                    ("sha", main0.as_str()),
+                ],
             )
             .await;
         assert_eq!(
@@ -124,7 +128,11 @@ async fn contract(pg: bool) {
         let (status, page) = alice
             .form(
                 "/alice/proj/_forms/delete-branch",
-                &[("name", alias), ("confirm", "yes")],
+                &[
+                    ("repository_id", &repository.id.to_string()),
+                    ("name", alias),
+                    ("confirm", "yes"),
+                ],
             )
             .await;
         assert_eq!(
@@ -149,17 +157,37 @@ async fn contract(pg: bool) {
             StatusCode::NO_CONTENT,
         )
         .await;
+    let stale = alice
+        .form_reply(
+            "/alice/proj/_forms/create-branch",
+            &[
+                ("name", "stale-native"),
+                ("sha", &main0),
+                ("repository_id", "0"),
+            ],
+        )
+        .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    assert!(git.find_reference("refs/heads/stale-native").is_err());
     let (status, page) = alice
         .form(
             "/alice/proj/_forms/create-branch",
-            &[("name", "ordinary-native"), ("sha", &main0)],
+            &[
+                ("repository_id", &repository.id.to_string()),
+                ("name", "ordinary-native"),
+                ("sha", &main0),
+            ],
         )
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
     let (status, page) = alice
         .form(
             "/alice/proj/_forms/delete-branch",
-            &[("name", "ordinary-native"), ("confirm", "yes")],
+            &[
+                ("repository_id", &repository.id.to_string()),
+                ("name", "ordinary-native"),
+                ("confirm", "yes"),
+            ],
         )
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");

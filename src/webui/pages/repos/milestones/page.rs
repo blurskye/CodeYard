@@ -206,6 +206,8 @@ pub fn detail(
                                 summary { class: "btn btn-danger btn-sm", "Delete milestone" }
                                 {confirm_dialog(None, &format!("Delete milestone {}", milestone.title), &url, &format!("{url}/delete"), rsx! {
                                     {csrf(&repo.csrf)}
+                                    input { r#type: "hidden", name: "repository_id", value: repo.chrome.id.to_string() }
+                                    input { r#type: "hidden", name: "milestone_id", value: milestone.id.to_string() }
                                     strong { "Delete milestone {milestone.title}?" }
                                     label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Delete this milestone. Its issues stay open or closed and lose it." }
                                 }, "Delete milestone")}

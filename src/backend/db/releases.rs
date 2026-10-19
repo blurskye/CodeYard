@@ -1,6 +1,6 @@
 //! Releases and their assets. Writers create and change them; readers see published releases,
 //! and writers also see drafts (the caller decides which list it asks for).
-use crate::backend::db::models::{Release, ReleaseAsset, ReleaseRow};
+use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 use uuid::Uuid;
@@ -47,19 +47,20 @@ native_operation!(crate::backend::db::postgres::releases::update_release,
     crate::backend::db::sqlite::releases::update_release,
     fn update_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, fields: &ReleaseFields) -> Result<Release>);
 
-// Deletes the release and its asset rows. Returns the files the assets used, for cleanup.
+// Removes the release, unused file metadata and queues object cleanup atomically.
+// Returns the removed files for an immediate best-effort object delete.
 native_operation!(crate::backend::db::postgres::releases::delete_release,
     crate::backend::db::sqlite::releases::delete_release,
-    fn delete_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64) -> Result<Vec<Uuid>>);
+    fn delete_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64) -> Result<Vec<File>>);
 
 native_operation!(crate::backend::db::postgres::releases::add_release_asset,
     crate::backend::db::sqlite::releases::add_release_asset,
     fn add_release_asset(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, asset: &NewReleaseAsset<'_>) -> Result<ReleaseAsset>);
 
-// Deletes one asset row. Returns the file it used, for cleanup.
+// Removes an asset and its unused file, with durable object cleanup in the same transaction.
 native_operation!(crate::backend::db::postgres::releases::delete_release_asset,
     crate::backend::db::sqlite::releases::delete_release_asset,
-    fn delete_release_asset(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, asset_id: i64) -> Result<Uuid>);
+    fn delete_release_asset(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, asset_id: i64) -> Result<Option<File>>);
 
 native_operation!(crate::backend::db::postgres::releases::get_release_by_tag,
     crate::backend::db::sqlite::releases::get_release_by_tag,

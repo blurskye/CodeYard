@@ -75,10 +75,32 @@ pub(crate) async fn load(ctx: &PageContext, owner: &str, name: &str) -> Result<L
     Ok(loaded)
 }
 
-/// Repository data for pages and actions that need only the database. Git enrichment is
-/// optional here: when storage is unavailable, the stored default branch stands in and no
-/// branches or tags are listed.
+/// Database chrome with optional Git enrichment for pages that display refs.
 pub(crate) async fn load_metadata(
+    ctx: &PageContext,
+    owner: &str,
+    name: &str,
+) -> Result<Loaded, Response> {
+    let mut loaded = load_database(ctx, owner, name).await?;
+    let git = crate::backend::repositories::reads::refs_and_default(
+        &loaded.repository,
+        ctx.state.cluster.as_ref(),
+    )
+    .await;
+    match git {
+        Ok((refs, default_branch)) => {
+            loaded.refs = refs;
+            loaded.chrome.default_branch = default_branch.clone();
+            loaded.default_branch = default_branch;
+        }
+        Err(error) if error.kind == ErrorKind::Unavailable => loaded.git_unavailable = true,
+        Err(error) => return Err(store_error(ctx, Some(&loaded.chrome), error)),
+    }
+    Ok(loaded)
+}
+
+/// Database-only actions must not wait for Git storage.
+pub(crate) async fn load_database(
     ctx: &PageContext,
     owner: &str,
     name: &str,
@@ -199,18 +221,9 @@ pub(crate) async fn load_metadata(
     if repository.is_archived {
         chrome.can_write = false;
     }
-    let git = crate::backend::repositories::reads::refs_and_default(
-        &repository,
-        ctx.state.cluster.as_ref(),
-    )
-    .await;
-    let (refs, default_branch, git_unavailable) = match git {
-        Ok((refs, default_branch)) => (refs, default_branch, false),
-        Err(error) if error.kind == ErrorKind::Unavailable => {
-            (HashMap::new(), repository.default_branch.clone(), true)
-        }
-        Err(error) => return Err(store_error(ctx, Some(&chrome), error)),
-    };
+    let refs = HashMap::new();
+    let default_branch = repository.default_branch.clone();
+    let git_unavailable = false;
     chrome.default_branch = default_branch.clone();
     Ok(Loaded {
         repository,
@@ -239,7 +252,15 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
                 .or_else(|| name.strip_prefix("refs/tags/"))
         })
         .map(str::to_owned)
+        .chain(loaded.refs.keys().cloned())
         .collect();
+    names.extend(
+        loaded
+            .refs
+            .keys()
+            .filter(|name| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+            .cloned(),
+    );
     names.sort();
     names.dedup();
     names
@@ -310,15 +331,37 @@ pub(crate) fn resolve(
     tail: &str,
     require_path: bool,
 ) -> Result<view::ref_path::ResolvedRefPath, Response> {
-    let resolved = resolve_repo_ref_path(&split_path(tail), &ref_names(loaded), require_path)
-        .ok_or_else(|| {
+    let names = if tail.starts_with("refs/heads/") || tail.starts_with("refs/tags/") {
+        loaded.refs.keys().cloned().collect()
+    } else {
+        ref_names(loaded)
+    };
+    let mut resolved =
+        resolve_repo_ref_path(&split_path(tail), &names, require_path).ok_or_else(|| {
             ctx.error(
                 StatusCode::NOT_FOUND,
                 "A reference and file path are required.",
             )
         })?;
-    if !loaded.refs.is_empty() {
+    if loaded.refs.is_empty() {
+        if crate::backend::git::ref_names::branch_ref(&resolved.reference).is_none()
+            || (resolved.reference != loaded.default_branch
+                && resolved.reference != format!("refs/heads/{}", loaded.default_branch))
+        {
+            return Err(ctx.repo_error(&loaded.chrome, StatusCode::NOT_FOUND, MISSING_REVISION));
+        }
+    } else {
         ensure_ref(ctx, loaded, &resolved.reference)?;
+    }
+    if let Some(branch) = resolved.reference.strip_prefix("refs/heads/") {
+        resolved.reference = branch.to_owned();
+    } else if !resolved.reference.starts_with("refs/")
+        && !is_branch(loaded, &resolved.reference)
+        && loaded
+            .refs
+            .contains_key(&format!("refs/tags/{}", resolved.reference))
+    {
+        resolved.reference = format!("refs/tags/{}", resolved.reference);
     }
     Ok(resolved)
 }
@@ -449,8 +492,8 @@ pub(crate) fn page_window(page: usize, per_page: usize) -> Option<(usize, usize)
 /// Whether a page after `page` exists. `fetched` is the row count read for `page`
 /// with one extra row, so a full extra row means more rows follow. The cap is the
 /// last page a URL can name, so it never offers a next page.
-pub(crate) fn has_next_page(page: usize, fetched: usize, per_page: usize) -> bool {
-    fetched > per_page && page < MAX_PAGE
+pub(crate) fn has_next_page(page: usize, fetched: usize, per_page: usize, max_page: usize) -> bool {
+    fetched > per_page && page < max_page
 }
 
 /// JSON list paging: `page` is 1 through 1,000, `per_page` defaults to 30 and is
@@ -558,9 +601,9 @@ mod tests {
 
     #[test]
     fn next_page_needs_an_extra_row_and_stops_at_the_cap() {
-        assert!(has_next_page(1, 31, 30));
-        assert!(!has_next_page(1, 30, 30));
-        assert!(has_next_page(MAX_PAGE - 1, 31, 30));
-        assert!(!has_next_page(MAX_PAGE, 31, 30));
+        assert!(has_next_page(1, 31, 30, MAX_PAGE));
+        assert!(!has_next_page(1, 30, 30, MAX_PAGE));
+        assert!(has_next_page(MAX_PAGE - 1, 31, 30, MAX_PAGE));
+        assert!(!has_next_page(MAX_PAGE, 31, 30, MAX_PAGE));
     }
 }

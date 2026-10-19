@@ -4,7 +4,6 @@ use crate::backend::{
     cluster::{placement, NodeContext},
     db::{self, models::Repository, repositories::creation as repo_lifecycle},
     repositories::{
-        languages,
         store::{repo_store, ErrorKind, RepoError, UploadFile, UploadWrite},
         templates::{self, Template},
     },
@@ -176,6 +175,7 @@ pub async fn provision(
             store
                 .initialize_fork(
                     pool,
+                    repository.id,
                     source.id,
                     owner.actor_id,
                     &repo_store(source, context),
@@ -205,6 +205,26 @@ pub async fn provision(
     .await;
     if let Err(error) = initialized {
         return Err(abandon_repository(pool, context, owner.actor_id, &repository, error).await);
+    }
+    let mut repository = repository;
+    if source.is_some() {
+        let size = store
+            .size_bytes()
+            .await
+            .map_err(git_storage_error)?
+            .min(i64::MAX as u64) as i64;
+        db::repositories::records::update_repo_default_branch_and_size(
+            pool,
+            repository.id,
+            &repository.default_branch,
+            size,
+        )
+        .await
+        .map_err(|_| unavailable())?;
+        db::repositories::records::insert_repo_storage_snapshot(pool, repository.id, size)
+            .await
+            .map_err(|_| unavailable())?;
+        repository.size_bytes = size;
     }
     Ok(repository)
 }
@@ -372,6 +392,12 @@ pub fn validate_name(name: &str) -> Result<(), StorageError> {
 /// Creation and updates check the description the user sends. A fork copies its
 /// source's description without this check, so a fork can hold a longer one.
 pub fn validate_description(description: &str) -> Result<(), StorageError> {
+    if description.contains('\0') {
+        return Err(StorageError {
+            kind: LifecycleFailure::Invalid,
+            message: "Description must not contain NUL bytes.",
+        });
+    }
     if description.len() > 2_000 {
         return Err(StorageError {
             kind: LifecycleFailure::Invalid,
@@ -507,15 +533,6 @@ pub async fn fork(
         Some(&source),
     )
     .await?;
-    let store = repo_store(&fork, context);
-    if let Some(path) = store.local_dir() {
-        languages::refresh_default_branch(
-            pool.clone(),
-            fork.id,
-            path.to_owned(),
-            fork.default_branch.clone(),
-        );
-    }
     if let Some(recipient) = source.personal_owner_id().filter(|id| *id != actor) {
         let title = format!("{} forked {}/{}", user.username, owner, source.name);
         let body = format!("New fork: {}/{}", user.username, source.name);
@@ -548,6 +565,15 @@ pub async fn fork(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn descriptions_reject_nul_before_storage() {
+        assert!(validate_description("ordinary description").is_ok());
+        assert_eq!(
+            validate_description("bad\0text").unwrap_err().kind,
+            LifecycleFailure::Invalid
+        );
+    }
 
     #[test]
     fn cli_error_context_preserves_storage_failure_kind() {

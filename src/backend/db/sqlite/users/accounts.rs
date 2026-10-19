@@ -216,7 +216,7 @@ pub async fn list_admin_account_summaries(pool: &SqlitePool) -> Result<Vec<Admin
                 SELECT f.file_size AS bytes FROM files f WHERE f.user_id=u.id AND f.is_active
                 UNION ALL SELECT r.size_bytes FROM repositories r WHERE r.owner_kind='user' AND r.owner_user_id=u.id
             )),0) AS total_bytes,
-            COALESCE((SELECT SUM(c.commits_count) FROM repo_contributors c WHERE c.user_id=u.id),0) AS commits_total,
+            COALESCE((SELECT SUM(c.commit_count) FROM repository_pushes c WHERE c.actor_id=u.id),0) AS commits_total,
             (SELECT COUNT(*) FROM ci_runs c WHERE c.triggered_by_id=u.id AND c.event='push') AS pushes_total,
             (SELECT COUNT(*) FROM pull_requests p WHERE p.author_id=u.id)
                 + (SELECT COUNT(*) FROM issues i WHERE i.author_id=u.id)
@@ -262,8 +262,8 @@ pub async fn list_admin_activity_points(
                 WHERE created_at>=moment GROUP BY date(created_at)
             UNION ALL SELECT date(created_at),COUNT(*) FROM repositories,window_start
                 WHERE owner_kind='user' AND owner_user_id IS NOT NULL AND created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(updated_at),COALESCE(SUM(commits_count),0) FROM repo_contributors,window_start
-                WHERE updated_at>=moment GROUP BY date(updated_at)
+            UNION ALL SELECT date(created_at),COALESCE(SUM(commit_count),0) FROM repository_pushes,window_start
+                WHERE created_at>=moment GROUP BY date(created_at)
         ), contribution_daily AS (
             SELECT day,SUM(weight) AS daily FROM contribution_events GROUP BY day
         ), repo_storage_recent AS (

@@ -40,7 +40,9 @@ pub(crate) async fn native_toggle_task(
     let comment_id = field(&form, "comment").parse::<i64>().ok();
     let text = match comment_id {
         None => value.body.clone(),
-        Some(id) => comment_body(&ctx, kind, id, actor_id).await?,
+        Some(id) => {
+            comment_body(&ctx, kind, id, actor_id, &field(&form, "comment_revision")).await?
+        }
     };
     let Some(updated) = toggle_task(&text, index) else {
         return Err(ctx.error(
@@ -56,7 +58,7 @@ pub(crate) async fn native_toggle_task(
                 actor_id,
                 (owner, name, number),
                 id,
-                updated,
+                (updated, text.as_str()),
                 &base,
             )
             .await
@@ -95,7 +97,13 @@ pub(crate) async fn native_toggle_task(
 }
 
 /// The text of comment `id`, read from the store that holds comments of `kind`.
-async fn comment_body(ctx: &PageContext, kind: Kind, id: i64, actor_id: i64) -> ResultPage<String> {
+async fn comment_body(
+    ctx: &PageContext,
+    kind: Kind,
+    id: i64,
+    actor_id: i64,
+    expected: &str,
+) -> ResultPage<String> {
     let body = match kind {
         Kind::Issue => db::issues::get_issue_comment(&ctx.state.pool, id)
             .await
@@ -113,7 +121,14 @@ async fn comment_body(ctx: &PageContext, kind: Kind, id: i64, actor_id: i64) -> 
         }
     }
     .map_err(|_| unavailable(ctx))?;
-    body.ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))
+    let body = body.ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?;
+    if expected != body {
+        return Err(ctx.error(
+            StatusCode::CONFLICT,
+            "The comment changed. Reload before ticking a task.",
+        ));
+    }
+    Ok(body)
 }
 
 /// Saves the ticked text of comment `id` through the rules for its kind, and returns the link to
@@ -124,7 +139,7 @@ async fn save_comment_text(
     actor_id: i64,
     (owner, name, number): (String, String, i32),
     id: i64,
-    body: String,
+    (body, expected_body): (String, &str),
     base: &str,
 ) -> Result<String, ApiFailure> {
     let pool = &ctx.state.pool;
@@ -143,6 +158,7 @@ async fn save_comment_text(
                 actor_id,
                 target,
                 CreateCommentRequest { body },
+                Some(expected_body),
             )
             .await
             .map_err(crate::backend::api::repos::issues::operation_error)?;
@@ -150,10 +166,16 @@ async fn save_comment_text(
             Ok(comment_link(base, id, position))
         }
         Kind::Pull => {
-            let comment =
-                comment_rules::edit_pull_request_comment(pool, broadcaster, actor_id, target, body)
-                    .await
-                    .map_err(crate::backend::api::repos::pulls::operation_error)?;
+            let comment = comment_rules::edit_pull_request_comment(
+                pool,
+                broadcaster,
+                actor_id,
+                target,
+                body,
+                Some(expected_body),
+            )
+            .await
+            .map_err(crate::backend::api::repos::pulls::operation_error)?;
             let position = db::pull_requests::reviews::count_discussion_items_through(
                 pool,
                 comment.pull_request_id,

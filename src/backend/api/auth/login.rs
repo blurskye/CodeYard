@@ -461,6 +461,7 @@ mod tests {
             profile: profile_model(&user),
             repositories: vec![],
             repository_count: 0,
+            repository_next: None,
             csrf_token: "csrf".into(),
             own: false,
             authenticated: false,

@@ -415,21 +415,24 @@ pub(super) async fn settings_model(
         viewer: viewer.username.clone(),
         ..view::settings::Settings::default()
     };
-    // The people a rule may let force push, offered as checkboxes beside the viewer's own.
-    settings.force_push_suggestions = db::repositories::access::list_write_access_users(
-        &ctx.state.pool,
-        loaded.repository.id,
-        viewer.id,
-    )
-    .await
-    .map_err(|_| unavailable(ctx))?
-    .into_iter()
-    .map(|(username, level)| view::settings::Collaborator {
-        username,
-        access: access_label(level).into(),
-    })
-    .collect();
-    if loaded.chrome.can_manage_collaborators {
+    // Only the branch-protection section uses rules and their user choices.
+    if tab == "branches" {
+        settings.force_push_suggestions = db::repositories::access::list_write_access_users(
+            &ctx.state.pool,
+            loaded.repository.id,
+            viewer.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .map(|(username, level)| view::settings::Collaborator {
+            username,
+            access: access_label(level).into(),
+        })
+        .collect();
+        settings.branch_rules = branch_rules(ctx, loaded).await?;
+    }
+    if tab == "collaborators" && loaded.chrome.can_manage_collaborators {
         // Only personal owners manage collaborators, as the JSON listing does.
         let accesses = db::repositories::access::list_repo_collaborators(
             &ctx.state.pool,
@@ -437,10 +440,14 @@ pub(super) async fn settings_model(
         )
         .await
         .map_err(|_| unavailable(ctx))?;
+        let ids: Vec<_> = accesses.iter().map(|access| access.user_id).collect();
+        let users = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+            .await
+            .map_err(|_| unavailable(ctx))?;
+        let mut users: HashMap<_, _> = users.into_iter().map(|user| (user.id, user)).collect();
         for access in accesses {
-            let user = db::users::accounts::get_user_by_id(&ctx.state.pool, access.user_id)
-                .await
-                .map_err(|_| unavailable(ctx))?
+            let user = users
+                .remove(&access.user_id)
                 .ok_or_else(|| unavailable(ctx))?;
             settings.collaborators.push(view::settings::Collaborator {
                 username: user.username,
@@ -448,7 +455,6 @@ pub(super) async fn settings_model(
             });
         }
     }
-    settings.branch_rules = branch_rules(ctx, loaded).await?;
     if tab == "deploy-keys" {
         settings.deploy_keys =
             Some(super::deploy_keys::settings_section(ctx, loaded, viewer).await?);
@@ -540,11 +546,11 @@ async fn branch_rules(
     )
     .await
     .map_err(|_| unavailable(ctx))?;
+    let rules = branch_protection::rule_responses(&ctx.state.pool, rules)
+        .await
+        .map_err(|_| unavailable(ctx))?;
     let mut listed = Vec::with_capacity(rules.len());
     for rule in rules {
-        let rule = branch_protection::rule_response(&ctx.state.pool, rule)
-            .await
-            .map_err(|_| unavailable(ctx))?;
         listed.push(view::settings::BranchRule {
             pattern: rule.pattern,
             require_pull_request: rule.require_pull_request,
@@ -586,7 +592,7 @@ fn force_push_names(form: &HashMap<String, String>, pairs: &[(String, String)]) 
     repeated(pairs, "force_push_allowances")
         .into_iter()
         .chain(typed)
-        .filter(|name| seen.insert(name.to_lowercase()))
+        .filter(|name| seen.insert(name.clone()))
         .collect()
 }
 
@@ -838,7 +844,8 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         "create-branch" => &["name", "sha"],
         "create-tag" => &["name", "sha", "message"],
         "delete-branch" | "delete-tag" | "rename" => &["name"],
-        "transfer" => &["new_owner"],
+        "transfer" => &["new_owner", "confirmation"],
+        "watch-level" => &["level", "events_issues", "events_pulls", "events_releases"],
         "about" => &["description", "website", "topics"],
         "settings" => &["description", "visibility"],
         "default-branch" => &["branch"],
@@ -1041,7 +1048,15 @@ pub(super) async fn post_form(
     {
         return ctx.error(StatusCode::NOT_FOUND, "Repository action not found.");
     }
-    let loaded = match load_metadata(&ctx, owner, name).await {
+    let database_only = matches!(
+        action.as_str(),
+        "star" | "unstar" | "watch" | "unwatch" | "watch-level"
+    );
+    let loaded = match if database_only {
+        super::chrome::load_database(&ctx, owner, name).await
+    } else {
+        load_metadata(&ctx, owner, name).await
+    } {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -1049,6 +1064,10 @@ pub(super) async fn post_form(
     // repository can take the old owner and name, and the form must not reach that one.
     let repository_id = loaded.repository.id.to_string();
     if [
+        "create-branch",
+        "delete-branch",
+        "create-tag",
+        "delete-tag",
         "about",
         "settings",
         "merge-methods",
@@ -1069,6 +1088,10 @@ pub(super) async fn post_form(
         "webhook-redeliver",
         "deploy-key-add",
         "deploy-key-delete",
+        "create-branch",
+        "delete-branch",
+        "create-tag",
+        "delete-tag",
     ]
     .contains(&action.as_str())
         && field(&form, "repository_id") != repository_id
@@ -1089,7 +1112,6 @@ pub(super) async fn post_form(
         "default-branch",
         "create-tag",
         "delete-tag",
-        "write-file",
         "delete-file",
         "fork",
         "delete",
@@ -1365,7 +1387,7 @@ async fn mutate(
                 ci,
                 actor.id,
                 owner,
-                name,
+                repository.id,
                 &field(form, "name"),
                 &field(form, "sha"),
             )
@@ -1394,8 +1416,7 @@ async fn mutate(
                 cluster,
                 ci,
                 actor.id,
-                owner,
-                name,
+                repository.id,
                 &field(form, "name"),
             )
             .await
@@ -1410,7 +1431,7 @@ async fn mutate(
                 ci,
                 actor.id,
                 owner,
-                name,
+                repository.id,
                 &field(form, "name"),
                 &field(form, "sha"),
                 (!message.is_empty()).then_some(message.as_str()),
@@ -1424,8 +1445,7 @@ async fn mutate(
                 pool,
                 cluster,
                 actor.id,
-                owner,
-                name,
+                repository.id,
                 &field(form, "name"),
             )
             .await
@@ -1545,6 +1565,7 @@ async fn mutate(
             // Archiving an archived repository, or the reverse, changes nothing and is not an error.
             db::repositories::records::set_repository_archived(
                 pool,
+                actor.id,
                 repository.id,
                 action == "archive",
             )
@@ -1651,6 +1672,12 @@ mod tests {
     use crate::backend::api::repos::chrome::hex_revision;
     use crate::backend::api::repos::code::contents::editor_from;
     #[test]
+    fn force_push_names_preserve_case_distinct_accounts() {
+        let form = HashMap::from([("force_push_extra".into(), "Alice alice Alice".into())]);
+        assert_eq!(force_push_names(&form, &[]), vec!["Alice", "alice"]);
+    }
+
+    #[test]
     fn confirmations_are_explicit_not_truthy() {
         let mut form = HashMap::new();
         assert!(confirmation(&form).is_err());
@@ -1666,11 +1693,13 @@ mod tests {
             ("expected_revision".into(), "old".into()),
             ("creating".into(), "yes".into()),
             ("intent".into(), "preview".into()),
+            ("commit_target".into(), "new_branch".into()),
         ]);
         let editor = editor_from(&form);
         assert_eq!(editor.content, "</textarea><script>x</script>");
         assert_eq!(editor.expected_revision, "old");
         assert!(editor.creating && editor.preview);
+        assert!(editor.commit_to_new_branch);
     }
     #[test]
     fn validation_models_never_reflect_undeclared_secrets_or_authority() {
@@ -1691,6 +1720,31 @@ mod tests {
             .contains("must-not-appear"));
         assert!(safe_submission("star", &values).is_empty());
     }
+    #[test]
+    fn retries_keep_transfer_confirmation_and_watch_choices() {
+        let form = HashMap::from([
+            ("new_owner".into(), "unknown".into()),
+            ("confirmation".into(), "project".into()),
+            ("level".into(), "custom".into()),
+            ("events_issues".into(), "yes".into()),
+        ]);
+        assert_eq!(
+            safe_submission("transfer", &form)["confirmation"],
+            "project"
+        );
+        assert_eq!(safe_submission("watch-level", &form)["level"], "custom");
+        assert_eq!(
+            safe_submission("watch-level", &form)["events_issues"],
+            "yes"
+        );
+    }
+
+    #[test]
+    fn force_push_accounts_are_case_sensitive() {
+        let form = HashMap::from([("force_push_extra".into(), "Alice alice".into())]);
+        assert_eq!(force_push_names(&form, &[]), ["Alice", "alice"]);
+    }
+
     #[test]
     fn command_option_like_revisions_are_not_accepted() {
         assert!(!hex_revision("--all"));

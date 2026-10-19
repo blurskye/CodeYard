@@ -26,29 +26,34 @@ impl NodeContext {
         body: &[u8],
         response_body_limit: usize,
     ) -> Result<(Reply, Vec<u8>), RepoError> {
-        if body.len() > operation_body_limit(&request.operation) {
-            return Err(invalid("RPC frame exceeds its limit"));
-        }
-        let header = serde_json::to_vec(&request).map_err(|_| invalid("invalid RPC request"))?;
-        if header.len() > MAX_JSON {
-            return Err(invalid("RPC frame exceeds its limit"));
-        }
-        let first = self
-            .exchange(node_id, &header, body, response_body_limit)
-            .await;
-        if first.is_ok() || !request.operation.is_read_only() {
-            return first;
-        }
-        for (copy, moved) in self.read_copies(request.repository, node_id).await {
-            let answer = self
-                .exchange(copy, &header, body, response_body_limit)
-                .await;
-            if !cannot_serve(answer.as_ref().ok().map(|(reply, _)| reply), moved) {
-                log_failover(request.repository, node_id, copy);
-                return answer;
+        tokio::time::timeout(TIMEOUT, async {
+            if body.len() > operation_body_limit(&request.operation) {
+                return Err(invalid("RPC frame exceeds its limit"));
             }
-        }
-        first
+            let header =
+                serde_json::to_vec(&request).map_err(|_| invalid("invalid RPC request"))?;
+            if header.len() > MAX_JSON {
+                return Err(invalid("RPC frame exceeds its limit"));
+            }
+            let first = self
+                .exchange(node_id, &header, body, response_body_limit)
+                .await;
+            if first.is_ok() || !request.operation.is_read_only() {
+                return first;
+            }
+            for (copy, moved) in self.read_copies(request.repository, node_id).await {
+                let answer = self
+                    .exchange(copy, &header, body, response_body_limit)
+                    .await;
+                if !cannot_serve(answer.as_ref().ok().map(|(reply, _)| reply), moved) {
+                    log_failover(request.repository, node_id, copy);
+                    return answer;
+                }
+            }
+            first
+        })
+        .await
+        .map_err(|_| unavailable())?
     }
 
     /// One request and its reply from `node_id`. An `Err` means the node gave no reply.
@@ -104,37 +109,43 @@ impl NodeContext {
 
     /// Opens a request stream to `node_id` for `alpn`. A node whose last dial failed is
     /// refused at once for a few seconds.
-    pub(super) async fn dial(&self, node_id: i64, alpn: &[u8]) -> Result<Link, RepoError> {
-        if self.recently_unreachable(node_id) {
-            return Err(unavailable());
-        }
-        let (node, address) = if let Some(pool) = &self.pool {
-            let node = db::cluster::get_node_by_id(pool, node_id)
-                .await
-                .map_err(|_| unavailable())?
-                .filter(|node| {
-                    node.status == "active" && node.roles.iter().any(|role| role == "storage")
-                })
-                .ok_or_else(unavailable)?;
-            let address: NodeAddress =
-                serde_json::from_str(node.addr_hint.as_deref().ok_or_else(unavailable)?)
+    pub(super) fn dial<'a>(
+        &'a self,
+        node_id: i64,
+        alpn: &'a [u8],
+    ) -> futures_util::future::BoxFuture<'a, Result<Link, RepoError>> {
+        Box::pin(async move {
+            if self.recently_unreachable(node_id) {
+                return Err(unavailable());
+            }
+            let (node, address) = if let Some(pool) = &self.pool {
+                let node = db::cluster::get_node_by_id(pool, node_id)
+                    .await
+                    .map_err(|_| unavailable())?
+                    .filter(|node| {
+                        node.status == "active" && node.roles.iter().any(|role| role == "storage")
+                    })
+                    .ok_or_else(unavailable)?;
+                let address: NodeAddress =
+                    serde_json::from_str(node.addr_hint.as_deref().ok_or_else(unavailable)?)
+                        .map_err(|_| unavailable())?;
+                let peer = crate::backend::cluster::parse_public_key(&node.public_key)
                     .map_err(|_| unavailable())?;
-            let peer = crate::backend::cluster::parse_public_key(&node.public_key)
-                .map_err(|_| unavailable())?;
-            (peer, address)
-        } else {
-            let peer = self
-                .peers
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(&node_id)
-                .cloned()
-                .ok_or_else(unavailable)?;
-            (peer.node().map_err(|_| unavailable())?, peer.address)
-        };
-        let linked = transport::dial_node(&self.iroh, node, &address, alpn).await;
-        self.note_dial(node_id, linked.is_ok());
-        linked.map_err(|_| unavailable())
+                (peer, address)
+            } else {
+                let peer = self
+                    .peers
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get(&node_id)
+                    .cloned()
+                    .ok_or_else(unavailable)?;
+                (peer.node().map_err(|_| unavailable())?, peer.address)
+            };
+            let linked = transport::dial_node(&self.iroh, node, &address, alpn).await;
+            self.note_dial(node_id, linked.is_ok());
+            linked.map_err(|_| unavailable())
+        })
     }
 
     /// The nodes that may answer a read after `primary` gave no reply, best first: the

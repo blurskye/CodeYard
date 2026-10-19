@@ -1,4 +1,4 @@
-use crate::backend::db::models::{PullRequestComment, PullRequestReview, User};
+use crate::backend::db::models::{PullRequest, PullRequestComment, PullRequestReview, User};
 use crate::backend::db::pull_requests::reviews::DiscussionItem;
 use crate::backend::db::pull_requests::reviews::DiscussionRef;
 use crate::backend::db::pull_requests::reviews::NewPullRequestComment;
@@ -217,6 +217,53 @@ pub async fn list_review_comments(
 ) -> Result<Vec<PullRequestCommentEntry>> {
     debug_assert!(review_ids.len() <= 1000);
     comments_in(pool, "i.review_id", review_ids).await
+}
+
+/// Select sizes before bodies, so nested reviews cannot bypass the discussion page limit.
+pub async fn list_review_comments_page(
+    pool: &SqlitePool,
+    review_ids: &[i64],
+    offset: i64,
+) -> Result<crate::backend::db::pull_requests::reviews::ReviewCommentPage> {
+    use crate::backend::db::pull_requests::reviews::{
+        ReviewCommentPage, MAX_REVIEW_COMMENTS_PAGE, MAX_REVIEW_COMMENT_PAGE_BYTES,
+    };
+    if review_ids.is_empty() {
+        return Ok(ReviewCommentPage {
+            comments: Vec::new(),
+            has_more: false,
+        });
+    }
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT id, (6 * (length(CAST(body AS BLOB)) + COALESCE(MIN(length(CAST(path AS BLOB)), 4096), 0)) + 4096) FROM pr_comments WHERE review_id IN (");
+    let mut ids = query.separated(",");
+    for id in review_ids {
+        ids.push_bind(id);
+    }
+    query
+        .push(") ORDER BY created_at, id LIMIT ")
+        .push_bind((MAX_REVIEW_COMMENTS_PAGE + 1) as i64)
+        .push(" OFFSET ")
+        .push_bind(offset);
+    let rows: Vec<(i64, i64)> = query.build_query_as().fetch_all(pool).await?;
+    let total = rows.len();
+    let mut bytes = 0;
+    let mut ids = Vec::new();
+    for (id, size) in rows.into_iter().take(MAX_REVIEW_COMMENTS_PAGE) {
+        bytes += usize::try_from(size)?;
+        if bytes > MAX_REVIEW_COMMENT_PAGE_BYTES {
+            break;
+        }
+        ids.push(id);
+    }
+    anyhow::ensure!(
+        total == 0 || !ids.is_empty(),
+        "Review comment exceeds its page limit"
+    );
+    let has_more = ids.len() < total;
+    Ok(ReviewCommentPage {
+        comments: comments_in(pool, "i.id", &ids).await?,
+        has_more,
+    })
 }
 
 /// The comments whose `column` is one of `ids`, oldest first. `column` is a column name written in
@@ -720,6 +767,52 @@ pub async fn request_pull_request_reviewer(
     Ok(result.rows_affected() > 0)
 }
 
+/// Only the CODEOWNERS resolver calls this; manual requests use writer authority above.
+pub async fn request_code_owner_reviews(
+    pool: &SqlitePool,
+    pull: &PullRequest,
+    actor_id: i64,
+    owners: &[i64],
+) -> Result<Vec<User>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    discussions::require_contribution_authority(&mut tx, actor_id, pull.repo_id).await?;
+    let current: Option<PullRequest> =
+        sqlx::query_as("SELECT * FROM pull_requests WHERE id = ?1 AND repo_id = ?2")
+            .bind(pull.id)
+            .bind(pull.repo_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(current) = current.filter(|current| {
+        current.state == "open"
+            && !current.is_draft
+            && current.head_sha == pull.head_sha
+            && current.base_sha == pull.base_sha
+    }) else {
+        return Ok(Vec::new());
+    };
+    let mut added = Vec::new();
+    for &id in owners {
+        if id == current.author_id
+            || !discussions::lock_write_authority(&mut tx, id, pull.repo_id).await?
+        {
+            continue;
+        }
+        let inserted = sqlx::query("INSERT INTO pr_reviewers (pull_request_id, user_id) SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM pr_reviews WHERE pull_request_id = ?1 AND author_id = ?2 AND state <> 'pending') ON CONFLICT DO NOTHING")
+            .bind(pull.id).bind(id).execute(&mut *tx).await?;
+        if inserted.rows_affected() > 0 {
+            added.push(id);
+        }
+    }
+    let users = sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE id IN (SELECT value FROM json_each(?1))",
+    )
+    .bind(serde_json::to_string(&added)?)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(users)
+}
+
 pub async fn remove_pull_request_reviewer(
     pool: &SqlitePool,
     pr_id: i64,
@@ -799,6 +892,7 @@ pub async fn edit_pull_request_comment(
     pr_id: i64,
     comment_id: i64,
     body: &str,
+    expected_body: &str,
 ) -> Result<Option<PullRequestComment>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let author = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?;
@@ -809,10 +903,11 @@ pub async fn edit_pull_request_comment(
     }
     let comment = sqlx::query_as::<_, PullRequestComment>(
         "UPDATE pr_comments SET body = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
-         WHERE id = ?1 RETURNING *",
+         WHERE id = ?1 AND body = ?3 RETURNING *",
     )
     .bind(comment_id)
     .bind(body)
+    .bind(expected_body)
     .fetch_optional(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -850,8 +945,9 @@ pub async fn delete_pull_request_comment(
     }
     sqlx::query(
         "DELETE FROM notifications WHERE repo_id = ?1
-         AND kind IN ('pull_request_comment', 'pull_request_comment_reply')
-         AND json_extract(metadata, '$.comment_id') = ?2",
+         AND ((kind IN ('pull_request_comment', 'pull_request_comment_reply')
+               AND json_extract(metadata, '$.comment_id') = ?2)
+              OR (kind = 'mention' AND json_extract(metadata, '$.pull_request_comment_id') = ?2))",
     )
     .bind(repo_id)
     .bind(comment_id)

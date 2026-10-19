@@ -426,6 +426,8 @@ pub async fn teams(f: &Fixture) {
         let mut fields = vec![("action", action), ("team_id", team_id.as_str())];
         if action == "team-edit" {
             fields.extend([("name", "Denied edit"), ("privacy", "visible")]);
+        } else {
+            fields.push(("confirmation", team_id.as_str()));
         }
         assert_eq!(
             f.form(&f.member, &path, &fields).await.status,
@@ -441,7 +443,11 @@ pub async fn teams(f: &Fixture) {
             f.form(
                 &f.owner,
                 &f.path(),
-                &[("action", "team-delete"), ("team_id", &target)]
+                &[
+                    ("action", "team-delete"),
+                    ("team_id", &target),
+                    ("confirmation", &target)
+                ]
             )
             .await
             .status,
@@ -672,7 +678,11 @@ pub async fn teams(f: &Fixture) {
     f.form(
         &f.owner,
         &path,
-        &[("action", "team-delete"), ("team_id", &team_id)],
+        &[
+            ("action", "team-delete"),
+            ("team_id", &team_id),
+            ("confirmation", &team_id),
+        ],
     )
     .await
     .redirect(&format!(

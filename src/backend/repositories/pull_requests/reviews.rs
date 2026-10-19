@@ -257,10 +257,10 @@ pub async fn create_pull_request_review(
     // The inline comments this review published were held back, so their mentions go out now.
     let published = db::pull_requests::reviews::list_review_comments(pool, &[review.id])
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?;
+        .unwrap_or_else(|error| {
+            tracing::warn!(review_id = review.id, %error, "could not notify published review comments");
+            Vec::new()
+        });
     for entry in &published {
         let comment_link = discussion_link(&base, page, &format!("comment-{}", entry.comment.id));
         notify_mentions(
@@ -519,7 +519,7 @@ pub async fn request_reviewer(
 }
 
 /// Records that `target` is asked to review `pull`, and tells them unless they asked themselves.
-/// Returns whether the request is new. Shared by people's requests and by code owner requests.
+/// Returns whether the request is new. Manually chosen reviewers require writer authority.
 pub(super) async fn add_review_request(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -538,7 +538,31 @@ pub(super) async fn add_review_request(
     .await
     .map_err(super::write_error)?;
 
-    if created && target.id != requester.id {
+    if created {
+        notify_review_request(
+            pool,
+            broadcaster,
+            requester,
+            owner,
+            repository,
+            pull_request,
+            target,
+        )
+        .await;
+    }
+    Ok(created)
+}
+
+pub(super) async fn notify_review_request(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    requester: &db::models::User,
+    owner: &str,
+    repository: &db::models::Repository,
+    pull_request: &db::models::PullRequest,
+    target: &db::models::User,
+) {
+    if target.id != requester.id {
         let title = format!(
             "{} requested your review on pull request #{}",
             requester.username, pull_request.number
@@ -568,7 +592,6 @@ pub(super) async fn add_review_request(
         )
         .await;
     }
-    Ok(created)
 }
 
 pub async fn remove_requested_reviewer(

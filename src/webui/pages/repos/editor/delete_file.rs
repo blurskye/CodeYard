@@ -17,6 +17,7 @@ pub struct DeleteFile {
     pub error: Option<String>,
     /// The branch refuses direct commits to this user, so the commit goes to `new_branch`.
     pub protected: bool,
+    pub commit_to_new_branch: bool,
     /// The name for the new branch, prefilled by the server and kept as the user typed it.
     pub new_branch: String,
 }
@@ -58,7 +59,7 @@ fn DeleteFileView(repo: RepoChrome, file: DeleteFile) -> Element {
                     section { class: "repo-commit-box panel",
                         header { class: "repo-section-heading", div { h3 { "Commit changes" } p { "Describe what changed so it is easy to understand in history." } } }
                         div { class: "repo-form-body",
-                            {commit_target(&file.branch, &file.new_branch, file.protected)}
+                            {commit_target(&file.branch, &file.new_branch, file.protected, file.commit_to_new_branch)}
                             label { class: "repo-field", span { "Commit message" } DraftInput { name: "message", initial_value: file.message.clone(), maxlength: Some(4096), placeholder: format!("Delete {}", file.path) } }
                             div { class: "repo-form-actions",
                                 button { class: "btn btn-danger", r#type: "submit", "Delete file" }

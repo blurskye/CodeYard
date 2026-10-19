@@ -85,6 +85,21 @@ fn secret_bytes(base32: &str) -> Vec<u8> {
         .unwrap()
 }
 
+async fn account_session(database: &Database, user_id: i64) -> String {
+    let session = token();
+    db::users::sessions::create_session(
+        database.pool(),
+        &session,
+        user_id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    session
+}
+
 /// Turns two-factor on for the user and returns the raw secret and the recovery codes.
 async fn enable(database: &Database, key: &SecretEncryptor, user: &User) -> (Vec<u8>, Vec<String>) {
     let setup = two_factor::begin_setup(database.pool(), key, user)
@@ -95,6 +110,8 @@ async fn enable(database: &Database, key: &SecretEncryptor, user: &User) -> (Vec
         database.pool(),
         key,
         user,
+        &account_session(database, user.id).await,
+        PASSWORD,
         &setup.token,
         &code_at(&secret, step()),
     )
@@ -167,17 +184,12 @@ async fn sign_in_flow(pg: bool) {
         .unwrap());
 
     let pending = pending_after_password(&database, &key, "alice", Some("Firefox")).await;
-    // The setup code is spent, so this step's code is refused; the next step's code works.
+    // Enrollment spent its step. Keep the exact accepted code for the replay check.
+    let accepted_code = code_at(&secret, step() + 1);
     assert_eq!(
-        second_factor(
-            &database,
-            &key,
-            &pending,
-            &code_at(&secret, step() + 1),
-            Some("Firefox")
-        )
-        .await
-        .err(),
+        second_factor(&database, &key, &pending, &accepted_code, Some("Firefox"))
+            .await
+            .err(),
         None
     );
     assert_eq!(
@@ -221,15 +233,9 @@ async fn sign_in_flow(pg: bool) {
     // Replaying the code that just signed in is refused, from a new pending sign-in as well.
     let again = pending_after_password(&database, &key, "alice", Some("Firefox")).await;
     assert_eq!(
-        second_factor(
-            &database,
-            &key,
-            &again,
-            &code_at(&secret, step() + 1),
-            Some("Firefox")
-        )
-        .await
-        .err(),
+        second_factor(&database, &key, &again, &accepted_code, Some("Firefox"))
+            .await
+            .err(),
         Some(LoginError::InvalidTwoFactorCode)
     );
 
@@ -259,42 +265,39 @@ async fn password_changes_need_the_password(pg: bool) {
     let key = encryptor();
     let alice = new_user(&database, "alice", false).await;
     let (_, codes) = enable(&database, &key, &alice).await;
+    let session = account_session(&database, alice.id).await;
     assert!(matches!(
-        two_factor::regenerate_recovery_codes(database.pool(), &alice, "wrong password").await,
+        two_factor::regenerate_recovery_codes(database.pool(), &alice, &session, "wrong password")
+            .await,
         Err(TwoFactorError::InvalidPassword)
     ));
     assert!(matches!(
-        two_factor::disable(database.pool(), &alice, "wrong password").await,
+        two_factor::disable(database.pool(), &alice, &session, "wrong password").await,
         Err(TwoFactorError::InvalidPassword)
     ));
     assert!(two_factor::is_enabled(database.pool(), alice.id)
         .await
         .unwrap());
 
-    let regenerated = two_factor::regenerate_recovery_codes(database.pool(), &alice, PASSWORD)
-        .await
-        .unwrap();
+    let regenerated =
+        two_factor::regenerate_recovery_codes(database.pool(), &alice, &session, PASSWORD)
+            .await
+            .unwrap();
     assert_eq!(regenerated.len(), 10);
-    assert!(!two_factor::verify_sign_in_code(
-        database.pool(),
-        &key,
-        alice.id,
-        &codes[0],
-        two_factor::now_unix()
-    )
-    .await
-    .unwrap());
-    assert!(two_factor::verify_sign_in_code(
-        database.pool(),
-        &key,
-        alice.id,
-        &regenerated[0],
-        two_factor::now_unix()
-    )
-    .await
-    .unwrap());
+    let pending = pending_after_password(&database, &key, "alice", None).await;
+    assert_eq!(
+        second_factor(&database, &key, &pending, &codes[0], None)
+            .await
+            .err(),
+        Some(LoginError::InvalidTwoFactorCode)
+    );
+    assert!(
+        second_factor(&database, &key, &pending, &regenerated[0], None)
+            .await
+            .is_ok()
+    );
 
-    two_factor::disable(database.pool(), &alice, PASSWORD)
+    two_factor::disable(database.pool(), &alice, &session, PASSWORD)
         .await
         .unwrap();
     assert!(!two_factor::is_enabled(database.pool(), alice.id)
@@ -399,12 +402,28 @@ async fn settings_forms(pg: bool) {
     let token = field_value(&page, "setup");
     let secret = secret_bytes(&secret);
 
-    let enabled = client
+    let refused = client
         .exchange(
             "POST",
             "/settings/two-factor/enable",
             "application/x-www-form-urlencoded",
             form(&format!("setup={token}&code={}", code_at(&secret, step()))),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert!(!two_factor::is_enabled(database.pool(), alice.id)
+        .await
+        .unwrap());
+
+    let enabled = client
+        .exchange(
+            "POST",
+            "/settings/two-factor/enable",
+            "application/x-www-form-urlencoded",
+            form(&format!(
+                "current_password={PASSWORD}&setup={token}&code={}",
+                code_at(&secret, step())
+            )),
         )
         .await;
     assert_eq!(enabled.status, StatusCode::OK);
@@ -643,6 +662,205 @@ async fn password_change_ends_pending_sign_ins(pg: bool) {
         Some(LoginError::PendingLoginExpired)
     );
     database.finish().await;
+}
+
+async fn enrollment_and_revocation(pg: bool) {
+    use db::users::two_factor::{self as stored, FactorAuthority};
+    let _work = PASSWORD_WORK.lock().await;
+    let mut database = fixture(pg).await;
+    let pool = database.pool();
+    let key = encryptor();
+    let alice = new_user(&database, "alice", false).await;
+    let session = account_session(&database, alice.id).await;
+    let authority = FactorAuthority::Password {
+        session: &session,
+        expected: alice.password_hash.as_deref().unwrap(),
+    };
+    let (_, codes) = enable(&database, &key, &alice).await;
+    let original = stored::get_two_factor(pool, alice.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let confirmed = original
+        .last_used_step
+        .expect("enrollment commits the spent step");
+    assert!(
+        !stored::use_totp_step(pool, alice.id, &original.nonce, confirmed)
+            .await
+            .unwrap()
+    );
+    assert!(stored::disable_two_factor(pool, alice.id, authority)
+        .await
+        .unwrap());
+    enable(&database, &key, &alice).await;
+    assert!(
+        !stored::use_totp_step(pool, alice.id, &original.nonce, confirmed + 100)
+            .await
+            .unwrap()
+    );
+    let fresh = token();
+    assert!(
+        db::users::sessions::rotate_authenticated_session(
+            pool,
+            None,
+            &fresh,
+            alice.id,
+            alice.password_hash.as_deref(),
+            None,
+            chrono::Utc::now() + chrono::Duration::hours(1)
+        )
+        .await
+        .unwrap()
+        .is_none(),
+        "password-only issuance must see the new enrollment"
+    );
+    db::users::sessions::delete_session(pool, &session)
+        .await
+        .unwrap();
+    assert!(
+        stored::replace_recovery_codes(pool, alice.id, authority, &[])
+            .await
+            .is_err()
+    );
+    assert!(stored::disable_two_factor(pool, alice.id, authority)
+        .await
+        .is_err());
+    let root = new_user(&database, "root", true).await;
+    let root_session = account_session(&database, root.id).await;
+    let admin = FactorAuthority::Administrator {
+        user_id: root.id,
+        session: &root_session,
+    };
+    database
+        .execute("UPDATE users SET is_admin=FALSE WHERE id=$1", &[root.id])
+        .await;
+    assert!(stored::disable_two_factor(pool, alice.id, admin)
+        .await
+        .is_err());
+    database
+        .execute(
+            "UPDATE users SET is_admin=TRUE,is_banned=TRUE WHERE id=$1",
+            &[root.id],
+        )
+        .await;
+    assert!(stored::disable_two_factor(pool, alice.id, admin)
+        .await
+        .is_err());
+    let pending = pending_after_password(&database, &key, "alice", None).await;
+    assert_eq!(
+        second_factor(&database, &key, &pending, &codes[0], None)
+            .await
+            .err(),
+        Some(LoginError::InvalidTwoFactorCode),
+        "reenrollment replaced old recovery codes"
+    );
+    database.finish().await;
+}
+
+async fn unsuccessful_disable_changes_nothing(pg: bool) {
+    use db::users::two_factor::{self as stored, FactorAuthority};
+    let _work = PASSWORD_WORK.lock().await;
+    let mut database = fixture(pg).await;
+    let alice = new_user(&database, "alice", false).await;
+    let session = account_session(&database, alice.id).await;
+    database
+        .execute(
+            "INSERT INTO two_factor_recovery_codes(user_id,code_hash) VALUES($1,'0000000000000000000000000000000000000000000000000000000000000000')",
+            &[alice.id],
+        )
+        .await;
+    database
+        .execute(
+            "UPDATE users SET two_factor_enabled=TRUE WHERE id=$1",
+            &[alice.id],
+        )
+        .await;
+    let authority = FactorAuthority::Password {
+        session: &session,
+        expected: alice.password_hash.as_deref().unwrap(),
+    };
+    assert!(
+        !stored::disable_two_factor(database.pool(), alice.id, authority)
+            .await
+            .unwrap()
+    );
+    let sql = "SELECT COUNT(*) FROM two_factor_recovery_codes WHERE user_id=$1";
+    let remaining: i64 = match database.pool() {
+        db::DbPool::Postgres(pool) => sqlx::query_scalar(sql)
+            .bind(alice.id)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+        db::DbPool::Sqlite(pool) => sqlx::query_scalar(sql)
+            .bind(alice.id)
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(
+        remaining, 1,
+        "an unsuccessful disable must leave recovery codes alone"
+    );
+    assert!(
+        db::users::accounts::get_user_by_id(database.pool(), alice.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .two_factor_enabled
+    );
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_unsuccessful_disable_changes_nothing() {
+    unsuccessful_disable_changes_nothing(false).await;
+}
+#[tokio::test]
+async fn postgres_unsuccessful_disable_changes_nothing() {
+    unsuccessful_disable_changes_nothing(true).await;
+}
+
+async fn recovery_code_survives_session_failure(pg: bool) {
+    let _work = PASSWORD_WORK.lock().await;
+    let mut database = fixture(pg).await;
+    let key = encryptor();
+    let alice = new_user(&database, "alice", false).await;
+    let (_, codes) = enable(&database, &key, &alice).await;
+    let pending = pending_after_password(&database, &key, "alice", None).await;
+    let collision = account_session(&database, alice.id).await;
+    assert!(identity::login::second_factor_login(
+        database.pool(),
+        Some(&key),
+        &pending,
+        &codes[0],
+        context(&collision, None)
+    )
+    .await
+    .is_err());
+    assert!(
+        second_factor(&database, &key, &pending, &codes[0], None)
+            .await
+            .is_ok(),
+        "failed session insertion must roll back code consumption"
+    );
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_enrollment_and_revocation() {
+    enrollment_and_revocation(false).await;
+}
+#[tokio::test]
+async fn postgres_enrollment_and_revocation() {
+    enrollment_and_revocation(true).await;
+}
+#[tokio::test]
+async fn sqlite_recovery_code_survives_session_failure() {
+    recovery_code_survives_session_failure(false).await;
+}
+#[tokio::test]
+async fn postgres_recovery_code_survives_session_failure() {
+    recovery_code_survives_session_failure(true).await;
 }
 
 #[tokio::test]

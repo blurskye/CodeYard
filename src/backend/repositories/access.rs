@@ -5,6 +5,21 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 
+/// The access projection with the personal-repository administrator policy applied.
+pub async fn user_access(
+    pool: &db::DbPool,
+    user: &User,
+    repository: &Repository,
+) -> Result<db::models::AccessLevel> {
+    if user.is_banned || user.must_change_password {
+        return Ok(db::models::AccessLevel::None);
+    }
+    if repository.owner_kind == "user" && user.is_admin {
+        return Ok(db::models::AccessLevel::Owner);
+    }
+    db::repositories::access::get_user_repo_access(pool, user.id, repository.id).await
+}
+
 pub async fn can_read(
     pool: &db::DbPool,
     user: Option<&User>,

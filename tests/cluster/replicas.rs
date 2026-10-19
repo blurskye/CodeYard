@@ -2171,6 +2171,96 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
     primary.shutdown().await;
 }
 
+#[tokio::test]
+async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
+    let database = native::PostgresDatabase::new().await;
+    let pool = &database.pool;
+    let a = storage_node(pool, "race-a").await;
+    let b = reporting_storage_node(pool, "race-b").await;
+    let source = family_member(pool, "promotion-race", a, None).await;
+    add_copy(pool, source, b, a, 0).await;
+    let owner = db::users::accounts::create_user(pool, "late-fork-owner", None)
+        .await
+        .unwrap();
+    let DbPool::Postgres(raw) = pool else {
+        unreachable!()
+    };
+    let mut lock = raw.begin().await.unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
+        .bind(source)
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let promote_pool = pool.clone();
+    let task =
+        tokio::spawn(async move { replicas::promote(&promote_pool, source, Some(b), false).await });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))")
+                .bind(pid).fetch_one(raw).await.unwrap();
+            if blocked { break; }
+            assert!(!task.is_finished());
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    let fork: i64 = sqlx::query_scalar("INSERT INTO repositories(owner_kind,owner_user_id,name,disk_path,forked_from_id,storage_node_id,write_version) VALUES('user',$1,'late-fork',$2,$3,$4,1) RETURNING id")
+        .bind(owner.id).bind(format!("/repos/{}.git", Uuid::new_v4())).bind(source).bind(a).fetch_one(&mut *lock).await.unwrap();
+    lock.commit().await.unwrap();
+    let error = task.await.unwrap().unwrap_err().to_string();
+    assert!(error.contains("fork family changed"), "{error}");
+    assert_eq!(primary_of(pool, source).await, b);
+    assert_eq!(primary_of(pool, fork).await, a);
+}
+
+#[tokio::test]
+async fn replica_copies_follow_ref_namespace_changes_in_both_directions() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "namespace").await;
+    let head = repo.save("main", "README.md", "unborn", b"one").await;
+    repo.branch("topic", &head).await;
+    assert_current(&primary, &copy, &repo).await;
+    repo.delete_branch("topic").await;
+    repo.branch("topic/sub", &head).await;
+    assert_current(&primary, &copy, &repo).await;
+    repo.delete_branch("topic/sub").await;
+    repo.branch("topic", &head).await;
+    assert_current(&primary, &copy, &repo).await;
+    copy.shutdown().await;
+    primary.shutdown().await;
+}
+
+#[tokio::test]
+async fn retiring_a_replica_removes_quarantined_directories_too() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "quarantined").await;
+    repo.save("main", "README.md", "unborn", b"one").await;
+    assert_current(&primary, &copy, &repo).await;
+    let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
+    let aside = copy_path(&copy, uuid).with_file_name(format!("{uuid}.git.unusable-123"));
+    std::fs::create_dir(&aside).unwrap();
+    std::fs::write(aside.join("data"), b"failed rebuild").unwrap();
+    db::cluster::delete_replica(
+        &database.pool,
+        repo.id(),
+        copy.context.node_id,
+        primary.context.node_id,
+    )
+    .await
+    .unwrap();
+    pass(&copy).await;
+    assert!(!aside.exists());
+    copy.shutdown().await;
+    primary.shutdown().await;
+}
+
 async fn check_default_target_is_reporting_in(pool: &DbPool) {
     let a = storage_node(pool, "pick-a").await;
     // `b` has the lower id and an equally current copy, but it has not reported in.
@@ -2190,6 +2280,19 @@ async fn check_default_target_is_reporting_in(pool: &DbPool) {
         }]
     );
     assert_eq!(primary_of(pool, repo).await, c);
+
+    let (d, key) = keyed_storage_node(pool, "family-pick-d").await;
+    report_in(pool, &key).await;
+    let (e, key) = keyed_storage_node(pool, "family-pick-e").await;
+    report_in(pool, &key).await;
+    let source = family_member(pool, "family-pick", a, None).await;
+    let fork = family_member(pool, "family-pick-fork", a, Some(source)).await;
+    add_copy(pool, source, d, a, 0).await;
+    add_copy(pool, source, e, a, 0).await;
+    add_copy(pool, fork, e, a, 0).await;
+    let promoted = replicas::promote(pool, source, None, false).await.unwrap();
+    assert_eq!(promoted.len(), 2);
+    assert!(promoted.iter().all(|promotion| promotion.to == e));
 }
 
 #[tokio::test]
@@ -2954,6 +3057,33 @@ async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
         "an unusable fallback must not hide the healthy copy"
     );
     assert_eq!(body, b"healthy");
+    let healthy_refs = RepoStore::from_disk_path(copy_path(&healthy, uuid).to_str().unwrap())
+        .refs()
+        .await
+        .unwrap();
+    let input = fetch_input(&healthy_refs["refs/heads/main"]);
+    let mut pack = Vec::new();
+    let (_, status) = web
+        .context
+        .git_session(
+            primary_id,
+            request(
+                uuid,
+                Operation::GitSession(GitSession::new(GitService::UploadPack, true)),
+            ),
+            GitStreams {
+                input: &mut input.as_bytes(),
+                output: &mut pack,
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(status.success());
+    assert!(
+        !pack.is_empty(),
+        "an unreadable first copy must not stop Git failover"
+    );
     web.shutdown().await;
     healthy.shutdown().await;
     first.shutdown().await;
@@ -3023,31 +3153,36 @@ async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
     let head = repo.save("main", "README.md", "unborn", b"# skip\n").await;
     assert_current(&primary, &own, &repo).await;
     pass(&other).await;
-    // The copy on this node is recorded but its files are gone.
-    std::fs::remove_dir_all(copy_path(&own, uuid)).unwrap();
+    // The copy on this node is recorded and exists, but Git cannot open it.
+    std::fs::write(copy_path(&own, uuid).join("config"), b"[broken").unwrap();
     let primary_id = primary.context.node_id;
     primary.shutdown().await;
 
-    let input = fetch_input(&head);
-    let mut pack: Vec<u8> = Vec::new();
-    let (_, status) = own
-        .context
-        .git_session(
-            primary_id,
-            request(
-                uuid,
-                Operation::GitSession(GitSession::new(GitService::UploadPack, true)),
-            ),
-            GitStreams {
-                input: &mut input.as_bytes(),
-                output: &mut pack,
-                errors: &mut tokio::io::sink(),
-            },
-        )
-        .await
-        .unwrap();
-    assert!(status.success());
-    assert!(!pack.is_empty());
+    for missing in [false, true] {
+        if missing {
+            std::fs::remove_dir_all(copy_path(&own, uuid)).unwrap();
+        }
+        let input = fetch_input(&head);
+        let mut pack: Vec<u8> = Vec::new();
+        let (_, status) = own
+            .context
+            .git_session(
+                primary_id,
+                request(
+                    uuid,
+                    Operation::GitSession(GitSession::new(GitService::UploadPack, true)),
+                ),
+                GitStreams {
+                    input: &mut input.as_bytes(),
+                    output: &mut pack,
+                    errors: &mut tokio::io::sink(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(status.success());
+        assert!(!pack.is_empty());
+    }
 
     own.shutdown().await;
     other.shutdown().await;

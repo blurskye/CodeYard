@@ -174,6 +174,19 @@ fn real_cli_creates_and_repairs_private_native_storage_under_umask_022() {
 }
 
 #[test]
+fn default_sqlite_database_uses_the_literal_state_path() {
+    let installation = tempfile::tempdir().unwrap();
+    std::fs::write(installation.path().join(".env"), "").unwrap();
+    let decoded = installation.path().join("forge state");
+    std::fs::create_dir(&decoded).unwrap();
+    for name in ["forge%20state", "forge?state", "forge#state"] {
+        assert_success(&run(installation.path(), &["--state-dir", name, "init"]));
+        assert_sqlite_files_private(&installation.path().join(name).join("gitserv.db"));
+    }
+    assert!(!decoded.join("gitserv.db").exists());
+}
+
+#[test]
 fn database_urls_and_join_tickets_are_refused_in_argv_without_echoing_them() {
     let directory = tempfile::tempdir().unwrap();
     let database_url = "postgres://operator:argv-password@database.invalid/forge";

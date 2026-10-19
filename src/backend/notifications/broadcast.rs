@@ -115,7 +115,7 @@ impl NotificationBroadcaster {
                 tracing::warn!("Notification announcement unavailable");
             }
         }
-        let _ = self.tx.send(event);
+        let _ = self.tx.send(event.hint());
     }
 }
 

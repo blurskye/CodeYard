@@ -21,21 +21,22 @@ pub async fn record_repository_push(
     Ok(())
 }
 
-/// Activity of one user, newest first, over every repository. Callers filter by what the
-/// viewer may read.
+/// One bounded scan of activity, authorized in the same statement as its content.
 pub async fn list_user_activity(
     pool: &SqlitePool,
     user_id: i64,
+    viewer: Option<i64>,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<ActivityRow>> {
-    Ok(sqlx::query_as::<_, ActivityRow>(
+    let readable = super::repositories::access::readable_condition();
+    Ok(sqlx::query_as::<_, ActivityRow>(&format!(
         r#"
         WITH activity AS (
             SELECT 'push' AS kind, p.id AS item_id, p.repo_id, p.created_at,
                    NULL AS number, NULL AS title, p.branch, p.commit_count
             FROM repository_pushes p
-            WHERE p.actor_id = ?1
+            WHERE p.actor_id = ?1 AND p.commit_count > 0
             UNION ALL
             SELECT 'repository_created', r.id, r.id, r.created_at,
                    NULL, NULL, NULL, NULL
@@ -69,21 +70,26 @@ pub async fn list_user_activity(
             JOIN pull_requests p ON p.id = c.pull_request_id
             WHERE c.author_id = ?1
             AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = c.review_id AND v.state = 'pending')
+        ), scanned AS (
+            SELECT * FROM activity ORDER BY created_at DESC, kind, item_id DESC
+            LIMIT ?2 OFFSET ?3
         )
         SELECT a.kind, a.item_id, a.repo_id, a.created_at, a.number, a.title, a.branch,
-               a.commit_count, COALESCE(users.username, organizations.name) AS owner_name,
-               repositories.name AS repo_name
-        FROM activity a
-        JOIN repositories ON repositories.id = a.repo_id
-        LEFT JOIN users ON repositories.owner_kind = 'user' AND repositories.owner_user_id = users.id
-        LEFT JOIN organizations ON repositories.owner_kind = 'org' AND repositories.owner_org_id = organizations.id
+               a.commit_count, COALESCE(owner.username, organizations.name) AS owner_name,
+               r.name AS repo_name
+        FROM scanned a
+        JOIN repositories r ON r.id = a.repo_id
+        LEFT JOIN users owner ON r.owner_kind = 'user' AND r.owner_user_id = owner.id
+        LEFT JOIN organizations ON r.owner_kind = 'org' AND r.owner_org_id = organizations.id
+        LEFT JOIN users u ON u.id = ?4
+        WHERE {readable}
         ORDER BY a.created_at DESC, a.kind, a.item_id DESC
-        LIMIT ?2 OFFSET ?3
         "#,
-    )
+    ))
     .bind(user_id)
     .bind(limit)
     .bind(offset)
+    .bind(viewer)
     .fetch_all(pool)
     .await?)
 }

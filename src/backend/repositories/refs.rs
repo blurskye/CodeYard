@@ -28,14 +28,9 @@ pub enum RefError {
 async fn writable(
     pool: &db::DbPool,
     actor: i64,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
 ) -> Result<(db::models::Repository, db::models::User), RefError> {
-    let repository = db::repositories::records::get_repository(pool, owner, name)
-        .await
-        .map_err(|_| RefError::Unavailable)?
-        .ok_or(RefError::Access(access::AccessError::NotFound))?;
-    access::check_write(pool, repository.id, actor)
+    access::check_write(pool, repo_id, actor)
         .await
         .map_err(RefError::Access)
 }
@@ -86,11 +81,11 @@ pub async fn create_branch(
     ci: &CiRuns,
     actor: i64,
     owner: &str,
-    name: &str,
+    repo_id: i64,
     branch: &str,
     source: &str,
 ) -> Result<String, RefError> {
-    let (repository, user) = writable(pool, actor, owner, name).await?;
+    let (repository, user) = writable(pool, actor, repo_id).await?;
     if branch.is_empty() {
         return Err(RefError::Invalid("Branch name is required"));
     }
@@ -166,11 +161,10 @@ pub async fn delete_branch(
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
     actor: i64,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     branch: &str,
 ) -> Result<(), RefError> {
-    let (repository, user) = writable(pool, actor, owner, name).await?;
+    let (repository, user) = writable(pool, actor, repo_id).await?;
     if git::branch_ref(branch).is_none() {
         return Err(invalid_ref("branch"));
     }
@@ -212,12 +206,12 @@ pub async fn create_tag(
     ci: &CiRuns,
     actor: i64,
     owner: &str,
-    name: &str,
+    repo_id: i64,
     tag: &str,
     source: &str,
     message: Option<&str>,
 ) -> Result<TagInfo, RefError> {
-    let (repository, _) = writable(pool, actor, owner, name).await?;
+    let (repository, _) = writable(pool, actor, repo_id).await?;
     if tag.is_empty() {
         return Err(RefError::Invalid("Tag name is required"));
     }
@@ -259,11 +253,10 @@ pub async fn delete_tag(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     tag: &str,
 ) -> Result<(), RefError> {
-    let (repository, _) = writable(pool, actor, owner, name).await?;
+    let (repository, _) = writable(pool, actor, repo_id).await?;
     if git::tag_ref(tag).is_none() {
         return Err(invalid_ref("tag"));
     }

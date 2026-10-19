@@ -1082,10 +1082,11 @@ async fn token_session_revocation_contract(pool: &DbPool) {
         .unwrap()
         .is_some());
     assert!(transitions::compare_exchange_password(
-        pool, user.id, "old-hash", "new-hash", true, true
+        pool, user.id, "old-hash", "new-hash", true, true, None
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     // The insert that resumes afterwards must not create a usable token.
     assert!(matches!(
         tokens::create(

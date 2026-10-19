@@ -76,6 +76,8 @@ fn model() -> ActionsPage {
         selected: None,
         dispatch_branch: "main".into(),
         can_dispatch: true,
+        can_manage_runs: true,
+        workflow_warning: None,
         run_limit: 100,
         log_limit: 2000,
     }
@@ -148,12 +150,17 @@ fn only_a_failed_run_shows_the_error_banner() {
         fetched_lines: 0,
         logs_truncated: false,
     });
-    assert!(!html(model.clone()).contains("This run reported an error"));
+    assert!(!html(model.clone()).contains("role=\"alert\""));
     let mut failed = run();
     failed.status = "failed".into();
     failed.error_message = Some("A workflow job failed".into());
     model.selected.as_mut().unwrap().run = failed;
-    assert!(html(model).contains("This run reported an error"));
+    let rendered = html(model.clone());
+    assert!(rendered.contains("A workflow job failed"));
+    assert!(!rendered.contains("Open the failed step"));
+    model.selected.as_mut().unwrap().run.error_message =
+        Some("The CI worker stopped before the run finished".into());
+    assert!(html(model).contains("The CI worker stopped before the run finished"));
 }
 
 fn html(model: ActionsPage) -> String {
@@ -901,7 +908,7 @@ fn a_repository_without_workflows_gets_started_instead_of_the_run_list() {
     assert!(rendered.contains("Get started with Actions"));
     assert!(rendered.contains("<code>.github/workflows/</code>"));
     assert!(rendered.contains("runs-on: ubuntu-latest"));
-    assert!(rendered.contains("href=\"/alice/repo/new/main/.github/workflows\""));
+    assert!(rendered.contains("href=\"/alice/repo/new/refs/heads/main/.github/workflows\""));
     assert!(!rendered.contains("actions-run-toolbar"));
     assert!(!rendered.contains("Filter workflow runs"));
     assert!(!rendered.contains("Run on"));
@@ -984,12 +991,20 @@ fn run_page_offers_cancel_and_rerun_forms_only_to_writers() {
     assert!(!rendered.contains("/rerun\""), "{rendered}");
     assert!(rendered.contains("name=\"csrf_token\""), "{rendered}");
 
-    // Readers get neither form.
+    // Discovery failure disables dispatch but not run controls.
     page.can_dispatch = false;
+    page.workflow_warning = Some("Workflow definitions could not be read.".into());
+    let degraded = html(page.clone());
+    assert!(degraded.contains("Workflow definitions could not be read."));
+    assert!(degraded.contains("/cancel\""));
+
+    // Readers get neither form.
+    page.can_manage_runs = false;
     let reader = html(page.clone());
     assert!(!reader.contains("/cancel\""), "{reader}");
     assert!(!reader.contains("/rerun\""), "{reader}");
     page.can_dispatch = true;
+    page.can_manage_runs = true;
 
     // A finished run is run again, whatever its event.
     running.status = "succeeded".into();

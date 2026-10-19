@@ -153,6 +153,8 @@ fn review_view(entry: PullRequestReviewEntry, head: &str) -> pulls::Review {
         stale: review.commit_sha.as_deref() != Some(head),
         dismissed_reason: review.dismissed_reason,
         comments: Vec::new(),
+        comments_more: None,
+        comments_start: None,
         reactions: Vec::new(),
     }
 }
@@ -165,14 +167,18 @@ pub(crate) async fn page_reviews(
     entries: Vec<PullRequestReviewEntry>,
 ) -> ResultPage<Vec<pulls::Review>> {
     let ids: Vec<i64> = entries.iter().map(|entry| entry.review.id).collect();
-    let comments = db::pull_requests::reviews::list_review_comments(&ctx.state.pool, &ids)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let offset = crate::backend::api::repos::chrome::number(ctx, "review_comments", 0, 1_000_000)?;
+    let comments =
+        db::pull_requests::reviews::list_review_comments_page(&ctx.state.pool, &ids, offset as i64)
+            .await
+            .map_err(|_| unavailable(ctx))?;
+    let next = offset + comments.comments.len();
+    let has_more = comments.has_more;
     let mut reviews: Vec<pulls::Review> = entries
         .into_iter()
         .map(|entry| review_view(entry, &pull.head_sha))
         .collect();
-    for entry in comments {
+    for entry in comments.comments {
         let Some(review_id) = entry.comment.review_id else {
             continue;
         };
@@ -180,6 +186,22 @@ pub(crate) async fn page_reviews(
         if let Some(review) = reviews.iter_mut().find(|review| review.id == review_id) {
             review.comments.push(comment);
         }
+    }
+    let page = crate::backend::api::repos::chrome::number(
+        ctx,
+        "page",
+        1,
+        crate::backend::issues::MAX_COMMENT_PAGE,
+    )?;
+    let base = format!(
+        "{}/{}?page={page}",
+        repo.view.family_url(Kind::Pull),
+        pull.number
+    );
+    if let Some(last) = reviews.last_mut() {
+        last.comments_more =
+            has_more.then(|| format!("{base}&review_comments={next}#review-{}", last.id));
+        last.comments_start = (offset > 0).then(|| format!("{base}#review-{}", last.id));
     }
     Ok(reviews)
 }
@@ -216,7 +238,7 @@ pub(crate) async fn reviewers(
             .await
             .unwrap_or_default()
     };
-    let owned = rules.owned_paths(&changed);
+    let owned = rules.owned_paths(&changed).unwrap_or_default();
     let owners: HashSet<&str> = owned
         .iter()
         .flat_map(|(_, names)| names.iter().map(String::as_str))
@@ -392,7 +414,6 @@ pub(crate) async fn native_dismiss_review(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let user = ctx.require_user()?.id;
     let reason = field(&form, "reason");
     let request = DismissPullRequestReviewRequest {
@@ -415,6 +436,7 @@ pub(crate) async fn native_dismiss_review(
             Ok(ctx.redirect(&location))
         }
         Err(failure) => {
+            let value = item(&ctx, &repo, Kind::Pull, number).await?;
             let (status, message) = safe_api_error(&failure);
             render_detail(
                 &ctx,
@@ -442,7 +464,6 @@ pub(crate) async fn native_request_reviewer(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     let username = field(&form, "username");
@@ -463,6 +484,7 @@ pub(crate) async fn native_request_reviewer(
     {
         Ok(_) => Ok(ctx.redirect(&format!("{base}#reviewers"))),
         Err(failure) => {
+            let value = item(&ctx, &repo, Kind::Pull, number).await?;
             let (status, message) = safe_api_error(&failure);
             let draft = DetailDraft {
                 reviewer: username,
@@ -493,7 +515,6 @@ pub(crate) async fn native_remove_requested_reviewer(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     match review_rules::remove_requested_reviewer(
@@ -509,6 +530,7 @@ pub(crate) async fn native_remove_requested_reviewer(
     {
         Ok(()) => Ok(ctx.redirect(&format!("{base}#reviewers"))),
         Err(failure) => {
+            let value = item(&ctx, &repo, Kind::Pull, number).await?;
             let (status, message) = safe_api_error(&failure);
             render_detail(
                 &ctx,
@@ -713,22 +735,36 @@ pub(crate) async fn native_set_viewed(
             .await
             .map_err(|_| unavailable(&ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
-    let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
-        .diff(&pull.base_sha, &pull.head_sha)
-        .await
-        .map_err(|_| unavailable(&ctx))?;
+    if field(&form, "expected_head") != pull.head_sha
+        || field(&form, "expected_base") != pull.base_sha
+    {
+        return Err(ctx.error(
+            StatusCode::CONFLICT,
+            "The pull request changed. Reload before marking this file.",
+        ));
+    }
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     let path = field(&form, "path");
-    let Some((index, file)) = diff
-        .files
-        .iter()
-        .enumerate()
-        .find(|(_, file)| file.filename == path)
-    else {
-        // The file left the diff, for example after a push. Nothing is marked.
-        return Ok(ctx.redirect(&format!("{base}/diff")));
+    let store = repo_store(&repo.record, ctx.state.cluster.as_ref());
+    let blob_sha = match store
+        .blob_range(
+            &pull.head_sha,
+            &path,
+            crate::backend::repositories::store::BlobRange::Window {
+                offset: 0,
+                length: 0,
+            },
+        )
+        .await
+    {
+        Ok(blob) => blob.id,
+        // Deleted files have a zero new-blob id in the diff.
+        Err(error) if error.kind == crate::backend::repositories::store::ErrorKind::MissingPath => {
+            "0".repeat(40)
+        }
+        Err(_) => return Err(unavailable(&ctx)),
     };
-    let blob = (field(&form, "viewed") == "yes").then_some(file.blob_sha.as_str());
+    let blob = (field(&form, "viewed") == "yes").then_some(blob_sha.as_str());
     db::pull_requests::viewed::set_pull_request_file_viewed(
         &ctx.state.pool,
         pull.id,
@@ -738,6 +774,18 @@ pub(crate) async fn native_set_viewed(
     )
     .await
     .map_err(|_| unavailable(&ctx))?;
+    if field(&form, "background") == "yes"
+        || ctx
+            .headers
+            .get(axum::http::header::ACCEPT)
+            .and_then(|value| value.to_str().ok())
+            == Some("application/json")
+    {
+        return Ok(axum::response::IntoResponse::into_response(
+            StatusCode::NO_CONTENT,
+        ));
+    }
+    let index = field(&form, "index").parse::<usize>().unwrap_or(0);
     Ok(ctx.redirect(&format!("{base}/diff#diff-file-{index}")))
 }
 
@@ -752,7 +800,6 @@ pub(crate) async fn native_discard_review(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     match review_rules::discard_pending_review(&ctx.state.pool, user, owner, name, number)
@@ -761,6 +808,7 @@ pub(crate) async fn native_discard_review(
     {
         Ok(()) => Ok(ctx.redirect(&format!("{base}/diff"))),
         Err(failure) => {
+            let value = item(&ctx, &repo, Kind::Pull, number).await?;
             let (status, message) = safe_api_error(&failure);
             render_diff(&ctx, &repo, &value, None, None, Some(&message), status).await
         }
@@ -779,7 +827,6 @@ async fn set_resolution(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let user = ctx.require_user()?.id;
     let from_diff = field(&form, "from") == "diff";
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
@@ -807,6 +854,7 @@ async fn set_resolution(
             Ok(ctx.redirect(&location))
         }
         Err(failure) => {
+            let value = item(&ctx, &repo, Kind::Pull, number).await?;
             let (status, message) = safe_api_error(&failure);
             if from_diff {
                 render_diff(&ctx, &repo, &value, None, None, Some(&message), status).await
@@ -864,6 +912,7 @@ pub(crate) async fn native_edit_conversation_comment(
             comment_id,
         },
         draft.comment.clone(),
+        None,
     )
     .await
     .map_err(operation_error);

@@ -166,6 +166,11 @@ native_operation!(crate::backend::db::postgres::secrets::delete_secret,
     crate::backend::db::sqlite::secrets::delete_secret,
     fn delete_secret(pool: &DbPool, actor_id: i64, repo_id: i64, name: &str) -> Result<bool, SecretsError>);
 
+// A claim with no encryption key must not silently omit configured secrets.
+native_operation!(crate::backend::db::postgres::secrets::repository_has_secrets,
+    crate::backend::db::sqlite::secrets::repository_has_secrets,
+    fn repository_has_secrets(pool: &DbPool, repo_id: i64) -> Result<bool, SecretsError>);
+
 // Control-plane recovery projection over an already owned DB/encryptor capability.
 // Not execution delivery: no pretend job/runner arguments grant authorization.
 native_operation!(crate::backend::db::postgres::secrets::decrypt_repository_secrets,

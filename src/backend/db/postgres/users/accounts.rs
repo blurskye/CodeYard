@@ -320,9 +320,9 @@ pub async fn list_admin_account_summaries(pool: &PgPool) -> Result<Vec<AdminAcco
             WHERE r.owner_kind = 'user' AND r.owner_user_id = u.id
         ) repo_storage ON TRUE
         LEFT JOIN LATERAL (
-            SELECT COALESCE(SUM(rc.commits_count), 0)::BIGINT AS commits_total
-            FROM repo_contributors rc
-            WHERE rc.user_id = u.id
+            SELECT COALESCE(SUM(rc.commit_count), 0)::BIGINT AS commits_total
+            FROM repository_pushes rc
+            WHERE rc.actor_id = u.id
         ) commits ON TRUE
         LEFT JOIN LATERAL (
             SELECT COUNT(*)::BIGINT AS pushes_total
@@ -437,10 +437,10 @@ pub async fn list_admin_activity_points(
                   AND r.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
                 GROUP BY DATE(r.created_at)
                 UNION ALL
-                SELECT DATE(rc.updated_at) AS day, COALESCE(SUM(rc.commits_count), 0)::BIGINT AS weight
-                FROM repo_contributors rc
-                WHERE rc.updated_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(rc.updated_at)
+                SELECT DATE(rc.created_at) AS day, COALESCE(SUM(rc.commit_count), 0)::BIGINT AS weight
+                FROM repository_pushes rc
+                WHERE rc.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                GROUP BY DATE(rc.created_at)
             ) contribution_events
             GROUP BY day
         ),

@@ -22,6 +22,7 @@ pub fn profile_page(
     followers: i64,
     follows: i64,
     message: Option<&str>,
+    repository_next: Option<usize>,
 ) -> Element {
     let path = format!("/{}", crate::webui::encode_component(&profile.username));
     let login = format!("/login?redirect={}", crate::webui::encode_component(&path));
@@ -107,6 +108,9 @@ pub fn profile_page(
                             ProfileStarList { path: path.clone(), stars: stars.clone(), own }
                         } else {
                             ProfileRepositories { key: "{path}", path: path.clone(), repositories, own }
+                            if let Some(next) = repository_next {
+                                NavLink { href: format!("{path}?repo_page={next}#profile-repositories"), class: "identity-profile-button", "More repositories" }
+                            }
                             section { id: "profile-activity", class: "identity-profile-activity", "aria-labelledby": "profile-activity-heading",
                                 h2 { id: "profile-activity-heading", "Recent activity" }
                                 if days.is_empty() {

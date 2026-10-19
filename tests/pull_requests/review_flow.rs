@@ -281,11 +281,14 @@ async fn viewed_marks_are_per_reader_and_reset_when_the_file_changes(pg: bool) {
     let (number, head) = open_pull(&world.alice, "topic", world.base.as_str()).await;
     let viewed = format!("{}/viewed", web(number));
     let diff = format!("{}/diff", web(number));
+    let yes = [
+        ("path", "topic.txt"),
+        ("viewed", "yes"),
+        ("expected_head", head.as_str()),
+        ("expected_base", world.base.as_str()),
+    ];
 
-    let reply = world
-        .bob
-        .form_reply(&viewed, &[("path", "topic.txt"), ("viewed", "yes")])
-        .await;
+    let reply = world.bob.form_reply(&viewed, &yes).await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
     let expected = format!("{diff}#diff-file-0");
     assert_eq!(reply.location.as_deref(), Some(expected.as_str()));
@@ -314,23 +317,55 @@ async fn viewed_marks_are_per_reader_and_reset_when_the_file_changes(pg: bool) {
     assert!(refused.status.is_client_error(), "{}", refused.text());
     let erin_id = world.database.actor("erin").await;
     let erin = Client::login(&world.router, world.database.pool(), erin_id).await;
-    let refused = erin
-        .form_reply(&viewed, &[("path", "topic.txt"), ("viewed", "yes")])
-        .await;
+    let refused = erin.form_reply(&viewed, &yes).await;
     assert_eq!(refused.status, StatusCode::NOT_FOUND);
 
+    // Enhanced saves acknowledge the committed mark without a follow-up page render.
+    {
+        use axum::{body::Body, http::Request};
+        use tower::ServiceExt;
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("csrf_token", &world.bob.csrf)
+            .append_pair("path", "topic.txt")
+            .append_pair("viewed", "yes")
+            .append_pair("expected_head", &head)
+            .append_pair("expected_base", &world.base)
+            .finish();
+        let response = world
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&viewed)
+                    .header("Cookie", format!("session_id={}", world.bob.session))
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        assert!(response.headers().get("location").is_none());
+    }
     // Clearing the mark works, and marking again restores it.
     let reply = world
         .bob
-        .form_reply(&viewed, &[("path", "topic.txt"), ("viewed", "no")])
+        .form_reply(
+            &viewed,
+            &[
+                ("path", "topic.txt"),
+                ("viewed", "no"),
+                ("expected_head", &head),
+                ("expected_base", &world.base),
+            ],
+        )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
     let (_, files) = world.bob.page(&diff).await;
     assert!(visible_words(&files).contains("0 / 1 file viewed"));
-    world
-        .bob
-        .form_reply(&viewed, &[("path", "topic.txt"), ("viewed", "yes")])
-        .await;
+    world.bob.form_reply(&viewed, &yes).await;
 
     // A push that changes the file clears its mark for every reader.
     let content = base64::engine::general_purpose::STANDARD.encode("changed\n");
@@ -348,11 +383,30 @@ async fn viewed_marks_are_per_reader_and_reset_when_the_file_changes(pg: bool) {
     assert!(visible_words(&files).contains("0 / 1 file viewed"));
     assert!(!files.contains("aria-checked=\"true\""));
 
-    // Marking the new contents counts again.
-    world
+    // The old page cannot acknowledge replacement contents.
+    let stale = world.bob.form_reply(&viewed, &yes).await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    let (_, files) = world.bob.page(&diff).await;
+    assert!(visible_words(&files).contains("0 / 1 file viewed"));
+
+    // Background saves return no page or redirect; native saves above still redirect.
+    let current = world.alice.pull(number).await;
+    let saved = world
         .bob
-        .form_reply(&viewed, &[("path", "topic.txt"), ("viewed", "yes")])
+        .form_reply(
+            &viewed,
+            &[
+                ("path", "topic.txt"),
+                ("viewed", "yes"),
+                ("expected_head", current["head_sha"].as_str().unwrap()),
+                ("expected_base", current["base_sha"].as_str().unwrap()),
+                ("background", "yes"),
+            ],
+        )
         .await;
+    assert_eq!(saved.status, StatusCode::NO_CONTENT);
+    assert!(saved.location.is_none());
+    assert!(saved.body.is_empty());
     let (_, files) = world.bob.page(&diff).await;
     assert!(visible_words(&files).contains("1 / 1 file viewed"));
     world.database.finish().await;

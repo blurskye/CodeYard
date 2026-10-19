@@ -27,6 +27,12 @@ pub enum DeployKeyError {
 
 /// Keeps a typed key refusal from the database layer, and turns anything else into unavailable.
 fn refusal(error: anyhow::Error) -> DeployKeyError {
+    if error
+        .downcast_ref::<DeployKeyError>()
+        .is_some_and(|error| matches!(error, DeployKeyError::Denied))
+    {
+        return DeployKeyError::Denied;
+    }
     match error.downcast::<SshKeyWriteRefusal>() {
         Ok(refusal) => DeployKeyError::Key(refusal),
         Err(error) => DeployKeyError::Unavailable(error),
@@ -61,6 +67,7 @@ pub async fn list_keys(
 pub async fn add_key(
     pool: &db::DbPool,
     actor: &User,
+    session: &str,
     repo: &Repository,
     title: &str,
     public_key: &str,
@@ -80,7 +87,7 @@ pub async fn add_key(
         can_write,
         created_by_id: actor.id,
     };
-    db::deploy_keys::insert_deploy_key(pool, &key)
+    db::deploy_keys::insert_deploy_key(pool, &key, session)
         .await
         .map_err(refusal)
 }
@@ -88,13 +95,14 @@ pub async fn add_key(
 pub async fn remove_key(
     pool: &db::DbPool,
     actor: &User,
+    session: &str,
     repo: &Repository,
     key_id: i64,
 ) -> Result<(), DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    let deleted = db::deploy_keys::delete_deploy_key(pool, repo.id, key_id)
+    let deleted = db::deploy_keys::delete_deploy_key(pool, repo.id, key_id, actor.id, session)
         .await
-        .map_err(DeployKeyError::Unavailable)?;
+        .map_err(refusal)?;
     if deleted {
         Ok(())
     } else {
@@ -189,7 +197,11 @@ pub async fn authorize(
         !creator.is_banned && !creator.must_change_password,
         "identity unavailable"
     );
-    let access = db::repositories::access::get_user_repo_access(pool, creator.id, repo.id).await?;
+    let access = if repo.owner_kind == "user" && creator.is_admin {
+        AccessLevel::Write
+    } else {
+        db::repositories::access::get_user_repo_access(pool, creator.id, repo.id).await?
+    };
     let required = if write {
         AccessLevel::Write
     } else {

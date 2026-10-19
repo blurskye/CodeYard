@@ -349,15 +349,15 @@ pub(super) async fn folder_listings(
         current.push_str(part);
         paths.push(current.clone());
     }
-    let mut folders = Vec::with_capacity(paths.len());
-    for folder in paths {
-        let entries = store.tree(reference, &folder).await?;
-        folders.push(view::blob::FolderListing {
-            path: folder,
+    Ok(store
+        .sidebar_trees(reference, &paths)
+        .await?
+        .into_iter()
+        .map(|(path, entries)| view::blob::FolderListing {
+            path,
             entries: view_entries(entries),
-        });
-    }
-    Ok(folders)
+        })
+        .collect())
 }
 
 /// The Files panel's folders for a file, the last commit that changed it, and its permalink. The
@@ -381,10 +381,17 @@ pub(super) async fn file_context(
     let folders = folder_listings(store, commit, directory)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
-    let latest_commit = folders
-        .last()
-        .and_then(|folder| folder.entries.iter().find(|entry| entry.path == path))
-        .and_then(|entry| entry.last_commit.clone());
+    let latest_commit = match store
+        .path_commits(commit, path, 0, 1, &Default::default())
+        .await
+    {
+        Ok(commits) => commits
+            .into_iter()
+            .next()
+            .map(crate::backend::api::repos::chrome::commit),
+        Err(error) if error.is_response_too_large() => None,
+        Err(error) => return Err(store_error(ctx, Some(&loaded.chrome), error)),
+    };
     let permalink = format!(
         "{}{}",
         crate::backend::api::http::config::public_origin(),

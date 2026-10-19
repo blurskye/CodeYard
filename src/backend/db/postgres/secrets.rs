@@ -56,6 +56,15 @@ pub async fn create_or_update_secret(
     Ok(())
 }
 
+pub async fn repository_has_secrets(pool: &PgPool, repo_id: i64) -> Result<bool, SecretsError> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repo_secrets WHERE repo_id = $1)")
+            .bind(repo_id)
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
 pub async fn list_secrets(
     pool: &PgPool,
     actor_id: i64,

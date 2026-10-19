@@ -6,6 +6,7 @@ pub(in crate::backend::repositories::git_sessions) use fixture::{
 #[cfg(test)]
 mod fixture {
     use super::super::*;
+    use crate::backend::db::models::AccessLevel;
     use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
     use base64::Engine;
     use std::sync::LazyLock;

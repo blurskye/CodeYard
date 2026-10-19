@@ -102,10 +102,16 @@ async fn remove_expired_rows(
             _ = stop.changed() => break,
             _ = interval.tick() => {}
         }
-        match crate::backend::files::remove_expired_uploads(&pool, &storage).await {
-            Ok(0) => {}
-            Ok(removed) => info!(removed, "removed expired uploads"),
-            Err(_) => warn!("could not remove expired uploads"),
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(12),
+            crate::backend::files::remove_expired_uploads(&pool, &storage),
+        )
+        .await
+        {
+            Ok(Ok(0)) => {}
+            Ok(Ok(removed)) => info!(removed, "removed expired uploads"),
+            Ok(Err(_)) => warn!("could not remove expired uploads"),
+            Err(_) => warn!("upload cleanup budget exhausted; remaining work stays queued"),
         }
         match crate::backend::db::files::remove_expired_transfer_rows(&pool).await {
             Ok(0) => {}
@@ -246,7 +252,22 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         ci_runs.queued.clone(),
         &config.state_dir,
     );
-    workers.startup().await?;
+    let started = async {
+        workers.startup().await?;
+        if let Some(member) = &member {
+            member.publish().await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if let Err(error) = started {
+        let _ = workers.shutdown().await;
+        if let Some(member) = &member {
+            member.shutdown().await;
+        }
+        notifications.shutdown().await;
+        return Err(error);
+    }
     let (stop_expiry, expiry_stop) = tokio::sync::watch::channel(false);
     let expiry = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(remove_expired_rows(
@@ -257,9 +278,6 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     });
     // Published only after the services above are set up. The listeners start next; if
     // one fails, the node shuts down and withdraws.
-    if let Some(member) = &member {
-        member.publish().await?;
-    }
     // Storage nodes keep the replica copies of their repositories current.
     let (stop_replicas, replica_stop) = tokio::sync::watch::channel(false);
     let replicas = member
@@ -321,6 +339,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     }
     stop_expiry.send_replace(true);
     stop_replicas.send_replace(true);
+    workers.request_stop();
     // Stop being a placement target before the node drains its work. The withdrawal is
     // bounded, so a row lock held elsewhere cannot stall the drain.
     if let Some(member) = &member {
@@ -360,6 +379,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             let _ = replicas.await;
         }
     }
+    crate::backend::webhooks::shutdown(deadline).await;
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
         member.shutdown().await;

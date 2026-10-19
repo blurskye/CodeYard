@@ -144,7 +144,10 @@ pub async fn activate_upload(
 /// Queues the file's bytes for deletion in the caller's transaction. The bytes wait
 /// out the grace period after the PUT deadline: a PUT accepted before the deadline
 /// can still be transferring, and a replayed one can recreate bytes already removed.
-async fn queue_deletion(tx: &mut Transaction<'_, Sqlite>, file: &File) -> Result<(), sqlx::Error> {
+pub(crate) async fn queue_deletion(
+    tx: &mut Transaction<'_, Sqlite>,
+    file: &File,
+) -> Result<(), sqlx::Error> {
     let delete_after = file
         .put_expires_at
         .unwrap_or(file.created_at + chrono::Duration::seconds(PUT_LIFETIME_SECONDS))
@@ -195,6 +198,28 @@ pub(crate) async fn delete_replaced_picture(
         .await?
     {
         delete_if_unselected(tx, &file).await?;
+    }
+    Ok(())
+}
+
+/// Removes a former release upload after its links were deleted, in the same transaction.
+pub(crate) async fn delete_unlinked_release_file(
+    tx: &mut Transaction<'_, Sqlite>,
+    file_id: Uuid,
+) -> Result<(), sqlx::Error> {
+    let file = sqlx::query_as::<_, File>("SELECT * FROM files WHERE id=?1")
+        .bind(file_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    if let Some(file) = file {
+        let linked: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets WHERE file_id=?1)")
+                .bind(file_id)
+                .fetch_one(&mut **tx)
+                .await?;
+        if !linked {
+            delete_if_unselected(tx, &file).await?;
+        }
     }
     Ok(())
 }

@@ -1,6 +1,4 @@
-//! Webhook events for branch and tag changes pushed over Git: `create`, `delete` and `push`,
-//! as GitHub sends them. Branch and tag actions made in the web UI or the API are not wired
-//! to these events yet.
+//! Webhook events for published branch and tag changes: `create`, `delete` and `push`.
 use super::payloads::{self, Scope};
 use super::{emit, events};
 use crate::backend::db::models::Repository;
@@ -55,7 +53,7 @@ pub fn emit_ref_moves(
                 let sender = people.get(pusher_id);
                 let before = (!is_zero(&old)).then_some(old.as_str());
                 let commits = if is_zero(&new) {
-                    Vec::new()
+                    payloads::PushedCommits::default()
                 } else {
                     payloads::pushed_commits(&path, before, &new)
                 };

@@ -94,6 +94,7 @@ js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "Node", "Location", "History", "Navigator", "Performance", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "HtmlFormElement", "KeyboardEvent", "NodeList", "Storage", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 

@@ -3,7 +3,9 @@ use anyhow::{ensure, Result};
 use git2::Repository;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageStat {
@@ -275,7 +277,57 @@ fn parse_contributors(output: &[u8]) -> Result<Vec<ContributorInfo>> {
     Ok(contributors)
 }
 
+struct ContributorSnapshot {
+    refs: HashMap<String, String>,
+    contributors: Vec<ContributorInfo>,
+}
+
+type ContributorCache = Arc<tokio::sync::Mutex<Option<ContributorSnapshot>>>;
+static CONTRIBUTOR_CACHES: LazyLock<Mutex<VecDeque<(PathBuf, ContributorCache)>>> =
+    LazyLock::new(Mutex::default);
+
+fn contributor_cache(path: &Path) -> ContributorCache {
+    let mut caches = CONTRIBUTOR_CACHES
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(at) = caches.iter().position(|(key, _)| key == path) {
+        let entry = caches.remove(at).expect("cached contributor entry");
+        let cache = entry.1.clone();
+        caches.push_back(entry);
+        return cache;
+    }
+    if caches.len() == 8 {
+        if let Some(at) = caches
+            .iter()
+            .position(|(_, cache)| Arc::strong_count(cache) == 1)
+        {
+            caches.remove(at);
+        }
+    }
+    let cache = Arc::new(tokio::sync::Mutex::new(None));
+    if caches.len() < 8 {
+        caches.push_back((path.to_owned(), cache.clone()));
+    }
+    cache
+}
+
+async fn contributor_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
+    let path = repo_path.to_owned();
+    let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        super::repository::list_mirror_refs(&path)
+    })
+    .await?
+}
+
 pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
+    let cache = contributor_cache(repo_path);
+    let mut cached = tokio::time::timeout(process::RPC_TIMEOUT, cache.lock()).await?;
+    let refs = contributor_refs(repo_path).await?;
+    if let Some(snapshot) = cached.as_ref().filter(|snapshot| snapshot.refs == refs) {
+        return Ok(snapshot.contributors.clone());
+    }
     let mut command = process::git_command()?;
     command
         .args(["shortlog", "-sne", "--all"])
@@ -288,7 +340,14 @@ pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<Contributor
     )
     .await?;
     ensure!(status.success(), "Git contributor listing failed");
-    parse_contributors(&output)
+    let contributors = parse_contributors(&output)?;
+    if refs == contributor_refs(repo_path).await? {
+        *cached = Some(ContributorSnapshot {
+            refs,
+            contributors: contributors.clone(),
+        });
+    }
+    Ok(contributors)
 }
 
 /// An entry that another push removed while this scan ran (a quarantine directory, a lock
@@ -337,6 +396,45 @@ pub(crate) fn directory_size(path: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn contributors_are_cached_until_refs_change() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init_bare(root.path()).unwrap();
+        let signature = git2::Signature::now("Test", "test@example.invalid").unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        let first = repo
+            .commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "one",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        assert_eq!(get_contributors(root.path()).await.unwrap()[0].commits, 1);
+        // A cache hit need not read history again.
+        let oid = first.to_string();
+        let object = root.path().join("objects").join(&oid[..2]).join(&oid[2..]);
+        let contents = std::fs::read(&object).unwrap();
+        std::fs::remove_file(&object).unwrap();
+        assert_eq!(get_contributors(root.path()).await.unwrap()[0].commits, 1);
+        std::fs::write(&object, contents).unwrap();
+        let parent = repo.find_commit(first).unwrap();
+        repo.commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            "two",
+            &tree,
+            &[&parent],
+        )
+        .unwrap();
+        assert_eq!(get_contributors(root.path()).await.unwrap()[0].commits, 2);
+    }
 
     #[test]
     fn a_file_removed_during_the_size_scan_is_skipped() {

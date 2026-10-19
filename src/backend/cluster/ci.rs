@@ -9,8 +9,86 @@ use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler},
 };
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tokio::sync::Semaphore;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::{
+        ci::{CiConfig, CiExecutionMode},
+        cluster::{IrohDialer, NodeKey, Relay},
+    };
+
+    #[tokio::test]
+    async fn draining_refuses_claims_but_still_accepts_heartbeats_and_finishes() {
+        let root = tempfile::tempdir().unwrap();
+        let pool = db::init_db(&format!(
+            "sqlite://{}",
+            root.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        let key = NodeKey::generate();
+        let context = NodeContext {
+            pool: Some(pool.clone()),
+            iroh: IrohDialer::new(Relay::Off, key.clone()),
+            key,
+            node_id: 1,
+            repos_path: root.path().to_owned(),
+            peers: Default::default(),
+            unreachable: Default::default(),
+        };
+        let queue = RunQueue::Database {
+            pool: pool.clone(),
+            config: Arc::new(CiConfig::default()),
+            secrets: None,
+            context: Some(context.clone()),
+            notifications: Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+                &pool,
+            )),
+        };
+        let handler = CiHandler::new(context.clone(), queue);
+        handler.stop_claiming();
+        let request = |operation| Request {
+            worker: "worker/1".into(),
+            operation,
+        };
+        let error = handler
+            .execute(
+                context.key.public_key(),
+                request(Operation::Claim {
+                    mode: CiExecutionMode::Local,
+                }),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), CORE_UNAVAILABLE);
+        assert!(handler
+            .execute(
+                context.key.public_key(),
+                request(Operation::Heartbeat { id: 999 })
+            )
+            .await
+            .is_ok());
+        assert!(handler
+            .execute(
+                context.key.public_key(),
+                request(Operation::Finish {
+                    id: 999,
+                    status: "success".into(),
+                    message: None
+                })
+            )
+            .await
+            .is_ok());
+        pool.close().await;
+    }
+}
 
 const REFUSED: &str = "CI queue request refused";
 
@@ -19,6 +97,7 @@ pub struct CiHandler {
     context: NodeContext,
     queue: RunQueue,
     slots: Arc<Semaphore>,
+    accepting_claims: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for CiHandler {
@@ -33,7 +112,12 @@ impl CiHandler {
             context,
             queue,
             slots: Arc::new(Semaphore::new(16)),
+            accepting_claims: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    pub(super) fn stop_claiming(&self) {
+        self.accepting_claims.store(false, Ordering::Release);
     }
 
     async fn execute(&self, peer: iroh::PublicKey, request: Request) -> Result<serde_json::Value> {
@@ -49,6 +133,10 @@ impl CiHandler {
         let worker = format!("{peer}/{}", request.worker);
         let value = match request.operation {
             Operation::Claim { mode } => {
+                ensure!(
+                    self.accepting_claims.load(Ordering::Acquire),
+                    CORE_UNAVAILABLE
+                );
                 let mut claim = self.queue.claim(&worker, mode).await?;
                 if let Some(claim) = &mut claim {
                     claim.storage_node_id = claim.storage_node_id.or(Some(self.context.node_id));

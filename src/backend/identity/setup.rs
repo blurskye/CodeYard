@@ -1,7 +1,8 @@
 use super::{
     admission::{self, AdmissionError},
     credentials::{
-        validate_account, validate_new_account_name, AccountInputError, PasswordAccount,
+        validate_account, validate_email, validate_new_account_name, AccountInputError,
+        PasswordAccount,
     },
     passwords::{self, PasswordError},
     sessions::{self, SessionContext, SessionIssueError},
@@ -83,7 +84,10 @@ pub async fn complete_setup(
         password: input.account.password,
     };
     validate_account(&account).map_err(SetupError::Input)?;
-    if input.account.email.is_some_and(|email| email.len() > 255)
+    if input
+        .account
+        .email
+        .is_some_and(|email| validate_email(email).is_err())
         || input.admin_secret.is_some_and(|secret| secret.len() > 4096)
     {
         return Err(SetupError::InputBounds);
@@ -146,9 +150,10 @@ pub async fn complete_setup(
     };
     // Account/config commit precedes issuance. Failure cannot reopen setup; the
     // completed administrator retries ordinary sign-in, not bootstrap adoption.
-    let session_id = sessions::issue_authenticated_session(pool, session, user.id, Some(&hash))
-        .await
-        .map_err(SetupError::Session)?;
+    let session_id =
+        sessions::issue_authenticated_session(pool, session, user.id, Some(hash.as_str()))
+            .await
+            .map_err(SetupError::Session)?;
     Ok(AuthenticatedAccount { user, session_id })
 }
 

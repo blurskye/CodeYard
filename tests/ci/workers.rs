@@ -1860,6 +1860,84 @@ async fn postgres_base_change_queues_pull_request_workflows() {
     base_change_queues_pull_request_workflows(&database.pool).await;
 }
 
+#[derive(Debug)]
+struct StalledWorkflowReads(mpsc::UnboundedSender<()>);
+
+impl ProtocolHandler for StalledWorkflowReads {
+    async fn accept(
+        &self,
+        connection: iroh::endpoint::Connection,
+    ) -> Result<(), iroh::protocol::AcceptError> {
+        let (_send, mut recv) = connection.accept_bi().await.unwrap();
+        rpc::read_frame(&mut recv, rpc::MAX_JSON).await.unwrap();
+        let _ = self.0.send(());
+        connection.closed().await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
+    use codeyard::backend::ci::list_workflows_for_ref;
+    let fixture = ci_fixture().await;
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .alpns(vec![cluster::ALPN_RPC.to_vec()])
+        .bind()
+        .await
+        .unwrap();
+    let (reads, mut started) = mpsc::unbounded_channel();
+    let router = iroh::protocol::Router::builder(endpoint.clone())
+        .accept(cluster::ALPN_RPC, StalledWorkflowReads(reads))
+        .spawn();
+    cluster::wait_for_address(&endpoint).await;
+    let context = fixture.worker.clone();
+    context.remember_peer(
+        100_000,
+        cluster::CorePeer {
+            public_key: endpoint.id().to_string(),
+            address: cluster::NodeAddress::of(&endpoint.addr()),
+        },
+    );
+    let store = RepoStore::remote(Uuid::new_v4(), 100_000, &context);
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let store = store.clone();
+        tasks.push(tokio::spawn(async move {
+            list_workflows_for_ref(&store, "main").await
+        }));
+    }
+    for _ in 0..2 {
+        tokio::time::timeout(Duration::from_secs(3), started.recv())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let repo = db::repositories::records::get_repository_by_id(fixture.pool(), fixture.repo)
+        .await
+        .unwrap()
+        .unwrap();
+    let healthy = RepoStore::from_disk_path(&repo.disk_path);
+    let workflows = tokio::time::timeout(
+        Duration::from_secs(2),
+        list_workflows_for_ref(&healthy, "main"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(workflows.len(), 1);
+    for task in tasks {
+        assert!(tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err());
+    }
+    endpoint.close().await;
+    router.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
 #[tokio::test]
 async fn workflow_discovery_keeps_http_workers_responsive() {
     use axum::{
@@ -2452,6 +2530,128 @@ async fn startup_does_not_wait_for_a_podman_socket_that_never_answers() {
 }
 
 #[tokio::test]
+async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
+    let fixture = ci_fixture().await;
+    let socket = fixture.root.path().join("podman.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (waiting, mut requests) = mpsc::unbounded_channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let cleanup_release = release.clone();
+    let server = tokio::spawn(async move {
+        for index in 0..3 {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut headers = Vec::new();
+            loop {
+                let mut bytes = [0; 1024];
+                let count = stream.read(&mut bytes).await.unwrap();
+                assert!(count > 0);
+                headers.extend_from_slice(&bytes[..count]);
+                if headers.windows(4).any(|part| part == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            assert!(headers.starts_with(b"GET /v1.40/containers/json?"));
+            waiting.send(index).unwrap();
+            if index == 1 {
+                cleanup_release.notified().await;
+            }
+            let response: &[u8] = if index == 0 {
+                b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]"
+            };
+            stream.write_all(response).await.unwrap();
+        }
+    });
+    let runner = fixture.root.path().join("runner");
+    std::fs::write(&runner, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let first = fixture.queue_run().await;
+    let second = fixture.queue_run().await;
+    let workers = CiWorkers::new(
+        fixture.remote(),
+        Arc::new(CiConfig {
+            mode: CiExecutionMode::Podman,
+            podman_socket: socket.to_str().unwrap().into(),
+            act_binary: runner.to_str().unwrap().into(),
+            max_active_runs: 1,
+            run_timeout_seconds: 30,
+            ..CiConfig::default()
+        }),
+        true,
+        fixture.root.path(),
+    );
+    workers.startup().await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(10), requests.recv())
+            .await
+            .unwrap(),
+        Some(0)
+    );
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), requests.recv())
+            .await
+            .unwrap(),
+        Some(1)
+    );
+    let db::DbPool::Postgres(pg) = fixture.pool() else {
+        unreachable!()
+    };
+    sqlx::query("UPDATE ci_runs SET heartbeat_at = NOW() - INTERVAL '1 hour' WHERE id=$1")
+        .bind(first.id)
+        .execute(pg)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            let recent: bool = sqlx::query_scalar(
+                "SELECT heartbeat_at > NOW() - INTERVAL '5 seconds' FROM ci_runs WHERE id=$1",
+            )
+            .bind(first.id)
+            .fetch_one(pg)
+            .await
+            .unwrap();
+            if recent {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    db::ci::fail_stale_ci_runs(fixture.pool(), 5).await.unwrap();
+    assert_eq!(
+        db::ci::get_ci_run_by_run_id(fixture.pool(), first.run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "running"
+    );
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        for run in [first, second] {
+            loop {
+                let current = db::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+                if current.completed_at.is_some() {
+                    assert_eq!(current.status, "success", "{:?}", current.error_message);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    workers.shutdown().await.unwrap();
+    server.await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn a_run_whose_commit_is_missing_fails_and_frees_its_slot() {
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
@@ -2798,6 +2998,75 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
             .unwrap()
             .unwrap();
     }
+}
+
+#[tokio::test]
+async fn claims_without_a_master_key_refuse_configured_secrets() {
+    let postgres = native::PostgresDatabase::new().await;
+    let sqlite = native::NativeDatabase::new().await;
+    for pool in [&postgres.pool, &sqlite.pool] {
+        let owner = db::users::accounts::create_user(pool, "missing_key_owner", None)
+            .await
+            .unwrap();
+        let repo = db::repositories::records::create_repository(
+            pool,
+            owner.id,
+            "secrets",
+            None,
+            true,
+            &format!("/{}.git", Uuid::new_v4()),
+        )
+        .await
+        .unwrap();
+        let queue = RunQueue::Database {
+            pool: pool.clone(),
+            config: Arc::new(CiConfig {
+                trusted_actor_ids: BTreeSet::from([owner.id]),
+                ..CiConfig::default()
+            }),
+            secrets: None,
+            context: None,
+            notifications: Arc::new(NotificationBroadcaster::new(pool)),
+        };
+        let empty = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
+        let claim = queue
+            .claim("worker", CiExecutionMode::Local)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(claim.secrets.is_empty());
+        queue
+            .finish("worker", empty.id, "success", None)
+            .await
+            .unwrap();
+        db::secrets::create_or_update_secret(
+            pool,
+            &SecretEncryptor::new(&[7; 32]),
+            repo.id,
+            "TOKEN",
+            "private",
+            Some(owner.id),
+        )
+        .await
+        .unwrap();
+        let refused = enqueue(pool, repo.id, owner.id, &"3".repeat(40), &"4".repeat(40)).await;
+        let error = queue
+            .claim("worker", CiExecutionMode::Local)
+            .await
+            .err()
+            .expect("missing key must refuse the claim");
+        assert!(error.to_string().contains("SECRETS_MASTER_KEY"));
+        let finished = db::ci::get_ci_run_by_run_id(pool, refused.run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(finished.status, "failed");
+        assert_eq!(
+            finished.error_message.as_deref(),
+            Some("CI could not load the repository or secrets")
+        );
+    }
+    sqlite.close().await;
 }
 
 #[tokio::test]
@@ -3545,6 +3814,205 @@ print('CI_PR_SNAPSHOT_PASSED')
         .unwrap()
         .iter()
         .any(|line| line.line == "CI_PR_SNAPSHOT_PASSED"));
+    fixture.close().await;
+}
+
+/// A test core that either loses a committed log reply or stalls log delivery entirely.
+#[derive(Debug)]
+struct LogReplyProxy {
+    upstream: iroh::Endpoint,
+    peer: iroh::EndpointAddr,
+    stall: bool,
+    logs: mpsc::UnboundedSender<()>,
+}
+
+impl ProtocolHandler for LogReplyProxy {
+    async fn accept(
+        &self,
+        connection: iroh::endpoint::Connection,
+    ) -> Result<(), iroh::protocol::AcceptError> {
+        let (mut send, mut recv) = connection.accept_bi().await.unwrap();
+        let header = rpc::read_frame(&mut recv, rpc::MAX_JSON).await.unwrap();
+        let request: serde_json::Value = serde_json::from_slice(&header).unwrap();
+        let logs = request["operation"].get("Logs").is_some();
+        if logs && self.stall {
+            let _ = self.logs.send(());
+            let _ = recv.read_to_end(1).await;
+            connection.closed().await;
+            return Ok(());
+        }
+        let upstream = self
+            .upstream
+            .connect(self.peer.clone(), cluster::ALPN_EVENTS)
+            .await
+            .unwrap();
+        let (mut writer, mut reader) = upstream.open_bi().await.unwrap();
+        rpc::write_frame(&mut writer, &header, rpc::MAX_JSON)
+            .await
+            .unwrap();
+        writer.finish().unwrap();
+        let reply = rpc::read_frame(&mut reader, rpc::MAX_JSON).await.unwrap();
+        if logs {
+            let _ = self.logs.send(());
+            connection.close(0u32.into(), b"lost log reply");
+        } else {
+            rpc::write_frame(&mut send, &reply, rpc::MAX_JSON)
+                .await
+                .unwrap();
+            send.finish().unwrap();
+            let _ = send.stopped().await;
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
+    let fixture = ci_fixture().await;
+    let run = fixture.queue_run().await;
+    fixture
+        .remote()
+        .claim("slot", CiExecutionMode::Local)
+        .await
+        .unwrap()
+        .unwrap();
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .alpns(vec![cluster::ALPN_EVENTS.to_vec()])
+        .bind()
+        .await
+        .unwrap();
+    let (logs, mut received) = mpsc::unbounded_channel();
+    let router = iroh::protocol::Router::builder(endpoint.clone())
+        .accept(
+            cluster::ALPN_EVENTS,
+            LogReplyProxy {
+                upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
+                peer: fixture.peer.endpoint_addr().unwrap(),
+                stall: false,
+                logs,
+            },
+        )
+        .spawn();
+    cluster::wait_for_address(&endpoint).await;
+    let queue = RunQueue::Remote {
+        context: fixture.worker.clone(),
+        peers: vec![
+            cluster::CorePeer {
+                public_key: endpoint.id().to_string(),
+                address: cluster::NodeAddress::of(&endpoint.addr()),
+            },
+            fixture.peer.clone(),
+        ],
+    };
+    assert!(queue.logs("slot", run.id, &[line("once")]).await.is_err());
+    received.recv().await.unwrap();
+    let stored = db::ci::list_ci_logs(fixture.pool(), run.id, 100)
+        .await
+        .unwrap();
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0].line, "once");
+    endpoint.close().await;
+    router.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
+    let fixture = ci_fixture().await;
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .alpns(vec![cluster::ALPN_EVENTS.to_vec()])
+        .bind()
+        .await
+        .unwrap();
+    let (logs, mut received) = mpsc::unbounded_channel();
+    let router = iroh::protocol::Router::builder(endpoint.clone())
+        .accept(
+            cluster::ALPN_EVENTS,
+            LogReplyProxy {
+                upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
+                peer: fixture.peer.endpoint_addr().unwrap(),
+                stall: true,
+                logs,
+            },
+        )
+        .spawn();
+    cluster::wait_for_address(&endpoint).await;
+    let runner = fixture.root.path().join("runner");
+    let config = Arc::new(CiConfig {
+        mode: CiExecutionMode::Local,
+        act_binary: runner.to_str().unwrap().into(),
+        max_active_runs: 1,
+        run_timeout_seconds: 5,
+        ..CiConfig::default()
+    });
+    let queue = RunQueue::Remote {
+        context: fixture.worker.clone(),
+        peers: vec![cluster::CorePeer {
+            public_key: endpoint.id().to_string(),
+            address: cluster::NodeAddress::of(&endpoint.addr()),
+        }],
+    };
+    for outcome in ["success", "timeout", "shutdown"] {
+        std::fs::write(
+            &runner,
+            if outcome != "success" {
+                "#!/bin/sh\nyes output\n"
+            } else {
+                "#!/bin/sh\ni=0; while test $i -lt 10000; do echo output; i=$((i+1)); done\n"
+            },
+        )
+        .unwrap();
+        std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let run = fixture.queue_run().await;
+        let workers = CiWorkers::new(queue.clone(), config.clone(), true, fixture.root.path());
+        workers.startup().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), received.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if outcome == "shutdown" {
+            tokio::time::timeout(Duration::from_secs(5), workers.shutdown())
+                .await
+                .unwrap()
+                .unwrap();
+        } else {
+            let wait = if outcome == "success" { 4 } else { 8 };
+            tokio::time::timeout(Duration::from_secs(wait), async {
+                loop {
+                    let current = db::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    if current.completed_at.is_some() {
+                        if outcome == "success" {
+                            assert_eq!(current.status, "success", "{:?}", current.error_message);
+                        } else {
+                            assert_eq!(current.status, "failed");
+                            assert_eq!(
+                                current.error_message.as_deref(),
+                                Some("The run exceeded its time limit")
+                            );
+                        }
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .unwrap();
+            workers.shutdown().await.unwrap();
+        }
+        assert!(db::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .completed_at
+            .is_some());
+    }
+    endpoint.close().await;
+    router.shutdown().await.unwrap();
     fixture.close().await;
 }
 

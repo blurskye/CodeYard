@@ -21,6 +21,12 @@ pub fn mentions_anyone(text: &str) -> bool {
     !mentioned_usernames(text).is_empty()
 }
 
+#[derive(Clone, Copy)]
+pub enum MentionComment {
+    Issue(i64),
+    PullRequest(i64),
+}
+
 /// One text that may mention users, and the event it belongs to.
 pub struct MentionSource<'a> {
     pub actor: &'a db::models::User,
@@ -33,8 +39,8 @@ pub struct MentionSource<'a> {
     pub subject: &'a str,
     /// Where the notification leads: the item, or the comment on it.
     pub link: &'a str,
-    /// The issue comment the text is. Deleting that comment deletes its mention notices too.
-    pub comment_id: Option<i64>,
+    /// The comment the text belongs to, for deletion of its mention notices.
+    pub comment_id: Option<MentionComment>,
     /// The text before an edit. `None` for new text, so every name counts.
     pub old_text: Option<&'a str>,
     pub text: &'a str,
@@ -114,7 +120,8 @@ pub async fn notify_mentions(
                     "repo_name": source.repo,
                     "number": source.number,
                     "subject": source.subject,
-                    "comment_id": source.comment_id,
+                    "comment_id": match source.comment_id { Some(MentionComment::Issue(id)) => Some(id), _ => None },
+                    "pull_request_comment_id": match source.comment_id { Some(MentionComment::PullRequest(id)) => Some(id), _ => None },
                 }),
             },
         )

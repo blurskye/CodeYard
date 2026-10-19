@@ -80,6 +80,7 @@ fn fixtures() -> Vec<Page> {
         preview: false,
         references: Default::default(),
         protected: false,
+        commit_to_new_branch: false,
         new_branch: String::new(),
         description: String::new(),
     };
@@ -230,12 +231,15 @@ fn fixtures() -> Vec<Page> {
                 message: "Delete docs/old.md".into(),
                 error: Some("This branch is protected".into()),
                 protected: true,
+                commit_to_new_branch: true,
                 new_branch: "alice-patch-1".into(),
             },
         },
         Page::Upload {
             repo: repo.clone(),
             form: UploadForm {
+                repository_id: repo.id,
+                commit_to_new_branch: false,
                 branch: "main".into(),
                 directory: "docs".into(),
                 expected_revision: "abc".into(),
@@ -424,13 +428,13 @@ fn copy_controls_and_navigation_keep_native_protocol_fallbacks() {
     let tree_html = dioxus_ssr::render_element(render(pages[0].clone()));
     assert!(tree_html.contains("Copy HTTPS"));
     assert!(tree_html.contains("Copy SSH"));
-    assert!(!tree_html.contains("href=\"/alice/project/tree/feature/x/docs/ReadMe.md\""));
-    assert!(tree_html.contains("href=\"/alice/project/blob/feature/x/docs/ReadMe.md\""));
+    assert!(!tree_html.contains("href=\"/alice/project/tree/refs/heads/feature/x/docs/ReadMe.md\""));
+    assert!(tree_html.contains("href=\"/alice/project/blob/refs/heads/feature/x/docs/ReadMe.md\""));
     assert!(tree_html.contains("/alice/project/archive/feature%2Fx.zip"));
     let blob_html = dioxus_ssr::render_element(render(pages[1].clone()));
     assert!(blob_html.contains("Copy preview"));
-    assert!(blob_html.contains("href=\"/alice/project/raw/feature/x/a%20%23%3F.rs\""));
-    assert!(blob_html.contains("href=\"/alice/project/edit/feature/x/a%20%23%3F.rs\""));
+    assert!(blob_html.contains("href=\"/alice/project/raw/refs/heads/feature/x/a%20%23%3F.rs\""));
+    assert!(blob_html.contains("href=\"/alice/project/edit/refs/heads/feature/x/a%20%23%3F.rs\""));
 }
 
 #[test]
@@ -861,7 +865,8 @@ fn editor_preview_renders_like_the_saved_markdown_file() {
     assert_eq!(preview, rendered(super::blob::blob(&repo, &page)));
     assert!(preview.contains(">a b</p>"));
     assert!(preview.contains("<sup class=\"footnote-reference\">"));
-    assert!(preview.contains("href=\"/alice/project/blob/main/docs/guide.md#user-content-top\""));
+    assert!(preview
+        .contains("href=\"/alice/project/blob/refs/heads/main/docs/guide.md#user-content-top\""));
 }
 #[test]
 fn rendered_settings_and_ref_deletion_require_confirmation() {
@@ -1108,6 +1113,8 @@ fn label_colours_reach_a_style_only_when_they_are_valid_hex() {
                 usage: Default::default(),
                 query: String::new(),
                 sort: String::new(),
+                page_number: 1,
+                has_next: false,
             }))
         })
     };
@@ -1722,7 +1729,11 @@ fn force_push_picker_offers_the_viewer_first_then_suggested_people() {
     let settings = Settings {
         tab: "branches".into(),
         viewer: "alice".into(),
-        force_push_suggestions: vec![person("bob", "write"), person("carol", "admin")],
+        force_push_suggestions: vec![
+            person("bob", "write"),
+            person("Bob", "write"),
+            person("carol", "admin"),
+        ],
         branch_rules: vec![BranchRule {
             pattern: "main".into(),
             allow_force_pushes: false,
@@ -1750,6 +1761,10 @@ fn force_push_picker_offers_the_viewer_first_then_suggested_people() {
     );
     assert!(!checked("alice"), "{html}");
     assert!(checked("bob"), "{html}");
+    assert!(
+        !checked("Bob"),
+        "case-distinct writer must not inherit the allowance: {html}"
+    );
     assert!(!checked("carol"), "{html}");
     assert!(checked("dave"), "{html}");
     assert!(html.contains(">admin</small>"), "{html}");
@@ -1867,7 +1882,7 @@ fn failed_save_heading_says_whether_the_file_was_saved() {
     assert!(!html.contains("File saved"));
 }
 #[test]
-fn editor_wraps_long_lines_on_phones_and_keeps_desktop_scrolling() {
+fn editor_keeps_long_lines_scrollable_and_gutter_aligned_at_every_width() {
     let css = include_str!("../../components/native.css");
     let desktop = css
         .split_once(".repo-content textarea.repo-editor-textarea {")
@@ -1878,12 +1893,27 @@ fn editor_wraps_long_lines_on_phones_and_keeps_desktop_scrolling() {
         .0;
     assert!(desktop.contains("white-space: pre;"), "{desktop}");
     assert!(desktop.contains("overflow-x: auto;"), "{desktop}");
-    // The first phone-width block holds the wrapping rule, and the highlight layer wraps with it.
-    let phone = css.split_once("@media (max-width: 639px) {").unwrap().1;
-    assert!(
-        phone.contains("textarea.repo-editor-textarea, .repo-editor-highlight { white-space: pre-wrap; overflow-wrap: anywhere; }"),
-        "{phone}"
-    );
+    assert!(!css
+        .contains("textarea.repo-editor-textarea, .repo-editor-highlight { white-space: pre-wrap"));
+    assert!(desktop.contains("overflow-wrap: normal;"));
+}
+
+#[test]
+fn phone_menus_scroll_and_keep_engagement_and_branch_controls_available() {
+    let css = include_str!("../../components/native.css");
+    let phone = css
+        .split_once("@container (min-width: 356px)")
+        .unwrap()
+        .1
+        .split_once(".native-menu {")
+        .unwrap()
+        .0;
+    assert!(!phone.contains(".repo-tabs-more { display: none; }"));
+    assert!(css.contains("max-height: calc(100dvh - 72px);\n    overflow-y: auto;"));
+    let repo_css = include_str!("style.css");
+    assert!(!repo_css.contains(".repo-home-actions > :is(.repo-goto-phone"));
+    assert!(!repo_css
+        .contains(".repo-file-actions > :is(.repo-ref-link, .repo-goto-phone, .repo-add-menu)"));
 }
 
 #[test]
@@ -2032,9 +2062,20 @@ fn empty_repository_quick_setup_is_shown_only_to_writers() {
     assert!(html.contains("<pre class=\"repo-quick-setup-code\">"));
     assert!(html.contains("git init"));
     assert!(html.contains("git add ."));
-    assert!(html.contains("git branch -M main"));
-    assert!(html.contains("git remote add origin https://git.example.invalid/alice/project.git"));
-    assert!(html.contains("git push -u origin main"));
+    assert!(
+        html.contains("git branch -M &#39;main&#39;")
+            || html.contains("git branch -M &#x27;main&#x27;")
+            || html.contains("git branch -M 'main'")
+    );
+    assert!(
+        html.contains(
+            "git remote add origin &#39;https://git.example.invalid/alice/project.git&#39;"
+        ) || html.contains("git remote add origin 'https://git.example.invalid/alice/project.git'")
+    );
+    assert!(
+        html.contains("git push -u origin &#39;main&#39;")
+            || html.contains("git push -u origin 'main'")
+    );
     // The body already offers the two choices, so the repository toolbar has no Add file menu.
     assert!(!html.contains("class=\"native-menu repo-menu repo-add-menu\""));
 
@@ -2421,12 +2462,16 @@ fn restored_file_browser_integrates_commit_rows_and_repository_description() {
             .unwrap()
             .0;
         assert!(
-            table.find("/tree/feature/x/src").unwrap()
-                < table.find("/blob/feature/x/docs/ReadMe.md").unwrap()
+            table.find("/tree/refs/heads/feature/x/src").unwrap()
+                < table
+                    .find("/blob/refs/heads/feature/x/docs/ReadMe.md")
+                    .unwrap()
         );
         assert!(
-            table.find("/blob/feature/x/docs/ReadMe.md").unwrap()
-                < table.find("/blob/feature/x/z-last.txt").unwrap()
+            table
+                .find("/blob/refs/heads/feature/x/docs/ReadMe.md")
+                .unwrap()
+                < table.find("/blob/refs/heads/feature/x/z-last.txt").unwrap()
         );
         assert!(table.contains("repo-sr-only"));
         assert!(table.contains("title=\"2026-10-02T00:00:00Z\""));
@@ -2811,8 +2856,10 @@ fn markdown_file_reads_like_a_readme_with_a_preview_and_code_switch() {
     // The page's stylesheet names every class, so the checks look for the elements themselves.
     assert!(preview.contains("<h1"));
     assert!(preview.contains("<div class=\"repo-readme-body\">"));
-    assert!(preview.contains("href=\"/alice/project/blob/main/docs/guide.md?view=code\""));
-    assert!(preview.contains("href=\"/alice/project/raw/main/docs/guide.md\""));
+    assert!(
+        preview.contains("href=\"/alice/project/blob/refs/heads/main/docs/guide.md?view=code\"")
+    );
+    assert!(preview.contains("href=\"/alice/project/raw/refs/heads/main/docs/guide.md\""));
     assert!(!preview.contains("Copy code"));
     assert!(!preview.contains("<pre class=\"repo-line-numbers\""));
 
@@ -2821,7 +2868,7 @@ fn markdown_file_reads_like_a_readme_with_a_preview_and_code_switch() {
     assert!(code.contains("Copy code"));
     assert!(code.contains("<pre class=\"repo-line-numbers\""));
     assert!(!code.contains("<div class=\"repo-readme-body\">"));
-    assert!(code.contains("href=\"/alice/project/blob/main/docs/guide.md\""));
+    assert!(code.contains("href=\"/alice/project/blob/refs/heads/main/docs/guide.md\""));
 }
 
 #[test]
@@ -3022,8 +3069,8 @@ fn blame_page_gives_each_run_one_hunk_cell_and_a_linkable_line_per_row() {
     assert!(html.contains("src=\"/avatars/Bob\""));
     assert!(html.contains("class=\"repo-blame-author\">Alice<"));
     assert!(html.contains("class=\"repo-blame-meta\""));
-    assert!(html.contains("href=\"/alice/project/blob/main/docs/a.txt\""));
-    assert!(html.contains("href=\"/alice/project/raw/main/docs/a.txt\""));
+    assert!(html.contains("href=\"/alice/project/blob/refs/heads/main/docs/a.txt\""));
+    assert!(html.contains("href=\"/alice/project/raw/refs/heads/main/docs/a.txt\""));
     // Source stays escaped, and the carriage return does not make a line of its own.
     assert!(html.contains("&lt;script&gt;x&lt;/script&gt;"));
     assert!(!html.contains("<script>x"));
@@ -3107,7 +3154,7 @@ fn blob_page_links_to_blame_only_for_text_it_can_blame() {
         ..Default::default()
     };
     let html = dioxus_ssr::render_element(blob(&repo, &page));
-    assert!(html.contains("href=\"/alice/project/blame/main/docs/guide.txt\""));
+    assert!(html.contains("href=\"/alice/project/blame/refs/heads/main/docs/guide.txt\""));
     page.can_blame = false;
     let html = dioxus_ssr::render_element(blob(&repo, &page));
     assert!(!html.contains("/blame/"));
@@ -3186,7 +3233,7 @@ fn upload_links_are_offered_to_writers_only() {
     };
     let writer = dioxus_ssr::render_element(tree(&chrome(true), &directory));
     assert!(writer.contains("Upload files"));
-    assert!(writer.contains("href=\"/alice/project/upload/main/docs\""));
+    assert!(writer.contains("href=\"/alice/project/upload/refs/heads/main/docs\""));
     let reader = dioxus_ssr::render_element(tree(&chrome(false), &directory));
     assert!(!reader.contains("/upload/"));
     let empty = TreePage {
@@ -3194,7 +3241,7 @@ fn upload_links_are_offered_to_writers_only() {
         ..directory
     };
     let writer = dioxus_ssr::render_element(tree(&chrome(true), &empty));
-    assert!(writer.contains("href=\"/alice/project/upload/main/docs\""));
+    assert!(writer.contains("href=\"/alice/project/upload/refs/heads/main/docs\""));
     let reader = dioxus_ssr::render_element(tree(&chrome(false), &empty));
     assert!(!reader.contains("/upload/"));
 }
@@ -3226,7 +3273,7 @@ fn go_to_file_filters_the_listing_and_marks_the_first_match() {
         query: "GUIDE".into(),
     };
     let html = dioxus_ssr::render_element(find(&repo, &page));
-    assert!(html.contains("href=\"/alice/project/blob/main/docs/guide.md\""));
+    assert!(html.contains("href=\"/alice/project/blob/refs/heads/main/docs/guide.md\""));
     assert!(!html.contains("src/lib.rs"));
     assert!(html.contains("class=\"repo-find-first\""));
     assert!(html.contains("Showing the first 10,000 files."));
@@ -3409,15 +3456,15 @@ fn blob_page_offers_delete_to_writers_for_binary_files_too() {
     };
     let html = dioxus_ssr::render_element(super::blob::blob(&repo, &page));
     assert!(
-        html.contains("/alice/project/delete/main/logo.png"),
+        html.contains("/alice/project/delete/refs/heads/main/logo.png"),
         "{html}"
     );
-    assert!(!html.contains("/edit/main/logo.png"), "{html}");
+    assert!(!html.contains("/edit/refs/heads/main/logo.png"), "{html}");
 
     let reader = RepoChrome {
         can_write: false,
         ..repo
     };
     let html = dioxus_ssr::render_element(super::blob::blob(&reader, &page));
-    assert!(!html.contains("/delete/main/logo.png"), "{html}");
+    assert!(!html.contains("/delete/refs/heads/main/logo.png"), "{html}");
 }

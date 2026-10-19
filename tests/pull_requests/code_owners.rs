@@ -28,7 +28,7 @@ struct World {
     base: String,
 }
 
-const OWNERS: &str = "/src/ @alice @carol\n/docs/ @bob @dave\n";
+const OWNERS: &str = "/src/ @alice @carol\n/docs/ @bob @dave\n/self/ @alice\n";
 
 impl World {
     async fn new(pg: bool) -> Self {
@@ -265,6 +265,115 @@ async fn merge_gate_contract(pg: bool) {
     let open = open_pull(&world.alice, "plain", &world.base, &["docs/c.md"]).await;
     world.alice.merge_current(open).await;
     assert_eq!(world.alice.pull(open).await["state"], "merged");
+}
+
+async fn owner_regressions_contract(pg: bool) {
+    let world = World::new(pg).await;
+    world.alice.branch("reader", &world.base).await;
+    world
+        .alice
+        .save("reader", "docs/reader.md", &world.base)
+        .await;
+    let pull = world
+        .dave
+        .open_pull("Reader contribution", "reader", "main")
+        .await;
+    let number = pull["number"].as_i64().unwrap();
+    assert_eq!(requested(&world.alice, number).await, names(&["bob"]));
+    world
+        .dave
+        .expect(
+            "POST",
+            &format!("/api/repos/alice/proj/pulls/{number}/requested_reviewers"),
+            json!({"username": "carol"}),
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+
+    world.alice.branch("reader-draft", &world.base).await;
+    world
+        .alice
+        .save("reader-draft", "docs/draft.md", &world.base)
+        .await;
+    let draft = world.dave.open_draft("Draft", "reader-draft", "main").await;
+    let draft = draft["number"].as_i64().unwrap();
+    assert!(requested(&world.alice, draft).await.is_empty());
+    world
+        .dave
+        .expect(
+            "POST",
+            &format!("/api/repos/alice/proj/pulls/{draft}/ready"),
+            json!({}),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(requested(&world.alice, draft).await, names(&["bob"]));
+
+    world.alice.branch("release", &world.base).await;
+    world.alice.expect("PUT", "/api/repos/alice/proj/contents/.github/CODEOWNERS",
+        json!({"branch": "release", "expected_revision": world.base, "message": "Release owners",
+            "content": base64::engine::general_purpose::STANDARD.encode("/docs/ @carol\n")}), StatusCode::OK).await;
+    let pull = world.alice.pull(number).await;
+    world.alice.expect("PUT", &format!("/api/repos/alice/proj/pulls/{number}"),
+        json!({"expected_state": "open", "expected_updated": pull["updated_at"], "base": "release"}), StatusCode::OK).await;
+    assert_eq!(
+        requested(&world.alice, number).await,
+        names(&["bob", "carol"])
+    );
+
+    let own = open_pull(&world.alice, "self-owned", &world.base, &["self/a.txt"]).await;
+    assert!(requested(&world.alice, own).await.is_empty());
+    world.alice.expect("PUT", "/api/repos/alice/proj/branch-protection",
+        json!({"pattern": "main", "require_pull_request": true, "require_code_owner_reviews": true,
+            "enforce_admins": true}), StatusCode::OK).await;
+    merge_refused(&world.alice, own, "Waiting on review from @alice").await;
+
+    let pool = world._database.pool();
+    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let users = db::users::accounts::get_users_by_usernames(
+        pool,
+        &["alice".into(), "bob".into(), "carol".into(), "dave".into()],
+    )
+    .await
+    .unwrap();
+    let ids: Vec<i64> = users.iter().map(|user| user.id).collect();
+    for restricted in [false, true] {
+        if restricted {
+            world
+                ._database
+                .execute(
+                    "UPDATE users SET is_banned = TRUE WHERE username = 'bob'",
+                    &[],
+                )
+                .await;
+        }
+        let writers = db::repositories::access::write_access_user_ids(pool, repo.id, &ids)
+            .await
+            .unwrap();
+        let current = db::users::accounts::get_users_by_ids(pool, &ids)
+            .await
+            .unwrap();
+        for user in current {
+            assert_eq!(
+                writers.contains(&user.id),
+                codeyard::backend::repositories::access::can_write(pool, &user, &repo)
+                    .await
+                    .unwrap()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn sqlite_code_owner_authority_retarget_and_self_ownership() {
+    owner_regressions_contract(false).await;
+}
+#[tokio::test]
+async fn postgres_code_owner_authority_retarget_and_self_ownership() {
+    owner_regressions_contract(true).await;
 }
 
 #[tokio::test]

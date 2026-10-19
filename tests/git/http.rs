@@ -1583,7 +1583,7 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     );
     // The push has passed its first check and is queued behind the holder.
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    db::repositories::records::set_repository_archived(pool, repo.id, true)
+    db::repositories::records::set_repository_archived(pool, repo.owner_id(), repo.id, true)
         .await
         .unwrap();
     drop(holder);

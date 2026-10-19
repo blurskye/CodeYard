@@ -12,7 +12,7 @@ use crate::webui::pages::orgs::{Organization, OrganizationProfile, Team};
 use axum::http::StatusCode;
 use axum::response::Response;
 
-/// Rows per page of the People and Teams tabs.
+/// Rows per page of each tab.
 const TAB_PAGE_LIMIT: i64 = 30;
 
 pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Response {
@@ -29,9 +29,9 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
         Err(_) => return unavailable(ctx),
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    let repositories =
-        match organizations::list_organization_profile_repositories(pool, org.id, viewer).await {
-            Ok(rows) => rows.into_iter().map(profile_repository).collect(),
+    let repository_count =
+        match organizations::count_organization_profile_repositories(pool, org.id, viewer).await {
+            Ok(count) => count,
             Err(_) => return unavailable(ctx),
         };
     // Only owners and admins are offered the management page; members are counted, others are not.
@@ -69,7 +69,38 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
         Some("teams") if members_visible => "teams",
         _ => "repositories",
     };
+    let mut repositories = Vec::new();
     let (people, teams, more, after) = match (tab, viewer) {
+        ("repositories", _) => {
+            let (after, page) = if ctx
+                .query
+                .get("tab")
+                .is_some_and(|tab| matches!(tab.as_str(), "people" | "teams"))
+            {
+                (
+                    0,
+                    organizations::OrganizationPage::new(0, TAB_PAGE_LIMIT)
+                        .expect("valid page limit"),
+                )
+            } else {
+                let Some(page) = cursor_with_limit(ctx, "after", TAB_PAGE_LIMIT) else {
+                    return invalid(ctx);
+                };
+                page
+            };
+            let rows = match organizations::list_organization_profile_repositories(
+                pool, org.id, viewer, page,
+            )
+            .await
+            {
+                Ok(rows) => rows,
+                Err(_) => return unavailable(ctx),
+            };
+            let more = rows.len() as i64 == TAB_PAGE_LIMIT;
+            let after = after + rows.len() as i64;
+            repositories = rows.into_iter().map(profile_repository).collect();
+            (Vec::new(), Vec::new(), more, after)
+        }
         ("people", Some(actor)) => {
             let Some((after, page)) = cursor_with_limit(ctx, "after", TAB_PAGE_LIMIT) else {
                 return invalid(ctx);
@@ -133,6 +164,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
                 .map(|id| format!("/api/files/{id}/download")),
         },
         repositories,
+        repository_count,
         member_count,
         team_count,
         manage,

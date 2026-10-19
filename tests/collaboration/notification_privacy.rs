@@ -639,7 +639,17 @@ async fn corrupt_row_privacy(pg: bool) {
     f.close().await;
 }
 
-fn assert_created_event(event: NotificationEvent, user_id: i64, kind: &str) {
+async fn assert_created_event(
+    pool: &db::DbPool,
+    hint: NotificationEvent,
+    user_id: i64,
+    kind: &str,
+) {
+    let session = session_inbox::session(pool, user_id).await;
+    let event = codeyard::backend::notifications::current_event(pool, &session, user_id, &hint)
+        .await
+        .unwrap()
+        .unwrap();
     match event {
         NotificationEvent::Created {
             user_id: actual_user,
@@ -762,10 +772,12 @@ async fn idempotent_relationship_notifications(pg: bool) {
         .await;
     assert_eq!(first["user_id"], reviewer_id);
     assert_created_event(
+        f.pool(),
         events.recv().await.unwrap(),
         reviewer_id,
         "pull_request_review_requested",
-    );
+    )
+    .await;
     owner
         .expect(
             "POST",
@@ -800,7 +812,13 @@ async fn idempotent_relationship_notifications(pg: bool) {
             .await,
         json!({"watched": true, "watchers_count": 1})
     );
-    assert_created_event(events.recv().await.unwrap(), owner_id, "repository_watched");
+    assert_created_event(
+        f.pool(),
+        events.recv().await.unwrap(),
+        owner_id,
+        "repository_watched",
+    )
+    .await;
     assert_eq!(
         notice_count(f.pool(), owner_id, "repository_watched").await,
         1
@@ -830,7 +848,13 @@ async fn idempotent_relationship_notifications(pg: bool) {
         watcher
             .expect("PUT", star_path, Value::Null, StatusCode::OK)
             .await;
-        assert_created_event(events.recv().await.unwrap(), owner_id, "repository_starred");
+        assert_created_event(
+            f.pool(),
+            events.recv().await.unwrap(),
+            owner_id,
+            "repository_starred",
+        )
+        .await;
     }
     assert_eq!(
         notice_count(f.pool(), owner_id, "repository_starred").await,

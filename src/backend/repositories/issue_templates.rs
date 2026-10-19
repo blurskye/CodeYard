@@ -139,27 +139,30 @@ async fn template_files(
     store: &RepoStore,
     branch: &str,
 ) -> Result<Vec<(String, String)>, RepoError> {
-    let entries = match store.tree(branch, ISSUE_TEMPLATE_DIRECTORY).await {
+    let entries = match store.tree_metadata(branch, ISSUE_TEMPLATE_DIRECTORY).await {
         Ok(entries) => entries,
         Err(error) if is_missing(&error) => return Ok(Vec::new()),
         Err(error) => return Err(error),
     };
-    let mut paths: Vec<String> = entries
-        .into_iter()
-        .filter(|entry| entry.entry_type == "file" && is_template_name(&entry.name))
-        .map(|entry| entry.path)
-        .collect();
-    paths.sort();
     let mut files = Vec::new();
-    for path in paths {
-        if files.len() == MAX_TEMPLATES {
-            break;
-        }
+    for path in template_paths(entries) {
         if let Some(text) = read_text(store, branch, &path).await? {
             files.push((path, text));
         }
     }
     Ok(files)
+}
+
+fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
+    let mut paths: Vec<String> = entries
+        .into_iter()
+        .filter(|entry| entry.entry_type == "file" && is_template_name(&entry.name))
+        .filter(|entry| entry.size.is_some_and(|size| size <= MAX_TEMPLATE_BYTES))
+        .map(|entry| entry.path)
+        .collect();
+    paths.sort();
+    paths.truncate(MAX_TEMPLATES);
+    paths
 }
 
 /// The text of a file, or `None` when it is missing, binary, not UTF-8 or over the size cap.
@@ -465,6 +468,23 @@ fn list_items(value: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn template_reads_are_bounded_even_when_candidates_are_rejected() {
+        let entries = (0..1000)
+            .map(|i| super::super::store::TreeEntry {
+                name: format!("{i:04}.md"),
+                path: format!("{i:04}.md"),
+                entry_type: "file".into(),
+                size: Some(if i < 500 { MAX_TEMPLATE_BYTES + 1 } else { 10 }),
+                last_commit: None,
+            })
+            .collect();
+        let paths = template_paths(entries);
+        assert_eq!(paths.len(), MAX_TEMPLATES);
+        assert_eq!(paths.first().unwrap(), "0500.md");
+        assert_eq!(paths.last().unwrap(), "0519.md");
+    }
 
     #[test]
     fn front_matter_fields_and_body_split() {

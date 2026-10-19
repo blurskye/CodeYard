@@ -1,4 +1,4 @@
-//! Public runner-log filtering and stage names, and the limit on what one run stores.
+//! Runner stage names and the limit on what one run stores.
 use super::queue::LogLine;
 
 /// Lines one run may store, counting its truncation line.
@@ -45,18 +45,6 @@ pub fn admit_log_lines(
 
 pub fn normalize_stage_name(stage: &str) -> String {
     stage.strip_prefix("act:").unwrap_or(stage).to_owned()
-}
-pub fn is_internal_runner_log_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    (lower.starts_with("time=\"") && lower.contains(" level=") && lower.contains(" msg=\""))
-        || (trimmed.starts_with('[') && trimmed.contains("] [DEBUG] "))
-        || lower.contains("🐳  docker ")
-        || lower.contains("🚀  start image=")
-        || lower.contains("/var/run/act/")
-        || lower.contains("act-latest")
-        || lower.contains("git-37-actions")
-        || lower.contains("gitserv-actions")
 }
 
 #[cfg(test)]

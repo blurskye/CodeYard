@@ -18,11 +18,19 @@ pub async fn delete_organization(
     if repository_count(&mut tx, org).await? > 0 {
         return Ok(Conflict);
     }
+    let avatar: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT avatar_file_id FROM organizations WHERE id=?1")
+            .bind(org)
+            .fetch_one(&mut *tx)
+            .await?;
     // Teams, memberships, secrets and audit rows go with the organization by cascade.
     sqlx::query("DELETE FROM organizations WHERE id=?1")
         .bind(org)
         .execute(&mut *tx)
         .await?;
+    if let Some(avatar) = avatar {
+        crate::backend::db::sqlite::files::delete_replaced_picture(&mut tx, avatar).await?;
+    }
     tx.commit().await?;
     Ok(Applied(()))
 }

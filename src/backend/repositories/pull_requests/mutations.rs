@@ -191,7 +191,7 @@ pub async fn create_pull_request(
                     message: "Pull request state changed; retry the request".to_owned(),
                 });
             };
-            if head_repository.id != repository.id {
+            {
                 // A retry after interruption repairs only an absent initial
                 // pull ref. Exact CAS cannot overwrite a later publication.
                 repo_store(&repository, ci.cluster.as_ref())
@@ -217,7 +217,7 @@ pub async fn create_pull_request(
         }
     };
 
-    if head_repository.id != repository.id {
+    {
         repo_store(&repository, ci.cluster.as_ref())
             .fetch_pull_head(
                 pool,
@@ -232,6 +232,20 @@ pub async fn create_pull_request(
             .await
             .map_err(|error| head_publish_error(pull_request.number, error))?;
     }
+
+    super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull_request.id)
+        .await
+        .map_err(|_| OperationError::Opened {
+            number: pull_request.number,
+        })?;
+    let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+        .await
+        .map_err(|_| OperationError::Opened {
+            number: pull_request.number,
+        })?
+        .ok_or(OperationError::Opened {
+            number: pull_request.number,
+        })?;
 
     if let Some(owner_user_id) = repository.personal_owner_id().filter(|id| *id != user.id) {
         let title = format!(
@@ -417,11 +431,37 @@ pub async fn update_pull_request(
             message: "Unstack the pull request before changing its base branch.".to_owned(),
         });
     }
-    let base_commit = match req.base.as_deref() {
-        Some(branch) => Some((
-            branch.to_owned(),
-            base_branch_commit(ci, &repository, &existing, branch).await?,
-        )),
+    let reopened_base = if requested_state == Some("open") && existing.state == "closed" {
+        if let Some(stack) = existing.stack_id {
+            let members =
+                db::pull_requests::records::list_stack_members(pool, repository.id, stack)
+                    .await
+                    .map_err(super::write_error)?;
+            let mut branch = existing.base_branch.clone();
+            for _ in 0..members.len() {
+                let Some(parent) = members
+                    .iter()
+                    .find(|member| member.state == "merged" && member.head_branch == branch)
+                else {
+                    break;
+                };
+                branch = parent.base_branch.clone();
+            }
+            (branch != existing.base_branch).then_some(branch)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let base_commit = match req.base.as_deref().or(reopened_base.as_deref()) {
+        Some(branch) => Some((branch.to_owned(), {
+            let mut target = existing.clone();
+            if reopened_base.is_some() {
+                target.state = "open".into();
+            }
+            base_branch_commit(ci, &repository, &target, branch).await?
+        })),
         None => None,
     };
     let base_changed = base_commit.is_some();
@@ -522,8 +562,16 @@ pub async fn update_pull_request(
         pull_request
     };
     if base_changed {
+        super::code_owners::request_code_owner_reviews(
+            pool,
+            ci,
+            &repository,
+            &pull_request,
+            user.id,
+        )
+        .await;
         // A new base can make workflows eligible that the old one did not, so queue them for it.
-        // The change is already saved, so the wait for them is bounded.
+        // Admission must finish because unchanged revisions will not retry it.
         super::workflows::queue_moved_pull_requests_ci(
             pool,
             ci,
@@ -802,6 +850,7 @@ pub async fn mark_pull_request_ready(
     owner: String,
     repo: String,
     number: i32,
+    expected: Option<&str>,
 ) -> Result<db::models::PullRequest, OperationError> {
     let user = super::actor(pool, actor_id).await?;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
@@ -826,19 +875,23 @@ pub async fn mark_pull_request_ready(
             message: "Pull request not found".to_owned(),
         })?;
 
-    let outcome = db::pull_requests::records::mark_pull_request_ready(pool, existing.id, user.id)
-        .await
-        .map_err(|_| {
-            tracing::error!(
-                pull_request_id = existing.id,
-                "marking a pull request ready failed"
-            );
-            OperationError::Unavailable {
-                code: "database_error",
-                message: "Unable to save this change; it was not confirmed".to_owned(),
-            }
-        })?;
+    let outcome =
+        db::pull_requests::records::mark_pull_request_ready(pool, existing.id, user.id, expected)
+            .await
+            .map_err(|_| {
+                tracing::error!(
+                    pull_request_id = existing.id,
+                    "marking a pull request ready failed"
+                );
+                OperationError::Unavailable {
+                    code: "database_error",
+                    message: "Unable to save this change; it was not confirmed".to_owned(),
+                }
+            })?;
     let pull_request = match outcome {
+        db::pull_requests::records::ReadyOutcome::Changed => {
+            return Err(OperationError::Conflict { code: "stale_revision", message: "This pull request changed after the form was opened. Reload before trying again.".to_owned() })
+        }
         db::pull_requests::records::ReadyOutcome::Ready(pull_request) => *pull_request,
         db::pull_requests::records::ReadyOutcome::Missing => {
             return Err(OperationError::Missing { code: "not_found", message: "Pull request not found".to_owned() })

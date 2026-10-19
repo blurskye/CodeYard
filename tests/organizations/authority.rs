@@ -236,6 +236,93 @@ fn applied<T: std::fmt::Debug>(result: OrganizationOutcome<T>) -> T {
 fn page() -> OrganizationPage {
     OrganizationPage::new(0, 100).unwrap()
 }
+async fn profile_repository_access(pg: bool) {
+    let mut database = if pg {
+        Database::postgres().await
+    } else {
+        Database::sqlite().await
+    };
+    let owner = database.actor("profile-owner").await;
+    let member = database.actor("profile-member").await;
+    let org = database.org(owner, "profile-org").await;
+    let repo = database.repo(owner, Some(org.id), "private").await;
+    let team = database
+        .team(owner, org.id, "readers", TeamPrivacy::Visible)
+        .await;
+    database
+        .execute(
+            "INSERT INTO org_memberships(org_id,user_id,role) VALUES($1,$2,'unknown')",
+            &[org.id, member],
+        )
+        .await;
+    database
+        .execute(
+            "INSERT INTO team_memberships(team_id,user_id,role) VALUES($1,$2,'member')",
+            &[team.id, member],
+        )
+        .await;
+    database
+        .execute(
+            "INSERT INTO team_repo_access(team_id,repo_id,permission) VALUES($1,$2,1)",
+            &[team.id, repo.id],
+        )
+        .await;
+    let page = || OrganizationPage::new(0, 30).unwrap();
+    assert!(
+        !db::repositories::access::get_user_repo_access(&database.pool, member, repo.id)
+            .await
+            .unwrap()
+            .can_read()
+    );
+    assert!(
+        list_organization_profile_repositories(&database.pool, org.id, Some(member), page())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        count_organization_profile_repositories(&database.pool, org.id, Some(member))
+            .await
+            .unwrap(),
+        0
+    );
+    db::repositories::access::grant_repo_access(
+        &database.pool,
+        member,
+        repo.id,
+        db::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        list_organization_profile_repositories(&database.pool, org.id, Some(member), page())
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "independent direct grants remain readable"
+    );
+    database
+        .execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[member])
+        .await;
+    assert!(
+        list_organization_profile_repositories(&database.pool, org.id, Some(member), page())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    database.close().await;
+}
+
+#[tokio::test]
+async fn sqlite_profile_repositories_use_canonical_access() {
+    profile_repository_access(false).await;
+}
+#[tokio::test]
+async fn postgres_profile_repositories_use_canonical_access() {
+    profile_repository_access(true).await;
+}
+
 fn profile() -> OrganizationProfile {
     OrganizationProfile::new(Some("Changed"), Some("description")).unwrap()
 }
@@ -2712,10 +2799,12 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         "owned-old-hash",
         "owned-new-hash",
         true,
-        true
+        true,
+        None,
     )
     .await
-    .unwrap());
+    .unwrap()
+    .is_some());
     assert!(
         !applied(
             get_organization_metadata(&database.pool, original, reset_org.id)

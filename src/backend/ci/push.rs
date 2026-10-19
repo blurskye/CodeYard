@@ -46,6 +46,18 @@ impl CiRuns {
                 return;
             }
         };
+        if let Err(error) = crate::backend::db::ci::record_ci_accepted_push(
+            &self.pool,
+            repo.id,
+            actor_id,
+            &update.reference,
+            &commit.sha,
+        )
+        .await
+        {
+            tracing::warn!(repo_id = repo.id, %error, "push runs skipped: accepted update could not be recorded");
+            return;
+        }
         let workflows = match list_workflows_for_ref(&store, &commit.sha).await {
             Ok(workflows) => workflows,
             Err(error) => {
@@ -60,12 +72,16 @@ impl CiRuns {
         if workflows.is_empty() {
             return;
         }
-        // A new branch or tag has nothing to compare with: its path filters do not apply.
-        let mut workflows = workflows;
-        let changed = match (update.changed_paths, &update.old) {
-            (Some(paths), _) => paths,
-            (None, Some(old)) if workflows.iter().any(filters_paths) => {
-                match store.changed_paths(old, &commit.sha).await {
+        let changed = match update.changed_paths {
+            Some(paths) => paths,
+            None if !update.reference.starts_with("refs/tags/")
+                && workflows.iter().any(filters_paths) =>
+            {
+                let old = update
+                    .old
+                    .as_deref()
+                    .unwrap_or("0000000000000000000000000000000000000000");
+                match store.push_changed_paths(old, &commit.sha).await {
                     Ok(paths) => paths,
                     Err(error) => {
                         tracing::warn!(repo_id = repo.id, %error, "push runs skipped: changed paths unavailable");
@@ -73,17 +89,7 @@ impl CiRuns {
                     }
                 }
             }
-            (None, None) => {
-                for filter in workflows
-                    .iter_mut()
-                    .filter_map(|w| w.triggers.push.as_mut())
-                {
-                    filter.paths.clear();
-                    filter.paths_ignore.clear();
-                }
-                Vec::new()
-            }
-            (None, Some(_)) => Vec::new(),
+            None => Vec::new(),
         };
         let mut budget = WorkflowMatchBudget::new();
         let mut matched = Vec::new();
@@ -139,7 +145,12 @@ fn filters_paths(workflow: &WorkflowDefinition) -> bool {
 
 /// The branch name a run is stored and shown with. A push arrives as the full ref
 /// (`refs/heads/main`) and is stored as `main`, like a manual run. A tag keeps its
-/// full ref so it cannot be mistaken for a branch of the same name.
+/// full ref so it cannot be mistaken for a branch of the same name. Branches whose
+/// short names start with `refs/` also keep their full ref to preserve their kind.
 pub fn branch_name(reference: &str) -> &str {
-    reference.strip_prefix("refs/heads/").unwrap_or(reference)
+    match reference.strip_prefix("refs/heads/") {
+        // Keep the kind of branches whose short name looks like a canonical ref.
+        Some(name) if !name.starts_with("refs/") => name,
+        _ => reference,
+    }
 }

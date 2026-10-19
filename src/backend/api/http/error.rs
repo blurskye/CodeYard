@@ -20,6 +20,8 @@ pub(crate) fn protection_write_error(
             "forbidden",
             "Repository policy authority is denied",
         ),
+        Some(Refusal::InvalidStatusMetadata) => (StatusCode::BAD_REQUEST, "validation_error", "Status context must be 1–255 bytes, description at most 1024 bytes and URL at most 2048 bytes, without NUL."),
+        Some(Refusal::StatusLimit) => (StatusCode::UNPROCESSABLE_ENTITY, "status_limit", "A commit can have at most 1024 external status contexts"),
         Some(Refusal::InvalidPattern) => (
             StatusCode::BAD_REQUEST,
             "validation_error",

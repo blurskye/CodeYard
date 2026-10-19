@@ -1155,8 +1155,8 @@ fn NewRepositoryView(
                             p { class: "mt-1 text-xs text-muted-foreground", "This page cannot confirm the selected organization. Choose a listed owner or reload the page." }
                         }
                         nav { class: "mt-2 flex gap-3 text-sm", aria_label: "Repository owner choices",
-                            if choices.after > 0 { NavLink { href: choices.page_url(0), class: "text-primary hover:underline", "First organization choices" } }
-                            if let Some(after) = choices.next_after { NavLink { href: choices.page_url(after), class: "text-primary hover:underline", "Next organization choices" } }
+                            if choices.after > 0 { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(0), class: "text-primary hover:underline", "First organization choices" } }
+                            if let Some(after) = choices.next_after { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(after), class: "text-primary hover:underline", "Next organization choices" } }
                         }
                     }
                     div {
@@ -1664,7 +1664,8 @@ mod tests {
         assert!(!html.contains("<script>org</script>"));
         assert!(html.contains("&#60;script&#62;org&#60;/script&#62;"));
         assert!(!html.contains("Selected organization unavailable"));
-        assert!(html.contains("/new?org_after=4&#38;org_limit=1"));
+        assert!(html.contains("formaction=\"/new?org_after=4&#38;org_limit=1\""));
+        assert!(html.contains("name=\"intent\" value=\"page-owners\""));
         assert!(html.contains("/new?org_limit=1"));
         assert!(html.contains("action=\"/new?org_after=2&#38;org_limit=1\""));
         let option = html

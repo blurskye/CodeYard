@@ -214,6 +214,24 @@ pub async fn contracts(f: &Fixture) {
         assert!(draft.is_private);
         reply.no_internal_fields();
     }
+    let mut paging = fields(
+        "owner_page_draft",
+        "Keep this description",
+        "private",
+        &target,
+    )
+    .to_vec();
+    paging.push(("intent", "page-owners"));
+    let paged = f
+        .form(&f.admin, "/new?org_after=0&org_limit=1", &paging, true)
+        .await;
+    assert_eq!(paged.status, StatusCode::OK);
+    assert_eq!(paged.creation().2.name, "owner_page_draft");
+    assert_eq!(paged.creation().2.description, "Keep this description");
+    assert!(paged.creation().2.is_private);
+    assert_eq!(f.database.count().await, before_count);
+    assert_eq!(f.disk_inventory(), before_disk);
+
     let invalid = f
         .form(
             &f.admin,

@@ -14,6 +14,10 @@ pub struct NewNotification<'a> {
     pub metadata: &'a Value,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Notification is no longer needed")]
+pub struct NotificationSuppressed;
+
 native_operation!(crate::backend::db::postgres::notifications::records::create_notification,
     crate::backend::db::sqlite::notifications::records::create_notification,
     fn create_notification(

@@ -197,7 +197,7 @@ fn repeats_command_line(line: &str, expected: &str) -> bool {
         .is_some_and(|rest| rest.trim().is_empty() || trailing_timing(rest).is_some())
 }
 
-fn steps(lines: &[LogLine], run_status: &str) -> Vec<Step> {
+fn steps(lines: &[&LogLine], run_status: &str) -> Vec<Step> {
     let mut result: Vec<Step> = Vec::new();
     let mut active: Option<usize> = None;
     // act prints the lines of a multi-line command without its `[job]` prefix, once after the
@@ -258,7 +258,7 @@ fn steps(lines: &[LogLine], run_status: &str) -> Vec<Step> {
                 result.len() - 1
             }
         });
-        result[index].lines.push(line.clone());
+        result[index].lines.push((*line).clone());
         if matches!(line.level.to_ascii_lowercase().as_str(), "error" | "fatal") {
             result[index].status = "failed".to_string();
         }
@@ -302,16 +302,16 @@ fn steps(lines: &[LogLine], run_status: &str) -> Vec<Step> {
 
 /// Preserve every delivered persisted line, including prelude/trailer and malformed text.
 pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
-    let mut buckets: Vec<(String, Vec<LogLine>)> = Vec::new();
+    let mut buckets: Vec<(String, Vec<&LogLine>)> = Vec::new();
     let mut current = "Runner".to_string();
     for line in lines {
         if let Some(name) = act_job_name(&line.line) {
             current = name;
         }
         if let Some((_, bucket)) = buckets.iter_mut().find(|(name, _)| name == &current) {
-            bucket.push(line.clone());
+            bucket.push(line);
         } else {
-            buckets.push((current.clone(), vec![line.clone()]));
+            buckets.push((current.clone(), vec![line]));
         }
     }
     buckets
@@ -323,35 +323,37 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
         .collect()
 }
 
-pub fn search_steps(steps: &[Step], query: &str) -> Vec<Step> {
+pub fn search_steps<'a>(steps: &'a [Step], query: &str) -> Vec<(&'a Step, Vec<&'a LogLine>)> {
     let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return steps.to_vec();
-    }
     steps
         .iter()
         .filter_map(|step| {
-            let mut visible = step.clone();
-            if !step.name.to_lowercase().contains(&query) {
-                visible.lines.retain(|line| {
-                    format!("{} {} {}", line.stage, line.level, line.line)
+            let all = query.is_empty() || step.name.to_lowercase().contains(&query);
+            let lines: Vec<_> = step
+                .lines
+                .iter()
+                .filter(|line| {
+                    all || format!("{} {} {}", line.stage, line.level, line.line)
                         .to_lowercase()
                         .contains(&query)
-                });
-            }
-            (!visible.lines.is_empty()).then_some(visible)
+                })
+                .collect();
+            (!lines.is_empty() || query.is_empty()).then_some((step, lines))
         })
         .collect()
 }
 
 #[component]
-pub(super) fn LogOutput(model: ActionsPage, selected: SelectedRun) -> Element {
+pub(super) fn LogOutput(
+    model: ActionsPage,
+    selected: SelectedRun,
+    jobs: std::rc::Rc<Vec<WorkflowJob>>,
+) -> Element {
     let initial_query = model.value("log_q").to_string();
     let initial_wrap = model.value("wrap") != "0";
     let mut query = use_signal(move || initial_query);
     let mut wrap = use_signal(move || initial_wrap);
     // One job at a time: the job the sidebar chose, or the first job when none is chosen.
-    let jobs = project_logs(&selected.logs, &selected.run.status);
     let visible_jobs: Vec<_> = jobs
         .iter()
         .enumerate()
@@ -463,7 +465,7 @@ fn render_steps(job_index: usize, job: &WorkflowJob, query: &str, wrap: bool) ->
     let visible = search_steps(&job.steps, query);
     rsx! {
         if visible.is_empty() { p { class: "actions-log-empty", "No log lines match your search." } }
-        for (step_index, step) in visible.iter().enumerate() {
+        for (step_index, (step, lines)) in visible.iter().enumerate() {
             details { class: "actions-step", open: !query.is_empty() || matches!(step.status.as_str(), "failed" | "running"),
                 summary { class: "actions-step-heading", id: format!("stage-{job_index}-{step_index}"),
                     span { class: "actions-step-name",
@@ -475,11 +477,11 @@ fn render_steps(job_index: usize, job: &WorkflowJob, query: &str, wrap: bool) ->
                     }
                     span { class: "actions-step-duration",
                         if let Some(duration) = &step.duration { "{short_duration(duration)}" }
-                        if !query.is_empty() { " · {step.lines.len()} matching lines" }
+                        if !query.is_empty() { " · {lines.len()} matching lines" }
                     }
                 }
                 div { class: if wrap { "actions-log-lines wrap-lines" } else { "actions-log-lines" },
-                    for line in &step.lines {
+                    for line in lines {
                         div { id: format!("log-{}", line.id), class: match line.level.to_ascii_lowercase().as_str() {
                             "error" | "fatal" => "actions-log-line is-error",
                             "warn" | "warning" => "actions-log-line is-warning",
@@ -608,7 +610,11 @@ mod tests {
             assert_eq!(jobs[0].steps[0].lines[0].line, text);
         }
         let jobs = project_logs(&[log(1, "needle λ"), log(2, "other")], "running");
-        assert_eq!(search_steps(&jobs[0].steps, "NEEDLE")[0].lines.len(), 1);
+        let found = search_steps(&jobs[0].steps, "NEEDLE");
+        assert_eq!(found[0].1.len(), 1);
+        assert!(std::ptr::eq(found[0].0, &jobs[0].steps[0]));
+        assert!(std::ptr::eq(found[0].1[0], &jobs[0].steps[0].lines[0]));
+        assert!(search_steps(&jobs[0].steps, "absent").is_empty());
     }
     #[test]
     fn only_last_unfinished_step_is_active() {

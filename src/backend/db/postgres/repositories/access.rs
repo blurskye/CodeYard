@@ -1,6 +1,6 @@
 use crate::backend::db::postgres::users::transitions::lock_membership_shared;
 use crate::backend::{
-    db::models::{AccessLevel, RepoAccess, User},
+    db::models::{AccessLevel, RepoAccess, Repository, User},
     repositories::access::{CollaboratorAccessTransaction, CollaboratorChange},
 };
 use anyhow::Result;
@@ -13,6 +13,29 @@ pub async fn get_user_repo_access(
 ) -> Result<AccessLevel> {
     let mut connection = pool.acquire().await?;
     user_repo_access_in_transaction(&mut connection, user_id, repo_id).await
+}
+
+pub async fn get_users_repo_access(
+    pool: &PgPool,
+    user_ids: &[i64],
+    repo_id: i64,
+) -> Result<Vec<(i64, AccessLevel)>> {
+    let rows: Vec<(i64, i16)> = sqlx::query_as(&format!("SELECT u.id, ({USER_REPO_ACCESS_SQL}) FROM repositories r CROSS JOIN users u WHERE r.id = $2 AND u.id = ANY($1)"))
+        .bind(user_ids).bind(repo_id).fetch_all(pool).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, level)| (id, AccessLevel::from(level)))
+        .collect())
+}
+
+pub async fn readable_repository_ids(
+    pool: &PgPool,
+    user_id: Option<i64>,
+    repo_ids: &[i64],
+) -> Result<Vec<i64>> {
+    anyhow::ensure!(repo_ids.len() <= 100, "Repository page exceeds its limit");
+    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=ANY($2) AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
+        .bind(user_id).bind(repo_ids).fetch_all(pool).await?)
 }
 
 /// Effectful callers lock the rows they depend on in their own transaction.
@@ -80,6 +103,23 @@ pub(crate) fn readable_condition() -> String {
     format!(
         "(NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1)"
     )
+}
+
+/// Current visibility and metadata in one snapshot for a bounded run list.
+pub async fn readable_repositories_by_ids(
+    pool: &PgPool,
+    user_id: i64,
+    ids: &[i64],
+) -> Result<Vec<Repository>> {
+    debug_assert!(ids.len() <= 500);
+    Ok(sqlx::query_as(&format!(
+        "SELECT r.* FROM repositories r JOIN users u ON u.id = $1 WHERE r.id = ANY($2) AND NOT u.is_banned AND NOT u.must_change_password AND {}",
+        readable_condition()
+    ))
+    .bind(user_id)
+    .bind(ids)
+    .fetch_all(pool)
+    .await?)
 }
 
 #[derive(Clone, Copy)]
@@ -400,6 +440,15 @@ pub async fn list_repo_collaborators(pool: &PgPool, repo_id: i64) -> Result<Vec<
     .await?;
 
     Ok(results)
+}
+
+/// Current writers among a supplied set, using the same access projection as individual checks.
+pub async fn write_access_user_ids(pool: &PgPool, repo_id: i64, ids: &[i64]) -> Result<Vec<i64>> {
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT u.id FROM repositories r JOIN users u ON u.id = ANY($2)
+         WHERE r.id = $1 AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password
+         AND ((r.owner_kind = 'user' AND (u.is_admin OR r.owner_user_id = u.id)) OR ({USER_REPO_ACCESS_SQL}) >= $3)"
+    )).bind(repo_id).bind(ids).bind(AccessLevel::Write as i16).fetch_all(pool).await?)
 }
 
 /// Up to 30 users other than `viewer_id` who can write to the repository, most privileged first.

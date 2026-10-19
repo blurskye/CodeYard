@@ -108,7 +108,11 @@ pub async fn remove_expired_uploads(
 ) -> Result<usize, ExpiryError> {
     const EXPIRED_LIMIT: i64 = 100;
     const OBJECT_LIMIT: i64 = 100;
+    use futures_util::{stream, StreamExt};
+    use std::{collections::HashMap, time::Duration};
     let mut removed = 0;
+    let mut objects = HashMap::new();
+    let metadata_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let expired = files_db::expired_uploads(pool, EXPIRED_LIMIT)
         .await
         .map_err(|_| ExpiryError {
@@ -116,32 +120,29 @@ pub async fn remove_expired_uploads(
             object_removed: None,
         })?;
     for candidate in expired {
-        let _file_lock = store
-            .lock_file(&candidate.object_key)
-            .await
-            .map_err(|_| ExpiryError {
-                removed,
-                object_removed: None,
-            })?;
-        let Some(file) = files_db::delete_expired_upload(pool, candidate.id)
-            .await
-            .map_err(|_| ExpiryError {
-                removed,
-                object_removed: Some(candidate.id),
-            })?
-        else {
-            continue;
-        };
-        removed += 1;
-        // Finishing removes the queued row only once its time has come, so bytes that
-        // a PUT can still deliver stay queued for the later sweep.
-        if store.delete(&file.object_key).await.is_ok() {
-            files_db::finish_object_deletion(pool, &file.object_key)
+        let expire = async {
+            let _file_lock =
+                store
+                    .lock_file(&candidate.object_key)
+                    .await
+                    .map_err(|_| ExpiryError {
+                        removed,
+                        object_removed: None,
+                    })?;
+            files_db::delete_expired_upload(pool, candidate.id)
                 .await
                 .map_err(|_| ExpiryError {
                     removed,
-                    object_removed: Some(file.id),
-                })?;
+                    object_removed: Some(candidate.id),
+                })
+        };
+        let file = match tokio::time::timeout_at(metadata_deadline, expire).await {
+            Ok(result) => result?,
+            Err(_) => break,
+        };
+        if let Some(file) = file {
+            removed += 1;
+            objects.insert(file.object_key, false);
         }
     }
 
@@ -152,18 +153,30 @@ pub async fn remove_expired_uploads(
             object_removed: None,
         })?;
     for key in due {
-        // A key that cannot be locked or removed now moves back in the queue, so it
-        // cannot keep the keys behind it from being tried on every sweep.
-        let deleted = match store.lock_file(&key).await {
-            Ok(_file_lock) => store.delete(&key).await.is_ok(),
-            Err(_) => false,
-        };
+        objects.insert(key, true);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deletions = stream::iter(objects)
+        .map(|(key, due)| async move {
+            let deleted = match store.lock_file(&key).await {
+                Ok(_file_lock) => store.delete(&key).await.is_ok(),
+                Err(_) => false,
+            };
+            (key, due, deleted)
+        })
+        .buffer_unordered(4);
+    tokio::pin!(deletions);
+    while let Ok(Some((key, due, deleted))) =
+        tokio::time::timeout_at(deadline, deletions.next()).await
+    {
         let recorded = if deleted {
             files_db::finish_object_deletion(pool, &key)
                 .await
                 .map(|_| ())
-        } else {
+        } else if due {
             files_db::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS).await
+        } else {
+            Ok(())
         };
         recorded.map_err(|_| ExpiryError {
             removed,

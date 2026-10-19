@@ -35,6 +35,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (Operation::CommitCount, false),
         (
             Operation::Tree {
+                metadata_only: false,
                 git_ref: "main".into(),
                 path: "".into(),
             },
@@ -126,6 +127,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::ChangedPaths {
                 base_ref: sha.into(),
                 head_ref: sha.into(),
+                endpoints: false,
             },
             false,
         ),

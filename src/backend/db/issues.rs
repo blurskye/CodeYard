@@ -75,6 +75,7 @@ native_operation!(crate::backend::db::postgres::issues::edit_issue_comment,
     issue_id: i64,
     comment_id: i64,
     body: &str,
+    expected_body: &str,
 ) -> Result<Option<IssueComment>>);
 
 // Deletes a comment on the issue: its author, or a maintainer. False when refused.

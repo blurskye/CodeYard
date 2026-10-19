@@ -1,5 +1,5 @@
 use crate::backend::db::users::transitions::{
-    AccountAdmission, BanChange, EmailChange, RoleChange, SetupClaim,
+    AccountAdmission, AdministratorActor, BanChange, EmailChange, RoleChange, SetupClaim,
 };
 use sqlx::PgPool;
 // Atomic identity transitions. No provider, filesystem or KDF work under locks.
@@ -57,6 +57,53 @@ pub(crate) async fn require_user_namespace(
         anyhow::bail!("Account namespace conflict");
     }
     Ok(())
+}
+
+/// The account row is locked by the caller before retaining its session.
+pub(crate) async fn live_session(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    session: &str,
+) -> Result<bool> {
+    let expiry: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE")
+            .bind(session)
+            .bind(actor)
+            .fetch_optional(&mut **tx)
+            .await?;
+    Ok(
+        sqlx::query_scalar("SELECT COALESCE($1::timestamptz>clock_timestamp(),FALSE)")
+            .bind(expiry)
+            .fetch_one(&mut **tx)
+            .await?,
+    )
+}
+
+pub(crate) async fn current_password(
+    tx: &mut Transaction<'_, Postgres>,
+    user: i64,
+    expected: &str,
+    session: &str,
+    allow_must_change: bool,
+) -> Result<bool> {
+    lock_membership_shared(tx).await?;
+    let valid: bool = sqlx::query_scalar(
+        "SELECT password_hash=$2 AND NOT is_banned AND ($3 OR NOT must_change_password) FROM users WHERE id=$1 FOR NO KEY UPDATE",
+    ).bind(user).bind(expected).bind(allow_must_change).fetch_optional(&mut **tx).await?.unwrap_or(false);
+    Ok(valid && live_session(tx, user, session).await?)
+}
+
+pub(crate) async fn active_admin_session(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &AdministratorActor,
+) -> Result<bool> {
+    if !active_admin(tx, actor.user_id).await? {
+        return Ok(false);
+    }
+    match actor.session.as_deref() {
+        Some(session) => live_session(tx, actor.user_id, session).await,
+        None => Ok(true),
+    }
 }
 
 pub(crate) async fn active_admin(tx: &mut Transaction<'_, Postgres>, actor: i64) -> Result<bool> {
@@ -248,13 +295,19 @@ pub async fn bootstrap_admin(
     Ok(SetupClaim::Completed(Box::new(user)))
 }
 
-pub async fn change_ban(pool: &PgPool, actor: i64, target: i64, banned: bool) -> Result<BanChange> {
+pub async fn change_ban(
+    pool: &PgPool,
+    actor: impl Into<AdministratorActor>,
+    target: i64,
+    banned: bool,
+) -> Result<BanChange> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
     let organizations = owned_organizations_for_account_change(&mut tx, target).await?;
-    if !active_admin(&mut tx, actor).await? {
+    if !active_admin_session(&mut tx, &actor).await? {
         return Ok(BanChange::Denied);
     }
-    if actor == target {
+    if actor.user_id == target {
         return Ok(BanChange::SelfBan);
     }
     let Some(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id=$1 FOR NO KEY UPDATE")
@@ -301,8 +354,17 @@ pub async fn change_ban(pool: &PgPool, actor: i64, target: i64, banned: bool) ->
 }
 
 /// Sets the account's address. Another account's address is refused in the same transaction.
-pub async fn change_email(pool: &PgPool, user_id: i64, email: &str) -> Result<EmailChange> {
+pub async fn change_email(
+    pool: &PgPool,
+    user_id: i64,
+    email: &str,
+    expected: &str,
+    session: &str,
+) -> Result<EmailChange> {
     let mut tx = pool.begin().await?;
+    if !current_password(&mut tx, user_id, expected, session, false).await? {
+        return Ok(EmailChange::Missing);
+    }
     if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE email=$1 AND id<>$2)")
         .bind(email)
         .bind(user_id)
@@ -329,15 +391,17 @@ pub async fn change_email(pool: &PgPool, user_id: i64, email: &str) -> Result<Em
 /// never the target, so at least one administrator always remains.
 pub async fn change_admin_role(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<AdministratorActor>,
     target: i64,
     admin: bool,
 ) -> Result<RoleChange> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    if !active_admin(&mut tx, actor).await? {
+    lock_membership(&mut tx).await?;
+    if !active_admin_session(&mut tx, &actor).await? {
         return Ok(RoleChange::Denied);
     }
-    if actor == target {
+    if actor.user_id == target {
         return Ok(RoleChange::SelfChange);
     }
     let user = sqlx::query_as::<_, User>(
@@ -359,7 +423,7 @@ pub async fn register_password(
     username: &str,
     email: Option<&str>,
     hash: &str,
-    administrator: Option<(i64, &str)>,
+    administrator: Option<(i64, &str, bool)>,
 ) -> Result<AccountAdmission> {
     let mut tx = pool.begin().await?;
     lock_membership(&mut tx).await?;
@@ -372,7 +436,7 @@ pub async fn register_password(
     let Some(config) = config.filter(|config| config.setup_completed) else {
         return Ok(AccountAdmission::SetupRequired);
     };
-    if let Some((actor, session_id)) = administrator {
+    if let Some((actor, session_id, _)) = administrator {
         if config.node_mode != "private" || !active_admin(&mut tx, actor).await? {
             return Ok(AccountAdmission::Denied);
         }
@@ -411,8 +475,8 @@ pub async fn register_password(
         tx.commit().await?;
         return Ok(AccountAdmission::Requested);
     }
-    let user = sqlx::query_as::<_, User>("INSERT INTO users (username,email,password_hash,is_admin,must_change_password) VALUES ($1,$2,$3,FALSE,$4) RETURNING *")
-        .bind(username).bind(email).bind(hash).bind(administrator.is_some()).fetch_one(&mut *tx).await?;
+    let user = sqlx::query_as::<_, User>("INSERT INTO users (username,email,password_hash,is_admin,must_change_password) VALUES ($1,$2,$3,$5,$4) RETURNING *")
+        .bind(username).bind(email).bind(hash).bind(administrator.is_some()).bind(administrator.is_some_and(|(_, _, admin)| admin)).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(AccountAdmission::User(Box::new(user)))
 }
@@ -523,14 +587,20 @@ pub async fn compare_exchange_password(
     replacement: &str,
     clear_must_change: bool,
     revoke_sessions: bool,
-) -> Result<bool> {
+    session: Option<&str>,
+) -> Result<Option<User>> {
     let mut tx = pool.begin().await?;
     if clear_must_change {
         owned_organizations_for_account_change(&mut tx, user_id).await?;
     }
-    let changed = sqlx::query("UPDATE users SET password_hash=$3,must_change_password=CASE WHEN $4 THEN FALSE ELSE must_change_password END,updated_at=NOW() WHERE id=$1 AND password_hash=$2 AND NOT is_banned")
-        .bind(user_id).bind(expected).bind(replacement).bind(clear_must_change).execute(&mut *tx).await?.rows_affected() == 1;
-    if changed && revoke_sessions {
+    if let Some(session) = session {
+        if !current_password(&mut tx, user_id, expected, session, true).await? {
+            return Ok(None);
+        }
+    }
+    let changed = sqlx::query_as::<_, User>("UPDATE users SET password_hash=$3,must_change_password=CASE WHEN $4 THEN FALSE ELSE must_change_password END,updated_at=NOW() WHERE id=$1 AND password_hash=$2 AND NOT is_banned RETURNING *")
+        .bind(user_id).bind(expected).bind(replacement).bind(clear_must_change).fetch_optional(&mut *tx).await?;
+    if changed.is_some() && revoke_sessions {
         sqlx::query("DELETE FROM personal_access_tokens WHERE user_id=$1")
             .bind(user_id)
             .execute(&mut *tx)

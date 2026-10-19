@@ -17,6 +17,7 @@ use crate::backend::repositories::store::ErrorKind;
 use crate::backend::repositories::store::MergeMethod;
 use crate::backend::repositories::store::MergeRequest as StoreMerge;
 use crate::backend::repositories::store::RepoError;
+use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use crate::webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
 use serde::Deserialize;
 use serde::Serialize;
@@ -121,22 +122,17 @@ async fn eligible_reviews(
     let decisions =
         db::pull_requests::reviews::list_pull_request_review_decisions(pool, pull_request.id)
             .await?;
-    let mut eligible = Vec::new();
-    for decision in decisions {
-        if decision.author_id == pull_request.author_id {
-            continue;
-        }
-        let allowed = match db::users::accounts::get_user_by_id(pool, decision.author_id).await? {
-            Some(reviewer) => {
-                crate::backend::repositories::access::can_write(pool, &reviewer, repository).await?
-            }
-            None => false,
-        };
-        if allowed {
-            eligible.push(decision);
-        }
-    }
-    Ok(eligible)
+    let ids: Vec<i64> = decisions
+        .iter()
+        .map(|decision| decision.author_id)
+        .filter(|id| *id != pull_request.author_id)
+        .collect();
+    let writers =
+        db::repositories::access::write_access_user_ids(pool, repository.id, &ids).await?;
+    Ok(decisions
+        .into_iter()
+        .filter(|decision| writers.contains(&decision.author_id))
+        .collect())
 }
 
 fn required_status_check_failures(
@@ -605,7 +601,7 @@ async fn refresh_chain(
 /// a fork.
 fn head_ref(repository: &db::models::Repository, pull_request: &db::models::PullRequest) -> String {
     if pull_request.head_repo_id == Some(repository.id) {
-        pull_request.head_branch.clone()
+        format!("refs/heads/{}", pull_request.head_branch)
     } else {
         format!("refs/pull/{}/head", pull_request.number)
     }
@@ -948,7 +944,7 @@ fn publish_failure(error: RepoError, method: MergeMethod) -> OperationError {
             code: "write_denied",
             message: "Repository write authority changed; merge denied.".to_owned(),
         }
-    } else if error.is_merge_commit_blocked() {
+    } else if error.is_merge_commit_blocked() || error.is_protected_branch() {
         OperationError::Denied {
             code: "branch_protection",
             message: error.message,
@@ -960,11 +956,16 @@ fn publish_failure(error: RepoError, method: MergeMethod) -> OperationError {
             code: "storage_unavailable",
             message: "storage node unavailable".to_owned(),
         }
-    } else {
+    } else if error.kind == ErrorKind::Conflict {
         OperationError::Conflict {
             code: "revision_conflict",
             message: "A branch changed while merging. Reload the pull request and try again."
                 .to_owned(),
+        }
+    } else {
+        OperationError::Unavailable {
+            code: "git_unavailable",
+            message: "Repository storage is unavailable; merge denied.".into(),
         }
     }
 }
@@ -1063,9 +1064,9 @@ pub async fn publish_prepared_merge(
     let marked =
         db::pull_requests::records::mark_pull_requests_merged(pool, &chain, user.id, &merge_sha)
             .await;
-    if !matches!(marked, Ok(true)) {
+    let marked = matches!(marked, Ok(true));
+    if !marked {
         tracing::error!(pr = current.id, %merge_sha, "branch merged but the pull requests were not marked");
-        return Err(OperationError::BranchMerged { sha: merge_sha });
     }
 
     // Open pull requests based on the head of any merged layer now follow the trunk, not only those
@@ -1073,7 +1074,7 @@ pub async fn publish_prepared_merge(
     // after `chain` was loaded. The other open pull requests are refreshed below, which also runs
     // push workflows for the merge commit.
     let mut moved = Vec::new();
-    for layer in &chain {
+    for layer in chain.iter().filter(|_| marked) {
         match db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await {
             Ok(Some(merged_row)) => moved.extend(
                 pull_requests::stacks::retarget_after_merge(
@@ -1092,7 +1093,7 @@ pub async fn publish_prepared_merge(
         }
     }
     // A moved layer may have workflows that run on its new base. They are queued after the
-    // retarget's own transaction, as a head move is, and the wait for them is bounded.
+    // retarget's own transaction, as a head move is.
     pull_requests::workflows::queue_moved_pull_requests_ci(pool, ci, &repository, &moved, user.id)
         .await;
     pull_requests::branches_moved(pool, &repository, ci, user.id).await;
@@ -1109,6 +1110,10 @@ pub async fn publish_prepared_merge(
     )
     .await;
 
+    if !marked {
+        return Err(OperationError::BranchMerged { sha: merge_sha });
+    }
+
     for layer in &chain {
         db::timeline::record(
             pool,
@@ -1121,6 +1126,30 @@ pub async fn publish_prepared_merge(
             "",
         )
         .await;
+        if let Ok(Some(merged)) =
+            db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
+        {
+            let repository_for_hook = repository.clone();
+            let (author_id, sender_id) = (merged.author_id, user.id);
+            webhooks::emit(
+                pool,
+                &repository,
+                events::PULL_REQUEST,
+                vec![author_id, sender_id],
+                move |owner, people| {
+                    payloads::pull_request(
+                        "closed",
+                        &merged,
+                        &people.get(author_id),
+                        Scope {
+                            repo: &repository_for_hook,
+                            owner,
+                            sender: &people.get(sender_id),
+                        },
+                    )
+                },
+            );
+        }
         if layer.author_id == user.id {
             continue;
         }
@@ -1172,6 +1201,31 @@ pub async fn merge_pull_request(
 mod tests {
     use super::*;
     use db::pull_requests::reviews::PullRequestReviewDecision;
+
+    #[test]
+    fn publication_errors_keep_conflicts_denials_and_outages_distinct() {
+        assert!(matches!(
+            publish_failure(RepoError::authority_unavailable(), MergeMethod::Merge),
+            OperationError::Unavailable { .. }
+        ));
+        assert!(matches!(
+            publish_failure(RepoError::protected_branch(), MergeMethod::Merge),
+            OperationError::Denied {
+                code: "branch_protection",
+                ..
+            }
+        ));
+        assert!(matches!(
+            publish_failure(
+                RepoError::new(ErrorKind::Conflict, "moved"),
+                MergeMethod::Merge
+            ),
+            OperationError::Conflict {
+                code: "revision_conflict",
+                ..
+            }
+        ));
+    }
 
     // The database returns each reviewer's latest decision, so these inputs hold at
     // most one entry per reviewer.

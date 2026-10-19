@@ -47,6 +47,12 @@ fi
 
 [[ -x $DX ]] || { echo "Dioxus CLI not found: set DX (version 0.7.10 is required)" >&2; exit 1; }
 [[ $OUT == /* && $OUT != / ]] || { echo "WEBUI_DIST must be an absolute directory, not /" >&2; exit 1; }
+PUBLIC=$(realpath -m -- "$TARGET_DIR/dx/codeyard/$MODE/web/public")
+OUT=$(realpath -m -- "$OUT")
+[[ $OUT != / && ( $OUT == "$PUBLIC" || ( $PUBLIC != "$OUT/"* && $OUT != "$PUBLIC/"* ) ) ]] || {
+    echo "WEBUI_DIST must not overlap the Dioxus output directory unless identical" >&2
+    exit 1
+}
 dx_version=$("$DX" --version)
 [[ $dx_version == *0.7.10* ]] || { echo "Dioxus CLI 0.7.10 is required, found: $dx_version" >&2; exit 1; }
 
@@ -64,7 +70,6 @@ cargo tree --locked -p codeyard --target wasm32-unknown-unknown --no-default-fea
     --features web --edges normal --prefix none --format '{p}' | python3 scripts/check-web-dependencies.py
 
 echo "== dx build ($MODE)"
-PUBLIC=$TARGET_DIR/dx/codeyard/$MODE/web/public
 # dx keeps hashed files of earlier builds in its output; start from nothing.
 rm -rf "$PUBLIC"
 args=(build --platform web --package codeyard --bin codeyard --no-default-features --features web
@@ -76,7 +81,9 @@ fi
 [[ -f $PUBLIC/index.html ]] || { echo "dx produced no $PUBLIC/index.html" >&2; exit 1; }
 
 echo "== publish to $OUT"
-rm -rf "$OUT"
-mkdir -p "$(dirname "$OUT")"
-cp -R "$PUBLIC" "$OUT"
+if [[ $OUT != "$PUBLIC" ]]; then
+    rm -rf "$OUT"
+    mkdir -p "$(dirname "$OUT")"
+    cp -R "$PUBLIC" "$OUT"
+fi
 find "$OUT" -type f -printf '%10s  %P\n' | sort -k2

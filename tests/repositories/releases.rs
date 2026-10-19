@@ -110,6 +110,57 @@ async fn upload(
         .await
 }
 
+async fn long_release_target(pg: bool) {
+    let mut world = setup(pg).await;
+    let branch = format!("{}/{}", "a".repeat(128), "b".repeat(126));
+    assert_eq!(branch.len(), 255);
+    world.alice.branch(&branch, &world.main).await;
+    let release = world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": "long-target", "target_commitish": branch}),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert_eq!(release["target_commitish"], world.main);
+    let oversized = format!("{branch}b");
+    world.alice.branch(&oversized, &world.main).await;
+    world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": "too-long-target", "target_commitish": oversized}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    let repository =
+        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    assert!(
+        !codeyard::backend::repositories::store::repo_store(&repository, None)
+            .refs()
+            .await
+            .unwrap()
+            .contains_key("refs/tags/too-long-target")
+    );
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_release_accepts_a_long_branch_target() {
+    long_release_target(false).await;
+}
+
+#[tokio::test]
+async fn postgres_release_accepts_a_long_branch_target() {
+    long_release_target(true).await;
+}
+
 async fn releases_flow(pg: bool) {
     let mut world = setup(pg).await;
     let (alice, bob, carol, anonymous) = (&world.alice, &world.bob, &world.carol, &world.anonymous);
@@ -346,6 +397,21 @@ async fn releases_flow(pg: bool) {
     let (status, html) = alice.page("/alice/proj/releases/new").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("name=\"tag\""), "{html}");
+    assert!(html.contains("name=\"repository_id\""), "{html}");
+    let stale = alice
+        .form_reply(
+            "/alice/proj/releases/new",
+            &[
+                ("repository_id", "0"),
+                ("tag", "stale-release"),
+                ("target", "main"),
+                ("body", "private notes"),
+            ],
+        )
+        .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    let missing = alice.page("/alice/proj/releases/tag/stale-release").await;
+    assert_eq!(missing.0, StatusCode::NOT_FOUND);
     let (status, _) = bob.page("/alice/proj/releases/new").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
@@ -731,6 +797,197 @@ async fn asset_files_leave_through_their_release(pg: bool) {
     world.database.finish().await;
 }
 
+async fn release_validation_and_atomic_files(pg: bool) {
+    let mut world = setup(pg).await;
+    let pool = world.database.pool();
+    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = repo.owner_user_id.unwrap();
+    for (field, value) in [("name", "bad\0title"), ("body", "bad\0notes")] {
+        world
+            .alice
+            .expect(
+                "POST",
+                "/api/repos/alice/proj/releases",
+                json!({"tag_name": "invalid", "target_commitish": "main", field: value}),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await;
+    }
+    let long_branch = format!("{}/{}", "a".repeat(128), "b".repeat(128));
+    world.alice.branch(&long_branch, &world.main).await;
+    world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": "invalid", "target_commitish": long_branch}),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        )
+        .await;
+    let store = codeyard::backend::repositories::store::repo_store(&repo, None);
+    assert!(!store
+        .refs()
+        .await
+        .unwrap()
+        .contains_key("refs/tags/invalid"));
+
+    // Unrelated large annotations cannot prevent publishing an ordinary tag.
+    let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
+    let object = git
+        .find_object(git2::Oid::from_str(&world.main).unwrap(), None)
+        .unwrap();
+    let signature = git2::Signature::now("Alice", "alice@example.test").unwrap();
+    for i in 0..5 {
+        git.tag(
+            &format!("large-{i}"),
+            &object,
+            &signature,
+            &"x".repeat(220 * 1024),
+            false,
+        )
+        .unwrap();
+    }
+    let release_id = publish(&world.alice, "v-small").await;
+    let refused = upload(
+        &world.alice,
+        &format!("/alice/proj/releases/{release_id}/assets"),
+        "bad\0label",
+        "bad.bin",
+        b"x",
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let file = db::files::reserve_upload(
+        pool,
+        db::files::ReserveUpload {
+            user_id: actor,
+            filename: "tool.bin",
+            content_type: "application/octet-stream",
+            file_size: 1,
+            reason: db::models::FileReason::ReleaseAsset,
+            visibility: db::models::FileVisibility::Owner,
+            sha256_hex: &"a".repeat(64),
+        },
+    )
+    .await
+    .unwrap();
+    let input = db::releases::NewReleaseAsset {
+        file_id: file.id,
+        name: "tool.bin",
+        label: None,
+        content_type: "application/octet-stream",
+        size: 1,
+    };
+    // Unverified uploads cannot be attached, and a refused attachment leaves expiry intact.
+    assert!(
+        db::releases::add_release_asset(pool, actor, repo.id, release_id, &input)
+            .await
+            .is_err()
+    );
+    let pending = db::files::get_file_by_id(pool, file.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!pending.is_active && pending.upload_expires_at.is_some());
+    db::files::verify_pending_upload(pool, file.id, actor)
+        .await
+        .unwrap();
+    let asset = db::releases::add_release_asset(pool, actor, repo.id, release_id, &input)
+        .await
+        .unwrap();
+    let active = db::files::get_file_by_id(pool, file.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(active.is_active && active.upload_expires_at.is_none());
+    // Calling the native delete alone must remove metadata and persist cleanup.
+    let removed = db::releases::delete_release_asset(pool, actor, repo.id, release_id, asset.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(removed.id, file.id);
+    assert!(db::files::get_file_by_id(pool, file.id)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(
+        !db::files::finish_object_deletion(pool, &file.object_key)
+            .await
+            .unwrap(),
+        "PUT grace keeps the cleanup queued"
+    );
+    world
+        .database
+        .execute(
+            "UPDATE pending_object_deletions SET delete_after='2000-01-01T00:00:00Z'",
+            &[],
+        )
+        .await;
+    assert!(db::files::due_object_deletions(pool, 100)
+        .await
+        .unwrap()
+        .contains(&file.object_key));
+
+    let file = db::files::reserve_upload(
+        pool,
+        db::files::ReserveUpload {
+            user_id: actor,
+            filename: "second.bin",
+            content_type: "application/octet-stream",
+            file_size: 1,
+            reason: db::models::FileReason::ReleaseAsset,
+            visibility: db::models::FileVisibility::Owner,
+            sha256_hex: &"b".repeat(64),
+        },
+    )
+    .await
+    .unwrap();
+    db::files::verify_pending_upload(pool, file.id, actor)
+        .await
+        .unwrap();
+    db::releases::add_release_asset(
+        pool,
+        actor,
+        repo.id,
+        release_id,
+        &db::releases::NewReleaseAsset {
+            file_id: file.id,
+            ..input
+        },
+    )
+    .await
+    .unwrap();
+    let removed = db::releases::delete_release(pool, actor, repo.id, release_id)
+        .await
+        .unwrap();
+    assert_eq!(removed[0].id, file.id);
+    assert!(db::files::get_file_by_id(pool, file.id)
+        .await
+        .unwrap()
+        .is_none());
+    world
+        .database
+        .execute(
+            "UPDATE pending_object_deletions SET delete_after='2000-01-01T00:00:00Z'",
+            &[],
+        )
+        .await;
+    assert!(db::files::due_object_deletions(pool, 100)
+        .await
+        .unwrap()
+        .contains(&file.object_key));
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn release_validation_and_atomic_files_on_both_engines() {
+    release_validation_and_atomic_files(false).await;
+    release_validation_and_atomic_files(true).await;
+}
+
 #[tokio::test]
 async fn postgres_large_assets_upload() {
     large_assets_upload(true).await;
@@ -739,6 +996,78 @@ async fn postgres_large_assets_upload() {
 #[tokio::test]
 async fn sqlite_large_assets_upload() {
     large_assets_upload(false).await;
+}
+
+async fn repository_deletion_removes_asset_uploads(pg: bool) {
+    let mut world = setup(pg).await;
+    let release = publish(&world.alice, "v1.0").await;
+    let uploaded = upload(
+        &world.alice,
+        &format!("/alice/proj/releases/{release}/assets"),
+        "",
+        "tool.bin",
+        b"asset bytes",
+    )
+    .await;
+    assert_eq!(
+        uploaded.status,
+        StatusCode::SEE_OTHER,
+        "{}",
+        uploaded.text()
+    );
+    let file_id = db::releases::list_release_assets(world.database.pool(), release)
+        .await
+        .unwrap()[0]
+        .file_id;
+    let file = db::files::get_file_by_id(world.database.pool(), file_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let repository =
+        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    codeyard::backend::repositories::lifecycle::delete(
+        world.database.pool(),
+        None,
+        repository.owner_id(),
+        repository.id,
+    )
+    .await
+    .unwrap();
+    assert!(db::files::get_file_by_id(world.database.pool(), file_id)
+        .await
+        .unwrap()
+        .is_none());
+    let queued: bool = match world.database.pool() {
+        db::DbPool::Postgres(pool) => sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=$1)",
+        )
+        .bind(&file.object_key)
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+        db::DbPool::Sqlite(pool) => sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pending_object_deletions WHERE object_key=?1)",
+        )
+        .bind(&file.object_key)
+        .fetch_one(pool)
+        .await
+        .unwrap(),
+    };
+    assert!(queued);
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_repository_deletion_removes_release_uploads() {
+    repository_deletion_removes_asset_uploads(false).await;
+}
+
+#[tokio::test]
+async fn postgres_repository_deletion_removes_release_uploads() {
+    repository_deletion_removes_asset_uploads(true).await;
 }
 
 #[tokio::test]

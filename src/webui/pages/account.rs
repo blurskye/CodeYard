@@ -62,6 +62,7 @@ pub enum Page {
         profile: Profile,
         repositories: Vec<Repository>,
         repository_count: usize,
+        repository_next: Option<usize>,
         csrf_token: String,
         own: bool,
         authenticated: bool,
@@ -136,6 +137,7 @@ pub fn render(page: Page) -> Element {
             profile,
             repositories,
             repository_count,
+            repository_next,
             csrf_token,
             own,
             authenticated,
@@ -158,6 +160,7 @@ pub fn render(page: Page) -> Element {
             followers,
             follows,
             message.as_deref(),
+            repository_next,
         ),
     }
 }
@@ -271,6 +274,7 @@ mod tests {
             Page::Admin {
                 model: Admin {
                     current_user_id: 1,
+                    totals: (1, 0, 1024),
                     ai_crawlers: "block".into(),
                     accounts: vec![Account {
                         two_factor: false,
@@ -349,6 +353,7 @@ mod tests {
                     updated: "2026-10-02".into(),
                 }],
                 repository_count: 1,
+                repository_next: None,
                 csrf_token: "csrf-marker".into(),
                 own: false,
                 authenticated: true,

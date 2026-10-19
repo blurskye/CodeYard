@@ -31,6 +31,7 @@ pub async fn mark_pull_request_ready(
             owner,
             repo,
             number,
+            None,
         )
         .await
         .map_err(super::operation_error)?;
@@ -79,6 +80,7 @@ pub(crate) async fn native_ready(
         owner,
         name,
         number,
+        form.get("expected_updated").map(String::as_str),
     )
     .await
     .map_err(crate::backend::api::repos::pulls::operation_error)

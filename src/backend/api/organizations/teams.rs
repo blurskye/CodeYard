@@ -14,6 +14,7 @@ use axum::response::Response;
 use std::sync::Arc;
 
 // Refusals that name the rule a field broke. Other malformed input gets INVALID_FORM.
+
 const TEAM_NAME_RULE: &str =
     "Team name must be 3-255 characters: letters, numbers, hyphens or underscores.";
 const DISPLAY_NAME_RULE: &str =
@@ -91,7 +92,13 @@ impl Command {
                 team: team()?,
                 profile: profile(organization::field(form, "name"), EDIT_NAME_RULE)?,
             },
-            "team-delete" => Self::Delete { team: team()? },
+            "team-delete" => {
+                let team = team()?;
+                if organization::field(form, "confirmation").trim() != team.to_string() {
+                    return Err("Type the displayed team ID to confirm deletion.");
+                }
+                Self::Delete { team }
+            }
             "team-member" => Self::AddMember {
                 team: team()?,
                 username: organization::username(form).map_err(|()| INVALID_FORM)?,
@@ -446,4 +453,23 @@ pub(super) async fn public_show(
         after,
     };
     ctx.page_model_status(StatusCode::OK, &title, Page::OrganizationTeam(model))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn confirmation_does_not_select_the_team_to_delete() {
+        let mut form = Fields::from([
+            ("action".into(), "team-delete".into()),
+            ("team_id".into(), "9".into()),
+            ("confirmation".into(), "8".into()),
+        ]);
+        assert!(Command::parse(&form).is_err());
+        form.insert("confirmation".into(), "9".into());
+        assert!(matches!(
+            Command::parse(&form),
+            Ok(Command::Delete { team: 9 })
+        ));
+    }
 }

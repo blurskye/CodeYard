@@ -39,13 +39,18 @@ pub async fn compute_and_store(
     repo_id: i64,
     branch: &str,
 ) -> Result<Vec<LanguageStat>, RepoError> {
-    let languages = store.languages(&format!("refs/heads/{branch}")).await?;
-    if store.local_dir().is_some() {
-        if let Err(error) = store_rows(pool, repo_id, &languages).await {
-            tracing::warn!(repo_id, %error, "could not store repository languages");
-        }
+    if let Some(path) = store.local_dir() {
+        return tokio::time::timeout(REFRESH_TIMEOUT, compute_local(pool, repo_id, path, branch))
+            .await
+            .map_err(|_| {
+                RepoError::new(
+                    crate::backend::repositories::store::ErrorKind::Unavailable,
+                    "Language computation timed out",
+                )
+            })?
+            .map_err(RepoError::from);
     }
-    Ok(languages)
+    store.languages(&format!("refs/heads/{branch}")).await
 }
 
 /// Stores the languages of `branch` after Git moved it, when it is still the default branch.
@@ -54,7 +59,7 @@ pub async fn compute_and_store(
 pub(crate) fn refresh_default_branch(pool: DbPool, repo_id: i64, path: PathBuf, branch: String) {
     tokio::spawn(async move {
         match tokio::time::timeout(REFRESH_TIMEOUT, refresh(&pool, repo_id, &path, &branch)).await {
-            Ok(Ok(())) => {}
+            Ok(Ok(_)) => {}
             Ok(Err(error)) => {
                 tracing::warn!(repo_id, %error, "could not store repository languages")
             }
@@ -63,24 +68,47 @@ pub(crate) fn refresh_default_branch(pool: DbPool, repo_id: i64, path: PathBuf, 
     });
 }
 
-async fn refresh(pool: &DbPool, repo_id: i64, path: &Path, branch: &str) -> Result<()> {
+async fn refresh(
+    pool: &DbPool,
+    repo_id: i64,
+    path: &Path,
+    branch: &str,
+) -> Result<Vec<LanguageStat>> {
     let Some(repository) = db::repositories::records::get_repository_by_id(pool, repo_id).await?
     else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if repository.default_branch != branch {
-        return Ok(());
+        return Ok(Vec::new());
     }
+    compute_local(pool, repo_id, path, branch).await
+}
+
+async fn compute_local(
+    pool: &DbPool,
+    repo_id: i64,
+    path: &Path,
+    branch: &str,
+) -> Result<Vec<LanguageStat>> {
+    let mut branch = branch.to_owned();
     loop {
         // A push can move the branch while these languages are computed and stored. That push starts
         // its own refresh, but this one may store after it, so store again until the branch has not
         // moved during a pass.
-        let tip = git::branch_tip(path, branch)?;
-        let languages = git::compute_language_stats(path, &format!("refs/heads/{branch}")).await?;
-        store_rows(pool, repo_id, &languages).await?;
-        if git::branch_tip(path, branch)? == tip {
-            return Ok(());
+        let tip = git::branch_tip(path, &branch)?;
+        let revision = tip
+            .clone()
+            .unwrap_or_else(|| format!("refs/heads/{branch}"));
+        let languages = git::compute_language_stats(path, &revision).await?;
+        if let Err(error) = store_rows(pool, repo_id, &languages).await {
+            tracing::warn!(repo_id, %error, "could not store repository languages");
+            return Ok(languages);
         }
+        let current = git::get_repo_info(path).await?.default_branch;
+        if current == branch && git::branch_tip(path, &branch)? == tip {
+            return Ok(languages);
+        }
+        branch = current;
     }
 }
 

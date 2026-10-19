@@ -16,7 +16,10 @@ native_operation!(crate::backend::db::postgres::organizations::access::list_orga
 // Public repositories for everyone; private ones only for a viewer who may read them.
 // An anonymous viewer passes `None`.
 native_operation!(crate::backend::db::postgres::organizations::access::list_organization_profile_repositories, crate::backend::db::sqlite::organizations::access::list_organization_profile_repositories,
-    fn list_organization_profile_repositories(pool: &DbPool, org: i64, viewer: Option<i64>) -> Result<Vec<Repository>>);
+    fn list_organization_profile_repositories(pool: &DbPool, org: i64, viewer: Option<i64>, page: OrganizationPage) -> Result<Vec<Repository>>);
+
+native_operation!(crate::backend::db::postgres::organizations::access::count_organization_profile_repositories, crate::backend::db::sqlite::organizations::access::count_organization_profile_repositories,
+    fn count_organization_profile_repositories(pool: &DbPool, org: i64, viewer: Option<i64>) -> Result<i64>);
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct OrganizationRepository {

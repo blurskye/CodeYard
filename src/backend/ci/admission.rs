@@ -1,7 +1,7 @@
 use super::config::{CiConfig, CiPipelineKind};
 use super::dispatch_inputs;
 use super::runs::CiRunRequest;
-use super::workflows::{infer_pipeline_from_workflow_path, parse_workflow_definition};
+use super::workflows::{infer_pipeline_from_workflow_path, workflow_definition_from_yaml};
 use crate::backend::db;
 use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
 use anyhow::Result;
@@ -82,6 +82,7 @@ pub(super) async fn resolve(
     config: &CiConfig,
     context: Option<&crate::backend::cluster::NodeContext>,
     mut request: CiRunRequest,
+    rerun: bool,
 ) -> Result<AdmittedRevision, AdmissionError> {
     if !is_supported_event(&request.event) {
         return Err(AdmissionError::Invalid(
@@ -183,10 +184,8 @@ pub(super) async fn resolve(
     if request.pipeline.includes_cd() && !actor.is_admin && !access.can_admin() {
         return Err(AdmissionError::Denied("CI deployment permission denied"));
     }
-    // A push is recorded under its full ref, but a run keeps its short branch name. The full
-    // ref is used for the lookup, so a rerun of a force-pushed branch matches. The commit is
-    // resolved by the short name, which also finds a tag.
-    let reference = if request.event == "push" && !request.branch.starts_with("refs/") {
+    // Recorded pushes and runs keep their ref kind even after the ref is deleted.
+    let reference = if !request.branch.starts_with("refs/") {
         format!("refs/heads/{}", request.branch)
     } else {
         request.branch.clone()
@@ -211,14 +210,18 @@ pub(super) async fn resolve(
             "CI pull request requires an immutable head SHA",
         ));
     }
-    // Pushed commits stay runnable after a force-push; PR heads are checked against
-    // the open PR; anything else must be on the ref.
+    // Recorded runs and pushes pin their commits; PR heads are checked against
+    // the open PR. Other dispatches must still be reachable from the ref.
     let store = repo_store(&repo, context);
     let commit = store
         .resolve_ci_commit(
-            &request.branch,
+            if accepted_push || rerun {
+                &reference
+            } else {
+                &request.branch
+            },
             request.head_sha.as_deref(),
-            !accepted_push && !pr_revision,
+            !accepted_push && !pr_revision && !rerun,
         )
         .await?;
     // Inputs belong to one workflow, so a run of several cannot take any.
@@ -239,54 +242,15 @@ pub(super) async fn resolve(
                     }
                     _ => AdmissionError::from(error),
                 })?;
-        let content = file.content.as_str();
-        let yaml = super::workflows::parse_yaml(content.as_bytes())
-            .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
-        let jobs = yaml
-            .get("jobs")
-            .and_then(serde_yaml::Value::as_mapping)
-            .ok_or(AdmissionError::Invalid("CI workflow requires actual jobs"))?;
-        if jobs.is_empty() || jobs.len() > 128 {
-            return Err(AdmissionError::Invalid(
-                "CI workflow requires one to 128 jobs",
-            ));
-        }
-        for job in jobs.values() {
-            if let Some(value) = job.get("environment") {
-                let name = value
-                    .as_str()
-                    .or_else(|| value.get("name").and_then(serde_yaml::Value::as_str))
-                    .ok_or(AdmissionError::Invalid(
-                        "CI dynamic workflow environments are unsupported",
-                    ))?;
-                if name.is_empty()
-                    || name.len() > 255
-                    || name.contains("${{")
-                    || name.chars().any(char::is_control)
-                {
-                    return Err(AdmissionError::Invalid(
-                        "CI dynamic workflow environments are unsupported",
-                    ));
-                }
-                if let Some(environment) = &request.environment {
-                    if environment != name {
-                        return Err(AdmissionError::Invalid(
-                            "CI workflow environment differs from requested target",
-                        ));
-                    }
-                } else {
-                    request.environment = Some(name.to_owned());
-                }
-                if !request.pipeline.includes_cd() {
-                    request.pipeline = CiPipelineKind::Full;
-                }
-            }
-        }
-        if *path == configured_cd && !request.pipeline.includes_cd() {
+        let (definition, environment) =
+            parse_admission_workflow(path.clone(), file.content, request.environment.clone())
+                .await?;
+        request.environment = environment;
+        if (*path == configured_cd || request.environment.is_some())
+            && !request.pipeline.includes_cd()
+        {
             request.pipeline = CiPipelineKind::Full;
         }
-        let definition = parse_workflow_definition(path, content)
-            .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
         if dispatch {
             if request.workflow_paths.len() == 1 {
                 run_inputs = dispatch_inputs::validate_inputs(
@@ -315,8 +279,7 @@ pub(super) async fn resolve(
     if request.pipeline.includes_cd() && request.environment.is_none() {
         request.environment = Some("production".to_owned());
     }
-    // A tag keeps its full ref, as a pushed tag does, so it is not taken for a branch.
-    if !pr_revision && commit.full_ref.starts_with("refs/tags/") {
+    if !pr_revision {
         request.branch = commit.full_ref;
     }
     request.head_sha = Some(commit.sha);
@@ -327,28 +290,79 @@ pub(super) async fn resolve(
     })
 }
 
+async fn parse_admission_workflow(
+    path: String,
+    content: String,
+    mut environment: Option<String>,
+) -> Result<(super::workflows::WorkflowDefinition, Option<String>), AdmissionError> {
+    let permit = super::workflows::PARSING_SLOTS
+        .acquire()
+        .await
+        .map_err(|_| AdmissionError::Unavailable)?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let yaml = super::workflows::parse_yaml(content.as_bytes())
+            .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
+        let jobs = yaml
+            .get("jobs")
+            .and_then(serde_yaml::Value::as_mapping)
+            .ok_or(AdmissionError::Invalid("CI workflow requires actual jobs"))?;
+        if jobs.is_empty() || jobs.len() > 128 {
+            return Err(AdmissionError::Invalid(
+                "CI workflow requires one to 128 jobs",
+            ));
+        }
+        for job in jobs.values() {
+            if let Some(value) = job.get("environment") {
+                let name = value
+                    .as_str()
+                    .or_else(|| value.get("name").and_then(serde_yaml::Value::as_str))
+                    .ok_or(AdmissionError::Invalid(
+                        "CI dynamic workflow environments are unsupported",
+                    ))?;
+                if name.is_empty()
+                    || name.len() > 255
+                    || name.contains("${{")
+                    || name.chars().any(char::is_control)
+                {
+                    return Err(AdmissionError::Invalid(
+                        "CI dynamic workflow environments are unsupported",
+                    ));
+                }
+                if let Some(environment) = &environment {
+                    if environment != name {
+                        return Err(AdmissionError::Invalid(
+                            "CI workflow environment differs from requested target",
+                        ));
+                    }
+                } else {
+                    environment = Some(name.to_owned());
+                }
+            }
+        }
+        let definition = workflow_definition_from_yaml(&path, &yaml)
+            .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
+        Ok((definition, environment))
+    })
+    .await
+    .map_err(|_| AdmissionError::Unavailable)?
+}
+
 pub fn is_safe_ref(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 255
-        && !value.starts_with('-')
-        && !value.contains("..")
-        && !value.ends_with('/')
-        && !value.ends_with('.')
-        && !value.contains("//")
-        && value
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '/' | '_' | '-' | '.'))
+    let reference = if value.starts_with("refs/") {
+        value.to_owned()
+    } else {
+        format!("refs/heads/{value}")
+    };
+    !value.starts_with('-')
+        && super::push::branch_name(&reference).chars().count() <= 255
+        && crate::backend::git::ref_names::is_canonical_ref(&reference)
 }
 
 pub fn is_safe_workflow_path(value: &str) -> bool {
-    value.len() <= 255
-        && value.starts_with(".github/workflows/")
-        && (value.ends_with(".yml") || value.ends_with(".yaml"))
-        && !value.contains("..")
-        && !value[18..].contains('/')
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'.'))
+    value
+        .strip_prefix(".github/workflows/")
+        .is_some_and(crate::backend::git::ci::is_ci_workflow_filename)
 }
 
 #[cfg(test)]
@@ -391,15 +405,66 @@ mod tests {
     fn names_and_refs_follow_what_the_forge_accepts() {
         assert!(is_safe_owner("功能"));
         assert!(is_safe_ref("refs/heads/équipe/功能"));
+        assert!(is_safe_ref("feature/c++"));
+        assert!(is_safe_ref("refs/tags/v1.2.3+build.1"));
+        assert!(is_safe_ref(&format!("refs/heads/{}", "a".repeat(255))));
+        assert!(!is_safe_ref(&format!("refs/heads/{}", "a".repeat(256))));
+        assert!(!is_safe_ref("refs/heads/a.lock"));
         assert!(!is_safe_owner("a b"));
         assert!(!is_safe_ref("refs/heads/a b"));
         assert!(!is_safe_ref("-option"));
     }
 
+    #[tokio::test]
+    async fn admission_parsing_checks_jobs_and_extracts_triggers_and_environment() {
+        let path = ".github/workflows/unit-test.yml".to_owned();
+        let content = "name: Test\non: workflow_dispatch\njobs:\n  test:\n    environment: staging\n    steps: [{run: echo ok}]\n".to_owned();
+        let (definition, environment) =
+            parse_admission_workflow(path.clone(), content.clone(), None)
+                .await
+                .unwrap();
+        assert!(definition.triggers.workflow_dispatch);
+        assert_eq!(environment.as_deref(), Some("staging"));
+        assert!(
+            parse_admission_workflow(path.clone(), content, Some("production".into()))
+                .await
+                .is_err()
+        );
+        assert!(
+            parse_admission_workflow(path, "on: push\njobs: {}".into(), None)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_waits_for_shared_parsing_capacity() {
+        let permits = super::super::workflows::PARSING_SLOTS
+            .acquire_many(2)
+            .await
+            .unwrap();
+        let mut parse = Box::pin(parse_admission_workflow(
+            ".github/workflows/ci.yml".into(),
+            "on: push\njobs: {test: {steps: [{run: echo ok}]}}".into(),
+            None,
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut parse)
+                .await
+                .is_err()
+        );
+        drop(permits);
+        assert!(parse.await.unwrap().0.triggers.push.is_some());
+    }
+
     #[test]
-    fn workflow_paths_are_literal_regular_file_names() {
+    fn workflow_paths_are_bounded_ascii_regular_file_names() {
         assert!(is_safe_workflow_path(".github/workflows/test.yml"));
+        assert!(is_safe_workflow_path(".github/workflows/unit-test.yml"));
         for bad in [
+            ".github/workflows/unit test.yml",
+            ".github/workflows/テスト.yml",
+            ".github/workflows/a..yml",
             ".github/workflows/../test.yml",
             ".github/workflows/nested/test.yml",
             ".github/workflows/a.yml,b.yml",

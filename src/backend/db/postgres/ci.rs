@@ -136,7 +136,7 @@ pub async fn enqueue_ci_run(
             }
         };
         let context_sql = format!(
-            "SELECT head_repo_id IS DISTINCT FROM repo_id, COALESCE(workflows_approved_sha = head_sha, FALSE), jsonb_build_object('number', number, 'title', title, 'head_ref', head_branch, 'base_ref', base_branch, 'base_sha', base_sha) FROM pull_requests WHERE id = $1 AND repo_id = $2 AND head_sha = $3 AND {} AND state = 'open' AND NOT is_draft FOR UPDATE",
+            "SELECT head_repo_id IS DISTINCT FROM repo_id, COALESCE(workflows_approved_sha = head_sha, FALSE), jsonb_build_object('number', number, 'title', title, 'head_ref', head_branch, 'base_ref', $4::text, 'base_sha', CASE WHEN base_branch = $4 THEN base_sha ELSE (SELECT trunk_layer.base_sha FROM pull_requests trunk_layer WHERE trunk_layer.repo_id = pull_requests.repo_id AND trunk_layer.stack_id = pull_requests.stack_id AND trunk_layer.state = 'open' AND trunk_layer.base_branch = $4 AND NOT EXISTS (SELECT 1 FROM pull_requests below WHERE below.repo_id = trunk_layer.repo_id AND below.stack_id = trunk_layer.stack_id AND below.state = 'open' AND below.head_branch = trunk_layer.base_branch) ORDER BY trunk_layer.id LIMIT 1) END) FROM pull_requests WHERE id = $1 AND repo_id = $2 AND head_sha = $3 AND {} AND state = 'open' AND NOT is_draft FOR UPDATE",
             branch_or_trunk_sql("$4")
         );
         let context: Option<(bool, bool, serde_json::Value)> = sqlx::query_as(&context_sql)
@@ -227,28 +227,30 @@ pub async fn claim_ci_run_on_node(
 /// The running run `worker` holds, if an earlier claim committed it and its reply was lost. A
 /// worker runs one job at a time, so that run is the one a retried claim should get back. It is
 /// locked the same way as a claim: the repository first, then the node, then the run.
-async fn held_run(pool: &PgPool, node_key: Option<&str>, worker: &str) -> Result<Option<CiRun>> {
+async fn held_run(
+    tx: &mut Transaction<'_, Postgres>,
+    node_key: Option<&str>,
+    worker: &str,
+) -> Result<Option<CiRun>> {
     let found: Option<(i64, i64)> = sqlx::query_as(
         "SELECT id, repo_id FROM ci_runs WHERE worker = $1 AND status = 'running' ORDER BY id LIMIT 1",
     )
     .bind(worker)
-    .fetch_optional(pool)
+    .fetch_optional(&mut **tx)
     .await?;
     let Some((id, repo_id)) = found else {
         return Ok(None);
     };
-    let mut tx = pool.begin().await?;
-    lock_run_repository(&mut tx, repo_id).await?;
+    lock_run_repository(tx, repo_id).await?;
     if let Some(node_key) = node_key {
         let active = sqlx::query_scalar::<_, i64>(
             "SELECT id FROM nodes WHERE public_key = $1 AND status = 'active'
              AND 'actions-worker' = ANY(roles) FOR SHARE",
         )
         .bind(node_key)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut **tx)
         .await?;
         if active.is_none() {
-            tx.rollback().await?;
             return Ok(None);
         }
     }
@@ -257,9 +259,8 @@ async fn held_run(pool: &PgPool, node_key: Option<&str>, worker: &str) -> Result
     )
     .bind(id)
     .bind(worker)
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut **tx)
     .await?;
-    tx.commit().await?;
     Ok(run)
 }
 
@@ -280,20 +281,30 @@ async fn claim_queued_run(
         matches!(mode, "local" | "podman"),
         "invalid CI execution mode"
     );
-    if let Some(run) = held_run(pool, node_key, worker).await? {
-        return Ok(Some(run));
-    }
     let mut after = 0_i64;
     for _ in 0..CLAIM_SCAN_LIMIT {
+        let mut tx = pool.begin().await?;
+        // Serialize retries of this worker's claim across cores, before any authority locks.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('ci-worker:' || $1))")
+            .bind(worker)
+            .execute(&mut *tx)
+            .await?;
+        let mut held = sqlx::Acquire::begin(&mut tx).await?;
+        if let Some(run) = held_run(&mut held, node_key, worker).await? {
+            held.commit().await?;
+            tx.commit().await?;
+            return Ok(Some(run));
+        }
+        // Release authority locks if a previously held run finished while we waited.
+        held.rollback().await?;
         let next = sqlx::query_as::<_, CiRun>(
             "SELECT * FROM ci_runs WHERE status = 'queued' AND id > $1 ORDER BY id LIMIT 1",
         )
         .bind(after)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await?;
         let Some(next) = next else { break };
         after = next.id;
-        let mut tx = pool.begin().await?;
         let permitted = match next.triggered_by_id {
             Some(actor) if !next.cancel_requested => {
                 ci_actor_has_permission(
@@ -440,7 +451,14 @@ async fn finish_in_tx(
     } else {
         "failure"
     };
-    ci_commit_status(tx, run, state, message.unwrap_or("CI run completed")).await?;
+    let description = crate::backend::ci::visible_run_error(message);
+    ci_commit_status(
+        tx,
+        run,
+        state,
+        description.as_deref().unwrap_or("CI run completed"),
+    )
+    .await?;
     // Only a failed run tells its starter. Successes and cancellations stay quiet.
     let notifications = if let Some(actor) = run.triggered_by_id.filter(|_| status == "failed") {
         let (title, body) = crate::backend::ci::failure_notification(run, message);
@@ -826,14 +844,17 @@ pub async fn append_ci_logs(
     };
     let (kept, lines_total, bytes_total) =
         crate::backend::ci::logs::admit_log_lines(stored_lines, stored_bytes, &lines);
-    for line in &kept {
-        sqlx::query("INSERT INTO ci_logs (run_id, stage, line, level) VALUES ($1, $2, $3, $4)")
-            .bind(run_id)
-            .bind(&line.stage)
-            .bind(&line.line)
-            .bind(&line.level)
-            .execute(&mut *tx)
-            .await?;
+    if !kept.is_empty() {
+        let mut insert = sqlx::QueryBuilder::<Postgres>::new(
+            "INSERT INTO ci_logs (run_id, stage, line, level) ",
+        );
+        insert.push_values(&kept, |mut row, line| {
+            row.push_bind(run_id)
+                .push_bind(&line.stage)
+                .push_bind(&line.line)
+                .push_bind(&line.level);
+        });
+        insert.build().execute(&mut *tx).await?;
     }
     sqlx::query("UPDATE ci_runs SET log_lines = $2, log_bytes = $3 WHERE id = $1")
         .bind(run_id)

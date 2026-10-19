@@ -512,7 +512,11 @@ pub async fn create_pull_request_comment(
                 number: pull_request.number,
                 subject: &pull_request.title,
                 link: &link,
-                comment_id: None,
+                comment_id: Some(
+                    crate::backend::notifications::mentions::MentionComment::PullRequest(
+                        comment.id,
+                    ),
+                ),
                 old_text: None,
                 text: &req.body,
                 notified: &notified,
@@ -671,6 +675,7 @@ pub async fn edit_pull_request_comment(
     actor_id: i64,
     target: CommentTarget,
     body: String,
+    expected_body: Option<&str>,
 ) -> Result<db::models::PullRequestComment, OperationError> {
     let CommentTarget {
         owner,
@@ -690,6 +695,12 @@ pub async fn edit_pull_request_comment(
             message: "Only the author can edit this comment.".to_owned(),
         });
     }
+    if expected_body.is_some_and(|body| body != previous.body) {
+        return Err(OperationError::Conflict {
+            code: "stale_comment",
+            message: "The comment changed. Reload before ticking a task.".into(),
+        });
+    }
     if let Err(message) = crate::backend::issues::validate_body(&body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
@@ -703,6 +714,7 @@ pub async fn edit_pull_request_comment(
         pull_request.id,
         comment_id,
         &body,
+        &previous.body,
     )
     .await
     .map_err(super::write_error)?
@@ -726,7 +738,11 @@ pub async fn edit_pull_request_comment(
                 number: pull_request.number,
                 subject: &pull_request.title,
                 link: &link,
-                comment_id: None,
+                comment_id: Some(
+                    crate::backend::notifications::mentions::MentionComment::PullRequest(
+                        comment.id,
+                    ),
+                ),
                 old_text: Some(&previous.body),
                 text: &body,
                 notified: &[],

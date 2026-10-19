@@ -50,6 +50,10 @@ pub struct Review {
     /// The inline comments filed in this review, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub comments: Vec<Comment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comments_more: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comments_start: Option<String>,
     /// The reactions on the review itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<Reaction>,
@@ -185,7 +189,12 @@ pub(in crate::webui::pages::repos) fn composer(
     state_label: Option<&str>,
     references: &References,
 ) -> Element {
-    let preview = draft.preview && draft.title.is_none();
+    let preview = draft.preview && draft.title.is_none() && draft.editing.is_none();
+    let comment = if draft.editing.is_some() {
+        String::new()
+    } else {
+        draft.comment.clone()
+    };
     rsx! {
         form { method: "post", action: format!("{url}/comments"), class: "collaboration-panel collaboration-comment-form collaboration-composer",
             header { class: "collaboration-panel-header", h3 { "Add a comment" } }
@@ -194,7 +203,7 @@ pub(in crate::webui::pages::repos) fn composer(
             div { class: "collaboration-form-fields",
                 // The header already names the box, so the label is for screen readers only.
                 label { r#for: "comment-body", class: "repo-sr-only", "Comment (Markdown)" }
-                MarkdownEditor { key: "{url}:comment:{draft.comment}:{preview}", id: "comment-body", initial: draft.comment.clone(), rows: 6, required: true, initial_preview: preview, references: references.clone() }
+                MarkdownEditor { key: "{url}:comment:{comment}:{preview}", id: "comment-body", initial: comment, rows: 6, required: true, initial_preview: preview, references: references.clone() }
             }
             div { class: "collaboration-card-footer",
                 if let Some(label) = state_label { button { r#type: "submit", form: "item-state-form", class: "btn btn-secondary", "{label}" } }
@@ -353,6 +362,12 @@ pub(in crate::webui::pages::repos) fn review_entry(
             {reaction_bar(repo, &react_action(url, page), Some(("review", review.id)), &review.reactions)}
             for comment in &review.comments {
                 {comment_entry(repo, url, page, item_author, comment, references)}
+            }
+            if review.comments_start.is_some() || review.comments_more.is_some() {
+                nav { class: "collaboration-pagination", aria_label: "Review comments",
+                    if let Some(href) = &review.comments_start { NavLink { href: href.clone(), "First review comments" } }
+                    if let Some(href) = &review.comments_more { NavLink { href: href.clone(), "More review comments" } }
+                }
             }
             if repo.can_admin && !dismissed {
                 details { class: "disclosure",
@@ -540,17 +555,36 @@ pub(super) fn line_composer(
     split: bool,
     review: Option<bool>,
 ) -> Element {
+    rsx! { LineComposer { repo: repo.clone(), url: url.to_owned(), head: head.to_owned(), target: target.clone(), references: references.clone(), split, review } }
+}
+
+#[component]
+fn LineComposer(
+    repo: Repository,
+    url: String,
+    head: String,
+    target: LineComment,
+    references: References,
+    split: bool,
+    review: Option<bool>,
+) -> Element {
+    let mut commit = use_signal(|| {
+        if target.commit.is_empty() {
+            head.clone()
+        } else {
+            target.commit.clone()
+        }
+    });
+    let repo = &repo;
+    let url = &url;
+    let target = &target;
+    let references = &references;
     let (id, caption) = match target.in_reply_to {
         Some(root) => (format!("reply-body-{root}"), "Reply (Markdown)"),
         None => (
             "line-comment-body".to_owned(),
             "Comment on this line (Markdown)",
         ),
-    };
-    let commit = if target.commit.is_empty() {
-        head.to_owned()
-    } else {
-        target.commit.clone()
     };
     let view = if split { "?view=split" } else { "" };
     let reply = target.in_reply_to.is_some();
@@ -566,10 +600,10 @@ pub(super) fn line_composer(
             input { r#type: "hidden", name: "side", value: target.side.clone() }
             input { r#type: "hidden", name: "line", value: target.line.clone() }
             if let Some(root) = target.in_reply_to { input { r#type: "hidden", name: "in_reply_to", value: root.to_string() } }
-            input { r#type: "hidden", name: "commit_sha", value: commit }
+            input { r#type: "hidden", name: "commit_sha", value: commit() }
             input { r#type: "hidden", name: "from", value: "diff" }
             label { r#for: id.clone(), "{caption}" }
-            MarkdownEditor { key: "{url}:{id}:{target.body}:{target.preview}", id: id.clone(), initial: target.body.clone(), rows: 4, required: true, initial_preview: target.preview, references: references.clone() }
+            MarkdownEditor { key: "{url}:{id}:{target.body}:{target.preview}", id: id.clone(), initial: target.body.clone(), rows: 4, required: true, initial_preview: target.preview, references: references.clone(), revision: Some(head.clone()), on_revision: move |revision: Option<String>| commit.set(revision.unwrap_or_default()) }
             div { class: "collaboration-actions",
                 if reply {
                     button { r#type: "submit", name: "intent", value: "comment", class: "btn btn-primary", "Comment" }
@@ -637,5 +671,30 @@ pub(super) fn thread_block(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use super::*;
+    #[test]
+    fn an_open_line_composer_keeps_the_commit_its_text_was_written_on() {
+        use std::{cell::RefCell, rc::Rc};
+        #[derive(Clone)]
+        struct Harness(Rc<RefCell<Option<Signal<String>>>>);
+        fn root(props: Harness) -> Element {
+            let head = use_signal(|| "old-head".to_owned());
+            *props.0.borrow_mut() = Some(head);
+            rsx! { LineComposer { repo: Repository { owner: "u".into(), name: "r".into(), signed_in: true, can_write: false, can_admin: false, csrf: String::new(), viewer: String::new(), chrome: Default::default() }, url: "/u/r/pulls/1", head: head(), target: LineComment::default(), references: References::default(), split: false, review: None } }
+        }
+        let control = Rc::new(RefCell::new(None));
+        let mut dom = VirtualDom::new_with_props(root, Harness(control.clone()));
+        dom.rebuild_in_place();
+        let mut head = control.borrow().unwrap();
+        dom.in_runtime(|| head.set("new-head".into()));
+        dom.render_immediate_to_vec();
+        let html = dioxus_ssr::render(&dom);
+        assert!(html.contains("name=\"commit_sha\" value=\"old-head\""));
+        assert!(!html.contains("value=\"new-head\""));
     }
 }

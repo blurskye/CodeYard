@@ -29,6 +29,41 @@ pub(super) async fn closed_state() -> AppState {
     )
 }
 
+#[tokio::test(start_paused = true)]
+async fn shutdown_cancels_unfinished_http_handlers_after_the_drain_grace() {
+    let (stop, receiver) = tokio::sync::watch::channel(false);
+    let app = Router::new()
+        .route(
+            "/blocked",
+            get(|| async { std::future::pending::<StatusCode>().await }),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            receiver,
+            cancel_on_shutdown,
+        ));
+    let request = tokio::spawn(
+        app.oneshot(
+            axum::http::Request::builder()
+                .uri("/blocked")
+                .body(Body::empty())
+                .unwrap(),
+        ),
+    );
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_secs(60)).await;
+    assert!(
+        !request.is_finished(),
+        "normal requests have no shutdown deadline"
+    );
+    stop.send_replace(true);
+    tokio::task::yield_now().await;
+    tokio::time::advance(std::time::Duration::from_secs(31)).await;
+    assert_eq!(
+        request.await.unwrap().unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+}
+
 #[tokio::test]
 async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
     use futures_util::StreamExt;

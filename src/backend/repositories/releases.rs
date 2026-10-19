@@ -137,6 +137,19 @@ fn write_error(error: Error) -> ReleaseError {
 }
 
 fn validate_fields(fields: &ReleaseFields) -> Result<(), ReleaseError> {
+    if fields
+        .name
+        .as_deref()
+        .is_some_and(|text| text.contains('\0'))
+        || fields
+            .body
+            .as_deref()
+            .is_some_and(|text| text.contains('\0'))
+    {
+        return Err(ReleaseError::Invalid(
+            "Release text cannot contain NUL characters",
+        ));
+    }
     if fields.name.as_deref().is_some_and(|name| name.len() > 255) {
         return Err(ReleaseError::Invalid(
             "Release titles are limited to 255 bytes",
@@ -343,19 +356,29 @@ pub async fn create(
     }
     let store = repo_store(&repository, cluster);
     let existing = store
-        .tags()
+        .refs_from_primary()
         .await
         .map_err(ReleaseError::Git)?
-        .into_iter()
-        .find(|tag| tag.name == input.tag);
+        .remove(&format!("refs/tags/{}", input.tag));
     let target = match existing {
-        Some(tag) => tag.sha,
+        Some(_) => {
+            store
+                .commit_from_primary(&format!("refs/tags/{}", input.tag))
+                .await
+                .map_err(ReleaseError::Git)?
+                .sha
+        }
         None => {
             if input.target.trim().is_empty() {
                 return Err(ReleaseError::TargetRequired);
             }
+            if input.target.trim().len() > 255 {
+                return Err(ReleaseError::Invalid(
+                    "Release targets are limited to 255 bytes",
+                ));
+            }
             let commit = store
-                .commit(input.target.trim())
+                .commit_from_primary(input.target.trim())
                 .await
                 .map_err(ReleaseError::Git)?;
             refs::create_tag(
@@ -364,14 +387,14 @@ pub async fn create(
                 ci,
                 actor,
                 owner,
-                name,
+                repository.id,
                 &input.tag,
                 &commit.sha,
                 None,
             )
             .await
             .map_err(ReleaseError::Ref)?;
-            input.target.trim().to_owned()
+            commit.sha
         }
     };
     let release = db::releases::create_release(
@@ -446,7 +469,7 @@ pub async fn update(
         "edited"
     };
     let (release_for_hook, repository_for_hook) = (release.clone(), repository.clone());
-    let (author_id, sender_id) = (actor, actor);
+    let (author_id, sender_id) = (release.author_id, actor);
     webhooks::emit(
         pool,
         &repository,
@@ -488,11 +511,11 @@ pub async fn delete(
         .await
         .map_err(write_error)?;
     for file in files {
-        discard_file(pool, store, file).await;
+        discard_object(store, &file).await;
     }
     let deleted = deleted.release;
     let (release_for_hook, repository_for_hook) = (deleted.clone(), repository.clone());
-    let (author_id, sender_id) = (actor, actor);
+    let (author_id, sender_id) = (deleted.author_id, actor);
     webhooks::emit(
         pool,
         &repository,
@@ -540,6 +563,11 @@ pub async fn add_asset(
     {
         return Err(ReleaseError::Invalid("Asset file name is not valid"));
     }
+    if label.is_some_and(|label| label.contains('\0')) {
+        return Err(ReleaseError::Invalid(
+            "Asset labels cannot contain NUL characters",
+        ));
+    }
     if label.is_some_and(|label| label.len() > 255) {
         return Err(ReleaseError::Invalid(
             "Asset labels are limited to 255 bytes",
@@ -571,30 +599,21 @@ pub async fn add_asset(
     )
     .await
     .map_err(ReleaseError::Upload)?;
-    let linked = async {
-        if !db::files::activate_upload(pool, file_id, actor)
-            .await
-            .map_err(unavailable)?
-        {
-            return Err(ReleaseError::Unavailable);
-        }
-        db::releases::add_release_asset(
-            pool,
-            actor,
-            repository.id,
-            release_id,
-            &db::releases::NewReleaseAsset {
-                file_id,
-                name: filename,
-                label,
-                content_type,
-                size,
-            },
-        )
-        .await
-        .map_err(write_error)
-    }
-    .await;
+    let linked = db::releases::add_release_asset(
+        pool,
+        actor,
+        repository.id,
+        release_id,
+        &db::releases::NewReleaseAsset {
+            file_id,
+            name: filename,
+            label,
+            content_type,
+            size,
+        },
+    )
+    .await
+    .map_err(write_error);
     match linked {
         Ok(asset) => Ok(asset),
         Err(error) => {
@@ -618,7 +637,9 @@ pub async fn delete_asset(
     let file = db::releases::delete_release_asset(pool, actor, repository.id, release_id, asset_id)
         .await
         .map_err(write_error)?;
-    discard_file(pool, store, file).await;
+    if let Some(file) = file {
+        discard_object(store, &file).await;
+    }
     Ok(())
 }
 
@@ -659,6 +680,14 @@ pub async fn download(
         tracing::warn!(%error, asset = asset.id, "could not count a release download");
     }
     Ok(opened)
+}
+
+async fn discard_object(store: &ObjectStore, file: &db::models::File) {
+    if let Ok(_lock) = store.lock_file(&file.object_key).await {
+        if let Err(error) = store.delete(&file.object_key).await {
+            tracing::warn!(file = %file.id, %error, "release object cleanup deferred");
+        }
+    }
 }
 
 /// Removes an uploaded file that no release uses any more, as its uploader.

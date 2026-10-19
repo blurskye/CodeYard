@@ -20,7 +20,7 @@ use crate::backend::repositories::store::RepoError;
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     str::FromStr,
     time::{Duration, Instant},
@@ -28,6 +28,82 @@ use std::{
 use tokio::{sync::watch, task::JoinSet};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn busy_copies_wait_for_the_next_pass_without_increasing_failure_backoff() {
+        let mut copying = Copying::default();
+        let mut retry = Retry::default();
+        let task = copying
+            .running
+            .spawn(async { (42, Err(RepoError::replica_busy().into())) });
+        copying.directories.insert(task.id(), Uuid::new_v4());
+        copying.finish(&mut retry).await;
+        assert!(retry.waiting(42));
+        assert_eq!(retry.failures[&42].0, 0);
+        assert!(copying.directories.is_empty());
+        retry.failed(42);
+        assert_eq!(retry.failures[&42].0, 1);
+    }
+
+    #[tokio::test]
+    async fn completed_slots_refill_from_the_pending_queue_without_a_database_scan() {
+        let key = crate::backend::cluster::NodeKey::generate();
+        let context = NodeContext {
+            pool: None,
+            iroh: crate::backend::cluster::IrohDialer::new(
+                crate::backend::cluster::Relay::Off,
+                key.clone(),
+            ),
+            key,
+            node_id: 1,
+            repos_path: PathBuf::new(),
+            peers: Default::default(),
+            unreachable: Default::default(),
+        };
+        let held: Vec<_> = (1..=5)
+            .map(|id| HeldReplica {
+                repository_id: id,
+                disk_path: format!("/repos/{}.git", Uuid::new_v4()),
+                primary_node_id: Some(2),
+                applied_version: -1,
+                write_version: 0,
+            })
+            .collect();
+        let mut copying = Copying::default();
+        let mut retry = Retry::default();
+        copying.start(&context, &held, &retry);
+        assert_eq!(copying.pending.len(), 3);
+        copying.finish(&mut retry).await;
+        copying.start_pending(&context, &retry);
+        assert_eq!(copying.pending.len(), 1);
+        copying.finish(&mut retry).await;
+        copying.start_pending(&context, &retry);
+        copying.finish(&mut retry).await;
+        assert!(copying.pending.is_empty());
+        assert_eq!(retry.failures.len(), 5);
+    }
+
+    #[test]
+    fn surplus_names_include_only_real_copies_and_numeric_quarantines() {
+        let uuid = Uuid::new_v4();
+        assert_eq!(copy_directory_uuid(&format!("{uuid}.git")), Some(uuid));
+        assert_eq!(
+            copy_directory_uuid(&format!("{uuid}.git.unusable-123")),
+            Some(uuid)
+        );
+        for suffix in [
+            ".git.unusable-",
+            ".git.unusable-abc",
+            ".git.unusable-123/other",
+        ] {
+            assert_eq!(copy_directory_uuid(&format!("{uuid}{suffix}")), None);
+        }
+    }
+}
 
 /// How often a storage node runs a pass.
 pub const INTERVAL: Duration = Duration::from_secs(5);
@@ -66,11 +142,8 @@ pub async fn run(context: NodeContext, mut stop: watch::Receiver<bool>) {
                 if periodic {
                     step(&context, &mut retry, &mut silent, &mut copying).await
                 } else {
-                    let pool = context.database()?;
-                    let primaries = group_primaries(
-                        db::cluster::list_primary_repositories(pool, context.node_id).await?,
-                    );
-                    place_and_start(&context, &primaries, &retry, &mut copying).await
+                    copying.start_pending(&context, &retry);
+                    Ok(())
                 }
             } => {
                 if let Err(error) = result {
@@ -142,6 +215,11 @@ impl Retry {
             .checked_mul(2u32.saturating_pow(entry.0 - 1))
             .map_or(RETRY_CAP, |delay| delay.min(RETRY_CAP));
         entry.1 = Instant::now() + delay;
+    }
+
+    fn busy(&mut self, repository_id: i64) {
+        self.failures
+            .insert(repository_id, (0, Instant::now() + INTERVAL));
     }
 
     fn succeeded(&mut self, repository_id: i64) {
@@ -319,6 +397,8 @@ pub struct Copying {
     /// repository that is behind at every pass cannot take both slots every time. Kept in
     /// memory only.
     last_started: i64,
+    /// Refreshed once per pass, not after every completed copy.
+    pending: VecDeque<HeldReplica>,
 }
 
 impl Copying {
@@ -354,6 +434,7 @@ impl Copying {
                     Ok(()) => retry.succeeded(repository_id),
                     // The primary is writing to the repository. The next pass asks again.
                     Err(error) if busy(&error) => {
+                        retry.busy(repository_id);
                         debug!(
                             repository = repository_id,
                             "a replica copy waits for writes in progress"
@@ -378,14 +459,26 @@ impl Copying {
         let node = context.node_id;
         // `held` comes from the database in repository id order.
         let split = held.partition_point(|row| row.repository_id <= self.last_started);
-        let rows = held[split..].iter().chain(&held[..split]);
-        for row in rows.filter(|row| {
-            row.primary_node_id.is_some_and(|primary| primary != node)
-                && row.applied_version < row.write_version
-                && !retry.waiting(row.repository_id)
-        }) {
-            if self.running.len() >= PARALLEL {
+        self.pending = held[split..]
+            .iter()
+            .chain(&held[..split])
+            .filter(|row| {
+                row.primary_node_id.is_some_and(|primary| primary != node)
+                    && row.applied_version < row.write_version
+                    && rpc::repository_uuid(&row.disk_path).is_ok_and(|uuid| !self.is_running(uuid))
+            })
+            .cloned()
+            .collect();
+        self.start_pending(context, retry);
+    }
+
+    fn start_pending(&mut self, context: &NodeContext, retry: &Retry) {
+        while self.running.len() < PARALLEL {
+            let Some(row) = self.pending.pop_front() else {
                 break;
+            };
+            if retry.waiting(row.repository_id) {
+                continue;
             }
             let Ok(uuid) = rpc::repository_uuid(&row.disk_path) else {
                 continue;
@@ -394,7 +487,7 @@ impl Copying {
                 continue;
             }
             self.last_started = row.repository_id;
-            let (context, row) = (context.clone(), row.clone());
+            let context = context.clone();
             let handle = self
                 .running
                 .spawn(async move { (row.repository_id, copy_one(&context, &row, uuid).await) });
@@ -459,11 +552,7 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             continue;
         };
         while let Ok(Some(entry)) = entries.next_entry().await {
-            let uuid = entry
-                .file_name()
-                .to_str()
-                .and_then(|name| name.strip_suffix(".git"))
-                .and_then(|id| Uuid::parse_str(id).ok());
+            let uuid = entry.file_name().to_str().and_then(copy_directory_uuid);
             let Some(uuid) = uuid else {
                 continue;
             };
@@ -491,10 +580,22 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
     }
 }
 
-/// Whether this node still needs the directory of `uuid` at the top level: the repository is
-/// unplaced, its primary is this node, or this node holds a copy of it. The repository row is
-/// read before the copy rows. A promotion commits the new primary and the old primary's copy
-/// row together, so once the row names another node, that copy row is visible too.
+/// Recognizes a copy or a numeric quarantine name, without accepting unrelated siblings.
+fn copy_directory_uuid(name: &str) -> Option<Uuid> {
+    let name = if let Some((name, stamp)) = name.split_once(".unusable-") {
+        if stamp.is_empty() || !stamp.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        name
+    } else {
+        name
+    };
+    Uuid::parse_str(name.strip_suffix(".git")?).ok()
+}
+
+/// Whether this node still needs the directory of `uuid`: an unplaced repository, a primary
+/// here, or a copy held here. Read the repository before its copies so a concurrent promotion's
+/// new primary and former-primary copy row are both visible.
 async fn needed_here(pool: &DbPool, node: i64, uuid: Uuid) -> Result<bool> {
     let Some(repo) = db::cluster::get_repository_by_uuid(pool, &uuid.to_string()).await? else {
         return Ok(false);

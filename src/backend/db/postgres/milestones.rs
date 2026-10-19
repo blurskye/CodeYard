@@ -139,15 +139,18 @@ pub async fn delete_milestone(
     actor_id: i64,
     repo_id: i64,
     number: i32,
+    expected_id: i64,
 ) -> Result<()> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    let id: i64 =
-        sqlx::query_scalar("SELECT id FROM milestones WHERE repo_id = $1 AND number = $2")
-            .bind(repo_id)
-            .bind(number)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(MilestoneWriteRefusal::NotFound)?;
+    let id: i64 = sqlx::query_scalar(
+        "SELECT id FROM milestones WHERE repo_id = $1 AND number = $2 AND id = $3",
+    )
+    .bind(repo_id)
+    .bind(number)
+    .bind(expected_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(MilestoneWriteRefusal::NotFound)?;
     sqlx::query("UPDATE issues SET milestone_id = NULL WHERE milestone_id = $1")
         .bind(id)
         .execute(&mut *tx)
@@ -174,6 +177,20 @@ pub async fn get_milestone(
     ))
     .bind(repo_id)
     .bind(number)
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn get_milestone_by_id(
+    pool: &PgPool,
+    repo_id: i64,
+    id: i64,
+) -> Result<Option<MilestoneSummary>> {
+    Ok(sqlx::query_as::<_, MilestoneSummary>(&format!(
+        "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.id = $2"
+    ))
+    .bind(repo_id)
+    .bind(id)
     .fetch_optional(pool)
     .await?)
 }
