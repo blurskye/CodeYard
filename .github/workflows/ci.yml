@@ -38,13 +38,18 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust
-        # Runner images differ; install the toolchain the project builds with when it is missing.
+        # The project is checked with one Rust version. Runner images ship a newer one whose Clippy
+        # has more lints, so install the pinned version and make it the default.
         run: |
-          if ! command -v cargo >/dev/null; then
+          if ! command -v rustup >/dev/null; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
-              sh -s -- -y --profile minimal --default-toolchain 1.97.0 -c rustfmt -c clippy
+              sh -s -- -y --profile minimal --default-toolchain none
             echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
           fi
+          rustup toolchain install 1.97.0 --profile minimal -c rustfmt -c clippy
+          rustup default 1.97.0
+          rustc --version
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
