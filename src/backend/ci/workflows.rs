@@ -725,8 +725,9 @@ fn matches_any_pattern(
     Ok(false)
 }
 
-/// GitHub's filter glob: `*` and `?` stop at `/`, `**` crosses it. Branch protection
-/// patterns use this too.
+/// GitHub's filter glob: `*` and `?` stop at `/`, `**` crosses it, and `**/` also matches
+/// no directory, so `**/README.md` matches a root README.md. Branch protection patterns use
+/// this too.
 pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let value: Vec<char> = value.chars().collect();
@@ -739,8 +740,23 @@ pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
     while index < pattern.len() {
         current.fill(false);
         let ch = pattern[index];
-        if ch == '*' {
-            let double = pattern.get(index + 1) == Some(&'*');
+        let double = ch == '*' && pattern.get(index + 1) == Some(&'*');
+        if double
+            && pattern.get(index + 2) == Some(&'/')
+            && (index == 0 || pattern[index - 1] == '/')
+        {
+            // `**/` crosses any directories and then needs a `/`, as in `a/**/b`. It can also
+            // match no directory at all, so the rows from before it carry over.
+            let mut reached = false;
+            for (offset, &letter) in value.iter().enumerate() {
+                reached |= previous[offset];
+                current[offset + 1] = reached && letter == '/';
+            }
+            for (offset, &matched) in previous.iter().enumerate() {
+                current[offset] |= matched;
+            }
+            index += 3;
+        } else if ch == '*' {
             current[0] = previous[0];
             for (offset, &letter) in value.iter().enumerate() {
                 current[offset + 1] =
@@ -999,7 +1015,13 @@ on: [push, pull_request]
             ("release/*", "release/v1/hotfix", false),
             ("release/**", "release/v1/hotfix", true),
             ("**/test*", "src/nested/tests", true),
-            ("**/test*", "tests", false),
+            ("**/test*", "tests", true),
+            ("**/README.md", "README.md", true),
+            ("**/README.md", "docs/README.md", true),
+            ("**/README.md", "xREADME.md", false),
+            ("docs/**/README.md", "docs/README.md", true),
+            ("docs/**/README.md", "docs/a/b/README.md", true),
+            ("docs/**/README.md", "docsREADME.md", false),
             ("*a*b", "aaab", true),
             ("*a*b", "aaa", false),
             ("release/?", "release/β", true),

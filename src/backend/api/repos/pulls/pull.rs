@@ -639,6 +639,8 @@ pub(crate) fn pull_item(
                 .map(|method| method.as_str().to_owned())
                 .collect(),
             has_checks: false,
+            failed_checks: 0,
+            checks_running: false,
             has_workflows: false,
         }),
     })
@@ -835,6 +837,32 @@ pub(crate) async fn item(
                 compare.merge_target = merge_target;
                 compare.merge_with = merge_with;
                 compare.has_checks = !runs.is_empty() || !statuses.is_empty();
+                // Each check counts once. A run writes its commit status under its own context, so only
+                // the statuses of other producers are added. Runs are the latest attempt of each workflow.
+                let states: Vec<&str> = runs
+                    .iter()
+                    .map(|run| run.status.as_str())
+                    .chain(
+                        statuses
+                            .iter()
+                            .filter(|status| {
+                                !runs
+                                    .iter()
+                                    .any(|run| run.commit_status_context() == status.context)
+                            })
+                            .map(|status| status.state.as_str()),
+                    )
+                    .collect();
+                // A check that is queued or pending has not failed yet.
+                compare.failed_checks = states
+                    .iter()
+                    .filter(|state| {
+                        !matches!(**state, "success" | "queued" | "running" | "pending")
+                    })
+                    .count() as i64;
+                compare.checks_running = states
+                    .iter()
+                    .any(|state| matches!(*state, "queued" | "running" | "pending"));
             }
             Ok(view_item)
         }

@@ -17,11 +17,12 @@ pub fn DraftInput(
     #[props(default)] maxlength: Option<u32>,
     #[props(default)] pattern: Option<String>,
     #[props(default)] inputmode: Option<String>,
+    #[props(default)] aria_label: Option<String>,
     #[props(default)] on_value: EventHandler<String>,
 ) -> Element {
     let mut value = use_signal(move || initial_value);
     rsx! {
-        input { r#type: input_type, name, id, class, placeholder, required, readonly, maxlength, pattern, inputmode,
+        input { r#type: input_type, name, id, class, placeholder, required, readonly, maxlength, pattern, inputmode, "aria-label": aria_label,
             value: value(),
             oninput: move |event| {
                 let next = event.value();
@@ -148,6 +149,13 @@ pub mod draft_text {
     /// Field names and ids that suggest a password, token or key. Their text is never stored.
     const SECRET_HINTS: [&str; 6] = ["pass", "token", "secret", "private", "credential", "key"];
 
+    /// Every draft key starts with this, so the drafts of a tab can be found and dropped.
+    const DRAFT_PREFIX: &str = "codeyard-draft:";
+
+    /// The account the stored drafts of this tab belong to.
+    #[cfg(target_arch = "wasm32")]
+    const OWNER_KEY: &str = "codeyard-draft-owner";
+
     fn looks_secret(text: &str) -> bool {
         let lower = text.to_ascii_lowercase();
         SECRET_HINTS.iter().any(|hint| lower.contains(hint))
@@ -169,7 +177,7 @@ pub mod draft_text {
             Some(id) => format!("id:{id}"),
             None => format!("name:{name}"),
         };
-        Some(format!("codeyard-draft:{path}{search}:{field}"))
+        Some(format!("{DRAFT_PREFIX}{path}{search}:{field}"))
     }
 
     /// The page path and query. Off the browser there is no page, so the key is only a
@@ -222,6 +230,33 @@ pub mod draft_text {
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = key;
+    }
+
+    /// Unsent text belongs to the account that typed it. The first page that another account, or
+    /// nobody, shows in this tab drops the drafts that the earlier account left there. The page
+    /// calls this before its fields restore their drafts.
+    pub fn keep_for_account(account: Option<&str>) {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = storage() {
+            let account = account.unwrap_or_default();
+            if storage.get_item(OWNER_KEY).ok().flatten().as_deref() != Some(account) {
+                forget_drafts(&storage);
+                let _ = storage.set_item(OWNER_KEY, account);
+            }
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = account;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn forget_drafts(storage: &web_sys::Storage) {
+        let keys: Vec<String> = (0..storage.length().unwrap_or(0))
+            .filter_map(|index| storage.key(index).ok().flatten())
+            .filter(|key| key.starts_with(DRAFT_PREFIX))
+            .collect();
+        for key in keys {
+            let _ = storage.remove_item(&key);
+        }
     }
 
     /// Clears a draft when the form around its field is submitted. The listener stays

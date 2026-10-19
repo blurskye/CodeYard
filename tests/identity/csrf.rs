@@ -17,7 +17,14 @@ use codeyard::backend::{
     ci::CiConfig,
     db,
     db::users::transitions::{self, SetupClaim},
-    identity::passwords,
+    identity::{
+        self,
+        admission::AdmissionError,
+        credentials::PasswordAccount,
+        passwords,
+        sessions::{InitiatingSession, SessionContext},
+        setup::{SetupError, SetupInput},
+    },
     storage::ObjectStore,
 };
 use database::Database;
@@ -616,6 +623,56 @@ async fn sqlite_temporary_password_settings_are_restricted() {
 #[tokio::test]
 async fn postgres_temporary_password_settings_are_restricted() {
     temporary_password_settings_contract(true).await;
+}
+
+/// Wrong bootstrap secrets are charged to the login budget before the secret is compared, so
+/// guessing stops when the budget for the name is spent.
+async fn setup_secret_guesses_are_limited(pg: bool) {
+    let mut fixture = Database::new(pg).await;
+    let name = format!("budget_{}", &native::token()[..12]);
+    let fresh = native::token();
+    let attempt = |secret: &'static str| {
+        identity::setup::complete_setup(
+            fixture.pool(),
+            SetupInput {
+                account: PasswordAccount {
+                    username: &name,
+                    email: None,
+                    password: "setup-password",
+                },
+                node_mode: "public",
+                admin_secret: Some(secret),
+            },
+            Some("bootstrap-secret"),
+            SessionContext {
+                initiating: InitiatingSession::Missing,
+                fresh_id: &fresh,
+                user_agent: None,
+                expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            },
+        )
+    };
+    for _ in 0..10 {
+        assert_eq!(
+            attempt("wrong").await.err(),
+            Some(SetupError::InvalidAdminSecret)
+        );
+    }
+    assert_eq!(
+        attempt("wrong").await.err(),
+        Some(SetupError::Admission(AdmissionError::Limited))
+    );
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_setup_secret_guesses_are_limited() {
+    setup_secret_guesses_are_limited(false).await;
+}
+
+#[tokio::test]
+async fn postgres_setup_secret_guesses_are_limited() {
+    setup_secret_guesses_are_limited(true).await;
 }
 
 #[tokio::test]

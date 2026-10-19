@@ -256,6 +256,44 @@ async fn pull_request_template_prefills_the_description(pg: bool) {
     assert!(!typed.contains("What changed?"), "{typed}");
 }
 
+/// A task box in a pull request's conversation comment ticks through the pull request's tasks
+/// form. The comment keeps the rest of its text.
+async fn pull_request_comment_task_ticks(pg: bool) {
+    let (database, _root, alice, _bob) = setup(pg).await;
+    let main = put(&alice, "main", "README.md", "# proj\n", "unborn").await;
+    alice.branch("topic", &main).await;
+    put(&alice, "topic", "feature.txt", "feature\n", &main).await;
+    let pull = alice.open_pull("Tasks", "topic", "main").await;
+    let number = pull["number"].as_i64().unwrap();
+    let comment = alice
+        .expect(
+            "POST",
+            &format!("/api/repos/alice/proj/pulls/{number}/comments"),
+            json!({"body": "Next:\n\n- [ ] ship\n"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let comment_id = comment["id"].as_i64().unwrap();
+    let reply = alice
+        .form_reply(
+            &format!("/alice/proj/pulls/{number}/tasks"),
+            &[("comment", &comment_id.to_string()), ("task", "0")],
+        )
+        .await;
+    assert!(reply.status.is_redirection(), "{}", reply.text());
+    assert!(reply
+        .location
+        .as_deref()
+        .unwrap()
+        .ends_with(&format!("#comment-{comment_id}")));
+    let saved =
+        db::pull_requests::reviews::get_pull_request_comment_by_id(database.pool(), comment_id)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(saved.body, "Next:\n\n- [x] ship\n");
+}
+
 async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
     let (_database, _root, alice, bob) = setup(pg).await;
     let created = alice
@@ -383,6 +421,15 @@ async fn postgres_task_boxes_tick_in_the_body_and_comments() {
 #[tokio::test]
 async fn sqlite_task_boxes_tick_in_the_body_and_comments() {
     task_boxes_tick_in_the_body_and_comments(false).await;
+}
+
+#[tokio::test]
+async fn postgres_pull_request_comment_task_ticks() {
+    pull_request_comment_task_ticks(true).await;
+}
+#[tokio::test]
+async fn sqlite_pull_request_comment_task_ticks() {
+    pull_request_comment_task_ticks(false).await;
 }
 
 #[tokio::test]

@@ -8,7 +8,7 @@ pub const BODY_LIMIT: usize = 1024 * 1024;
 pub const MESSAGE_LIMIT: usize = 500;
 
 /// Addresses the wiki uses for its own pages, so no page takes them.
-const RESERVED: [&str; 2] = ["_pages", "_new"];
+const RESERVED: [&str; 3] = ["_pages", "_new", "_settings"];
 
 /// A page the writer typed, checked and ready to save.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +22,10 @@ pub struct Draft {
 /// Checks what a writer submitted. The error is the text the page shows.
 pub fn check(title: &str, body: &str, message: &str) -> Result<Draft, &'static str> {
     let title = title.trim();
+    // PostgreSQL text cannot hold NUL, so a page holding one could not be copied to it.
+    if title.contains('\0') || body.contains('\0') || message.contains('\0') {
+        return Err("Text cannot contain NUL characters.");
+    }
     if title.is_empty() {
         return Err("Enter a title for the page.");
     }
@@ -72,6 +76,10 @@ mod tests {
             "This title is reserved for the wiki's own pages."
         );
         assert_eq!(
+            check("_Settings", "", "").unwrap_err(),
+            "This title is reserved for the wiki's own pages."
+        );
+        assert_eq!(
             check("  ", "", "").unwrap_err(),
             "Enter a title for the page."
         );
@@ -83,5 +91,14 @@ mod tests {
         assert_eq!(draft.slug, "home");
         assert_eq!(draft.title, "Home");
         assert_eq!(draft.message, "fix");
+    }
+
+    #[test]
+    fn check_refuses_nul_in_title_body_and_message() {
+        // PostgreSQL text cannot hold NUL, so a SQLite wiki holding one could not be copied.
+        assert!(check("Home\0", "", "").is_err());
+        assert!(check("Home", "text\0", "").is_err());
+        assert!(check("Home", "text", "fix\0").is_err());
+        assert!(check("Home", "text", "fix").is_ok());
     }
 }

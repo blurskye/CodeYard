@@ -73,6 +73,7 @@ fn a_refused_edit_keeps_the_text_and_the_revision_it_was_opened_on() {
                     title: "Home".into(),
                     body: "My words".into(),
                     message: "why".into(),
+                    preview: false,
                 },
                 error: Some("The page changed while you were editing.".into()),
             },
@@ -85,6 +86,27 @@ fn a_refused_edit_keeps_the_text_and_the_revision_it_was_opened_on() {
     assert!(html.contains("My words"), "{html}");
     assert!(html.contains("name=\"revision\""), "{html}");
     assert!(html.contains("value=\"4\""), "{html}");
+}
+
+#[test]
+fn a_preview_renders_the_body_in_the_editor() {
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(render(
+            &repo(true, false),
+            Page::Form {
+                editing: None,
+                draft: DraftFields {
+                    title: "Home".into(),
+                    body: "**Bold** words".into(),
+                    message: String::new(),
+                    preview: true,
+                },
+                error: None,
+            },
+        ))
+    });
+    // The raw text sits in the textarea; only the preview renders the bold words, with classes.
+    assert!(html.contains(">Bold</strong>"), "{html}");
 }
 
 #[test]

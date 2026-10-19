@@ -389,6 +389,80 @@ async fn flow(pg: bool, receiver: &Receiver, url: &str) {
     .is_empty());
 }
 
+/// A conversation comment sends `issue_comment` when it is written. An inline comment in a pending
+/// review is held back, and sends `pull_request_review_comment` when the review is submitted.
+async fn pull_request_comment_hooks(pg: bool, url: &str) {
+    let (database, _root, alice, _bob) = setup(pg).await;
+    let repo = repo_id(&database).await;
+    let reply = alice
+        .form_reply(
+            "/alice/proj/_forms/webhook-save",
+            &save_pairs(
+                &repo,
+                url,
+                &["issue_comment", "pull_request_review_comment"],
+            ),
+        )
+        .await;
+    assert!(reply.status.is_redirection(), "{}", reply.text());
+    let hook = hook_id(&database).await;
+    deliveries(&database, hook, 1).await;
+
+    let base = alice.save("main", "README.md", "unborn").await;
+    alice.branch("topic", &base).await;
+    let head = alice.save("topic", "topic.txt", &base).await;
+    let pull = alice.open_pull("Review me", "topic", "main").await;
+    let number = pull["number"].as_i64().unwrap();
+    let comments = format!("/api/repos/alice/proj/pulls/{number}/comments");
+
+    alice
+        .expect(
+            "POST",
+            &comments,
+            json!({"body": "Conversation"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let rows = deliveries(&database, hook, 2).await;
+    assert_eq!(rows[0].event, "issue_comment");
+    assert_eq!(rows[0].action.as_deref(), Some("created"));
+    // The issue is marked as a pull request, as GitHub receivers expect.
+    let sent: Value = serde_json::from_str(&rows[0].request_body).unwrap();
+    assert!(
+        sent["issue"]["pull_request"]["html_url"].is_string(),
+        "{sent}"
+    );
+
+    alice
+        .expect(
+            "POST",
+            &comments,
+            json!({"body": "On the line", "path": "topic.txt", "line": 1, "side": "RIGHT", "commit_sha": head, "pending": true}),
+            StatusCode::CREATED,
+        )
+        .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        db::webhooks::list_deliveries(database.pool(), hook)
+            .await
+            .unwrap()
+            .len(),
+        2,
+        "a pending inline comment is not sent"
+    );
+    alice
+        .expect(
+            "POST",
+            &format!("/api/repos/alice/proj/pulls/{number}/reviews"),
+            json!({"state": "commented", "body": "Done", "commit_sha": head}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let rows = deliveries(&database, hook, 3).await;
+    assert_eq!(rows[0].event, "pull_request_review_comment");
+    assert_eq!(rows[0].action.as_deref(), Some("created"));
+}
+
 /// One test runs both engines, because the receiver needs `WEBHOOKS_ALLOW_PRIVATE` for the
 /// whole process and the refusal checks need it unset.
 #[tokio::test]
@@ -401,5 +475,6 @@ async fn webhooks_on_sqlite_and_postgres() {
         let receiver = Receiver::default();
         let url = receiver.start().await;
         flow(pg, &receiver, &url).await;
+        pull_request_comment_hooks(pg, &url).await;
     }
 }

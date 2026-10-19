@@ -99,6 +99,64 @@ async fn in_pending_review(
     Ok(review.is_some_and(|review| review.state == "pending"))
 }
 
+/// Sends the webhook for a saved comment. A comment on a file is a review comment. A conversation
+/// comment is sent as an issue comment, which is how GitHub sends those on pull requests.
+pub(super) fn emit_comment_webhook(
+    pool: &db::DbPool,
+    repository: &db::models::Repository,
+    pull_request: &db::models::PullRequest,
+    comment: &db::models::PullRequestComment,
+    action: &'static str,
+    sender_id: i64,
+) {
+    let on_file = comment.path.is_some();
+    let event = if on_file {
+        events::PULL_REQUEST_REVIEW_COMMENT
+    } else {
+        events::ISSUE_COMMENT
+    };
+    let (comment_for_hook, pull_for_hook, repository_for_hook) =
+        (comment.clone(), pull_request.clone(), repository.clone());
+    let (pull_author_id, comment_author_id) = (pull_request.author_id, comment.author_id);
+    webhooks::emit(
+        pool,
+        repository,
+        event,
+        vec![pull_author_id, comment_author_id, sender_id],
+        move |owner, people| {
+            let (pull_author, comment_author, sender) = (
+                people.get(pull_author_id),
+                people.get(comment_author_id),
+                people.get(sender_id),
+            );
+            let scope = Scope {
+                repo: &repository_for_hook,
+                owner,
+                sender: &sender,
+            };
+            if on_file {
+                payloads::pull_request_review_comment(
+                    action,
+                    &comment_for_hook,
+                    &pull_for_hook,
+                    &pull_author,
+                    &comment_author,
+                    scope,
+                )
+            } else {
+                payloads::pull_request_conversation_comment(
+                    action,
+                    &comment_for_hook,
+                    &pull_for_hook,
+                    &pull_author,
+                    &comment_author,
+                    scope,
+                )
+            }
+        },
+    );
+}
+
 /// The file must be one this pull request changes, and the line must be a line of its diff on the
 /// side named, or on either side when none is. The diff is the one the diff page shows.
 async fn check_diff_anchor(
@@ -454,6 +512,7 @@ pub async fn create_pull_request_comment(
                 number: pull_request.number,
                 subject: &pull_request.title,
                 link: &link,
+                comment_id: None,
                 old_text: None,
                 text: &req.body,
                 notified: &notified,
@@ -462,38 +521,14 @@ pub async fn create_pull_request_comment(
         .await;
     }
 
-    if comment.path.is_some() {
-        let (comment_for_hook, pull_for_hook, repository_for_hook) =
-            (comment.clone(), pull_request.clone(), repository.clone());
-        let (pull_author_id, comment_author_id, sender_id) =
-            (pull_request.author_id, comment.author_id, user.id);
-        webhooks::emit(
-            pool,
-            &repository,
-            events::PULL_REQUEST_REVIEW_COMMENT,
-            vec![pull_author_id, comment_author_id, sender_id],
-            move |owner, people| {
-                let (pull_author, comment_author, sender) = (
-                    people.get(pull_author_id),
-                    people.get(comment_author_id),
-                    people.get(sender_id),
-                );
-                payloads::pull_request_review_comment(
-                    "created",
-                    &comment_for_hook,
-                    &pull_for_hook,
-                    &pull_author,
-                    &comment_author,
-                    Scope {
-                        repo: &repository_for_hook,
-                        owner,
-                        sender: &sender,
-                    },
-                )
-            },
-        );
-    }
-
+    emit_comment_webhook(
+        pool,
+        &repository,
+        &pull_request,
+        &comment,
+        "created",
+        user.id,
+    );
     Ok(comment)
 }
 
@@ -676,7 +711,8 @@ pub async fn edit_pull_request_comment(
         message: "You cannot edit this comment.".to_owned(),
     })?;
 
-    // Only the names the edit adds notify; the others were notified when first written.
+    // Only the names the edit adds notify; the others were notified when first written. The
+    // author's notice for the comment is not a mention, so the author is not excluded here.
     if mentions_anyone(&body) {
         let link = pull_request_comment_link(pool, &owner, &repo, &pull_request, &comment).await;
         notify_mentions(
@@ -690,45 +726,22 @@ pub async fn edit_pull_request_comment(
                 number: pull_request.number,
                 subject: &pull_request.title,
                 link: &link,
+                comment_id: None,
                 old_text: Some(&previous.body),
                 text: &body,
-                notified: &[pull_request.author_id],
+                notified: &[],
             },
         )
         .await;
     }
-    if comment.path.is_some() {
-        let (comment_for_hook, pull_for_hook, repository_for_hook) =
-            (comment.clone(), pull_request.clone(), repository.clone());
-        let (pull_author_id, comment_author_id, sender_id) =
-            (pull_request.author_id, comment.author_id, user.id);
-        webhooks::emit(
-            pool,
-            &repository,
-            events::PULL_REQUEST_REVIEW_COMMENT,
-            vec![pull_author_id, comment_author_id, sender_id],
-            move |owner, people| {
-                let (pull_author, comment_author, sender) = (
-                    people.get(pull_author_id),
-                    people.get(comment_author_id),
-                    people.get(sender_id),
-                );
-                payloads::pull_request_review_comment(
-                    "edited",
-                    &comment_for_hook,
-                    &pull_for_hook,
-                    &pull_author,
-                    &comment_author,
-                    Scope {
-                        repo: &repository_for_hook,
-                        owner,
-                        sender: &sender,
-                    },
-                )
-            },
-        );
-    }
-
+    emit_comment_webhook(
+        pool,
+        &repository,
+        &pull_request,
+        &comment,
+        "edited",
+        user.id,
+    );
     Ok(comment)
 }
 
@@ -761,37 +774,14 @@ pub async fn delete_pull_request_comment(
     .await
     .map_err(super::write_error)?;
     if removed {
-        if previous.path.is_some() {
-            let (comment_for_hook, pull_for_hook, repository_for_hook) =
-                (previous.clone(), pull_request.clone(), repository.clone());
-            let (pull_author_id, comment_author_id, sender_id) =
-                (pull_request.author_id, previous.author_id, user.id);
-            webhooks::emit(
-                pool,
-                &repository,
-                events::PULL_REQUEST_REVIEW_COMMENT,
-                vec![pull_author_id, comment_author_id, sender_id],
-                move |owner, people| {
-                    let (pull_author, comment_author, sender) = (
-                        people.get(pull_author_id),
-                        people.get(comment_author_id),
-                        people.get(sender_id),
-                    );
-                    payloads::pull_request_review_comment(
-                        "deleted",
-                        &comment_for_hook,
-                        &pull_for_hook,
-                        &pull_author,
-                        &comment_author,
-                        Scope {
-                            repo: &repository_for_hook,
-                            owner,
-                            sender: &sender,
-                        },
-                    )
-                },
-            );
-        }
+        emit_comment_webhook(
+            pool,
+            &repository,
+            &pull_request,
+            &previous,
+            "deleted",
+            user.id,
+        );
         Ok(())
     } else {
         Err(OperationError::Denied {

@@ -119,7 +119,7 @@ fn segments_match(pattern: &[String], path: &[&str]) -> bool {
 }
 
 /// Reads a CODEOWNERS file. A line with no owners removes them, and a line that names no path is
-/// skipped. Owners are the tokens with an `@` in them.
+/// skipped. Owners are the tokens with an `@` in them, before any `#` that starts a comment.
 pub fn parse(text: &str) -> Rules {
     let entries = text
         .lines()
@@ -130,6 +130,7 @@ pub fn parse(text: &str) -> Rules {
             let mut tokens = line.split_whitespace();
             let pattern = tokens.next()?;
             let owners = tokens
+                .take_while(|token| !token.starts_with('#'))
                 .filter(|token| token.contains('@'))
                 .map(str::to_owned)
                 .collect();
@@ -272,6 +273,13 @@ mod tests {
     fn comments_and_blank_lines_are_skipped() {
         let text = "# a comment\n\n   \n/x @x\n";
         assert_eq!(owners_of(text, "x"), vec!["@x"]);
+    }
+
+    #[test]
+    fn a_hash_ends_the_owners_on_its_line() {
+        let text = "/x @alice # contact @bob\n/y @carol #@dave\n";
+        assert_eq!(owners_of(text, "x"), vec!["@alice"]);
+        assert_eq!(owners_of(text, "y"), vec!["@carol"]);
     }
 
     #[test]

@@ -1370,7 +1370,9 @@ impl LocalStore {
     // ----- Git sessions -----
 
     pub(super) async fn advertise_refs(&self, service: GitService) -> Result<Vec<u8>, RepoError> {
-        let _permit = git::repository::process::session_permit().map_err(RepoError::from)?;
+        let _permit = git::repository::process::session_permit()
+            .await
+            .map_err(RepoError::from)?;
         git::advertise_service_refs(self.path(), service.name())
             .await
             .map_err(RepoError::from)
@@ -1523,7 +1525,17 @@ impl LocalStore {
                 "This repository is archived and read-only.",
             ));
         }
-        self.set_head_target(&reference).await
+        self.set_head_target(&reference).await?;
+        // Replicas copy HEAD with the repository, so the change counts as a write.
+        record_ref_change(pool, repo_id).await;
+        // The stored languages describe the default branch, so store the new one's.
+        languages::refresh_default_branch(
+            pool.clone(),
+            repo_id,
+            self.path().to_owned(),
+            name.to_owned(),
+        );
+        Ok(())
     }
 
     /// Points HEAD at a branch, such as `refs/heads/main`.

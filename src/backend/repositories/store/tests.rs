@@ -2337,6 +2337,23 @@ async fn every_ref_change_moves_the_write_version() {
         .await
         .is_err());
     assert_eq!(write_version(&authority).await, 8, "a refused branch");
+
+    // HEAD moves with the default branch, and replicas copy HEAD, so the change is a write.
+    f.store
+        .set_default_branch_as(pool, repo_id, actor, "topic")
+        .await
+        .unwrap();
+    assert_eq!(write_version(&authority).await, 9, "default branch");
+    assert!(f
+        .store
+        .set_default_branch_as(pool, repo_id, actor, "missing")
+        .await
+        .is_err());
+    assert_eq!(
+        write_version(&authority).await,
+        9,
+        "a missing default branch"
+    );
 }
 
 /// A storage node registered in the database, to place or copy a repository on.

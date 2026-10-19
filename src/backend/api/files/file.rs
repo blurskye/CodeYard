@@ -50,6 +50,11 @@ fn deletion_failure(error: DeleteError) -> Failure {
             "file_in_use",
             "This file is the current organization picture",
         ),
+        DeleteError::ReferencedReleaseAsset => (
+            StatusCode::CONFLICT,
+            "file_in_use",
+            "This file is a release asset. Delete it from its release.",
+        ),
     };
     failure(status, code, message)
 }

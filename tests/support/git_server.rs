@@ -33,6 +33,9 @@ impl Server {
             .env("HOME", root)
             .env("WEBUI_DIST", std::env::var_os("WEBUI_DIST").unwrap())
             .env("RUST_LOG", "info")
+            // Tests that fill every session slot count on 16 of them and an instant refusal.
+            .env("GIT_SESSION_LIMIT", "16")
+            .env("GIT_SESSION_WAIT_SECONDS", "0")
             .env("COOKIE_SECURE", "false")
             .env("DATABASE_URL", url)
             .env("GITSERV_STATE_DIR", root.join("state"))

@@ -337,7 +337,10 @@ async fn releases_flow(pg: bool) {
     assert!(html.contains("v1.1") && !html.contains("v2.0-rc"), "{html}");
     let (status, html) = bob.page("/alice/proj/releases/tag/v1.0").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(html.contains("/alice/proj/archive/v1.0.zip"), "{html}");
+    assert!(
+        html.contains("/alice/proj/archive/refs%2Ftags%2Fv1.0.zip"),
+        "{html}"
+    );
     let (status, _) = bob.page("/alice/proj/releases/tag/v2.0-rc").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     let (status, html) = alice.page("/alice/proj/releases/new").await;
@@ -515,6 +518,57 @@ async fn archives(pg: bool) {
     world.database.finish().await;
 }
 
+async fn tag_archives_download_the_tag_even_when_a_branch_has_its_name(pg: bool) {
+    let mut world = setup(pg).await;
+    // The branch `v1.0` has a file that the tag, which points at the first commit, does not.
+    world.alice.branch("v1.0", &world.main).await;
+    world
+        .alice
+        .save("v1.0", "branch-only.txt", &world.main)
+        .await;
+    world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": "v1.0", "target_commitish": world.main, "name": "First"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let (status, page) = world.anonymous.page("/alice/proj/releases/tag/v1.0").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("/alice/proj/archive/refs%2Ftags%2Fv1.0.zip"),
+        "{page}"
+    );
+    let tag = world
+        .anonymous
+        .exchange(
+            "GET",
+            "/alice/proj/archive/refs%2Ftags%2Fv1.0.zip",
+            "text/html",
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(tag.status, StatusCode::OK);
+    let tag_zip = String::from_utf8_lossy(&tag.body);
+    assert!(tag_zip.contains("proj-v1.0/README.md"), "{tag_zip}");
+    assert!(!tag_zip.contains("branch-only.txt"), "{tag_zip}");
+    // The short name still names the branch, as Git resolves it.
+    let branch = world
+        .anonymous
+        .exchange(
+            "GET",
+            "/alice/proj/archive/v1.0.zip",
+            "text/html",
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(branch.status, StatusCode::OK);
+    assert!(String::from_utf8_lossy(&branch.body).contains("branch-only.txt"));
+    world.database.finish().await;
+}
+
 async fn publish_notifies_release_watchers(pg: bool) {
     let mut world = setup(pg).await;
     world
@@ -570,6 +624,133 @@ async fn sqlite_releases_flow() {
     releases_flow(false).await;
 }
 
+/// Publishes `tag` on `main` of alice's project and returns the release id.
+async fn publish(alice: &Client, tag: &str) -> i64 {
+    alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": tag, "target_commitish": "main"}),
+            StatusCode::CREATED,
+        )
+        .await["id"]
+        .as_i64()
+        .unwrap()
+}
+
+/// An asset may be as large as the asset limit, which is larger than the form body limit.
+async fn large_assets_upload(pg: bool) {
+    let mut world = setup(pg).await;
+    let release_id = publish(&world.alice, "v1.0").await;
+    let uploaded = upload(
+        &world.alice,
+        &format!("/alice/proj/releases/{release_id}/assets"),
+        "",
+        "large.bin",
+        &vec![7u8; 5 * 1024 * 1024],
+    )
+    .await;
+    assert_eq!(
+        uploaded.status,
+        StatusCode::SEE_OTHER,
+        "{}",
+        uploaded.text()
+    );
+    // A visitor who is not signed in is refused before the body is read.
+    let refused = upload(
+        &world.anonymous,
+        &format!("/alice/proj/releases/{release_id}/assets"),
+        "",
+        "large.bin",
+        &vec![7u8; 5 * 1024 * 1024],
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNAUTHORIZED,
+        "{}",
+        refused.text()
+    );
+    world.database.finish().await;
+}
+
+/// The file of an asset leaves with the asset, through its release. Deleting the file directly is
+/// refused, even for the account that uploaded it.
+async fn asset_files_leave_through_their_release(pg: bool) {
+    let mut world = setup(pg).await;
+    let alice = &world.alice;
+    let release_id = publish(alice, "v1.0").await;
+    let uploaded = upload(
+        alice,
+        &format!("/alice/proj/releases/{release_id}/assets"),
+        "",
+        "tool.bin",
+        b"binary bytes",
+    )
+    .await;
+    assert_eq!(
+        uploaded.status,
+        StatusCode::SEE_OTHER,
+        "{}",
+        uploaded.text()
+    );
+    let assets = db::releases::list_release_assets(world.database.pool(), release_id)
+        .await
+        .unwrap();
+    let file = assets[0].file_id;
+    let refused = alice
+        .exchange(
+            "DELETE",
+            &format!("/api/files/{file}"),
+            "application/json",
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text());
+    let release = alice
+        .expect(
+            "GET",
+            &format!("/api/repos/alice/proj/releases/{release_id}"),
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(release["assets"].as_array().unwrap().len(), 1, "{release}");
+    let asset_id = release["assets"][0]["id"].as_i64().unwrap();
+    let removed = alice
+        .form_reply(
+            &format!("/alice/proj/releases/{release_id}/assets/{asset_id}/delete"),
+            &[],
+        )
+        .await;
+    assert!(removed.status.is_redirection(), "{}", removed.text());
+    let remaining = db::releases::list_release_assets(world.database.pool(), release_id)
+        .await
+        .unwrap();
+    assert!(remaining.is_empty());
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn postgres_large_assets_upload() {
+    large_assets_upload(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_large_assets_upload() {
+    large_assets_upload(false).await;
+}
+
+#[tokio::test]
+async fn postgres_asset_files_leave_through_their_release() {
+    asset_files_leave_through_their_release(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_asset_files_leave_through_their_release() {
+    asset_files_leave_through_their_release(false).await;
+}
+
 #[tokio::test]
 async fn postgres_source_archives() {
     archives(true).await;
@@ -578,6 +759,16 @@ async fn postgres_source_archives() {
 #[tokio::test]
 async fn sqlite_source_archives() {
     archives(false).await;
+}
+
+#[tokio::test]
+async fn postgres_tag_archives_name_the_tag() {
+    tag_archives_download_the_tag_even_when_a_branch_has_its_name(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_tag_archives_name_the_tag() {
+    tag_archives_download_the_tag_even_when_a_branch_has_its_name(false).await;
 }
 
 #[tokio::test]

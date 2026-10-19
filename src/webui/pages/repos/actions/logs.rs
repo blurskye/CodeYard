@@ -166,17 +166,66 @@ fn new_step(name: String) -> Step {
     }
 }
 
+/// The time at the end of a line, "[140.28ms]". act puts the time of a step with a multi-line
+/// command after its last line.
+fn trailing_timing(line: &str) -> Option<String> {
+    let inner = line.trim_end().strip_suffix(']')?;
+    let value = inner[inner.rfind('[')? + 1..].trim();
+    let digits = value.chars().next()?.is_ascii_digit();
+    let unit = |ch: char| ch.is_ascii_digit() || matches!(ch, '.' | 'µ' | 'n' | 'm' | 's' | 'h');
+    (digits && value.chars().all(unit)).then(|| value.to_owned())
+}
+
+/// A step time as act prints it ("35.195068ms", "1.234567s") rounded for reading.
+pub fn short_duration(timing: &str) -> String {
+    if let Some(milliseconds) = timing
+        .strip_suffix("ms")
+        .and_then(|v| v.parse::<f64>().ok())
+    {
+        return format!("{milliseconds:.0}ms");
+    }
+    if let Some(seconds) = timing.strip_suffix('s').and_then(|v| v.parse::<f64>().ok()) {
+        return format!("{seconds:.1}s");
+    }
+    timing.to_owned()
+}
+
+/// Whether `line` is the next line of a multi-line command that act prints again after the step's
+/// end marker, with the step's time after the last one.
+fn repeats_command_line(line: &str, expected: &str) -> bool {
+    line.strip_prefix(expected)
+        .is_some_and(|rest| rest.trim().is_empty() || trailing_timing(rest).is_some())
+}
+
 fn steps(lines: &[LogLine], run_status: &str) -> Vec<Step> {
     let mut result: Vec<Step> = Vec::new();
     let mut active: Option<usize> = None;
+    // act prints the lines of a multi-line command without its `[job]` prefix, once after the
+    // step's start marker and again after its end marker. These keep them in their step.
+    let mut command_lines: std::collections::HashMap<usize, Vec<String>> =
+        std::collections::HashMap::new();
+    let mut command_over = false;
+    let mut closed: Option<usize> = None;
+    let mut repeated = 0;
     for line in lines {
-        if let Some(name) = act_step_start(&line.line) {
+        let prefixed = act_payload(&line.line).is_some();
+        let start = act_step_start(&line.line);
+        if let Some(name) = start.clone() {
             let mut step = new_step(name);
             step.status = "running".to_string();
             result.push(step);
             active = Some(result.len() - 1);
+            command_over = false;
         }
         let outcome = act_step_outcome(&line.line);
+        let repeat = !prefixed
+            && closed.is_some_and(|index| {
+                match command_lines.get(&index).and_then(|l| l.get(repeated)) {
+                    Some(expected) => repeats_command_line(&line.line, expected),
+                    None => trailing_timing(&line.line)
+                        .is_some_and(|_| line.line.trim_start().starts_with('[')),
+                }
+            });
         // Late/mismatched outcomes must not mark an unrelated active step successful.
         let target = outcome
             .as_ref()
@@ -185,7 +234,14 @@ fn steps(lines: &[LogLine], run_status: &str) -> Vec<Step> {
                     .iter()
                     .rposition(|step| step.name == *name && step.status == "running")
             })
-            .or(active);
+            .or(active)
+            .or(if repeat { closed } else { None })
+            // The "Job succeeded" flag closes the last step.
+            .or(if act_job_result(&line.line).is_some() {
+                result.len().checked_sub(1)
+            } else {
+                None
+            });
         let index = target.unwrap_or_else(|| {
             let name = if line.stage.is_empty() {
                 "Runner"
@@ -206,10 +262,28 @@ fn steps(lines: &[LogLine], run_status: &str) -> Vec<Step> {
         if matches!(line.level.to_ascii_lowercase().as_str(), "error" | "fatal") {
             result[index].status = "failed".to_string();
         }
+        if repeat {
+            repeated += 1;
+            if let Some(timing) = trailing_timing(&line.line) {
+                result[index].duration = Some(timing);
+            }
+        } else if prefixed {
+            closed = None;
+            if start.is_none() {
+                command_over = true;
+            }
+        } else if active == Some(index) && !command_over {
+            command_lines
+                .entry(index)
+                .or_default()
+                .push(line.line.clone());
+        }
         if let Some((name, status, timing)) = outcome {
             if result[index].name == name {
                 result[index].status = status.to_string();
                 result[index].duration = timing;
+                closed = Some(index);
+                repeated = 0;
                 if active == Some(index) {
                     active = None;
                 }
@@ -400,7 +474,7 @@ fn render_steps(job_index: usize, job: &WorkflowJob, query: &str, wrap: bool) ->
                         } else { span { class: "actions-sr-only", "{step.status}" } }
                     }
                     span { class: "actions-step-duration",
-                        if let Some(duration) = &step.duration { "{duration}" }
+                        if let Some(duration) = &step.duration { "{short_duration(duration)}" }
                         if !query.is_empty() { " · {step.lines.len()} matching lines" }
                     }
                 }
@@ -457,6 +531,38 @@ mod tests {
             .collect();
         ids.sort();
         assert_eq!(ids, (1..=8).collect::<Vec<_>>());
+    }
+    #[test]
+    fn a_multi_line_command_keeps_its_lines_and_time_in_its_step() {
+        let lines = vec![
+            log(1, "[CI/build] ⭐ Run Main echo a"),
+            log(2, "test -f README.md"),
+            log(3, "[CI/build]   | a"),
+            log(4, "[CI/build]   ✅  Success - Main echo a"),
+            log(5, "test -f README.md"),
+            log(6, " [140.282868ms]"),
+            log(7, "[CI/build] ⭐ Run Complete job"),
+            log(8, "[CI/build]   ✅  Success - Complete job"),
+        ];
+        let jobs = project_logs(&lines, "success");
+        let steps = &jobs[0].steps;
+        assert_eq!(steps.len(), 2, "{steps:?}");
+        assert_eq!(steps[0].lines.len(), 6);
+        assert_eq!(steps[0].duration.as_deref(), Some("140.282868ms"));
+        assert_eq!(short_duration("140.282868ms"), "140ms");
+        assert_eq!(short_duration("1.234567s"), "1.2s");
+        assert_eq!(short_duration("1m2.5s"), "1m2.5s");
+    }
+    #[test]
+    fn the_job_flag_stays_with_the_last_step() {
+        let lines = vec![
+            log(1, "[CI/build] ⭐ Run Complete job"),
+            log(2, "[CI/build]   ✅  Success - Complete job"),
+            log(3, "[CI/build] 🏁  Job succeeded"),
+        ];
+        let jobs = project_logs(&lines, "success");
+        assert_eq!(jobs[0].steps.len(), 1, "{:?}", jobs[0].steps);
+        assert_eq!(jobs[0].steps[0].lines.len(), 3);
     }
     #[test]
     fn job_flag_lines_read_as_the_job_result() {

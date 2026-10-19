@@ -137,6 +137,9 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
         .filter(|line| matches!(line.level.to_ascii_lowercase().as_str(), "error" | "fatal"))
         .count();
     let cancellable = matches!(logs::normalize_status(&run.status), "queued" | "running");
+    // A cancelled run stores a message too, but it did not fail.
+    let run_failed =
+        run.error_message.is_some() && logs::normalize_status(&run.status) != "cancelled";
     rsx! {
         header { class: "actions-run-heading",
             NavLink { class: "actions-back", href: model.url(&[("job", ""), ("view", ""), ("workflow_job", ""), ("log_q", "")]), "← Workflow runs" }
@@ -180,7 +183,7 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
                 }
             }
             div { class: "actions-detail-main",
-                if error_lines > 0 || run.error_message.is_some() {
+                if error_lines > 0 || run_failed {
                     details { class: "actions-annotations", open: true,
                         summary {
                             span { h2 { "Annotations" }
@@ -191,7 +194,7 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
                             }
                             span { class: "actions-disclosure-label", "Details" }
                         }
-                        p { role: "alert", "This run reported an error. Open the failed step for details." }
+                        if run_failed { p { role: "alert", "This run reported an error. Open the failed step for details." } }
                     }
                 }
                 if show_logs {

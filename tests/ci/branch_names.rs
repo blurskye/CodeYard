@@ -482,5 +482,32 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
         stored,
         ["main", "main", "refs/tags/v1", "refs/tags/v1", "main"]
     );
+    // A push is recorded under its full ref. After a force-push moves the branch, a rerun of
+    // that push still runs the commit it pushed.
+    db::ci::record_ci_accepted_push(&f.pool, f.repo.id, f.owner.id, "refs/heads/main", &f.sha)
+        .await
+        .unwrap();
+    let git = git2::Repository::open_bare(f.temp.path().join("repo.git")).unwrap();
+    production::commit(&git, "refs/heads/main", None, "force-pushed", None);
+    drop(git);
+    let rerun = service
+        .dispatch_run(
+            f.owner.id,
+            codeyard::backend::ci::runs::DispatchRequest {
+                repo_owner: f.owner.username.clone(),
+                repo_name: f.repo.name.clone(),
+                branch: "main".to_owned(),
+                event: "push".to_owned(),
+                head_sha: Some(f.sha.clone()),
+                workflow_path: Some(".github/workflows/ci.yml".to_owned()),
+                pipeline: Some("ci".to_owned()),
+                environment: None,
+                inputs: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(rerun.branch, "main");
+    assert_eq!(rerun.head_sha.as_deref(), Some(f.sha.as_str()));
     f.finish().await;
 }

@@ -135,6 +135,28 @@ fn persisted_output_is_escaped_and_absent_deployment_is_honest() {
     assert!(html.contains(" open=true") || html.contains(" open=\"true\""));
     assert!(!html.contains("<script>unsafe"));
 }
+
+#[test]
+fn only_a_failed_run_shows_the_error_banner() {
+    let mut model = model();
+    let mut cancelled = run();
+    cancelled.status = "cancelled".into();
+    cancelled.error_message = Some("Cancelled".into());
+    model.selected = Some(SelectedRun {
+        run: cancelled,
+        logs: Vec::new(),
+        deployment: None,
+        fetched_lines: 0,
+        logs_truncated: false,
+    });
+    assert!(!html(model.clone()).contains("This run reported an error"));
+    let mut failed = run();
+    failed.status = "failed".into();
+    failed.error_message = Some("A workflow job failed".into());
+    model.selected.as_mut().unwrap().run = failed;
+    assert!(html(model).contains("This run reported an error"));
+}
+
 fn html(model: ActionsPage) -> String {
     let mut dom = VirtualDom::new_with_props(|props: ActionsPage| actions_page(props), model);
     dom.rebuild_in_place();

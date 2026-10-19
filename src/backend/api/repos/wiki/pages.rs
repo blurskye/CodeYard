@@ -56,6 +56,7 @@ fn draft_of(form: &HashMap<String, String>) -> DraftFields {
         title: field(form, "title"),
         body: field(form, "body"),
         message: field(form, "message"),
+        preview: field(form, "intent") == "preview",
     }
 }
 
@@ -493,7 +494,8 @@ pub(crate) async fn new_page(
     )
 }
 
-/// Saves a new page. A refused title or address is shown in the form, with the text kept.
+/// Saves a new page. A refused title or address is shown in the form, with the text kept. A
+/// preview shows the body rendered in the form and saves nothing.
 pub(crate) async fn create(
     State(state): State<Arc<AppState>>,
     Path((owner, name)): Path<(String, String)>,
@@ -520,6 +522,9 @@ pub(crate) async fn create(
         Err(response) => return response,
     };
     let draft = draft_of(&form);
+    if draft.preview {
+        return form_again(&ctx, &repo, None, draft, None, StatusCode::OK);
+    }
     let checked = match rules::check(&draft.title, &draft.body, &draft.message) {
         Ok(checked) => checked,
         Err(message) => {
@@ -528,7 +533,7 @@ pub(crate) async fn create(
                 &repo,
                 None,
                 draft,
-                message,
+                Some(message),
                 StatusCode::UNPROCESSABLE_ENTITY,
             )
         }
@@ -553,7 +558,7 @@ pub(crate) async fn create(
                     &repo,
                     None,
                     draft,
-                    &message,
+                    Some(message.as_str()),
                     StatusCode::UNPROCESSABLE_ENTITY,
                 )
             }
@@ -562,13 +567,13 @@ pub(crate) async fn create(
     }
 }
 
-/// The editor again, with what the writer typed and the reason it was refused.
+/// The editor again, with what the writer typed and the reason it was refused, if any.
 fn form_again(
     ctx: &PageContext,
     repo: &RepoChrome,
     editing: Option<(String, i64)>,
     draft: DraftFields,
-    message: &str,
+    message: Option<&str>,
     status: StatusCode,
 ) -> Response {
     let title = if editing.is_some() {
@@ -584,7 +589,7 @@ fn form_again(
             WikiPageView::Form {
                 editing,
                 draft,
-                error: Some(message.to_owned()),
+                error: message.map(str::to_owned),
             },
         ),
     )
@@ -618,6 +623,7 @@ pub(crate) async fn edit_page(
         title: page.head.title.clone(),
         body: page.head.body.clone(),
         message: String::new(),
+        preview: false,
     };
     ctx.page_model(
         "Edit page",
@@ -634,6 +640,7 @@ pub(crate) async fn edit_page(
 
 /// Saves an edit against the head the writer opened. A page that changed since then is not
 /// overwritten: the form comes back with the text kept and the current head to save against.
+/// A preview comes back the same way, with the body rendered, and saves nothing.
 pub(crate) async fn update(
     State(state): State<Arc<AppState>>,
     Path((owner, name, slug)): Path<(String, String, String)>,
@@ -665,6 +672,10 @@ pub(crate) async fn update(
     };
     let draft = draft_of(&form);
     let expected: i64 = field(&form, "revision").parse().unwrap_or(-1);
+    if draft.preview {
+        let editing = Some((page.slug.clone(), expected));
+        return form_again(&ctx, &repo, editing, draft, None, StatusCode::OK);
+    }
     let checked = match rules::check(&draft.title, &draft.body, &draft.message) {
         Ok(checked) => checked,
         Err(message) => {
@@ -674,7 +685,7 @@ pub(crate) async fn update(
                 &repo,
                 editing,
                 draft,
-                message,
+                Some(message),
                 StatusCode::UNPROCESSABLE_ENTITY,
             );
         }
@@ -708,7 +719,7 @@ pub(crate) async fn update(
                     &repo,
                     editing,
                     draft,
-                    "The page changed while you were editing. Your text is kept below. Review the current page, then save again.",
+                    Some("The page changed while you were editing. Your text is kept below. Review the current page, then save again."),
                     StatusCode::CONFLICT,
                 )
             }
@@ -719,7 +730,7 @@ pub(crate) async fn update(
                     &repo,
                     editing,
                     draft,
-                    "A page with this title already exists.",
+                    Some("A page with this title already exists."),
                     StatusCode::UNPROCESSABLE_ENTITY,
                 )
             }

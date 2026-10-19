@@ -406,7 +406,7 @@ pub async fn delete_issue_comment(
         return Ok(false);
     }
     sqlx::query(
-        "DELETE FROM notifications WHERE repo_id = ?1 AND kind = 'issue_comment'
+        "DELETE FROM notifications WHERE repo_id = ?1 AND kind IN ('issue_comment', 'mention')
          AND json_extract(metadata, '$.comment_id') = ?2",
     )
     .bind(repo_id)

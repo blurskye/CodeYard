@@ -264,7 +264,8 @@ fn detail(
     can_write: bool,
 ) -> Element {
     let base = repo.base();
-    let tag = crate::webui::encode_component(&release.tag);
+    // The archive names the tag's full ref, so a branch with the same name is not downloaded.
+    let archive_ref = crate::webui::encode_component(&format!("refs/tags/{}", release.tag));
     let delete_id = format!("delete-release-{}", release.id);
     rsx! {
         section { class: "collaboration-page releases-page release-detail", aria_label: "Release {release.title}",
@@ -297,11 +298,11 @@ fn detail(
                 ul { class: "releases-asset-list",
                     li { class: "releases-asset",
                         {icon("archive")}
-                        a { class: "releases-asset-name", href: format!("{base}/archive/{tag}.zip"), "Source code (zip)" }
+                        a { class: "releases-asset-name", href: format!("{base}/archive/{archive_ref}.zip"), "Source code (zip)" }
                     }
                     li { class: "releases-asset",
                         {icon("archive")}
-                        a { class: "releases-asset-name", href: format!("{base}/archive/{tag}.tar.gz"), "Source code (tar.gz)" }
+                        a { class: "releases-asset-name", href: format!("{base}/archive/{archive_ref}.tar.gz"), "Source code (tar.gz)" }
                     }
                     for asset in assets { {asset_row(asset)} }
                 }

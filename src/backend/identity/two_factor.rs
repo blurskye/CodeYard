@@ -132,6 +132,12 @@ pub fn client_digest(user_agent: Option<&str>) -> String {
     hex::encode(Sha256::digest(user_agent.unwrap_or("").as_bytes()))
 }
 
+/// The digest of a stored password hash. A pending sign-in records it and only completes while
+/// the account still has that password.
+pub fn password_digest(password_hash: Option<&str>) -> String {
+    hex::encode(Sha256::digest(password_hash.unwrap_or("").as_bytes()))
+}
+
 fn seal(encryptor: &SecretEncryptor, payload: &str) -> Result<String, TwoFactorError> {
     let (ciphertext, nonce) = encryptor
         .encrypt(payload.as_bytes())
@@ -151,8 +157,8 @@ fn open(encryptor: &SecretEncryptor, token: &str) -> Option<String> {
     String::from_utf8(plaintext).ok()
 }
 
-/// A sealed token that names the account and an expiry. Tokens are not reusable across accounts
-/// or after they expire.
+/// A sealed token that names its kind and an expiry, then the fields of its kind. Tokens are not
+/// reusable across kinds or after they expire.
 fn open_fields(
     encryptor: &SecretEncryptor,
     token: &str,
@@ -161,41 +167,46 @@ fn open_fields(
 ) -> Option<Vec<String>> {
     let payload = open(encryptor, token)?;
     let fields: Vec<String> = payload.split('|').map(str::to_owned).collect();
-    if fields.len() != 4 || fields[0] != kind {
+    if fields.len() < 4 || fields[0] != kind {
         return None;
     }
     let expires: u64 = fields[1].parse().ok()?;
     (expires > now).then_some(fields)
 }
 
-/// The sealed token a password sign-in carries to the second-factor page.
+/// The sealed token a password sign-in carries to the second-factor page. It names the password
+/// that was verified, so a later password change ends the sign-in.
 pub fn seal_pending_login(
     encryptor: &SecretEncryptor,
     user_id: i64,
     user_agent: Option<&str>,
+    password_hash: Option<&str>,
     now: u64,
 ) -> Result<String, TwoFactorError> {
     seal(
         encryptor,
         &format!(
-            "login|{}|{user_id}|{}",
+            "login|{}|{user_id}|{}|{}",
             now + PENDING_LOGIN_SECONDS,
-            client_digest(user_agent)
+            client_digest(user_agent),
+            password_digest(password_hash)
         ),
     )
 }
 
-/// The account a pending sign-in belongs to, when it is current and the same client sends it.
+/// The account and password digest a pending sign-in belongs to, when it is current and the same
+/// client sends it.
 pub fn open_pending_login(
     encryptor: &SecretEncryptor,
     token: &str,
     user_agent: Option<&str>,
     now: u64,
-) -> Option<i64> {
+) -> Option<(i64, String)> {
     let fields = open_fields(encryptor, token, "login", now)?;
-    (fields.get(3)? == &client_digest(user_agent))
-        .then(|| fields[2].parse().ok())
-        .flatten()
+    if fields.get(3)? != &client_digest(user_agent) {
+        return None;
+    }
+    Some((fields[2].parse::<i64>().ok()?, fields.get(4)?.clone()))
 }
 
 /// Every change to the second factor needs the current password, and counts against the same
@@ -447,12 +458,13 @@ mod tests {
     }
 
     #[test]
-    fn sealed_tokens_name_their_kind_expiry_and_client() {
+    fn sealed_tokens_name_their_kind_expiry_client_and_password() {
         let encryptor = SecretEncryptor::new(&[7u8; 32]);
-        let token = seal_pending_login(&encryptor, 42, Some("Firefox"), 1000).unwrap();
+        let token =
+            seal_pending_login(&encryptor, 42, Some("Firefox"), Some("hash-one"), 1000).unwrap();
         assert_eq!(
             open_pending_login(&encryptor, &token, Some("Firefox"), 1000),
-            Some(42)
+            Some((42, password_digest(Some("hash-one"))))
         );
         assert_eq!(
             open_pending_login(&encryptor, &token, Some("Chrome"), 1000),

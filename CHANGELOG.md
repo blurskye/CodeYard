@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.4
+
+- **CI:** runs of the same workflow run side by side, with a taken name made unique, so two pushes
+  no longer fail on a taken container name. Each job's container stops in one second instead of
+  ten, and the runner image is not pulled again on every run. An output line over 16 KiB is cut
+  short instead of failing the run, cancelled runs are not reported as errors, only failed runs
+  send a notification, and an empty required input is refused. The pull request merge box says
+  when checks failed or are still running, and its runs show the head branch. The run page keeps a multi-line `run:` step in one row with a rounded time, and the job
+  result line stays with the last step.
+- **Git:** a push no longer reports a failure when another push to the same repository ran at the
+  same time. Clones and pushes above the session limit wait up to 30 seconds for a slot instead of
+  failing at once, and the limit follows the CPU count (`GIT_SESSION_LIMIT`).
+- **Fixed:** two-factor sign-in on a private node, and a pending two-factor sign-in ends when the
+  password changes; the setup secret is rate limited; webhooks ignore proxy settings; a release
+  asset's file can only be deleted with its release; CODEOWNERS comments no longer name owners;
+  release uploads over 4 MiB; the PostgreSQL session list with an IP address; deleted comments take
+  their mention notices with them; task boxes in pull request comments; pull request comments
+  send webhooks; a `**/` path filter matches the top level; a CI log line cut inside a character;
+  a changed default branch reaches replicas; wiki Preview without JavaScript no longer saves;
+  tag downloads use the tag; unsent drafts stay with the account that typed them; PostgreSQL
+  lock-order deadlocks and the assignee limit; milestone due dates in a database copy.
+
 ## 0.1.3
 
 - **Releases:** a Releases block on the Code page and a Releases | Tags switch. Create, edit and delete releases on a

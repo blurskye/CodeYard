@@ -319,6 +319,12 @@ pub struct Comparison {
     /// A check run or a commit status has reported on the head commit.
     #[serde(default)]
     pub has_checks: bool,
+    /// Checks on the head commit that did not pass: a run that failed or was cancelled, or a commit status that failed.
+    #[serde(default)]
+    pub failed_checks: i64,
+    /// A check on the head commit is queued or running.
+    #[serde(default)]
+    pub checks_running: bool,
     /// The head commit has workflows, so "No checks configured" links to the Actions page.
     #[serde(default)]
     pub has_workflows: bool,

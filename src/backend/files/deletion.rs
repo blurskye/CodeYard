@@ -17,6 +17,8 @@ pub enum DeleteError {
     NotFound,
     #[error("The file is the current picture of an organization")]
     ReferencedOrganizationAvatar,
+    #[error("The file is a release asset")]
+    ReferencedReleaseAsset,
 }
 
 /// Removes the owner's metadata immediately and records durable object cleanup in
@@ -45,6 +47,9 @@ pub async fn delete_owned_file(
         files_db::DeleteFileOutcome::NotFound => return Err(DeleteError::NotFound),
         files_db::DeleteFileOutcome::ReferencedOrganizationAvatar => {
             return Err(DeleteError::ReferencedOrganizationAvatar)
+        }
+        files_db::DeleteFileOutcome::ReferencedReleaseAsset => {
+            return Err(DeleteError::ReferencedReleaseAsset)
         }
     };
     if let Err(error) = store.delete(&file.object_key).await {

@@ -183,11 +183,19 @@ pub(super) async fn resolve(
     if request.pipeline.includes_cd() && !actor.is_admin && !access.can_admin() {
         return Err(AdmissionError::Denied("CI deployment permission denied"));
     }
+    // A push is recorded under its full ref, but a run keeps its short branch name. The full
+    // ref is used for the lookup, so a rerun of a force-pushed branch matches. The commit is
+    // resolved by the short name, which also finds a tag.
+    let reference = if request.event == "push" && !request.branch.starts_with("refs/") {
+        format!("refs/heads/{}", request.branch)
+    } else {
+        request.branch.clone()
+    };
     let accepted_push = if request.event == "push" {
         if let Some(sha) = request.head_sha.as_deref() {
             tokio::time::timeout(
                 lookup_timeout,
-                db::ci::has_ci_accepted_push(pool, repo.id, actor.id, &request.branch, sha),
+                db::ci::has_ci_accepted_push(pool, repo.id, actor.id, &reference, sha),
             )
             .await??
         } else {

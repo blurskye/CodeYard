@@ -69,6 +69,9 @@ async fn populate(source: &NativeDatabase) -> Seed {
     )
     .await
     .unwrap();
+    db::milestones::create_milestone(pool, alice.id, repo.id, "v1", None, Some("2026-10-20"))
+        .await
+        .unwrap();
     db::repositories::discovery::create_forked_repository(
         pool,
         db::repositories::discovery::NewForkedRepository {
@@ -238,6 +241,15 @@ async fn copies_every_table_and_value_to_postgres() {
     .unwrap();
     assert_eq!(address, "2001:db8::1/128");
     assert_eq!(created, "2026-10-11T10:00:00.123456Z");
+
+    // A due date is a calendar day. PostgreSQL stores it as midnight UTC of that day.
+    let due: String = sqlx::query_scalar(
+        "SELECT to_char(due_date AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI') FROM milestones WHERE title = 'v1'",
+    )
+    .fetch_one(target_pool)
+    .await
+    .unwrap();
+    assert_eq!(due, "2026-10-20 00:00");
 
     let title: String = sqlx::query_scalar("SELECT title FROM issues WHERE repo_id = $1")
         .bind(seed.repo)

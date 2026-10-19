@@ -83,15 +83,20 @@ pub async fn list_repo_labels(pool: &SqlitePool, repo_id: i64) -> Result<Vec<Lab
 }
 
 /// Each label of the repository with the number of issues and pull requests it is on, as
-/// `(label id, count)`.
+/// `(label id, count)`. The association tables are keyed by item, not by label, so the counts
+/// start from the repository's issues and pull requests, which are indexed by repository.
 pub async fn list_label_usage(pool: &SqlitePool, repo_id: i64) -> Result<Vec<(i64, i64)>> {
     let usage = sqlx::query_as::<_, (i64, i64)>(
         r"SELECT l.id, COUNT(u.label_id)
         FROM labels l
         LEFT JOIN (
-            SELECT label_id FROM issue_labels
+            SELECT il.label_id FROM issues i
+            JOIN issue_labels il ON il.issue_id = i.id
+            WHERE i.repo_id = ?1
             UNION ALL
-            SELECT label_id FROM pr_labels
+            SELECT pl.label_id FROM pull_requests p
+            JOIN pr_labels pl ON pl.pull_request_id = p.id
+            WHERE p.repo_id = ?1
         ) u ON u.label_id = l.id
         WHERE l.repo_id = ?1
         GROUP BY l.id",

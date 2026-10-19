@@ -291,19 +291,38 @@ pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<Contributor
     parse_contributors(&output)
 }
 
+/// An entry that another push removed while this scan ran (a quarantine directory, a lock
+/// file) is not an error: it simply is not part of the size any more.
+fn unless_removed<T>(result: std::io::Result<T>) -> Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(crate) fn directory_size(path: &Path) -> Result<u64> {
+    // The repository itself must exist; only what is inside it may vanish.
+    std::fs::symlink_metadata(path)?;
     let mut size = 0u64;
     let mut pending = vec![path.to_owned()];
     let mut entries = 0usize;
     while let Some(path) = pending.pop() {
-        for entry in std::fs::read_dir(path)? {
+        let Some(listing) = unless_removed(std::fs::read_dir(path))? else {
+            continue;
+        };
+        for entry in listing {
             entries += 1;
             ensure!(
                 entries <= 1_000_000 && pending.len() <= 8192,
                 "repository metadata scan limit exceeded"
             );
-            let entry = entry?;
-            let metadata = std::fs::symlink_metadata(entry.path())?;
+            let Some(entry) = unless_removed(entry)? else {
+                continue;
+            };
+            let Some(metadata) = unless_removed(std::fs::symlink_metadata(entry.path()))? else {
+                continue;
+            };
             if metadata.is_dir() {
                 pending.push(entry.path());
             } else if metadata.is_file() {
@@ -318,6 +337,36 @@ pub(crate) fn directory_size(path: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_removed_during_the_size_scan_is_skipped() {
+        let missing = std::fs::metadata("/nonexistent/path/for/the/test");
+        assert!(unless_removed(missing).unwrap().is_none());
+        let denied = Err::<(), _>(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(unless_removed(denied).is_err());
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("pack"), [0u8; 10]).unwrap();
+        assert_eq!(directory_size(directory.path()).unwrap(), 10);
+        assert!(directory_size(&directory.path().join("gone")).is_err());
+    }
+
+    #[test]
+    fn the_size_scan_survives_files_that_appear_and_vanish() {
+        let directory = tempfile::tempdir().unwrap();
+        let busy = directory.path().to_owned();
+        let churn = std::thread::spawn(move || {
+            for round in 0..3000 {
+                let incoming = busy.join(format!("incoming-{round}"));
+                std::fs::create_dir(&incoming).unwrap();
+                std::fs::write(incoming.join("tmp_pack"), [0u8; 64]).unwrap();
+                std::fs::remove_dir_all(&incoming).unwrap();
+            }
+        });
+        while !churn.is_finished() {
+            directory_size(directory.path()).unwrap();
+        }
+        churn.join().unwrap();
+    }
 
     #[test]
     fn language_and_contributor_counts_accept_exactly_the_limit() {

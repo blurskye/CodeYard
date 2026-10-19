@@ -271,7 +271,7 @@ async fn rpc(
         Ok(repo) => repo,
         Err(response) => return response,
     };
-    let permit = match git_process::session_permit() {
+    let permit = match git_process::session_permit().await {
         Ok(permit) => permit,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "Git sessions busy").into_response(),
     };
@@ -345,6 +345,9 @@ async fn rpc(
                 anyhow::ensure!(status.success(), "Git session failed");
                 Ok(())
             });
+        if let Err(error) = &status {
+            tracing::warn!(%error, "Git HTTP session failed");
+        }
         let _ = finished.send(status);
     }) {
         return unavailable();

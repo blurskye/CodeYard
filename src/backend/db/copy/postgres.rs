@@ -98,19 +98,29 @@ async fn serial_columns(tx: &mut Transaction<'static, Postgres>) -> Result<Vec<(
     .await?)
 }
 
+/// Milestone due dates are calendar days. PostgreSQL stores each as midnight UTC of its day,
+/// and SQLite keeps the day alone.
+fn is_due_date(table: &str, column: &str) -> bool {
+    table == "milestones" && column == "due_date"
+}
+
 /// One JSON object per row, with every value as text in the form SQLite stores it:
-/// timestamps in the application's RFC 3339 microseconds, INET as `address/prefix`,
-/// blobs as hex, booleans as 0 or 1 and arrays as JSON.
+/// timestamps in the application's RFC 3339 microseconds, due dates as their day, INET as
+/// `address/prefix`, blobs as hex, booleans as 0 or 1 and arrays as JSON.
 pub(super) fn read_sql(table: &Table) -> String {
     let fields = table
         .columns
         .iter()
         .map(|column| {
-            format!(
-                "'{}', {}",
-                column.name,
+            let value = if is_due_date(&table.name, &column.name) {
+                format!(
+                    "to_char({} AT TIME ZONE 'UTC', 'YYYY-MM-DD')",
+                    quote(&column.name)
+                )
+            } else {
                 read_value(&quote(&column.name), &column.ty)
-            )
+            };
+            format!("'{}', {value}", column.name)
         })
         .collect::<Vec<_>>()
         .join(", ");
@@ -152,7 +162,14 @@ pub(super) fn insert_sql(table: &Table) -> String {
     let values = table
         .columns
         .iter()
-        .map(|column| write_value(&format!("staged.{}", quote(&column.name)), &column.ty))
+        .map(|column| {
+            let staged = format!("staged.{}", quote(&column.name));
+            if is_due_date(&table.name, &column.name) {
+                format!("({staged}::DATE)::TIMESTAMP AT TIME ZONE 'UTC'")
+            } else {
+                write_value(&staged, &column.ty)
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     format!(

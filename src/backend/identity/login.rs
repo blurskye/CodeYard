@@ -97,6 +97,7 @@ pub async fn password_login(
             encryptor,
             user.id,
             session.user_agent,
+            user.password_hash.as_deref(),
             two_factor::now_unix(),
         )
         .map_err(|_| LoginError::TwoFactorUnavailable)?;
@@ -129,12 +130,17 @@ pub async fn second_factor_login(
 ) -> Result<AuthenticatedAccount, LoginError> {
     let encryptor = encryptor.ok_or(LoginError::TwoFactorUnavailable)?;
     let now = two_factor::now_unix();
-    let user_id = two_factor::open_pending_login(encryptor, pending, session.user_agent, now)
-        .ok_or(LoginError::PendingLoginExpired)?;
+    let (user_id, sealed_password) =
+        two_factor::open_pending_login(encryptor, pending, session.user_agent, now)
+            .ok_or(LoginError::PendingLoginExpired)?;
     let user = db::users::accounts::get_user_by_id(pool, user_id)
         .await
         .map_err(|_| LoginError::AccountUnavailable)?
         .ok_or(LoginError::PendingLoginExpired)?;
+    // A password change ends the sign-in that started with the old password.
+    if two_factor::password_digest(user.password_hash.as_deref()) != sealed_password {
+        return Err(LoginError::PendingLoginExpired);
+    }
     if user.is_banned {
         return Err(LoginError::Banned);
     }

@@ -428,6 +428,93 @@ async fn the_limits_are_enforced(pg: bool) {
     world.database.finish().await;
 }
 
+async fn previews_show_the_body_and_save_nothing(pg: bool) {
+    let mut world = setup(pg).await;
+    create(&world.carol, "proj", "Home", "Body").await;
+
+    let (status, page) = world
+        .carol
+        .form(
+            "/alice/proj/wiki/_new",
+            &[
+                ("title", "Draft"),
+                ("body", "**Previewed**"),
+                ("message", ""),
+                ("intent", "preview"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains(">Previewed</strong>"), "{page}");
+    world
+        .alice
+        .expect(
+            "GET",
+            "/api/repos/alice/proj/wiki/pages/draft",
+            Value::Null,
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+
+    let (status, page) = world
+        .carol
+        .form(
+            "/alice/proj/wiki/home/edit",
+            &[
+                ("revision", "1"),
+                ("title", "Home"),
+                ("body", "*Changed*"),
+                ("message", ""),
+                ("intent", "preview"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(page.contains(">Changed</em>"), "{page}");
+    assert_eq!(revision_of(&world.alice, "home").await, 1);
+    let home = world
+        .alice
+        .expect(
+            "GET",
+            "/api/repos/alice/proj/wiki/pages/home",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(home["body"], "Body", "{home}");
+    world.database.finish().await;
+}
+
+async fn reserved_addresses_are_refused_on_create_and_rename(pg: bool) {
+    let mut world = setup(pg).await;
+    create(&world.carol, "proj", "Home", "Body").await;
+    let (status, page) = world
+        .carol
+        .form(
+            "/alice/proj/wiki/_new",
+            &[("title", "_Settings"), ("body", "x"), ("message", "")],
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{page}");
+    assert!(page.contains("reserved"), "{page}");
+    let (status, page) = world
+        .carol
+        .form(
+            "/alice/proj/wiki/home/edit",
+            &[
+                ("revision", "1"),
+                ("title", "_Settings"),
+                ("body", "Body"),
+                ("message", "rename"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{page}");
+    assert!(page.contains("reserved"), "{page}");
+    assert_eq!(revision_of(&world.alice, "home").await, 1);
+    world.database.finish().await;
+}
+
 async fn the_json_api_reads_pages_and_hides_disabled_wikis(pg: bool) {
     let mut world = setup(pg).await;
     create(&world.carol, "proj", "Home", "Body").await;
@@ -550,4 +637,24 @@ async fn sqlite_json_api_reads_pages() {
 #[tokio::test]
 async fn postgres_json_api_reads_pages() {
     the_json_api_reads_pages_and_hides_disabled_wikis(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_previews_show_the_body_and_save_nothing() {
+    previews_show_the_body_and_save_nothing(false).await;
+}
+
+#[tokio::test]
+async fn postgres_previews_show_the_body_and_save_nothing() {
+    previews_show_the_body_and_save_nothing(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_reserved_addresses_are_refused() {
+    reserved_addresses_are_refused_on_create_and_rename(false).await;
+}
+
+#[tokio::test]
+async fn postgres_reserved_addresses_are_refused() {
+    reserved_addresses_are_refused_on_create_and_rename(true).await;
 }

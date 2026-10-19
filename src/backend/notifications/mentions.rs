@@ -33,6 +33,8 @@ pub struct MentionSource<'a> {
     pub subject: &'a str,
     /// Where the notification leads: the item, or the comment on it.
     pub link: &'a str,
+    /// The issue comment the text is. Deleting that comment deletes its mention notices too.
+    pub comment_id: Option<i64>,
     /// The text before an edit. `None` for new text, so every name counts.
     pub old_text: Option<&'a str>,
     pub text: &'a str,
@@ -112,6 +114,7 @@ pub async fn notify_mentions(
                     "repo_name": source.repo,
                     "number": source.number,
                     "subject": source.subject,
+                    "comment_id": source.comment_id,
                 }),
             },
         )

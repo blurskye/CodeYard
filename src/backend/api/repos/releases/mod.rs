@@ -11,6 +11,8 @@ use axum::{
 };
 use std::sync::Arc;
 
+/// The asset upload route, shared with the form-body middleware that exempts it.
+pub const ASSET_ROUTE: &str = "/:owner/:repo/releases/:id/assets";
 /// The largest asset body: the file limit plus room for the form fields.
 const UPLOAD_BODY_LIMIT: usize =
     crate::backend::repositories::releases::MAX_ASSET_BYTES + 1024 * 1024;
@@ -58,9 +60,6 @@ pub fn page_router() -> Router<Arc<AppState>> {
 /// Asset uploads carry whole files, so they have their own, larger body limit.
 pub fn upload_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
-            "/:owner/:repo/releases/:id/assets",
-            post(pages::upload_asset),
-        )
+        .route(ASSET_ROUTE, post(pages::upload_asset))
         .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
 }

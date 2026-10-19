@@ -36,6 +36,17 @@ use uuid::Uuid;
 /// permit take this lock and run one at a time.
 static GIT_SESSION_CAP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Takes the session-cap lock after pinning the cap to 16 slots and an instant refusal, so the
+/// tests that fill it do not depend on the CPU count or wait for a free slot.
+async fn lock_git_session_cap() -> tokio::sync::MutexGuard<'static, ()> {
+    static PIN: std::sync::Once = std::sync::Once::new();
+    PIN.call_once(|| {
+        std::env::set_var("GIT_SESSION_LIMIT", "16");
+        std::env::set_var("GIT_SESSION_WAIT_SECONDS", "0");
+    });
+    GIT_SESSION_CAP.lock().await
+}
+
 /// A merge commit of `head` into `base`, committed by `name` and `email`.
 fn merge_request(head: &str, base: &str, message: &str, name: &str, email: &str) -> MergeRequest {
     MergeRequest {
@@ -433,7 +444,7 @@ async fn open_git_session(
 
 #[tokio::test]
 async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
-    let _session_cap = GIT_SESSION_CAP.lock().await;
+    let _session_cap = lock_git_session_cap().await;
     let database = native::PostgresDatabase::new().await;
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
@@ -1035,7 +1046,7 @@ async fn unread_repository_downloads_are_bounded(router: &axum::Router) {
 
 #[tokio::test]
 async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
-    let _session_cap = GIT_SESSION_CAP.lock().await;
+    let _session_cap = lock_git_session_cap().await;
     bundle::install();
     let database = native::PostgresDatabase::new().await; // Missing PostgreSQL must fail.
     db::node_config::upsert_node_configuration(&database.pool, "public", true)

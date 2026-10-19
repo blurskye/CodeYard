@@ -243,6 +243,40 @@ pub fn pull_request_review_comment(
     })
 }
 
+/// A conversation comment on a pull request. GitHub sends it as an issue_comment whose issue is
+/// the pull request.
+pub fn pull_request_conversation_comment(
+    action: &str,
+    comment: &PullRequestComment,
+    pull: &PullRequest,
+    pull_author: &Person,
+    comment_author: &Person,
+    scope: Scope,
+) -> Value {
+    let Scope {
+        repo,
+        owner,
+        sender,
+    } = scope;
+    // GitHub marks an issue that is a pull request with a `pull_request` link object.
+    let mut issue = pull_request_json(pull, pull_author, repo, owner);
+    issue["pull_request"] = json!({ "html_url": issue["html_url"].clone() });
+    json!({
+        "action": action,
+        "issue": issue,
+        "comment": {
+            "id": comment.id,
+            "body": comment.body,
+            "user": person(comment_author),
+            "html_url": format!("{}/pulls/{}#issuecomment-{}", repository_url(owner, &repo.name), pull.number, comment.id),
+            "created_at": time(comment.created_at),
+            "updated_at": time(comment.updated_at),
+        },
+        "repository": repository(repo, owner),
+        "sender": person(sender),
+    })
+}
+
 pub fn release(action: &str, release: &Release, author: &Person, scope: Scope) -> Value {
     let Scope {
         repo,

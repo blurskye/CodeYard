@@ -330,9 +330,9 @@ pub async fn heartbeat_ci_run(pool: &SqlitePool, id: i64, worker: &str) -> Resul
 }
 
 /// Moves a queued or running run to a final state and records the outcome: the
-/// run, its deployment, the commit status and the starter's notification, all in
-/// the caller's transaction. A run that is already finished stays as it is and
-/// the result is `None`: the first final state wins.
+/// run, its deployment, the commit status and, for a failed run, the starter's
+/// notification, all in the caller's transaction. A run that is already finished
+/// stays as it is and the result is `None`: the first final state wins.
 async fn finish_in_tx(
     tx: &mut Transaction<'_, Sqlite>,
     run: &CiRun,
@@ -368,19 +368,22 @@ async fn finish_in_tx(
         "failure"
     };
     ci_commit_status(tx, run, state, message.unwrap_or("CI run completed")).await?;
-    let notifications = if let Some(actor) = run.triggered_by_id {
+    // Only a failed run tells its starter. Successes and cancellations stay quiet.
+    let notifications = if let Some(actor) = run.triggered_by_id.filter(|_| status == "failed") {
+        let (title, body) = crate::backend::ci::failure_notification(run, message);
         sqlx::query_as::<_, (i64, i64)>(r#"INSERT INTO notifications(user_id, repo_id, scope_repository_id, kind, title, body, link, metadata)
-            SELECT ?1, r.id, r.id, 'ci_completed', 'CI run ' || ?2, ?3,
+            SELECT ?1, r.id, r.id, 'ci_completed', ?2, ?3,
                 '/' || COALESCE(u.username, o.name) || '/' || r.name || '/actions?job=' || ?4,
-                json_object('run_id', ?4, 'status', ?2)
+                json_object('run_id', ?4, 'status', ?5)
             FROM repositories r LEFT JOIN users u ON r.owner_user_id = u.id AND r.owner_kind = 'user'
-            LEFT JOIN organizations o ON r.owner_org_id = o.id AND r.owner_kind = 'org' WHERE r.id = ?5
+            LEFT JOIN organizations o ON r.owner_org_id = o.id AND r.owner_kind = 'org' WHERE r.id = ?6
             AND NOT EXISTS (SELECT 1 FROM watches w WHERE w.user_id = ?1 AND w.repo_id = r.id AND w.level = 'ignoring')
             RETURNING user_id, id"#)
             .bind(actor)
-            .bind(status)
-            .bind(message)
+            .bind(title)
+            .bind(body)
             .bind(run.run_id.to_string())
+            .bind(status)
             .bind(run.repo_id)
             .fetch_all(&mut **tx)
             .await?

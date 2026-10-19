@@ -7,7 +7,7 @@ use crate::support::pull_requests as pulls;
 
 use axum::http::StatusCode;
 use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
+    api::create_router, app::AppState, ci::CiConfig, db, identity::activity, storage::ObjectStore,
 };
 use database::Database;
 use pulls::Client;
@@ -167,7 +167,84 @@ async fn sqlite_profile_activity_pages_and_hides_private_repositories() {
     contract(false).await;
 }
 
+/// One request reads at most `MAX_SCAN_ROWS` rows. A thousand private issues are newer than the
+/// older public issue, so the scan stops before it. Only the newest public issue is listed.
+async fn scan_stops_at_the_row_bound(pg: bool) {
+    let mut f = Database::new(pg).await;
+    f.execute(
+        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
+        &[],
+    )
+    .await;
+    let alice = f.actor("alice").await;
+    let pool = f.pool().clone();
+    let public = db::repositories::records::create_repository(
+        &pool,
+        alice,
+        "pub",
+        None,
+        false,
+        "/owned/scan.git",
+    )
+    .await
+    .unwrap();
+    let secret = db::repositories::records::create_repository(
+        &pool,
+        alice,
+        "secret",
+        None,
+        true,
+        "/owned/scan-secret.git",
+    )
+    .await
+    .unwrap();
+    db::issues::create_issue(&pool, public.id, alice, "older public", "")
+        .await
+        .unwrap();
+    for number in 0..activity::MAX_SCAN_ROWS {
+        db::issues::create_issue(&pool, secret.id, alice, &format!("private {number}"), "")
+            .await
+            .unwrap();
+    }
+    db::issues::create_issue(&pool, public.id, alice, "newest public", "")
+        .await
+        .unwrap();
+
+    let root = tempfile::tempdir().unwrap();
+    let router = create_router(AppState::new(
+        pool.clone(),
+        root.path().to_owned(),
+        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
+        None,
+        CiConfig::default(),
+        None,
+    ));
+    let anonymous = Client::anonymous(&router);
+    let (status, page) = anonymous
+        .api("GET", "/api/users/alice/activity?page=1", Value::Null)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let items = page["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{page}");
+    assert!(items[0]["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("/alice/pub/issues/"));
+    assert_eq!(page["next_page"], Value::Null);
+    f.finish().await;
+}
+
 #[tokio::test]
 async fn postgres_profile_activity_pages_and_hides_private_repositories() {
     contract(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_profile_activity_scan_stops_at_the_row_bound() {
+    scan_stops_at_the_row_bound(false).await;
+}
+
+#[tokio::test]
+async fn postgres_profile_activity_scan_stops_at_the_row_bound() {
+    scan_stops_at_the_row_bound(true).await;
 }

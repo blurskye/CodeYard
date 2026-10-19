@@ -128,7 +128,7 @@ pub fn refs(
                                         span { class: "repo-ref-date", {ref_date(updated)} }
                                     }
                                     if tags {
-                                        a { class: "repo-icon-button", href: format!("{base}/archive/{}.zip", crate::webui::encode_component(&row.name)), title: "Download ZIP", "aria-label": "Download {row.name} as ZIP", {icon("download")} }
+                                        a { class: "repo-icon-button", href: format!("{base}/archive/{}.zip", crate::webui::encode_component(&format!("refs/tags/{}", row.name))), title: "Download ZIP", "aria-label": "Download {row.name} as ZIP", {icon("download")} }
                                     }
                                     if let Some(default) = default_branch.as_deref().filter(|_| !row.is_default) {
                                         NavLink { class: "btn btn-secondary btn-sm", href: compare_url(&base, default, &row.name), "Compare" }

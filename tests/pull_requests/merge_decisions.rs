@@ -1225,6 +1225,87 @@ async fn postgres_runs_of_another_pull_request_do_not_satisfy_a_check() {
     runs_of_another_pull_request_do_not_satisfy_a_check(true).await;
 }
 
+/// A failed run on the head commit makes the merge box say so, and the run is listed under the
+/// pull request's head branch even though it is stored on the base branch.
+async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
+    bundle::install();
+    let mut f = Database::new(pg).await;
+    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    let owner = f.actor("alice").await;
+    let root = tempfile::tempdir().unwrap();
+    let repository = codeyard::backend::repositories::lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "proj",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let state = Arc::new(AppState::new(
+        f.pool().clone(),
+        root.path().to_owned(),
+        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
+        None,
+        CiConfig::default(),
+        None,
+    ));
+    let router = create_router((*state).clone());
+    let alice = Client::login(&router, f.pool(), owner).await;
+    let base = alice.save("main", "README.md", "unborn").await;
+    alice.branch("topic", &base).await;
+    let head = alice.save("topic", "topic.txt", &base).await;
+    let pull = alice.open_pull("To main", "topic", "main").await;
+    let number = pull["number"].as_i64().unwrap();
+    let checks_path = format!("/alice/proj/pulls/{number}/checks");
+
+    let run = enqueue_pull_request_run(
+        f.pool(),
+        repository.id,
+        owner,
+        pull["id"].as_i64().unwrap(),
+        "main",
+        &head,
+    )
+    .await;
+    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner])
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, run.id);
+    db::ci::finish_ci_run(f.pool(), run.id, "worker", "failed", None)
+        .await
+        .unwrap()
+        .unwrap();
+
+    // The merge stays allowed: the box shows the failure and links to the Checks tab.
+    let (status, page) = alice.page(&format!("/alice/proj/pulls/{number}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(page.contains("Some checks were not successful"), "{page}");
+    assert!(page.contains("1 check failed."), "{page}");
+    assert!(page.contains(&format!("href=\"{checks_path}\"")), "{page}");
+    assert!(!page.contains("Ready to merge"), "{page}");
+    assert!(!page.contains("Merging is blocked"), "{page}");
+
+    let (status, checks) = alice.page(&checks_path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(checks.contains(", topic, run "), "{checks}");
+    assert!(!checks.contains(", main, run "), "{checks}");
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_pull_request_checks_show_failures_and_the_head_branch() {
+    pull_request_checks_show_failures_and_the_head_branch(false).await;
+}
+
+#[tokio::test]
+async fn postgres_pull_request_checks_show_failures_and_the_head_branch() {
+    pull_request_checks_show_failures_and_the_head_branch(true).await;
+}
+
 async fn merge_with(client: &Client, number: i64, method: &str) -> (StatusCode, serde_json::Value) {
     let pull = client.pull(number).await;
     client

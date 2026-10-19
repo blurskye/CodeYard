@@ -150,6 +150,8 @@ pub(crate) fn page_tree(envelope: PageEnvelope) -> Element {
     // advance its hidden revision snapshot. Equal Page props memoize this body.
     // A genuinely different URL resets scoped drafts/tasks; same-URL log polling
     // retains component state, whose controls still need proper local handlers.
+    // Drafts belong to the signed-in account, so another account's drafts are dropped first.
+    components::draft_text::keep_for_account(envelope.chrome.username.as_deref());
     let location = &envelope.location;
     let repo = envelope.page.repo_chrome().cloned();
     let located = !matches!(envelope.page, Page::Error { repo: None, .. });

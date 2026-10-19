@@ -1,6 +1,6 @@
 //! Running CI commands: own process group, deadline, cancellation and
 //! line-by-line output streaming.
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Result};
 use std::future::Future;
 use std::io;
 use std::process::{ExitStatus, Stdio};
@@ -10,6 +10,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::watch;
 
 const MAX_LINE: usize = 16 * 1024;
+const TRUNCATED_MARK: &str = " … [line truncated]";
 const TERM_GRACE: Duration = Duration::from_secs(3);
 const KILL_GRACE: Duration = Duration::from_secs(2);
 const GROUP_POLL: Duration = Duration::from_millis(20);
@@ -216,14 +217,41 @@ where
         if read == 0 {
             return Ok(());
         }
-        ensure!(
-            line.len() <= MAX_LINE || line.ends_with(b"\n"),
-            "CI output line too long"
-        );
-        let text = String::from_utf8_lossy(&line)
+        // An over-long line has more input after this read, which is dropped below.
+        let cut = line.len() > MAX_LINE && !line.ends_with(b"\n");
+        if cut {
+            skip_line(&mut reader).await?;
+        }
+        let mut text = String::from_utf8_lossy(&line)
             .trim_end_matches(['\r', '\n'])
             .to_owned();
+        // Lossy decoding can make the text longer than the bytes read, so the limit applies to
+        // the text. The cut moves back to a character boundary, so no character is split.
+        if cut || text.len() > MAX_LINE {
+            let mut end = text.len().min(MAX_LINE - TRUNCATED_MARK.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            text.push_str(TRUNCATED_MARK);
+        }
         on_line(text, stderr).await?;
+    }
+}
+
+/// Drops input through the next newline. It reads a bounded piece at a time, so the rest of a
+/// very long line is never held in memory.
+async fn skip_line<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> io::Result<()> {
+    let mut piece = Vec::new();
+    loop {
+        piece.clear();
+        let read = (&mut *reader)
+            .take(MAX_LINE as u64)
+            .read_until(b'\n', &mut piece)
+            .await?;
+        if read == 0 || piece.ends_with(b"\n") {
+            return Ok(());
+        }
     }
 }
 
@@ -266,12 +294,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn callback_output_failure_cancel_timeout_and_abort_stop_descendants() {
-        for reason in ["callback", "output", "cancel", "timeout", "abort"] {
+    async fn a_line_over_the_limit_is_cut_with_a_marker_and_the_run_goes_on() {
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let (_tx, cancel) = watch::channel(false);
+        let mut long = command("/bin/sh");
+        long.args([
+            "-c",
+            "head -c 40000 /dev/zero | tr '\\0' a; echo; echo after",
+        ]);
+        let collected = lines.clone();
+        let status = run(long, Duration::from_secs(10), cancel, move |line, err| {
+            collected.lock().unwrap().push((line, err));
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+        assert!(status.success());
+        let seen = lines.lock().unwrap().clone();
+        // The rest of the long line is dropped, not split into lines of its own.
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[0].0.len(), MAX_LINE);
+        assert!(seen[0].0.starts_with("aaaa") && seen[0].0.ends_with(TRUNCATED_MARK));
+        assert_eq!(seen[1], ("after".to_string(), false));
+    }
+
+    #[tokio::test]
+    async fn a_cut_line_stays_within_the_limit_on_a_character_boundary() {
+        // Each character is two bytes, so the cut lands inside one. Lossy decoding of that
+        // partial character would grow the line past the limit that CI log ingest enforces.
+        let input = format!("{}\nafter\n", "é".repeat(10_000));
+        let lines = Arc::new(Mutex::new(Vec::new()));
+        let collected = lines.clone();
+        let on_line = move |line: String, _stderr: bool| {
+            collected.lock().unwrap().push(line);
+            async { Ok(()) }
+        };
+        forward(Some(input.as_bytes()), false, &on_line)
+            .await
+            .unwrap();
+        let seen = lines.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(seen[0].len() <= MAX_LINE, "{}", seen[0].len());
+        assert!(seen[0].starts_with('é') && seen[0].ends_with(TRUNCATED_MARK));
+        assert_eq!(seen[1], "after");
+    }
+
+    #[tokio::test]
+    async fn callback_failure_cancel_timeout_and_abort_stop_descendants() {
+        for reason in ["callback", "cancel", "timeout", "abort"] {
             let directory = tempfile::tempdir().unwrap();
             let pids = directory.path().join("pids");
             let mut child = command("/bin/sh");
-            child.args(["-c", "sleep 60 & descendant=$!; printf '%s %s\\n' \"$$\" \"$descendant\" > \"$1\"; if [ \"$2\" = callback ]; then echo ready; elif [ \"$2\" = output ]; then head -c 20000 /dev/zero; fi; wait", "sh"]).arg(&pids).arg(reason);
+            child.args(["-c", "sleep 60 & descendant=$!; printf '%s %s\\n' \"$$\" \"$descendant\" > \"$1\"; if [ \"$2\" = callback ]; then echo ready; fi; wait", "sh"]).arg(&pids).arg(reason);
             let (tx, cancel) = watch::channel(false);
             let duration = if reason == "timeout" {
                 Duration::from_millis(200)
@@ -322,7 +396,6 @@ mod tests {
                 let error = task.await.unwrap().unwrap_err();
                 match reason {
                     "callback" => assert_eq!(error.to_string(), "log write failed"),
-                    "output" => assert!(error.to_string().contains("CI output line too long")),
                     "cancel" => assert!(matches!(error.downcast_ref(), Some(Stopped::Cancelled))),
                     "timeout" => assert!(matches!(error.downcast_ref(), Some(Stopped::TimedOut))),
                     _ => unreachable!(),

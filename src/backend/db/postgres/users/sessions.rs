@@ -471,7 +471,7 @@ pub async fn keep_newest_anonymous_sessions(pool: &PgPool, cap: i64) -> Result<u
 
 pub async fn list_user_sessions(pool: &PgPool, user_id: i64) -> Result<Vec<Session>> {
     Ok(sqlx::query_as(
-        "SELECT id,user_id,user_agent,ip_address,expires_at,created_at FROM sessions WHERE user_id=$1 AND expires_at>NOW() ORDER BY created_at DESC, id",
+        "SELECT id,user_id,user_agent,ip_address::text,expires_at,created_at FROM sessions WHERE user_id=$1 AND expires_at>NOW() ORDER BY created_at DESC, id",
     )
     .bind(user_id)
     .fetch_all(pool)

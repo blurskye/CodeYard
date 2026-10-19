@@ -33,6 +33,7 @@ pub enum DeleteFileOutcome {
     Deleted(Box<File>),
     NotFound,
     ReferencedOrganizationAvatar,
+    ReferencedReleaseAsset,
 }
 
 #[derive(Debug, Clone)]

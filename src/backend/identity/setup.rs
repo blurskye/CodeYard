@@ -89,6 +89,18 @@ pub async fn complete_setup(
         return Err(SetupError::InputBounds);
     }
     let mode = node_mode(input.node_mode).ok_or(SetupError::InvalidNodeMode)?;
+    let existing = db::users::accounts::get_user_by_username(pool, input.account.username)
+        .await
+        .map_err(|_| SetupError::AccountUnavailable)?;
+    // Even installations with no configured bootstrap secret share admission. It is charged
+    // before the secret is compared, so guesses at the secret are bounded.
+    admission::admit_login(
+        pool,
+        existing.as_ref().map(|user| user.id),
+        input.account.username,
+    )
+    .await
+    .map_err(SetupError::Admission)?;
     if let Some(expected) = expected_admin_secret {
         let supplied = input.admin_secret.map(str::trim).unwrap_or("");
         if !bool::from(
@@ -97,21 +109,10 @@ pub async fn complete_setup(
             return Err(SetupError::InvalidAdminSecret);
         }
     }
-    let existing = db::users::accounts::get_user_by_username(pool, input.account.username)
-        .await
-        .map_err(|_| SetupError::AccountUnavailable)?;
     // Recovery of an existing administrator keeps its name; only a new account is checked.
     if existing.is_none() {
         validate_new_account_name(input.account.username).map_err(SetupError::Input)?;
     }
-    // Even installations with no configured bootstrap secret share admission.
-    admission::admit_login(
-        pool,
-        existing.as_ref().map(|user| user.id),
-        input.account.username,
-    )
-    .await
-    .map_err(SetupError::Admission)?;
     let recovery = if let Some(user) = &existing {
         let verified =
             passwords::verify_password(input.account.password, user.password_hash.as_deref())

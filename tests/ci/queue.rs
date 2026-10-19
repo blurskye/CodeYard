@@ -321,7 +321,11 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         ),
         ("failure", Some(ACCESS_LOST))
     );
-    assert_eq!(db.notifications(w.collab).await, 1);
+    assert_eq!(
+        db.notifications(w.collab).await,
+        0,
+        "a cancelled run tells no one"
+    );
 
     // The run queued behind it is dealt with by the next claim.
     assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
@@ -834,7 +838,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .await
     .unwrap();
     assert_eq!(statuses[0].state, "success");
-    assert_eq!(notified().await, 1);
+    assert_eq!(notified().await, 0, "a successful run tells no one");
 
     // Found by a sweep, then finished by the worker that came back: still the sweep's.
     let run = db.enqueue(w.repo, w.owner, true, &trusted).await;
@@ -869,7 +873,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .await
     .unwrap();
     assert_eq!(statuses[0].state, "failure");
-    assert_eq!(notified().await, 2, "one outcome, one notification");
+    assert_eq!(notified().await, 1, "one outcome, one notification");
     assert_eq!(db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(), 0);
 
     // Cancelling something that already ended does nothing.
@@ -1133,59 +1137,75 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
     .await
     .unwrap();
 
-    for cancel in [false, true] {
-        let run = db.enqueue(w.repo, w.owner, false, &[]).await;
-        if cancel {
-            assert!(service.cancel_run(run.run_id, w.owner).await.unwrap());
-        } else {
-            db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
-                .await
-                .unwrap()
-                .unwrap();
-            assert!(!queue
-                .finish("foreign-worker", run.id, "success", None)
-                .await
-                .unwrap());
-            assert!(
-                subscriber.try_recv().is_err(),
-                "an unowned finish sends nothing"
-            );
-            assert!(queue.finish(WORKER, run.id, "success", None).await.unwrap());
-        }
-        let event = promptly("the live CI notification", subscriber.recv())
-            .await
-            .unwrap();
-        let NotificationEvent::Created {
-            user_id,
-            notification_id,
-            ..
-        } = &event
-        else {
-            panic!("expected a created notification: {event:?}");
-        };
-        assert_eq!(*user_id, w.owner);
-        // Projection is the same recipient/session filter connected browsers use.
-        let projected = current_event(db.pool(), &session, w.owner, &event)
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(
-            matches!(projected, NotificationEvent::Created { notification_id: id, kind, title, .. }
-            if id == *notification_id && kind == "ci_completed"
-                && title == if cancel { "CI run cancelled" } else { "CI run success" })
-        );
-        assert!(current_event(db.pool(), &session, w.collab, &event)
-            .await
-            .unwrap()
-            .is_none());
-        assert!(!service.cancel_run(run.run_id, w.owner).await.unwrap());
-        assert!(!queue.finish(WORKER, run.id, "success", None).await.unwrap());
-        assert!(
-            subscriber.try_recv().is_err(),
-            "one completed run sends one event"
-        );
-    }
-    assert_eq!(db.notifications(w.owner).await, 2);
+    // A cancelled run tells no one.
+    let cancelled = db.enqueue(w.repo, w.owner, false, &[]).await;
+    assert!(service.cancel_run(cancelled.run_id, w.owner).await.unwrap());
+    assert!(
+        subscriber.try_recv().is_err(),
+        "a cancelled run sends nothing"
+    );
+
+    // A failed run sends one notice, and an unowned finish sends nothing.
+    let run = db.enqueue(w.repo, w.owner, false, &[]).await;
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
+        .await
+        .unwrap()
+        .unwrap();
+    let failure = Some("A workflow job failed");
+    assert!(!queue
+        .finish("foreign-worker", run.id, "failed", failure)
+        .await
+        .unwrap());
+    assert!(
+        subscriber.try_recv().is_err(),
+        "an unowned finish sends nothing"
+    );
+    assert!(queue
+        .finish(WORKER, run.id, "failed", failure)
+        .await
+        .unwrap());
+    let event = promptly("the live CI notification", subscriber.recv())
+        .await
+        .unwrap();
+    let NotificationEvent::Created {
+        user_id,
+        notification_id,
+        ..
+    } = &event
+    else {
+        panic!("expected a created notification: {event:?}");
+    };
+    assert_eq!(*user_id, w.owner);
+    // Projection is the same recipient/session filter connected browsers use.
+    let projected = current_event(db.pool(), &session, w.owner, &event)
+        .await
+        .unwrap()
+        .unwrap();
+    let sha = run.head_sha.as_deref().unwrap();
+    let expected = format!(
+        "CI run failed: {} on {} ({})",
+        run.workflow_path,
+        codeyard::backend::ci::branch_name(&run.branch),
+        &sha[..7]
+    );
+    assert!(
+        matches!(projected, NotificationEvent::Created { notification_id: id, kind, title, .. }
+        if id == *notification_id && kind == "ci_completed" && title == expected)
+    );
+    assert!(current_event(db.pool(), &session, w.collab, &event)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(!service.cancel_run(run.run_id, w.owner).await.unwrap());
+    assert!(!queue
+        .finish(WORKER, run.id, "failed", failure)
+        .await
+        .unwrap());
+    assert!(
+        subscriber.try_recv().is_err(),
+        "one failed run sends one event"
+    );
+    assert_eq!(db.notifications(w.owner).await, 1);
     assert_eq!(db.notifications(w.collab).await, 0);
 }
 
@@ -1197,10 +1217,16 @@ async fn finish_collaborator_run(db: &Database, w: &World) {
         .unwrap()
         .expect("claim");
     assert_eq!(claimed.id, run.id);
-    db::ci::finish_ci_run(db.pool(), claimed.id, WORKER, "success", None)
-        .await
-        .unwrap()
-        .expect("finish");
+    db::ci::finish_ci_run(
+        db.pool(),
+        claimed.id,
+        WORKER,
+        "failed",
+        Some("A workflow job failed"),
+    )
+    .await
+    .unwrap()
+    .expect("finish");
 }
 
 /// The run result reaches its author, unless the author ignores the repository, as it does

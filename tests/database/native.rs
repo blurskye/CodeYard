@@ -1400,6 +1400,137 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
     }
 }
 
+/// A ban takes the membership lock, then the repository rows of an organization it leaves without
+/// an owner. A milestone write must not hold a repository row while it waits for that lock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_ban_and_milestone_write_do_not_deadlock() {
+    let fixture = PostgresDatabase::new().await;
+    let pool = &fixture.pool;
+    let admin = setup(pool, "public").await;
+    for round in 0..40 {
+        let owner = db::users::accounts::create_user(pool, &format!("sole_owner{round}"), None)
+            .await
+            .unwrap();
+        let writer = db::users::accounts::create_user(pool, &format!("writer{round}"), None)
+            .await
+            .unwrap();
+        let organization = db::organizations::create_organization(
+            pool,
+            owner.id,
+            &db::organizations::NewOrganization::new(
+                &format!("ban_org_{round}"),
+                db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        let db::organizations::OrganizationOutcome::Applied(organization) = organization else {
+            panic!("organization was not created");
+        };
+        let repo = db::repositories::creation::insert_repository(
+            pool,
+            db::repositories::creation::NewRepository {
+                owner: db::repositories::creation::RepositoryCreationOwner {
+                    actor_id: owner.id,
+                    target: db::repositories::creation::RepositoryTarget::Organization(
+                        organization.id,
+                    ),
+                },
+                name: "proj",
+                description: None,
+                is_private: false,
+                disk_path: "/owned/native-fixture.git",
+                storage_node_id: None,
+                source_id: None,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        repositories::access::grant_repo_access(
+            pool,
+            writer.id,
+            repo.id,
+            db::models::AccessLevel::Write,
+        )
+        .await
+        .unwrap();
+        let (banned, milestone) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            tokio::join!(
+                transitions::change_ban(pool, admin.id, owner.id, true),
+                db::milestones::create_milestone(pool, writer.id, repo.id, "v1", None, None),
+            )
+        })
+        .await
+        .expect("a ban and a milestone write must not wait on each other");
+        assert!(matches!(banned.unwrap(), BanChange::Updated(_)));
+        // The write lands before the ban, or is refused once the ban has committed.
+        if let Err(error) = milestone {
+            assert_eq!(
+                error.downcast_ref::<db::milestones::MilestoneWriteRefusal>(),
+                Some(&db::milestones::MilestoneWriteRefusal::Denied),
+                "{error:#}"
+            );
+        }
+    }
+}
+
+/// Editing or deleting a comment takes repository authority before the comment row, the order a
+/// repository deletion uses for the comments it removes. Taking them the other way round deadlocks.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
+    let fixture = PostgresDatabase::new().await;
+    let pool = &fixture.pool;
+    let owner = setup(pool, "public").await;
+    for round in 0..40 {
+        let repo = repository(pool, owner.id, &format!("comments{round}")).await;
+        let issue = db::issues::create_issue(pool, repo.id, owner.id, "Issue", "")
+            .await
+            .unwrap();
+        let comment = db::issues::add_issue_comment(pool, issue.id, owner.id, "first")
+            .await
+            .unwrap();
+        let pr = new_pr(pool, repo.id, owner.id, &format!("comments{round}")).await;
+        let pr_comment = db::pull_requests::reviews::add_pull_request_comment(
+            pool,
+            db::pull_requests::reviews::NewPullRequestComment {
+                pr_id: pr.id,
+                author_id: owner.id,
+                body: "first",
+                path: None,
+                line: None,
+                side: None,
+                commit_sha: None,
+                in_reply_to_comment_id: None,
+            },
+        )
+        .await
+        .unwrap();
+        let (edited, deleted_comment, deleted) =
+            tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                tokio::join!(
+                    db::issues::edit_issue_comment(
+                        pool, owner.id, repo.id, issue.id, comment.id, "second"
+                    ),
+                    db::pull_requests::reviews::delete_pull_request_comment(
+                        pool,
+                        owner.id,
+                        repo.id,
+                        pr.id,
+                        pr_comment.id
+                    ),
+                    repositories::records::delete_repository(pool, owner.id, repo.id),
+                )
+            })
+            .await
+            .expect("comment changes and repository deletion must not wait on each other");
+        edited.expect("comment edit must not fail");
+        deleted_comment.expect("comment delete must not fail");
+        deleted.expect("repository deletion must not fail");
+    }
+}
+
 async fn accounting_and_explore_indexes(pool: &db::DbPool) {
     let owner = setup(pool, "public").await;
     let popular = repository(pool, owner.id, "popular").await;

@@ -292,6 +292,7 @@ fn public_identity_path(path: &str) -> bool {
         path,
         "/enter"
             | "/login"
+            | "/login/two-factor"
             | "/register"
             | "/setup"
             | "/logout"

@@ -161,3 +161,19 @@ async fn buffered_failure_timeout_and_abort_stop_parent_and_descendant() {
         .unwrap_or_else(|_| panic!("{reason} left a parent or descendant alive: {numbers:?}"));
     }
 }
+
+#[tokio::test]
+async fn a_busy_node_makes_a_session_wait_and_only_then_fails() {
+    let slots = Arc::new(Semaphore::new(1));
+    let held = slots.clone().acquire_owned().await.unwrap();
+    let waiting = tokio::spawn(wait_for_slot(slots.clone(), Duration::from_secs(5)));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    drop(held);
+    assert!(waiting.await.unwrap().is_ok());
+
+    let _held = slots.clone().acquire_owned().await.unwrap();
+    let error = wait_for_slot(slots, Duration::from_millis(50))
+        .await
+        .unwrap_err();
+    assert!(error.is::<SessionsBusy>());
+}

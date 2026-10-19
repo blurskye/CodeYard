@@ -139,6 +139,8 @@ fn item() -> Item {
             can_vote: true,
             merge_methods: vec!["merge".into(), "squash".into()],
             has_checks: false,
+            failed_checks: 0,
+            checks_running: false,
             has_workflows: false,
         }),
     }
@@ -966,9 +968,41 @@ fn merge_box_shows_blockers_to_writers_and_a_status_to_everyone_else() {
         let mut checked = item();
         checked.comparison.as_mut().unwrap().has_checks = true;
         let ready = render(&checked, &writer);
-        assert!(ready.contains("Ready to merge"));
+        assert!(ready.contains("All checks have passed"));
+        assert!(!ready.contains("Ready to merge"));
+        assert!(!ready.contains("Some checks were not successful"));
         assert!(!ready.contains("Merging is blocked"));
         assert!(!ready.contains("collaboration-blockers"));
+
+        // A failed check is not a green check: the count and a link to the Checks tab say why.
+        let mut failing = item();
+        let failing_compare = failing.comparison.as_mut().unwrap();
+        failing_compare.has_checks = true;
+        failing_compare.failed_checks = 2;
+        let failed = render(&failing, &writer);
+        assert!(failed.contains("Some checks were not successful"));
+        assert!(failed.contains("2 checks failed."));
+        assert!(failed.contains("href=\"/alice/repo/pulls/7/checks\""));
+        assert!(!failed.contains("All checks have passed"));
+        assert!(!failed.contains("Ready to merge"));
+        assert!(!failed.contains("Merging is blocked"));
+        // The merge stays on offer; the failure only changes the mark and the words.
+        assert!(failed.contains("Merge pull request"));
+        assert!(failed.contains("name=\"merge_method\""));
+
+        let mut one_failing = item();
+        one_failing.comparison.as_mut().unwrap().failed_checks = 1;
+        one_failing.comparison.as_mut().unwrap().has_checks = true;
+        assert!(render(&one_failing, &writer).contains("1 check failed."));
+
+        let mut running = item();
+        let running_compare = running.comparison.as_mut().unwrap();
+        running_compare.has_checks = true;
+        running_compare.checks_running = true;
+        let pending = render(&running, &writer);
+        assert!(pending.contains("Checks are still running"));
+        assert!(!pending.contains("All checks have passed"));
+        assert!(!pending.contains("Ready to merge"));
         assert!(ready.contains("name=\"merge_method\""));
 
         let mut reader = repository_at(Kind::Pull, "/7");

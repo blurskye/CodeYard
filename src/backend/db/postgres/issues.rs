@@ -324,6 +324,11 @@ pub async fn edit_issue_comment(
     body: &str,
 ) -> Result<Option<IssueComment>> {
     let mut tx = pool.begin().await?;
+    // Repository authority comes before the comment row. A repository deletion locks the
+    // repository and then the comments it removes, so the other order deadlocks.
+    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+        return Ok(None);
+    }
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
          WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF c",
@@ -333,9 +338,7 @@ pub async fn edit_issue_comment(
     .bind(repo_id)
     .fetch_optional(&mut *tx)
     .await?;
-    if author != Some(actor_id)
-        || !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    {
+    if author != Some(actor_id) {
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, IssueComment>(
@@ -360,6 +363,10 @@ pub async fn delete_issue_comment(
     comment_id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    // Repository authority first, then the comment, as in edit_issue_comment.
+    if !super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+        return Ok(false);
+    }
     let author: Option<i64> = sqlx::query_scalar(
         "SELECT c.author_id FROM issue_comments c JOIN issues i ON i.id = c.issue_id
          WHERE c.id = $1 AND c.issue_id = $2 AND i.repo_id = $3 AND NOT i.locked FOR UPDATE OF c",
@@ -372,16 +379,14 @@ pub async fn delete_issue_comment(
     let Some(author) = author else {
         return Ok(false);
     };
-    let allowed = if author == actor_id {
-        super::discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    } else {
-        super::discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
-    };
-    if !allowed {
+    // Anyone else needs maintainer authority, which also implies the contribution check.
+    if author != actor_id
+        && !super::discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
+    {
         return Ok(false);
     }
     sqlx::query(
-        "DELETE FROM notifications WHERE repo_id = $1 AND kind = 'issue_comment'
+        "DELETE FROM notifications WHERE repo_id = $1 AND kind IN ('issue_comment', 'mention')
          AND metadata->>'comment_id' = $2::text",
     )
     .bind(repo_id)

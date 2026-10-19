@@ -228,7 +228,14 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     let pool = fixture.pool.clone();
     let writer_run_id = writer_run.id;
     let finishing = tokio::spawn(async move {
-        db::ci::finish_ci_run(&pool, writer_run_id, WORKER, "success", None).await
+        db::ci::finish_ci_run(
+            &pool,
+            writer_run_id,
+            WORKER,
+            "failed",
+            Some("A workflow job failed"),
+        )
+        .await
     });
     wait_until_blocked_by(raw, holder, 1).await;
     let pool = fixture.pool.clone();
@@ -241,13 +248,19 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     // run. Notifications for either user must still be able to take FK key-share.
     let (finished_admin, admin_notifications) = tokio::time::timeout(
         Duration::from_secs(30),
-        db::ci::finish_ci_run(&fixture.pool, admin_run.id, WORKER, "success", None),
+        db::ci::finish_ci_run(
+            &fixture.pool,
+            admin_run.id,
+            WORKER,
+            "failed",
+            Some("A workflow job failed"),
+        ),
     )
     .await
     .expect("the admin lock must not block CI finish")
     .unwrap()
     .unwrap();
-    assert_eq!(finished_admin.status, "success");
+    assert_eq!(finished_admin.status, "failed");
     assert_eq!(admin_notifications.len(), 1);
     assert_eq!(admin_notifications[0].0, admin);
     gate.commit().await.unwrap();
@@ -259,7 +272,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
             .unwrap()
             .unwrap()
             .unwrap();
-    assert_eq!(finished_writer.status, "success");
+    assert_eq!(finished_writer.status, "failed");
     assert_eq!(writer_notifications.len(), 1);
     assert_eq!(writer_notifications[0].0, writer);
     let ban = tokio::time::timeout(Duration::from_secs(30), banning)

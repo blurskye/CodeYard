@@ -43,7 +43,8 @@ pub(super) fn input(page: &Page, action: &str, name: &str, label: &str) -> Eleme
     };
     rsx! { label { span { "{label}" }
         if name == "description" {
-            DraftTextarea { class: FIELD, name: name.to_owned(), initial_value: value, maxlength: Some(limit), rows: 4 }
+            // Each form has its own description, so the draft is keyed by the form as well.
+            DraftTextarea { class: FIELD, id: Some(format!("{action}-{name}")), name: name.to_owned(), initial_value: value, maxlength: Some(limit), rows: 4 }
         } else {
             DraftInput { class: FIELD, name: name.to_owned(), initial_value: value, maxlength: Some(limit) }
         }

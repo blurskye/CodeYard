@@ -541,6 +541,10 @@ pub(crate) async fn upload_asset(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
+    // The body is read before the CSRF field can be checked, so only signed-in users get that far.
+    if ctx.user.is_none() {
+        return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to upload an asset.");
+    }
     let mut fields = HashMap::new();
     let mut file = None;
     loop {

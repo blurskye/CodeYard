@@ -489,3 +489,72 @@ async fn sqlite_milestones_and_assignees_hold_their_rules() {
 async fn postgres_milestones_and_assignees_hold_their_rules() {
     contract(true).await;
 }
+
+/// Racing assignments cannot pass the limit. Each one counts the assignees before it inserts, so
+/// without the item row lock every racer could count nine and insert its own tenth.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn postgres_concurrent_assignments_stop_at_the_limit() {
+    let mut f = Database::new(true).await;
+    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    let owner = f.actor("alice").await;
+    let root = tempfile::tempdir().unwrap();
+    let pool = f.pool().clone();
+    let repo = lifecycle::provision(
+        (&pool, None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "proj",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap()
+    .id;
+    let item = AssignedItem::Issue(
+        db::issues::create_issue(&pool, repo, owner, "Racing", "")
+            .await
+            .unwrap()
+            .id,
+    );
+    let mut members = Vec::new();
+    for index in 0..17 {
+        let member = f.actor(&format!("racer{index}")).await;
+        db::repositories::access::grant_repo_access(&pool, member, repo, AccessLevel::Read)
+            .await
+            .unwrap();
+        members.push(member);
+    }
+    for &member in &members[..9] {
+        db::assignees::assign_user(&pool, owner, repo, item, member)
+            .await
+            .unwrap();
+    }
+
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(8));
+    let mut tasks = tokio::task::JoinSet::new();
+    for &member in &members[9..] {
+        let (pool, barrier) = (pool.clone(), barrier.clone());
+        tasks.spawn(async move {
+            barrier.wait().await;
+            db::assignees::assign_user(&pool, owner, repo, item, member).await
+        });
+    }
+    let mut added = 0;
+    while let Some(result) = tasks.join_next().await {
+        match result.unwrap() {
+            Ok(true) => added += 1,
+            Ok(false) => panic!("a new assignee was reported as already assigned"),
+            Err(error) => assert_eq!(assignment_refusal(error), AssignmentRefusal::TooMany),
+        }
+    }
+    assert_eq!(added, 1);
+    assert_eq!(
+        db::assignees::list_assignees(&pool, item)
+            .await
+            .unwrap()
+            .len(),
+        10
+    );
+    f.finish().await;
+}

@@ -92,11 +92,9 @@ pub fn NavLink(
     // ordinary anchors instead of a panic or an inert link.
     let router = dioxus_router::try_router();
     if let Some(router) = router.filter(|_| safe_page_target(&href) && !href.contains('#')) {
-        let aria_current = if mark_current {
-            aria_current.or_else(|| (router.full_route_string() == href).then(|| "page".to_owned()))
-        } else {
-            None
-        };
+        let aria_current = aria_current.or_else(|| {
+            (mark_current && router.full_route_string() == href).then(|| "page".to_owned())
+        });
         let target = href.clone();
         rsx! {
             a { href, class, title, "aria-label": aria_label, "aria-current": aria_current, onclick: move |event| {

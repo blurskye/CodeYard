@@ -17,6 +17,57 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tracing::warn;
 
+/// act names a job's container after the workflow's name and the job alone, so two runs of one
+/// workflow on one engine, from two pushes or from two repositories, would fight over the name.
+/// The second run gets its short run id added to the workflow name, which `github.workflow`
+/// shows too. A name nothing else is using stays as the workflow wrote it. The name is kept until
+/// the run's containers are gone.
+#[derive(Default)]
+pub struct WorkflowNames {
+    active: Arc<Mutex<std::collections::HashSet<String>>>,
+}
+
+pub struct WorkflowName {
+    active: Arc<Mutex<std::collections::HashSet<String>>>,
+    name: String,
+}
+
+impl Drop for WorkflowName {
+    fn drop(&mut self) {
+        self.active.lock().unwrap().remove(&self.name);
+    }
+}
+
+impl WorkflowNames {
+    fn take(&self, name: &str, run_id: uuid::Uuid) -> WorkflowName {
+        let short = &run_id.simple().to_string()[..8];
+        let mut active = self.active.lock().unwrap();
+        let mut candidate = name.to_owned();
+        let mut attempt = 1;
+        while !active.insert(candidate.clone()) {
+            candidate = if attempt == 1 {
+                format!("{name} ({short})")
+            } else {
+                format!("{name} ({short}-{attempt})")
+            };
+            attempt += 1;
+        }
+        WorkflowName {
+            active: self.active.clone(),
+            name: candidate,
+        }
+    }
+}
+
+/// The name act gives a workflow: its `name:`, or the file name without one.
+fn act_workflow_name(definition: &[u8], workflow: &str) -> String {
+    super::workflows::parse_yaml(definition)
+        .ok()
+        .and_then(|value| value.get("name").and_then(Value::as_str).map(str::to_owned))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| file_name(workflow).to_owned())
+}
+
 const IDLE_POLL: Duration = Duration::from_secs(3);
 const HEARTBEAT: Duration = Duration::from_secs(10);
 const RUN_LABEL_KEY: &str = "com.codeyard.ci.run";
@@ -191,8 +242,9 @@ async fn execute(
         }
     };
     let (cleaned, cleanup) = oneshot::channel();
+    let mut names = Vec::new();
     let result = tokio::select! {
-        result = run_workflows(service, worker, &claim, cancel, cleaned) => result,
+        result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names) => result,
         _ = heartbeat => unreachable!("heartbeat loop never ends"),
     };
     let shutting_down = *stop.borrow();
@@ -234,6 +286,7 @@ async fn execute(
             reuse_slot = false;
         }
     }
+    drop(names);
     record_result(service, worker, run, status, message.as_deref()).await;
     // Do not let a fast runner accumulate unfinished directory removals in this slot.
     let _ = cleanup.await;
@@ -271,6 +324,7 @@ async fn run_workflows(
     claim: &ClaimedRun,
     cancel: watch::Receiver<bool>,
     cleaned: oneshot::Sender<()>,
+    names: &mut Vec<WorkflowName>,
 ) -> Result<bool> {
     let deadline = Instant::now() + Duration::from_secs(service.config.run_timeout_seconds.into());
     let run = &claim.run;
@@ -302,6 +356,12 @@ async fn run_workflows(
                 bail!("no runner image for `runs-on: {label}`; add it to CI_ACT_PLATFORM_MAP");
             }
             add_container_label(&definition, podman_label.as_deref().unwrap())?;
+            let name = act_workflow_name(&std::fs::read(&definition)?, workflow);
+            let unique = service.names.take(&name, run.run_id);
+            if unique.name != name {
+                set_workflow_name(&definition, &unique.name)?;
+            }
+            names.push(unique);
         }
         let command = act_command(
             service,
@@ -441,6 +501,9 @@ fn act_command(
             let socket = podman_socket_path(&config.podman_socket)
                 .expect("CiConfig contains a validated Podman socket");
             command.env("DOCKER_HOST", format!("unix://{socket}"));
+            // Use the runner image that is already on the node; act pulls it only when it is
+            // missing. Pulling on every run costs a registry round trip and fails offline.
+            command.arg("--pull=false");
             if let Some(label) = podman_label {
                 let options = run_container_options(label);
                 // Direct act gets the option from argv. The shipped wrapper combines the
@@ -464,13 +527,26 @@ fn run_container_label(run_id: uuid::Uuid) -> String {
     format!("{RUN_LABEL_KEY}={run_id}")
 }
 
+/// The label that finds a run's containers, and a one-second stop grace: a job container's
+/// first process ignores SIGTERM, so the default makes every run wait ten seconds to clean up.
 fn run_container_options(label: &str) -> String {
-    format!("--label {label}")
+    format!("--label {label} --stop-timeout 1")
 }
 
 fn container_filters(label: &str) -> String {
     serde_json::to_string(&BTreeMap::from([("label", [label])]))
         .expect("the static container filter is serializable")
+}
+
+fn set_workflow_name(path: &Path, name: &str) -> Result<()> {
+    let mut workflow = super::workflows::parse_yaml(&std::fs::read(path)?)
+        .context("could not prepare the workflow name")?;
+    let Some(mapping) = workflow.as_mapping_mut() else {
+        bail!("workflow must be a mapping");
+    };
+    mapping.insert(Value::String("name".into()), Value::String(name.to_owned()));
+    std::fs::write(path, serde_yaml::to_string(&workflow)?)?;
+    Ok(())
 }
 
 fn add_container_label(path: &Path, label: &str) -> Result<()> {
@@ -919,6 +995,41 @@ fn file_name(workflow: &str) -> &str {
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn act_names_a_workflow_by_its_name_or_its_file() {
+        assert_eq!(
+            act_workflow_name(
+                b"name: CI\non: push\njobs: {}\n",
+                ".github/workflows/ci.yml"
+            ),
+            "CI"
+        );
+        assert_eq!(
+            act_workflow_name(b"on: push\njobs: {}\n", ".github/workflows/ci.yml"),
+            "ci.yml"
+        );
+    }
+
+    #[test]
+    fn a_second_run_of_a_workflow_name_gets_its_run_id_added() {
+        let names = WorkflowNames::default();
+        let first = names.take("CI", uuid::Uuid::from_u128(1));
+        assert_eq!(first.name, "CI");
+        let second = names.take("CI", uuid::Uuid::from_u128(2));
+        assert_eq!(second.name, "CI (00000000)");
+        // Another workflow keeps its name, and a name frees up when its run is over.
+        assert_eq!(
+            names.take("Deploy", uuid::Uuid::from_u128(3)).name,
+            "Deploy"
+        );
+        drop(first);
+        let fourth = names.take("CI", uuid::Uuid::from_u128(4));
+        assert_eq!(fourth.name, "CI");
+        // Two workflows of one run with the same name still differ.
+        let other = names.take("CI", uuid::Uuid::from_u128(2));
+        assert_eq!(other.name, "CI (00000000-2)");
+    }
 
     fn secret_workspace() -> Workspace {
         Workspace {

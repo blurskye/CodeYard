@@ -9,8 +9,9 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::issues::comment_link;
 use crate::backend::issues::comments::{CommentTarget, CreateCommentRequest};
+use crate::backend::repositories::pull_requests::comments as comment_rules;
 use crate::webui::components::task_lists::toggle_task;
-use crate::webui::pages::repos::issues::DetailDraft;
+use crate::webui::pages::repos::issues::{DetailDraft, Kind};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -39,13 +40,7 @@ pub(crate) async fn native_toggle_task(
     let comment_id = field(&form, "comment").parse::<i64>().ok();
     let text = match comment_id {
         None => value.body.clone(),
-        Some(id) => {
-            db::issues::get_issue_comment(&ctx.state.pool, id)
-                .await
-                .map_err(|_| unavailable(&ctx))?
-                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?
-                .body
-        }
+        Some(id) => comment_body(&ctx, kind, id, actor_id).await?,
     };
     let Some(updated) = toggle_task(&text, index) else {
         return Err(ctx.error(
@@ -54,45 +49,35 @@ pub(crate) async fn native_toggle_task(
         ));
     };
     let result = match comment_id {
-        Some(id) => crate::backend::issues::comments::edit_issue_comment(
-            &ctx.state.pool,
-            &ctx.state.notification_broadcaster,
-            actor_id,
-            CommentTarget {
-                owner,
-                repo: name,
-                number,
-                comment_id: id,
-            },
-            CreateCommentRequest { body: updated },
-        )
-        .await
-        .map_err(crate::backend::api::repos::issues::operation_error)
-        .map(|_| ()),
-        None => {
-            save_entry_text(
+        Some(id) => {
+            save_comment_text(
                 &ctx,
                 kind,
                 actor_id,
                 (owner, name, number),
-                EntryText {
-                    title: value.title.clone(),
-                    body: updated,
-                    expected_state: field(&form, "expected_state"),
-                    expected_updated: field(&form, "expected_updated"),
-                },
+                id,
+                updated,
+                &base,
             )
             .await
         }
+        None => save_entry_text(
+            &ctx,
+            kind,
+            actor_id,
+            (owner, name, number),
+            EntryText {
+                title: value.title.clone(),
+                body: updated,
+                expected_state: field(&form, "expected_state"),
+                expected_updated: field(&form, "expected_updated"),
+            },
+        )
+        .await
+        .map(|()| base.clone()),
     };
     match result {
-        Ok(()) => match comment_id {
-            Some(id) => {
-                let position = db::issues::issue_comment_position(&ctx.state.pool, id).await;
-                Ok(ctx.redirect(&comment_link(&base, id, position)))
-            }
-            None => Ok(ctx.redirect(&base)),
-        },
+        Ok(location) => Ok(ctx.redirect(&location)),
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
             render_detail(
@@ -105,6 +90,77 @@ pub(crate) async fn native_toggle_task(
                 status,
             )
             .await
+        }
+    }
+}
+
+/// The text of comment `id`, read from the store that holds comments of `kind`.
+async fn comment_body(ctx: &PageContext, kind: Kind, id: i64, actor_id: i64) -> ResultPage<String> {
+    let body = match kind {
+        Kind::Issue => db::issues::get_issue_comment(&ctx.state.pool, id)
+            .await
+            .map(|comment| comment.map(|comment| comment.body)),
+        // Only the author can edit a comment, so another account's comment, pending ones
+        // included, is not found here.
+        Kind::Pull => {
+            db::pull_requests::reviews::get_pull_request_comment_by_id(&ctx.state.pool, id)
+                .await
+                .map(|comment| {
+                    comment
+                        .filter(|comment| comment.author_id == actor_id)
+                        .map(|comment| comment.body)
+                })
+        }
+    }
+    .map_err(|_| unavailable(ctx))?;
+    body.ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))
+}
+
+/// Saves the ticked text of comment `id` through the rules for its kind, and returns the link to
+/// the comment.
+async fn save_comment_text(
+    ctx: &PageContext,
+    kind: Kind,
+    actor_id: i64,
+    (owner, name, number): (String, String, i32),
+    id: i64,
+    body: String,
+    base: &str,
+) -> Result<String, ApiFailure> {
+    let pool = &ctx.state.pool;
+    let broadcaster = &ctx.state.notification_broadcaster;
+    let target = CommentTarget {
+        owner,
+        repo: name,
+        number,
+        comment_id: id,
+    };
+    match kind {
+        Kind::Issue => {
+            crate::backend::issues::comments::edit_issue_comment(
+                pool,
+                broadcaster,
+                actor_id,
+                target,
+                CreateCommentRequest { body },
+            )
+            .await
+            .map_err(crate::backend::api::repos::issues::operation_error)?;
+            let position = db::issues::issue_comment_position(pool, id).await;
+            Ok(comment_link(base, id, position))
+        }
+        Kind::Pull => {
+            let comment =
+                comment_rules::edit_pull_request_comment(pool, broadcaster, actor_id, target, body)
+                    .await
+                    .map_err(crate::backend::api::repos::pulls::operation_error)?;
+            let position = db::pull_requests::reviews::count_discussion_items_through(
+                pool,
+                comment.pull_request_id,
+                db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
+            )
+            .await;
+            Ok(comment_link(base, id, position))
         }
     }
 }

@@ -197,7 +197,8 @@ async fn attempt(url: &Url, ssl_verify: bool, headers: &[(&str, String)], body: 
 }
 
 /// The client for one attempt. A domain name is pinned to the addresses that were just
-/// checked, so the connection cannot reach a different host than the one that passed.
+/// checked, so the connection cannot reach a different host than the one that passed. A proxy
+/// from the environment would receive the name instead, so proxies are not used.
 fn client(
     url: &Url,
     addresses: &[SocketAddr],
@@ -205,6 +206,7 @@ fn client(
 ) -> reqwest::Result<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .timeout(TIMEOUT)
+        .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .danger_accept_invalid_certs(!ssl_verify)
         .user_agent(user_agent());
@@ -346,5 +348,53 @@ mod tests {
         assert_eq!(outgoing.body, "payload=%7B%7D");
         assert_eq!(outgoing.event, "push");
         assert_ne!(outgoing.guid, "old");
+    }
+
+    /// reqwest reads the proxy variables when a client is built, so the client is built in a child
+    /// process that starts with them set. A request to a pinned name must reach the pinned address,
+    /// not the proxy.
+    #[test]
+    fn webhook_requests_do_not_use_a_proxy() {
+        const CHILD: &str = "CODEYARD_WEBHOOK_PROXY_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("webhook_requests_do_not_use_a_proxy")
+                .env(CHILD, "1")
+                // Nothing listens on the discard port, so a request sent to the proxy fails.
+                .env("HTTP_PROXY", "http://127.0.0.1:9")
+                .env("http_proxy", "http://127.0.0.1:9")
+                .env_remove("NO_PROXY")
+                .env_remove("no_proxy")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                tokio::spawn(async move {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut request = [0u8; 4096];
+                    let read = stream.read(&mut request).await.unwrap();
+                    assert!(read > 0, "the request reached the pinned address");
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
+                        .await
+                        .unwrap();
+                });
+                let url =
+                    Url::parse(&format!("http://hook.example.test:{}/", address.port())).unwrap();
+                let client = client(&url, &[address], true).unwrap();
+                let response = client.post(url).body("{}").send().await.unwrap();
+                assert_eq!(response.status(), reqwest::StatusCode::OK);
+            });
     }
 }

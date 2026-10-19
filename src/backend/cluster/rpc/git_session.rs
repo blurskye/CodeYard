@@ -140,7 +140,9 @@ impl RpcHandler {
         let caller = link.peer;
         let prepared = async {
             let (store, _) = self.authorize_request(&request, caller).await?;
-            let permit = git_process::session_permit().map_err(RepoError::from)?;
+            let permit = git_process::session_permit()
+                .await
+                .map_err(RepoError::from)?;
             let (admission, targets) = match &request.operation {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.

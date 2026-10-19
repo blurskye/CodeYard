@@ -395,7 +395,7 @@ impl russh::server::Handler for GitSshHandler {
             ReceiveCredential::SshKey(key_id)
         };
 
-        let permit = match git_process::session_permit() {
+        let permit = match git_process::session_permit().await {
             Ok(permit) => permit,
             Err(_) => {
                 self.refuse_channel(channel, session, "Git sessions busy");

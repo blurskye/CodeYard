@@ -295,8 +295,9 @@ impl RemoteStore {
             git2::Oid::from_str(sha).map_err(|_| rpc::wire::invalid("invalid checkout commit"))?;
         // A checkout is a session like any other, also when this node serves it from its own
         // copy, which takes no permit of its own.
-        let _permit =
-            crate::backend::git::repository::process::session_permit().map_err(RepoError::from)?;
+        let _permit = crate::backend::git::repository::process::session_permit()
+            .await
+            .map_err(RepoError::from)?;
         let want = format!("want {oid}\n");
         let request = format!("{:04x}{want}00000009done\n", want.len() + 4);
         let pack = tempfile::NamedTempFile::new()

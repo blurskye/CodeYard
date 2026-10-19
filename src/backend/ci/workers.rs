@@ -26,6 +26,7 @@ pub struct CiWorkers {
     pub(super) queued: Arc<Notify>,
     pub(super) cleanups: Arc<Mutex<JoinSet<()>>>,
     pub(super) cleanup_dir: PathBuf,
+    pub(super) names: Arc<worker::WorkflowNames>,
     run_workers: bool,
     workers: Arc<Workers>,
 }
@@ -65,6 +66,7 @@ impl CiWorkers {
             queued,
             cleanups: Arc::new(Mutex::new(JoinSet::new())),
             cleanup_dir: state_dir.join("ci-containers"),
+            names: Arc::new(worker::WorkflowNames::default()),
             workers: Arc::new(Workers {
                 stop: watch::channel(false).0,
                 tasks: Mutex::new(JoinSet::new()),

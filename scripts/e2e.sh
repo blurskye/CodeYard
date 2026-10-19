@@ -1837,9 +1837,11 @@ t_replica_outage_push() { # store1 is down: a push is a write, so it is refused 
 }
 
 t_cluster_outage_no_copy() { # store1 is down and store2 is revoked: alice/replica has no usable copy, so 503
-    local status=0
     cluster_cli web1 revoke store2
     (
+        # Approve store2 again on exit, even after a failed check. The checks are not on the
+        # left of `||`, so errexit stops the subshell at the first failure.
+        trap 'cluster_cli web1 approve store2' EXIT
         set -euo pipefail
         as alice req GET /alice/replica --status 503 --contains 'unavailable'
         as alice req GET /api/repos/alice/replica/commits --accept json --status 503 --contains-raw 'storage node unavailable'
@@ -1847,9 +1849,7 @@ t_cluster_outage_no_copy() { # store1 is down and store2 is revoked: alice/repli
         must_fail 'HTTP clone with no usable copy' git_with_token read clone -q "$BASE/alice/replica.git" "$RUN/clone-revoked-http"
         grep -q 503 "$RUN/must-fail.out"
         must_fail 'SSH clone with no usable copy' git_as alice clone -q "$SSH_URL/alice/replica.git" "$RUN/clone-revoked-ssh"
-    ) || status=$?
-    cluster_cli web1 approve store2
-    return "$status"
+    )
 }
 
 t_cluster_outage_survivor() {

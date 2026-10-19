@@ -166,14 +166,23 @@ pub(crate) fn map_run(
     run: db::models::CiRun,
     repository: &db::models::Repository,
 ) -> view_actions::Run {
+    // A pull request run is stored on its base branch, which admission uses. The page shows the head
+    // branch of the pull request, which the run kept in its event.
+    let head_branch = run
+        .pull_request_event
+        .as_ref()
+        .filter(|_| run.event == "pull_request")
+        .and_then(|event| event["head_ref"].as_str());
+    // Runs stored before short branch names were used still have the full ref.
+    let branch =
+        crate::backend::ci::branch_name(head_branch.unwrap_or(run.branch.as_str())).to_owned();
     view_actions::Run {
         commit_status_context: run.commit_status_context(),
         id: run.run_id.to_string(),
         repository: repository.name.clone(),
         status: run.status,
         workflow_path: run.workflow_path,
-        // Runs stored before short branch names were used still have the full ref.
-        branch: crate::backend::ci::branch_name(&run.branch).to_owned(),
+        branch,
         event: run.event,
         pipeline: run.pipeline,
         mode: run.mode,
@@ -181,10 +190,7 @@ pub(crate) fn map_run(
         created_at: run.created_at.timestamp(),
         started_at: run.started_at.map(|value| value.timestamp()),
         completed_at: run.completed_at.map(|value| value.timestamp()),
-        // Raw executor/driver errors can contain credentials or internal paths.
-        error_message: run
-            .error_message
-            .map(|_| "The runner recorded an error".to_string()),
+        error_message: crate::backend::ci::visible_run_error(run.error_message.as_deref()),
         // Admission stores these as an object of strings; the page shows none if it cannot read them.
         inputs: run
             .workflow_inputs

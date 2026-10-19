@@ -822,9 +822,11 @@ fn merge_box(
     };
     // A green check means something only when a check ran or a review was asked for.
     let unverified = !blocked && !compare.has_checks && reviewers.is_empty();
-    let (mark_class, mark) = if blocked || !changes.is_empty() {
+    let failed = compare.failed_checks;
+    let noun = if failed == 1 { "check" } else { "checks" };
+    let (mark_class, mark) = if blocked || !changes.is_empty() || failed > 0 {
         ("collaboration-merge-mark collaboration-mark-changes", "×")
-    } else if unverified {
+    } else if unverified || compare.checks_running {
         ("collaboration-merge-mark collaboration-mark-neutral", "–")
     } else {
         ("collaboration-merge-mark collaboration-mark-approved", "✓")
@@ -837,14 +839,21 @@ fn merge_box(
                     h3 {
                         if blocked { span { "Merging is blocked" } }
                         else if !changes.is_empty() { span { "Changes requested" } }
+                        else if failed > 0 { span { "Some checks were not successful" } }
                         else if unverified && compare.has_workflows {
                             NavLink { class: "collaboration-merge-checks", href: format!("{}/actions", repo.url()), "No checks configured" }
                         }
                         else if unverified { span { "No checks configured" } }
+                        else if compare.checks_running { span { "Checks are still running" } }
+                        else if compare.has_checks { span { "All checks have passed" } }
                         else { span { "Ready to merge" } }
                     }
                     p { class: "collaboration-muted",
                         if !changes.is_empty() { "{requested} {policy}" }
+                        else if failed > 0 {
+                            "{failed} {noun} failed. "
+                            NavLink { class: "collaboration-merge-checks", href: format!("{url}/checks"), "View checks" }
+                        }
                         else if unverified { "No reviews requested. Merging is still allowed." }
                         else { "Required reviews, status checks, and branch protection must pass before merging." }
                     }

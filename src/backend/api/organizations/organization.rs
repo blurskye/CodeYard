@@ -46,9 +46,11 @@ pub(super) fn optional<'a>(form: &'a Fields, key: &str) -> Option<&'a str> {
 pub(super) fn id(form: &Fields, key: &str) -> Result<i64, ()> {
     field(form, key).parse().ok().filter(|id| *id > 0).ok_or(())
 }
+/// The name of an existing account. OAuth can create one- and two-character names, so the length
+/// rule for new accounts does not apply here.
 pub(super) fn username(form: &Fields) -> Result<String, ()> {
     let value = field(form, "username");
-    if !(3..=1024).contains(&value.len())
+    if !(1..=1024).contains(&value.len())
         || value.chars().count() > 255
         || !value
             .chars()

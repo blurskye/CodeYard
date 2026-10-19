@@ -12,8 +12,27 @@ use tokio::time::Instant;
 pub(crate) const SESSION_TIMEOUT: Duration = Duration::from_secs(3600);
 pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 pub(crate) const CHUNK: usize = 32 * 1024;
-static RPC_SESSIONS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(16)));
+/// How long a Git session waits for a free slot before the request fails as busy:
+/// `GIT_SESSION_WAIT_SECONDS`, default 30.
+static SESSION_WAIT: LazyLock<Duration> = LazyLock::new(|| {
+    let seconds = std::env::var("GIT_SESSION_WAIT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    Duration::from_secs(seconds.unwrap_or(30))
+});
+static RPC_SESSIONS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(session_limit())));
 static GIT_OPERATIONS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(16)));
+
+/// Git sessions at once on this node: `GIT_SESSION_LIMIT`, or four per CPU core and at least 16.
+fn session_limit() -> usize {
+    let cores = std::thread::available_parallelism().map_or(4, |cores| cores.get());
+    std::env::var("GIT_SESSION_LIMIT")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or((cores * 4).max(16))
+}
 
 pub(crate) fn session_slots() -> Arc<Semaphore> {
     RPC_SESSIONS.clone()
@@ -23,11 +42,17 @@ pub(crate) fn session_slots() -> Arc<Semaphore> {
 #[error("Git sessions busy")]
 pub(crate) struct SessionsBusy;
 
-pub(crate) fn session_permit() -> Result<OwnedSemaphorePermit> {
-    RPC_SESSIONS
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| SessionsBusy.into())
+/// A Git session slot. A busy node makes the request wait for a short time, as a queue would,
+/// instead of failing every push or clone above the limit.
+pub(crate) async fn session_permit() -> Result<OwnedSemaphorePermit> {
+    wait_for_slot(RPC_SESSIONS.clone(), *SESSION_WAIT).await
+}
+
+async fn wait_for_slot(slots: Arc<Semaphore>, wait: Duration) -> Result<OwnedSemaphorePermit> {
+    match tokio::time::timeout(wait, slots.acquire_owned()).await {
+        Ok(Ok(permit)) => Ok(permit),
+        _ => Err(SessionsBusy.into()),
+    }
 }
 
 pub(crate) const RPC_LIMIT: usize = 128 * 1024 * 1024;

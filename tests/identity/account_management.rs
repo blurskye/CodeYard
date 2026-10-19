@@ -239,6 +239,32 @@ async fn sessions_belong_to_their_account(pg: bool) {
     f.finish().await;
 }
 
+/// A session that recorded its address lists with that address, on both backends.
+async fn session_list_shows_recorded_addresses(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let pool = f.pool();
+    let a = f.actor("sessions-address").await;
+    let expires = Utc::now() + Duration::days(1);
+    db::users::sessions::create_session(
+        pool,
+        "with-address",
+        a,
+        Some("Firefox"),
+        Some("203.0.113.7"),
+        expires,
+    )
+    .await
+    .unwrap();
+    let listed = db::users::sessions::list_user_sessions(pool, a)
+        .await
+        .unwrap();
+    assert_eq!(listed.len(), 1);
+    // SQLite keeps the prefix of the stored address, and PostgreSQL leaves out a host prefix.
+    let address = listed[0].ip_address.as_deref().unwrap_or_default();
+    assert_eq!(address.trim_end_matches("/32"), "203.0.113.7");
+    f.finish().await;
+}
+
 fn organization(
     outcome: OrganizationOutcome<db::organizations::OrganizationMetadata>,
 ) -> db::organizations::OrganizationMetadata {
@@ -429,6 +455,16 @@ async fn sqlite_session_revoke_touches_only_your_own_sessions() {
 #[tokio::test]
 async fn postgres_session_revoke_touches_only_your_own_sessions() {
     sessions_belong_to_their_account(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_session_list_shows_recorded_addresses() {
+    session_list_shows_recorded_addresses(false).await;
+}
+
+#[tokio::test]
+async fn postgres_session_list_shows_recorded_addresses() {
+    session_list_shows_recorded_addresses(true).await;
 }
 
 #[tokio::test]

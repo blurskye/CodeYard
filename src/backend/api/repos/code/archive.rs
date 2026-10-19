@@ -179,7 +179,9 @@ pub(in crate::backend::api::repos) async fn page(
     {
         return ctx.error(status, "Unable to download this repository archive.");
     }
-    let prefix = format!("{}-{}", name, reference.replace('/', "-"));
+    // A tag arrives as `refs/tags/NAME`; the folder and file keep the short name.
+    let short = reference.strip_prefix("refs/tags/").unwrap_or(reference);
+    let prefix = format!("{}-{}", name, short.replace('/', "-"));
     let Ok(permit) = ctx.state.repository_downloads.clone().try_acquire_owned() else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,

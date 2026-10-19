@@ -44,9 +44,7 @@ pub fn map_job_info(run: db::models::CiRun) -> JobInfo {
         started_at: run.started_at.map(|v| v.timestamp()),
         completed_at: run.completed_at.map(|v| v.timestamp()),
         created_at: run.created_at.timestamp(),
-        error_message: run
-            .error_message
-            .map(|_| "The runner recorded an error".to_owned()),
+        error_message: crate::backend::ci::visible_run_error(run.error_message.as_deref()),
     }
 }
 pub fn map_workflow_info(workflow: crate::backend::ci::WorkflowDefinition) -> WorkflowInfo {

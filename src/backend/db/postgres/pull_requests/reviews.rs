@@ -789,10 +789,12 @@ pub async fn edit_pull_request_comment(
     body: &str,
 ) -> Result<Option<PullRequestComment>> {
     let mut tx = pool.begin().await?;
+    // Repository authority before the comment row, as in edit_issue_comment.
+    if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+        return Ok(None);
+    }
     let author = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?;
-    if author != Some(actor_id)
-        || !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    {
+    if author != Some(actor_id) {
         return Ok(None);
     }
     let comment = sqlx::query_as::<_, PullRequestComment>(
@@ -817,15 +819,20 @@ pub async fn delete_pull_request_comment(
     comment_id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    // Repository authority first, then the comment, as in edit_pull_request_comment.
+    if !discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await? {
+        return Ok(false);
+    }
     let Some(author) = conversation_comment_author(&mut tx, repo_id, pr_id, comment_id).await?
     else {
         return Ok(false);
     };
-    let allowed = if author == actor_id {
-        discussions::lock_contribution_authority(&mut tx, actor_id, repo_id).await?
-    } else {
-        discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
-    };
+    // Anyone else needs maintainer authority, which also implies the contribution check.
+    if author != actor_id
+        && !discussions::lock_maintain_authority(&mut tx, actor_id, repo_id).await?
+    {
+        return Ok(false);
+    }
     // Replies are removed with their parent, so a comment with replies stays.
     let has_replies: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM pr_comments WHERE in_reply_to_comment_id = $1)",
@@ -833,7 +840,7 @@ pub async fn delete_pull_request_comment(
     .bind(comment_id)
     .fetch_one(&mut *tx)
     .await?;
-    if !allowed || has_replies {
+    if has_replies {
         return Ok(false);
     }
     sqlx::query(

@@ -157,6 +157,7 @@ pub async fn create_issue_comment(
                 number: issue.number,
                 subject: &issue.title,
                 link: &link,
+                comment_id: Some(comment.id),
                 old_text: None,
                 text: &req.body,
                 notified: &[issue.author_id],
@@ -244,7 +245,8 @@ pub async fn edit_issue_comment(
         message: "You cannot edit this comment.".to_owned(),
     })?;
 
-    // Only the names the edit adds notify; the others were notified when first written.
+    // Only the names the edit adds notify; the others were notified when first written. The
+    // author's notice for the comment is not a mention, so the author is not excluded here.
     if mentions_anyone(&req.body) {
         let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
         let link = comment_link(
@@ -263,9 +265,10 @@ pub async fn edit_issue_comment(
                 number: issue.number,
                 subject: &issue.title,
                 link: &link,
+                comment_id: Some(comment.id),
                 old_text: Some(&previous.body),
                 text: &req.body,
-                notified: &[issue.author_id],
+                notified: &[],
             },
         )
         .await;

@@ -69,6 +69,8 @@ pub struct DraftFields {
     pub title: String,
     pub body: String,
     pub message: String,
+    /// The Preview button was pressed, so the editor shows the body rendered.
+    pub preview: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -361,7 +363,7 @@ fn form(
                         input { r#type: "text", name: "title", class: "collaboration-input", required: true, maxlength: "200", value: draft.title.clone() }
                     }
                     div { class: "collaboration-field", "Content"
-                        MarkdownEditor { id: "wiki-body".to_owned(), initial: draft.body.clone(), rows: 16, required: false, initial_preview: false, placeholder: "Write the page in Markdown. Link to another page with [[Page Name]].".to_owned() }
+                        MarkdownEditor { id: "wiki-body".to_owned(), initial: draft.body.clone(), rows: 16, required: false, initial_preview: draft.preview, placeholder: "Write the page in Markdown. Link to another page with [[Page Name]].".to_owned() }
                     }
                     label { class: "collaboration-field", "Edit message (optional)"
                         input { r#type: "text", name: "message", class: "collaboration-input", maxlength: "500", value: draft.message.clone(), placeholder: "What changed" }

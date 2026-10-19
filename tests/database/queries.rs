@@ -819,8 +819,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
             .unwrap()
             .unwrap();
     assert_eq!(finished.status, "success");
-    assert_eq!(notifications.len(), 1);
-    assert_eq!(notifications[0].0, owner.id);
+    assert!(notifications.is_empty(), "a successful run tells no one");
     assert!(finished.completed_at.is_some());
     let deployment = db::ci::get_ci_deployment_by_run_id(&pool, run.id)
         .await
@@ -2678,6 +2677,36 @@ async fn label_usage_contract(pool: &DbPool) {
             .into_iter()
             .collect();
     assert_eq!(usage, expected);
+
+    // Another repository's labels and items do not count here, and are counted there.
+    let other = db::repositories::records::create_repository(
+        pool,
+        owner.id,
+        &format!("{repo_name}-other"),
+        None,
+        false,
+        &format!("/tmp/{repo_name}-other.git"),
+    )
+    .await
+    .unwrap();
+    let other_bug =
+        db::labels::create_label(pool, owner.id, other.id, "other-bug", "#d73a4a", None)
+            .await
+            .unwrap();
+    let other_issue = db::issues::create_issue(pool, other.id, owner.id, "other issue", "")
+        .await
+        .unwrap();
+    db::labels::add_issue_labels(pool, owner.id, other.id, other_issue.id, &[other_bug.id])
+        .await
+        .unwrap();
+    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(pool, repo.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect();
+    assert_eq!(usage, expected);
+    let other_usage: Vec<(i64, i64)> = db::labels::list_label_usage(pool, other.id).await.unwrap();
+    assert_eq!(other_usage, vec![(other_bug.id, 1)]);
 }
 
 #[tokio::test]

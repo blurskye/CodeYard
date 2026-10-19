@@ -1657,8 +1657,11 @@ fn tag_rows_show_their_date_in_a_column() {
     assert!(html.contains("class=\"repo-ref-date\""), "{html}");
     assert!(html.contains("datetime=\"2026-10-02T00:00:00Z\""), "{html}");
     assert!(html.contains(">Oct 2, 2026</time>"), "{html}");
-    // Each tag downloads as a ZIP of its files.
-    assert!(html.contains("/alice/project/archive/v1.zip"), "{html}");
+    // Each tag downloads as a ZIP of its files, named by its full ref.
+    assert!(
+        html.contains("/alice/project/archive/refs%2Ftags%2Fv1.zip"),
+        "{html}"
+    );
 }
 
 #[test]

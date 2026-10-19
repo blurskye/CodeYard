@@ -75,7 +75,11 @@ pub fn validate_inputs(
     }
     let mut values = BTreeMap::new();
     for input in declared {
-        let given = submitted.get(&input.name).filter(|value| !value.is_empty());
+        let submitted_value = submitted.get(&input.name);
+        if input.required && submitted_value.is_some_and(String::is_empty) {
+            return Err("a required workflow input is empty");
+        }
+        let given = submitted_value.filter(|value| !value.is_empty());
         match given.or(input.default.as_ref()) {
             Some(value) => {
                 check_value(input, value)?;
@@ -159,6 +163,20 @@ mod tests {
         assert!(validate_inputs(&declared, &submitted(&[])).is_err());
         assert!(validate_inputs(&declared, &submitted(&[("target", "")])).is_err());
         assert!(validate_inputs(&declared, &submitted(&[("target", "prod")])).is_ok());
+    }
+
+    #[test]
+    fn a_required_input_refuses_an_empty_value_even_with_a_default() {
+        let mut env = input("env", InputKind::Text);
+        env.required = true;
+        env.default = Some("staging".into());
+        let declared = [env];
+        assert!(validate_inputs(&declared, &submitted(&[("env", "")])).is_err());
+        // Left out, the default still applies.
+        assert_eq!(
+            validate_inputs(&declared, &submitted(&[])).unwrap(),
+            submitted(&[("env", "staging")])
+        );
     }
 
     #[test]

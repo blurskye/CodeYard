@@ -638,23 +638,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
             .status,
         "cancelled"
     );
-    let event = tokio::time::timeout(Duration::from_secs(5), subscriber.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(matches!(&event, NotificationEvent::Created { user_id, .. } if *user_id == owner.id));
-    let projected = current_event(pool, &session, owner.id, &event)
-        .await
-        .unwrap()
-        .unwrap();
+    // A cancelled run tells no one, not even its owner.
     assert!(
-        matches!(projected, NotificationEvent::Created { kind, title, .. }
-        if kind == "ci_completed" && title == "CI run cancelled")
+        subscriber.try_recv().is_err(),
+        "a cancelled run sends nothing"
     );
-    assert!(current_event(pool, &session, other_user.id, &event)
-        .await
-        .unwrap()
-        .is_none());
     assert!(!remote
         .finish("slot-1", queued.id, "cancelled", None)
         .await
@@ -764,7 +752,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap();
     assert!(claimed.run.is_fork && claimed.secrets.is_empty());
     assert!(remote
-        .finish("slot-1", fork.id, "success", None)
+        .finish("slot-1", fork.id, "failed", Some("A workflow job failed"))
         .await
         .unwrap());
 
@@ -778,7 +766,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap();
     assert!(
         matches!(projected, NotificationEvent::Created { kind, title, .. }
-        if kind == "ci_completed" && title == "CI run success")
+        if kind == "ci_completed" && title.starts_with("CI run failed: "))
     );
     assert!(current_event(pool, &session, other_user.id, &event)
         .await

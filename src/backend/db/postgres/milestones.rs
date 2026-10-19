@@ -22,12 +22,10 @@ async fn begin_write(
     repo_id: i64,
 ) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT id FROM repositories WHERE id = $1 FOR UPDATE")
-        .bind(repo_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    // The exclusive authority lock takes the membership lock before the repository row, the
+    // order every other write uses.
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?,
+        super::discussions::lock_exclusive_write_authority(&mut tx, actor_id, repo_id).await?,
         MilestoneWriteRefusal::Denied
     );
     Ok(tx)

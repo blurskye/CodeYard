@@ -231,9 +231,15 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     }
     let offset = number(ctx, "offset", 0, usize::MAX)?;
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
+    // Resolve the ref once. The content, the Files panel and the permalink then name the same
+    // commit, even if a push moves the branch while this page loads.
+    let head = store
+        .commit(&resolved.reference)
+        .await
+        .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
     let read = store
         .blob_range(
-            &resolved.reference,
+            &head.sha,
             &resolved.path,
             BlobRange::Window {
                 offset: offset as u64,
@@ -301,7 +307,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         latest_commit: None,
     };
     let (folders, latest_commit, permalink) =
-        file_context(ctx, loaded, &store, &page.reference, &page.path).await?;
+        file_context(ctx, loaded, &store, &head.sha, &page.path).await?;
     page.folders = folders;
     page.latest_commit = latest_commit;
     page.permalink = permalink;
@@ -355,13 +361,13 @@ pub(super) async fn folder_listings(
 }
 
 /// The Files panel's folders for a file, the last commit that changed it, and its permalink. The
-/// file view and the blame view both show them. The permalink names the commit the file was read
-/// at, so the link keeps showing the same file.
+/// file view and the blame view both show them. `commit` is the commit the file was read at, and
+/// the permalink names it, so the link keeps showing the same file.
 pub(super) async fn file_context(
     ctx: &PageContext,
     loaded: &Loaded,
     store: &RepoStore,
-    reference: &str,
+    commit: &str,
     path: &str,
 ) -> Result<
     (
@@ -372,21 +378,17 @@ pub(super) async fn file_context(
     Response,
 > {
     let directory = path.rsplit_once('/').map_or("", |(parent, _)| parent);
-    let folders = folder_listings(store, reference, directory)
+    let folders = folder_listings(store, commit, directory)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
     let latest_commit = folders
         .last()
         .and_then(|folder| folder.entries.iter().find(|entry| entry.path == path))
         .and_then(|entry| entry.last_commit.clone());
-    let head = store
-        .commit(reference)
-        .await
-        .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
     let permalink = format!(
         "{}{}",
         crate::backend::api::http::config::public_origin(),
-        view::ref_path::file_url(&loaded.chrome.base(), "blob", &head.sha, path)
+        view::ref_path::file_url(&loaded.chrome.base(), "blob", commit, path)
     );
     Ok((folders, latest_commit, permalink))
 }

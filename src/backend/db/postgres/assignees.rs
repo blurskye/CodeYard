@@ -29,7 +29,9 @@ async fn begin_write(
     Ok(tx)
 }
 
-/// Checks that the item is in the repository, and returns the link table and column.
+/// Checks that the item is in the repository and locks its row, so that writes to one item's
+/// assignees run one at a time and each counts the assignees the earlier ones left. Returns the
+/// link table and column.
 async fn locate_item(
     tx: &mut Transaction<'_, Postgres>,
     repo_id: i64,
@@ -37,7 +39,7 @@ async fn locate_item(
 ) -> Result<(&'static str, &'static str)> {
     let (table, link, column) = tables(item);
     let found: Option<i64> = sqlx::query_scalar(&format!(
-        "SELECT id FROM {table} WHERE id = $1 AND repo_id = $2"
+        "SELECT id FROM {table} WHERE id = $1 AND repo_id = $2 FOR UPDATE"
     ))
     .bind(item_id(item))
     .bind(repo_id)

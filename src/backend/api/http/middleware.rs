@@ -3,7 +3,10 @@ use super::{
     error::ApiError,
     session::{self, get_current_user},
 };
-use crate::backend::api::{files, repos::code::upload};
+use crate::backend::api::{
+    files,
+    repos::{code::upload, releases},
+};
 use crate::backend::{app::AppState, db};
 use axum::{
     extract::{MatchedPath, Request},
@@ -16,22 +19,22 @@ use futures_util::{Stream, StreamExt};
 use std::{io, sync::Arc, time::Duration};
 
 /// The upload routes are matched before this layer runs. A request without a matched path is
-/// not an upload route, so it is gated. An upload form reads its own body, with per-file and
-/// total limits, and answers a too-large file with the upload page.
+/// not an upload route, so it is gated. Upload routes read their own bodies, with their own
+/// limits, and answer a too-large file with their own response.
 fn streams_upload(request: &Request) -> bool {
     request
         .extensions()
         .get::<MatchedPath>()
         .is_some_and(|path| {
             (*request.method() == Method::PUT && path.as_str() == files::CONTENT_ROUTE)
-                || (*request.method() == Method::POST && path.as_str() == upload::ROUTE)
+                || (*request.method() == Method::POST
+                    && matches!(path.as_str(), upload::ROUTE | releases::ASSET_ROUTE))
         })
 }
 
 /// Reads the whole body of every POST, PUT, PATCH and DELETE request before its handler
 /// runs. At most 8 reads run at once per node, each within 4 MiB and 30 seconds. A slot
-/// covers only the read, so a slow handler does not hold one. The streamed upload route
-/// is exempt.
+/// covers only the read, so a slow handler does not hold one. The upload routes are exempt.
 pub(crate) async fn bounded_form_body(
     Extension(state): Extension<Arc<AppState>>,
     request: Request,

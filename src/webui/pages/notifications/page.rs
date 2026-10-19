@@ -1,5 +1,5 @@
 //! Recipient-scoped notification presentation and polling.
-use crate::webui::components::Avatar;
+use crate::webui::components::{Avatar, DraftInput};
 use crate::webui::encode_component;
 use crate::webui::navigation::{NavLink, RefreshLink};
 use dioxus::prelude::*;
@@ -380,7 +380,8 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                     if model.unread_only {
                         input { r#type: "hidden", name: "unread_only", value: "1" }
                     }
-                    input { r#type: "search", name: "q", class: "notification-search-input", placeholder: "Search notifications", aria_label: "Search notifications", value: model.query.clone().unwrap_or_default() }
+                    // A draft, so the 15-second refresh does not overwrite text not yet searched.
+                    DraftInput { name: "q", input_type: "search".to_string(), class: "notification-search-input".to_string(), placeholder: "Search notifications".to_string(), aria_label: Some("Search notifications".to_string()), initial_value: model.query.clone().unwrap_or_default() }
                     button { r#type: "submit", class: "btn btn-sm", "Search" }
                 }
                 div { class: "notification-toolbar-actions",
@@ -636,6 +637,12 @@ mod tests {
         }
     }
 
+    /// The page inside a Dioxus scope, as the app renders it. The search box is a component with
+    /// state, so it needs the scope that the app always provides.
+    fn render_page(model: NotificationsPage) -> String {
+        crate::webui::tests::in_scope(|| dioxus_ssr::render_element(notifications_page(model)))
+    }
+
     fn page(notifications: Vec<Notification>) -> NotificationsPage {
         NotificationsPage {
             csrf_token: "inbox-token".into(),
@@ -747,7 +754,7 @@ mod tests {
         item.read = true;
         item.actor = None;
         item.repository = None;
-        let html = dioxus_ssr::render_element(notifications_page(page(vec![item])));
+        let html = render_page(page(vec![item]));
         assert!(html.contains("class=\"notification-link\""));
         assert!(html.contains("href=\"/alice/repo/issues/1\""));
         assert!(!html.contains("/avatars/"));
@@ -762,7 +769,7 @@ mod tests {
             saved: 2,
             done: 9,
         };
-        let html = dioxus_ssr::render_element(notifications_page(model));
+        let html = render_page(model);
         let saved = element_at(&html, "notification-tab is-current", "</a>");
         assert!(saved.contains("Saved"), "{saved}");
         assert!(saved.contains("aria-current=\"page\""), "{saved}");
@@ -782,7 +789,7 @@ mod tests {
         item.done = true;
         let mut model = page(vec![item]);
         model.view = "done".into();
-        let html = dioxus_ssr::render_element(notifications_page(model));
+        let html = render_page(model);
         assert!(!html.contains("Mark all as done"));
         assert!(!html.contains("notification-bulk-form"));
         assert!(html.contains("aria-label=\"Undo\""));
@@ -794,7 +801,7 @@ mod tests {
         item.done = true;
         let mut model = page(vec![item]);
         model.view = "done".into();
-        let html = dioxus_ssr::render_element(notifications_page(model));
+        let html = render_page(model);
         assert!(!html.contains("notification-row is-unread"), "{html}");
         assert!(html.contains("aria-label=\"Read\""), "{html}");
         assert!(!html.contains("action=\"/notifications/7/read\""), "{html}");
@@ -808,7 +815,7 @@ mod tests {
         item.subject = Some("Crash when saving an empty file".into());
         item.reason = Some("Comments".into());
         item.read = true;
-        let html = dioxus_ssr::render_element(notifications_page(page(vec![item])));
+        let html = render_page(page(vec![item]));
         let title = element_at(&html, "class=\"notification-title\"", "</h2>");
         assert!(title.contains("Crash when saving an empty file"), "{title}");
         assert!(!title.contains("commented on issue"), "{title}");
@@ -830,7 +837,7 @@ mod tests {
             slug: "comment".into(),
             label: "Comments".into(),
         }];
-        let html = dioxus_ssr::render_element(notifications_page(model));
+        let html = render_page(model);
         assert!(
             html.contains(
                 "<summary class=\"btn btn-sm is-current\">Repository: alice/proj</summary>"
@@ -855,7 +862,7 @@ mod tests {
 
     #[test]
     fn row_actions_are_named_native_forms_that_say_their_state() {
-        let html = dioxus_ssr::render_element(notifications_page(page(vec![notification(7)])));
+        let html = render_page(page(vec![notification(7)]));
         let save = element_at(&html, "action=\"/notifications/7/save\"", "</form>");
         assert!(save.contains("name=\"saved\""), "{save}");
         assert!(save.contains("value=\"1\""), "{save}");
@@ -872,12 +879,47 @@ mod tests {
         saved.done = true;
         let mut model = page(vec![saved]);
         model.view = "done".into();
-        let html = dioxus_ssr::render_element(notifications_page(model));
+        let html = render_page(model);
         assert!(html.contains("aria-label=\"Unsave\""));
         assert!(html.contains("aria-label=\"Undo\""));
         assert!(html.contains("aria-pressed=\"true\""));
         let undo = element_at(&html, "action=\"/notifications/8/done\"", "</form>");
         assert!(undo.contains("value=\"0\""), "{undo}");
+    }
+
+    #[test]
+    fn the_search_box_is_labelled_and_shows_the_query() {
+        let mut model = page(vec![notification(7)]);
+        model.query = Some("build".into());
+        let html = render_page(model);
+        let search = element_at(&html, "notification-search-input", ">");
+        assert!(
+            search.contains("aria-label=\"Search notifications\""),
+            "{search}"
+        );
+        assert!(search.contains("value=\"build\""), "{search}");
+    }
+
+    #[test]
+    fn the_unread_toggle_keeps_its_pressed_state_inside_the_app() {
+        // Inside the router, a link that is not marked as current must still keep its own state.
+        let mut model = page(vec![notification(7)]);
+        model.unread_only = true;
+        let envelope = crate::webui::app::PageEnvelope {
+            title: "Notifications".into(),
+            location: "/notifications?unread_only=1".into(),
+            chrome: crate::webui::document::Chrome::default(),
+            page: crate::webui::app::Page::Actions(crate::webui::pages::ci::Page::Notifications(
+                model,
+            )),
+        };
+        let html = crate::webui::document::render_model(envelope, "/assets/app.js").unwrap();
+        let at = html
+            .find("class=\"btn btn-sm is-current\"")
+            .expect("the unread toggle");
+        let start = html[..at].rfind('<').unwrap();
+        let tag = &html[start..at + html[at..].find('>').unwrap()];
+        assert!(tag.contains("aria-current=\"true\""), "{tag}");
     }
 
     #[test]
@@ -889,7 +931,7 @@ mod tests {
         model.query = Some("build".into());
         model.unread_only = true;
         model.before = Some("cursor".into());
-        let html = dioxus_ssr::render_element(notifications_page(model));
+        let html = render_page(model);
         let save = element_at(&html, "action=\"/notifications/7/save\"", "</form>");
         for expected in [
             "name=\"view\"",

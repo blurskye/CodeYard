@@ -154,6 +154,42 @@ async fn issue_mentions(pg: bool) {
     world.close().await;
 }
 
+/// Deleting a comment takes the mention notices it sent, so their copy of the text goes too.
+async fn deleted_comments_take_their_mention_notices(pg: bool) {
+    let world = World::new(pg).await;
+    world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/issues",
+            json!({"title": "Thread", "body": "Opening"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let comment = world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/issues/1/comments",
+            json!({"body": "Over to @bob"}),
+            StatusCode::CREATED,
+        )
+        .await["id"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(mentions(&world, world.bob_id).await.len(), 1);
+    let removed = world
+        .alice
+        .form_reply(
+            &format!("/alice/proj/issues/1/comments/{comment}/delete"),
+            &[],
+        )
+        .await;
+    assert!(removed.status.is_redirection(), "{}", removed.text());
+    assert!(mentions(&world, world.bob_id).await.is_empty());
+    world.close().await;
+}
+
 async fn ignored_mentions(pg: bool) {
     let world = World::new(pg).await;
     let body = "Real @bob.\n\n`@carol` and `@carol`\n\n```\n@carol\n```\n\n\
@@ -321,6 +357,72 @@ async fn issue_author_gets_one_notice_for_a_comment(pg: bool) {
         .map(|notification| notification.kind.as_str())
         .collect();
     assert_eq!(kinds, ["issue_comment"]);
+    world.close().await;
+}
+
+/// An edit that newly mentions the issue author notifies them. The author got the comment's own
+/// notice when it was written, and that notice is not a mention.
+async fn edit_mentions_the_issue_author(pg: bool) {
+    let world = World::new(pg).await;
+    world
+        .bob
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/issues",
+            json!({"title": "Question", "body": "How?"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let comment = world
+        .carol
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/issues/1/comments",
+            json!({"body": "Plain text"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert!(mentions(&world, world.bob_id).await.is_empty());
+    let comment_id = comment["id"].as_i64().unwrap();
+    let reply = world
+        .carol
+        .form_reply(
+            &format!("/alice/proj/issues/1/comments/{comment_id}/edit"),
+            &[("body", "@bob see this")],
+        )
+        .await;
+    assert!(reply.status.is_redirection(), "{}", reply.text());
+    assert_eq!(mentions(&world, world.bob_id).await.len(), 1);
+    world.close().await;
+}
+
+/// The same for a pull request's conversation comment: an edit that newly mentions its author
+/// notifies them.
+async fn edit_mentions_the_pull_request_author(pg: bool) {
+    let world = World::new(pg).await;
+    world.alice.branch("topic", &world.base).await;
+    world.alice.save("topic", "topic.txt", &world.base).await;
+    world.alice.open_pull("Review me", "topic", "main").await;
+    let comment = world
+        .carol
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/pulls/1/comments",
+            json!({"body": "Plain text"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    assert!(mentions(&world, world.alice_id).await.is_empty());
+    let comment_id = comment["id"].as_i64().unwrap();
+    let reply = world
+        .carol
+        .form_reply(
+            &format!("/alice/proj/pulls/1/comments/{comment_id}/edit"),
+            &[("body", "@alice see this")],
+        )
+        .await;
+    assert!(reply.status.is_redirection(), "{}", reply.text());
+    assert_eq!(mentions(&world, world.alice_id).await.len(), 1);
     world.close().await;
 }
 
@@ -578,6 +680,16 @@ async fn sqlite_issue_mentions() {
 }
 
 #[tokio::test]
+async fn postgres_deleted_comments_take_their_mention_notices() {
+    deleted_comments_take_their_mention_notices(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_deleted_comments_take_their_mention_notices() {
+    deleted_comments_take_their_mention_notices(false).await;
+}
+
+#[tokio::test]
 async fn postgres_ignored_mentions() {
     ignored_mentions(true).await;
 }
@@ -620,6 +732,24 @@ async fn postgres_issue_author_gets_one_notice_for_a_comment() {
 #[tokio::test]
 async fn sqlite_issue_author_gets_one_notice_for_a_comment() {
     issue_author_gets_one_notice_for_a_comment(false).await;
+}
+
+#[tokio::test]
+async fn postgres_edit_mentions_the_issue_author() {
+    edit_mentions_the_issue_author(true).await;
+}
+#[tokio::test]
+async fn sqlite_edit_mentions_the_issue_author() {
+    edit_mentions_the_issue_author(false).await;
+}
+
+#[tokio::test]
+async fn postgres_edit_mentions_the_pull_request_author() {
+    edit_mentions_the_pull_request_author(true).await;
+}
+#[tokio::test]
+async fn sqlite_edit_mentions_the_pull_request_author() {
+    edit_mentions_the_pull_request_author(false).await;
 }
 
 #[tokio::test]

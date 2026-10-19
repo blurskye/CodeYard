@@ -246,6 +246,7 @@ pub async fn create_pull_request_review(
             number: pull_request.number,
             subject: &pull_request.title,
             link: &link,
+            comment_id: None,
             old_text: None,
             text: review.body.as_deref().unwrap_or(""),
             notified: &[pull_request.author_id],
@@ -273,12 +274,21 @@ pub async fn create_pull_request_review(
                 number: pull_request.number,
                 subject: &pull_request.title,
                 link: &comment_link,
+                comment_id: None,
                 old_text: None,
                 text: &entry.comment.body,
                 notified: &[pull_request.author_id],
             },
         )
         .await;
+        super::comments::emit_comment_webhook(
+            pool,
+            &repository,
+            &pull_request,
+            &entry.comment,
+            "created",
+            user.id,
+        );
     }
 
     if review.state != "pending" {

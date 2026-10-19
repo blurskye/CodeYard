@@ -263,6 +263,15 @@ pub async fn delete_file(
     {
         return Ok(DeleteFileOutcome::ReferencedOrganizationAvatar);
     }
+    // The file row is locked above, so an asset that links this file either waits for the delete
+    // or is seen here.
+    if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM release_assets WHERE file_id=$1)")
+        .bind(file_id)
+        .fetch_one(&mut *tx)
+        .await?
+    {
+        return Ok(DeleteFileOutcome::ReferencedReleaseAsset);
+    }
     queue_deletion(&mut tx, &file).await?;
     sqlx::query("DELETE FROM files WHERE id=$1")
         .bind(file_id)

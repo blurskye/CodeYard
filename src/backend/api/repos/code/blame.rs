@@ -18,7 +18,12 @@ async fn blame_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Re
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository is empty."));
     }
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
-    let blame = match store.blame(&resolved.reference, &resolved.path).await {
+    // Resolve the ref once, so the blame and the permalink name the same commit.
+    let head = store
+        .commit(&resolved.reference)
+        .await
+        .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
+    let blame = match store.blame(&head.sha, &resolved.path).await {
         Ok(blame) => blame,
         // A file the store refuses to blame is a fact about the file, not an outage.
         Err(error) if error.kind == ErrorKind::Invalid && !error.is_response_too_large() => {
@@ -31,7 +36,7 @@ async fn blame_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Re
         Err(error) => return Err(store_error(ctx, Some(&loaded.chrome), error)),
     };
     let (folders, latest_commit, permalink) =
-        file_context(ctx, loaded, &store, &resolved.reference, &resolved.path).await?;
+        file_context(ctx, loaded, &store, &head.sha, &resolved.path).await?;
     let page = view::blame::BlamePage {
         deletable: is_branch(loaded, &resolved.reference),
         branches: ref_names_under(loaded, "refs/heads/"),

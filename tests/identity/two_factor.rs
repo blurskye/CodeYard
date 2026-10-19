@@ -6,7 +6,11 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::native_database::token;
 use crate::support::pull_requests::Client;
 use crate::support::{database::Database, PASSWORD_WORK};
-use axum::http::StatusCode;
+use axum::{
+    body::{to_bytes, Body},
+    http::{header, HeaderMap, Request, StatusCode},
+    Router,
+};
 use codeyard::backend::{
     api::create_router,
     app::AppState,
@@ -24,6 +28,7 @@ use codeyard::backend::{
     storage::ObjectStore,
 };
 use std::sync::Arc;
+use tower::ServiceExt;
 
 const PASSWORD: &str = "correct horse battery";
 
@@ -472,6 +477,189 @@ fn recovery_codes_in(page: &str) -> Vec<String> {
         })
         .map(str::to_owned)
         .collect()
+}
+
+/// The anonymous session cookie and CSRF token of a visitor, from the sign-in page.
+async fn visitor(router: &Router) -> (String, String) {
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/login")
+                .header(header::HOST, "forge.example.test")
+                .header(header::ACCEPT, "text/html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|value| value.strip_prefix("session_id="))
+        .and_then(|value| value.split(';').next())
+        .expect("the sign-in page sets a visitor session")
+        .to_owned();
+    let bytes = to_bytes(response.into_body(), 2 * 1024 * 1024)
+        .await
+        .unwrap();
+    let page = String::from_utf8_lossy(&bytes).into_owned();
+    (cookie, field_value(&page, "csrf_token"))
+}
+
+/// Submits a native form the way a browser does, with the session cookie and same-origin headers.
+async fn submit(
+    router: &Router,
+    path: &str,
+    session: &str,
+    fields: &[(&str, &str)],
+) -> (StatusCode, HeaderMap, String) {
+    let mut body = url::form_urlencoded::Serializer::new(String::new());
+    for (name, value) in fields {
+        body.append_pair(name, value);
+    }
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(path)
+                .header(header::HOST, "forge.example.test")
+                .header(header::ORIGIN, "http://forge.example.test")
+                .header(header::ACCEPT, "text/html")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .header(header::COOKIE, format!("session_id={session}"))
+                .body(Body::from(body.finish()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = to_bytes(response.into_body(), 2 * 1024 * 1024)
+        .await
+        .unwrap();
+    (
+        status,
+        headers,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+/// On a private node the password step and the second-factor page are both sign-in pages, so a
+/// two-factor user can finish signing in. Only anonymous visitors reach this path.
+async fn private_node_two_factor_sign_in(pg: bool) {
+    let _work = PASSWORD_WORK.lock().await;
+    let mut database = fixture(pg).await;
+    database
+        .execute(
+            "UPDATE node_configuration SET node_mode='private' WHERE id=1",
+            &[],
+        )
+        .await;
+    let key = encryptor();
+    let alice = new_user(&database, "alice", false).await;
+    let (secret, _) = enable(&database, &key, &alice).await;
+    let root = tempfile::tempdir().unwrap();
+    let router = create_router(AppState::new(
+        database.pool().clone(),
+        root.path().to_owned(),
+        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
+        Some(Arc::new(encryptor())),
+        CiConfig::default(),
+        None,
+    ));
+    let (visitor_session, csrf) = visitor(&router).await;
+    let (status, _, page) = submit(
+        &router,
+        "/login",
+        &visitor_session,
+        &[
+            ("csrf_token", csrf.as_str()),
+            ("username", "alice"),
+            ("password", PASSWORD),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let pending = field_value(&page, "pending");
+    let code = code_at(&secret, step() + 1);
+    let (status, headers, page) = submit(
+        &router,
+        "/login/two-factor",
+        &visitor_session,
+        &[
+            ("csrf_token", csrf.as_str()),
+            ("pending", pending.as_str()),
+            ("code", code.as_str()),
+        ],
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    // The session cookie is issued only when the second factor completes the sign-in.
+    assert!(headers[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .starts_with("session_id="));
+    database.finish().await;
+}
+
+/// A password change ends the sign-ins that were started with the old password, including their
+/// unused recovery codes.
+async fn password_change_ends_pending_sign_ins(pg: bool) {
+    let _work = PASSWORD_WORK.lock().await;
+    let mut database = fixture(pg).await;
+    let key = encryptor();
+    let alice = new_user(&database, "alice", false).await;
+    let (_, codes) = enable(&database, &key, &alice).await;
+    let pending = pending_after_password(&database, &key, "alice", Some("Firefox")).await;
+    let session = token();
+    db::users::sessions::create_session(
+        database.pool(),
+        &session,
+        alice.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    identity::accounts::change_password(
+        database.pool(),
+        Some(&session),
+        identity::accounts::PasswordChange {
+            current_password: PASSWORD,
+            new_password: "replacement password",
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        second_factor(&database, &key, &pending, &codes[0], Some("Firefox"))
+            .await
+            .err(),
+        Some(LoginError::PendingLoginExpired)
+    );
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn postgres_two_factor_private_node_sign_in() {
+    private_node_two_factor_sign_in(true).await;
+}
+#[tokio::test]
+async fn sqlite_two_factor_private_node_sign_in() {
+    private_node_two_factor_sign_in(false).await;
+}
+#[tokio::test]
+async fn postgres_two_factor_password_change_ends_pending_sign_ins() {
+    password_change_ends_pending_sign_ins(true).await;
+}
+#[tokio::test]
+async fn sqlite_two_factor_password_change_ends_pending_sign_ins() {
+    password_change_ends_pending_sign_ins(false).await;
 }
 
 #[tokio::test]

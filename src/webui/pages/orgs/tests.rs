@@ -143,6 +143,14 @@ fn selected(block: &str, value: &str) -> bool {
 }
 
 #[test]
+fn the_new_and_edited_team_descriptions_have_their_own_ids() {
+    // Each description is a separate draft, so the two forms must not share an id or a name.
+    let page = html(sample_page(HashMap::new(), Vec::new()));
+    assert!(page.contains("id=\"team-description\""), "{page}");
+    assert!(page.contains("id=\"team-edit-description\""), "{page}");
+}
+
+#[test]
 fn fixed_choices_are_selects_with_human_labels() {
     // With a repository the grant form renders, so it has its own access select.
     let repositories = vec![RepositoryChoice {

@@ -393,6 +393,27 @@ pub async fn invitations(f: &Fixture) {
         .members
         .iter()
         .any(|member| member.user_id == invitee.id && member.role == "member"));
+
+    // OAuth can create one- and two-character names, and those accounts can still be invited.
+    let short = Fixture::actor(pool, "ab").await;
+    f.form(
+        &f.owner,
+        &path,
+        &[
+            ("action", "add-member"),
+            ("username", "ab"),
+            ("role", "member"),
+        ],
+    )
+    .await
+    .redirect(&path);
+    assert!(f
+        .get(&f.owner, &path)
+        .await
+        .organization()
+        .pending_invitations
+        .iter()
+        .any(|pending| pending.user_id == short.id));
 }
 
 pub async fn contracts(f: &Fixture) {

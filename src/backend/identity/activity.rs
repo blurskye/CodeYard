@@ -10,6 +10,9 @@ pub const PAGE_SIZE: usize = 30;
 /// Later pages are not served, so one request reads a bounded number of rows.
 pub const MAX_PAGE: i64 = 100;
 const SCAN_ROWS: i64 = 100;
+/// Most rows one request reads while it looks for items the viewer can read. A page the scan does
+/// not fill is served short, with no next page, so a long private history is not read in full.
+pub const MAX_SCAN_ROWS: i64 = 1_000;
 
 pub struct ActivityPage {
     pub items: Vec<ActivityRow>,
@@ -17,7 +20,8 @@ pub struct ActivityPage {
 }
 
 /// One page of `user_id`'s activity, newest first. Rows in repositories the viewer cannot
-/// read are skipped and do not count toward the page size. Out-of-range pages are clamped.
+/// read are skipped and do not count toward the page size. Out-of-range pages are clamped, and
+/// the scan stops after `MAX_SCAN_ROWS` rows.
 pub async fn profile_activity(
     pool: &DbPool,
     viewer: Option<&User>,
@@ -32,7 +36,7 @@ pub async fn profile_activity(
     let mut visible_before = 0usize;
     let mut items = Vec::with_capacity(wanted);
     let mut offset = 0i64;
-    'scan: loop {
+    'scan: while offset < MAX_SCAN_ROWS {
         let rows = db::activity::list_user_activity(pool, user_id, SCAN_ROWS, offset).await?;
         let exhausted = (rows.len() as i64) < SCAN_ROWS;
         for row in rows {
