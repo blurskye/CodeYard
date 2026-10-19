@@ -36,7 +36,6 @@ fn repo_chrome() -> RepoChrome {
         topics: Vec::new(),
         is_private: false,
         is_archived: false,
-        wiki_enabled: true,
         can_write: true,
         can_admin: true,
         is_owner: false,
@@ -992,7 +991,7 @@ fn run_page_offers_cancel_and_rerun_forms_only_to_writers() {
     assert!(!reader.contains("/rerun\""), "{reader}");
     page.can_dispatch = true;
 
-    // A finished push run is run again; a finished pull request run is not offered that.
+    // A finished run is run again, whatever its event.
     running.status = "succeeded".into();
     page.selected = Some(selected(running.clone()));
     let finished = html(page.clone());
@@ -1003,5 +1002,5 @@ fn run_page_offers_cancel_and_rerun_forms_only_to_writers() {
     assert!(!finished.contains("/cancel\""), "{finished}");
     running.event = "pull_request".into();
     page.selected = Some(selected(running));
-    assert!(!html(page).contains("/rerun\""));
+    assert!(html(page).contains("action=\"/alice/repo/actions/runs/real-run/rerun\""));
 }

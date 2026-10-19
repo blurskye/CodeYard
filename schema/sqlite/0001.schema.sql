@@ -169,12 +169,20 @@ CREATE TABLE gpg_keys (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 
+-- The encrypted TOTP secret, the last accepted time step (a code works once) and the hashed
+-- one-time recovery codes. users.two_factor_enabled is kept in step.
 CREATE TABLE two_factor_auth (
-    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE CHECK (typeof(user_id)='integer'),
     totp_secret_encrypted BLOB NOT NULL,
-    backup_codes_encrypted BLOB,
-    enabled_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    last_used_at TEXT
+    totp_nonce BLOB NOT NULL,
+    last_used_step INTEGER CHECK (last_used_step IS NULL OR typeof(last_used_step)='integer'),
+    enabled_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+);
+
+CREATE TABLE two_factor_recovery_codes (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (typeof(user_id)='integer'),
+    code_hash TEXT NOT NULL CHECK (length(code_hash)=64),
+    PRIMARY KEY (user_id, code_hash)
 );
 
 CREATE TABLE organizations (
@@ -197,6 +205,20 @@ CREATE TABLE org_memberships (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     UNIQUE(org_id, user_id)
 );
+
+-- Organization invitations: a pending offer of membership. Membership starts only when the
+-- invitee accepts; a decline or a cancellation deletes the row.
+CREATE TABLE organization_invitations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
+    org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE CHECK (typeof(org_id)='integer'),
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (typeof(user_id)='integer'),
+    role TEXT NOT NULL DEFAULT 'member' CHECK (length(role)<=20),
+    invited_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (invited_by_id IS NULL OR typeof(invited_by_id)='integer'),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    UNIQUE(org_id, user_id)
+);
+
+CREATE INDEX idx_organization_invitations_user_id ON organization_invitations(user_id);
 
 CREATE TABLE teams (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
@@ -287,6 +309,8 @@ CREATE TABLE deploy_keys (
     public_key TEXT NOT NULL,
     read_only INTEGER NOT NULL DEFAULT 1 CHECK (read_only IN (0,1)),
     last_used_at TEXT,
+    -- The account that added the key, which its pushes are attributed to.
+    created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (created_by_id IS NULL OR typeof(created_by_id)='integer'),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     UNIQUE(repo_id, fingerprint)
 );
@@ -350,6 +374,7 @@ CREATE TABLE branch_protection_rules (
     require_pull_request INTEGER NOT NULL DEFAULT 0 CHECK (require_pull_request IN (0,1)),
     required_approving_reviews INTEGER NOT NULL DEFAULT 0 CHECK (required_approving_reviews IS NULL OR typeof(required_approving_reviews)='integer') CHECK (required_approving_reviews BETWEEN -2147483648 AND 2147483647),
     dismiss_stale_reviews INTEGER NOT NULL DEFAULT 0 CHECK (dismiss_stale_reviews IN (0,1)),
+    require_code_owner_review INTEGER NOT NULL DEFAULT 0 CHECK (require_code_owner_review IN (0,1)),
     require_status_checks INTEGER NOT NULL DEFAULT 0 CHECK (require_status_checks IN (0,1)),
     required_status_checks TEXT DEFAULT '[]' CHECK (required_status_checks IS NULL OR (json_valid(required_status_checks) AND json_type(required_status_checks)='array')),
     require_up_to_date_branch INTEGER NOT NULL DEFAULT 0 CHECK (require_up_to_date_branch IN (0,1)),
@@ -491,6 +516,8 @@ CREATE TABLE pull_requests (
     head_sha TEXT NOT NULL CHECK (length(head_sha)<=40),
     base_branch TEXT NOT NULL CHECK (length(base_branch)<=255),
     base_sha TEXT NOT NULL CHECK (length(base_sha)<=40),
+    -- The base a stacked layer was built on, kept while its base branch moves on. NULL means base_sha is that base.
+    fork_sha TEXT CHECK (length(fork_sha)<=40),
     is_draft INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0,1)),
     mergeable INTEGER CHECK (mergeable IN (0,1)),
     merged INTEGER NOT NULL DEFAULT 0 CHECK (merged IN (0,1)),
@@ -576,11 +603,15 @@ CREATE TABLE releases (
     body TEXT,
     is_draft INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0,1)),
     is_prerelease INTEGER NOT NULL DEFAULT 0 CHECK (is_prerelease IN (0,1)),
+    is_latest INTEGER NOT NULL DEFAULT 0 CHECK (is_latest IN (0,1)),
     author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (author_id IS NULL OR typeof(author_id)='integer'),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     published_at TEXT,
     UNIQUE(repo_id, tag_name)
 );
+
+-- One latest release per repository.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_one_latest ON releases(repo_id) WHERE is_latest = 1;
 
 CREATE TABLE release_assets (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
@@ -594,6 +625,8 @@ CREATE TABLE release_assets (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_release_assets_name ON release_assets(release_id, name);
 
 CREATE TABLE stars (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
@@ -750,10 +783,12 @@ CREATE TABLE ci_runs (
     -- A frozen copy of the pull request fields the run was started with.
     pull_request_event TEXT CHECK (pull_request_event IS NULL OR json_valid(pull_request_event)),
     -- The inputs a manual run was started with: a JSON object of strings, as GitHub's event.inputs.
-    workflow_inputs TEXT CHECK (workflow_inputs IS NULL OR json_valid(workflow_inputs))
+    workflow_inputs TEXT CHECK (workflow_inputs IS NULL OR json_valid(workflow_inputs)),
+    -- The attempt at a pull request revision: 1 for the first run, one more for each run started again.
+    attempt INTEGER NOT NULL DEFAULT 1 CHECK (attempt >= 1)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_request_id, branch, head_sha, workflow_path)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_request_id, branch, head_sha, workflow_path, attempt)
     WHERE event = 'pull_request' AND pull_request_id IS NOT NULL;
 
 CREATE TABLE ci_logs (
@@ -1154,3 +1189,44 @@ SELECT user_id,ip_address,COUNT(*) AS upload_count,SUM(file_size) AS total_bytes
     MIN(uploaded_at) AS first_upload,MAX(uploaded_at) AS last_upload,COUNT(DISTINCT reason) AS reason_variety
 FROM upload_rate_limit WHERE uploaded_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')
 GROUP BY user_id,ip_address HAVING COUNT(*)>20 OR SUM(file_size)>104857600;
+
+-- Webhooks on a repository or an organization, their encrypted secrets, and recent deliveries.
+CREATE TABLE webhooks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
+    repo_id INTEGER REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
+    org_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE CHECK (org_id IS NULL OR typeof(org_id)='integer'),
+    payload_url TEXT NOT NULL CHECK (length(payload_url) <= 2048),
+    content_type TEXT NOT NULL CHECK (content_type IN ('application/json','application/x-www-form-urlencoded')),
+    encrypted_secret BLOB,
+    secret_nonce BLOB,
+    events TEXT NOT NULL CHECK (length(events) <= 1024),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0,1)),
+    ssl_verify INTEGER NOT NULL DEFAULT 1 CHECK (ssl_verify IN (0,1)),
+    created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (created_by_id IS NULL OR typeof(created_by_id)='integer'),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    CHECK ((repo_id IS NULL) <> (org_id IS NULL)),
+    CHECK ((encrypted_secret IS NULL) = (secret_nonce IS NULL))
+);
+
+CREATE INDEX idx_webhooks_repo_id ON webhooks(repo_id);
+
+CREATE INDEX idx_webhooks_org_id ON webhooks(org_id);
+
+CREATE TABLE webhook_deliveries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
+    webhook_id INTEGER NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE CHECK (typeof(webhook_id)='integer'),
+    guid TEXT NOT NULL CHECK (length(guid) <= 64),
+    event TEXT NOT NULL CHECK (length(event) <= 64),
+    action TEXT CHECK (length(action) <= 64),
+    status_code INTEGER,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    error TEXT CHECK (length(error) <= 512),
+    request_headers TEXT NOT NULL,
+    request_body TEXT NOT NULL,
+    response_headers TEXT,
+    response_body TEXT,
+    delivered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+);
+
+CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id, id);

@@ -22,6 +22,18 @@ impl Drop for Server {
 }
 impl Server {
     pub async fn start(root: &Path, url: &str) -> Self {
+        // Tests that fill every session slot count on 16 of them and an instant refusal.
+        Self::start_with_session_slots(root, url, 16, 0).await
+    }
+
+    /// A server with `slots` Git sessions at once. A request that finds them all taken waits up
+    /// to `wait_seconds` for one before it is refused as busy.
+    pub async fn start_with_session_slots(
+        root: &Path,
+        url: &str,
+        slots: usize,
+        wait_seconds: u64,
+    ) -> Self {
         let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = socket.local_addr().unwrap();
         drop(socket);
@@ -33,9 +45,8 @@ impl Server {
             .env("HOME", root)
             .env("WEBUI_DIST", std::env::var_os("WEBUI_DIST").unwrap())
             .env("RUST_LOG", "info")
-            // Tests that fill every session slot count on 16 of them and an instant refusal.
-            .env("GIT_SESSION_LIMIT", "16")
-            .env("GIT_SESSION_WAIT_SECONDS", "0")
+            .env("GIT_SESSION_LIMIT", slots.to_string())
+            .env("GIT_SESSION_WAIT_SECONDS", wait_seconds.to_string())
             .env("COOKIE_SECURE", "false")
             .env("DATABASE_URL", url)
             .env("GITSERV_STATE_DIR", root.join("state"))

@@ -38,13 +38,11 @@ pub mod pull_requests;
 pub mod reactions;
 pub mod releases;
 pub mod repositories;
-pub mod repository_insights;
 pub mod repository_stats;
 pub mod secrets;
 pub mod timeline;
 pub mod users;
 pub mod webhooks;
-pub mod wiki;
 
 pub use connection::{init_db, DbPool};
 pub use migrations::run_migrations;

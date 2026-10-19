@@ -24,10 +24,9 @@ use std::{collections::HashMap, fmt, path::Path, time::Instant};
 
 pub(crate) use crate::backend::git::validate_merge_revision;
 pub use crate::backend::git::{
-    BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource,
-    CommitActivity, CommitActivityLog, CommitFilter, CommitInfo, ContributorInfo, DiffFileInfo,
-    DiffInfo, FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry,
-    MAX_ACTIVITY_COMMITS, MAX_CI_CHANGED_PATHS, MAX_CI_CHANGED_PATH_BYTES,
+    BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource, CommitFilter,
+    CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame, FileList, LanguageStat,
+    RepoInfo, TagInfo, TreeEntry, MAX_CI_CHANGED_PATHS, MAX_CI_CHANGED_PATH_BYTES,
     MAX_CI_CHANGED_PATH_TOTAL_BYTES, MAX_CI_WORKFLOW_BYTES, MAX_CONTRIBUTORS, MAX_DIFF_FILES,
     MAX_DIFF_FILE_PATCH_BYTES, MAX_DIFF_TOTAL_PATCH_BYTES, MAX_LANGUAGE_FILES, MAX_REPOSITORY_REFS,
     MAX_TREE_ENTRIES, MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
@@ -36,7 +35,8 @@ pub use editor::{
     FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_BYTES,
     MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES,
 };
-pub(crate) use local::{ensure_ref_room, record_ref_change};
+pub(crate) use local::ensure_ref_room;
+pub use local::{begin_ref_change, RefChange};
 
 /// The store for a repository row. Cheap to create and to clone.
 pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore {
@@ -103,11 +103,16 @@ pub enum ErrorKind {
 /// Refused when the storage node finds the merge method turned off in the repository.
 pub const MERGE_METHOD_NOT_ALLOWED: &str = "This merge method is not allowed in this repository.";
 
+/// Refused when a replica asks for a copy while a ref change to the repository is in progress.
+/// The copy waits and asks again on its next pass.
+pub const REPLICA_BUSY: &str = "Repository writes are in progress.";
+
 /// Specific failure reasons remain internal; the released RPC shape is unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepoErrorReason {
     StorageNodeUnavailable,
     SessionsBusy,
+    ReplicaBusy,
     WriteDenied,
     ProtectedBranch,
     MergeCommitBlocked,
@@ -170,6 +175,10 @@ impl RepoError {
         self.reason == Some(RepoErrorReason::MergeMethodNotAllowed)
     }
 
+    pub fn is_replica_busy(&self) -> bool {
+        self.reason == Some(RepoErrorReason::ReplicaBusy)
+    }
+
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
         Self {
             kind,
@@ -191,6 +200,14 @@ impl RepoError {
             kind: ErrorKind::Unavailable,
             reason: Some(RepoErrorReason::SessionsBusy),
             message: "Git sessions busy".into(),
+        }
+    }
+
+    pub fn replica_busy() -> Self {
+        Self {
+            kind: ErrorKind::Unavailable,
+            reason: Some(RepoErrorReason::ReplicaBusy),
+            message: REPLICA_BUSY.into(),
         }
     }
 
@@ -295,6 +312,7 @@ impl<'de> Deserialize<'de> for RepoError {
                 Self::storage_node_unavailable()
             }
             (ErrorKind::Unavailable, "Git sessions busy") => Self::sessions_busy(),
+            (ErrorKind::Unavailable, REPLICA_BUSY) => Self::replica_busy(),
             (ErrorKind::Invalid, "repository write denied") => Self::write_denied(),
             (ErrorKind::Invalid, "protected branch") => Self::protected_branch(),
             (ErrorKind::Invalid, MERGE_COMMIT_BLOCKED) => Self::merge_commit_blocked(),
@@ -735,6 +753,17 @@ impl RepoStore {
     pub async fn mirror_refs(&self) -> Result<HashMap<String, String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.mirror_refs().await,
+            Backend::Remote(_) => Err(rpc::wire::invalid("replica refs are listed on their node")),
+        }
+    }
+
+    /// The refs and HEAD a replica copy takes, as one listing. Refused while a ref change to
+    /// the repository is in progress here, so a copy never claims a version it lacks.
+    pub async fn replica_listing(
+        &self,
+    ) -> Result<(HashMap<String, String>, Option<String>), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.replica_listing().await,
             Backend::Remote(_) => Err(rpc::wire::invalid("replica refs are listed on their node")),
         }
     }
@@ -1226,23 +1255,6 @@ impl RepoStore {
         }
     }
 
-    /// The newest commits of `git_ref` with the lines each one changed. Insights reads it.
-    pub async fn commit_activity(&self, git_ref: &str) -> Result<CommitActivityLog, RepoError> {
-        match &self.0 {
-            Backend::Local(local) => local.commit_activity(git_ref).await,
-            Backend::Remote(remote) => {
-                remote
-                    .call(
-                        Operation::CommitActivity {
-                            git_ref: git_ref.into(),
-                        },
-                        b"",
-                    )
-                    .await
-            }
-        }
-    }
-
     /// Whether `ancestor` is reachable from `descendant`. Both are full commit IDs.
     pub async fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool, RepoError> {
         match &self.0 {
@@ -1422,7 +1434,7 @@ impl RepoStore {
             return Err(invalid_ref("branch"));
         }
         match &self.0 {
-            Backend::Local(local) => local.set_default_branch(pool, repo_id, name).await,
+            Backend::Local(local) => local.set_default_branch(pool, repo_id, actor, name).await,
             Backend::Remote(remote) => {
                 remote
                     .call_as(

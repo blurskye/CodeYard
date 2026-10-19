@@ -484,18 +484,27 @@ pub async fn set_repository_archived(
     Ok(result.rows_affected() == 1)
 }
 
-/// Stores the default branch. An archived repository keeps its branch; the result says whether it changed.
+/// Stores the default branch when the actor may administer the repository. The check and the
+/// update share one transaction. An archived repository keeps its branch. Returns whether it changed.
 pub async fn set_repository_default_branch(
     pool: &SqlitePool,
+    actor_id: i64,
     repo_id: i64,
     branch: &str,
 ) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
+        .await?
+    {
+        return Ok(false);
+    }
     let result = sqlx::query(
         "UPDATE repositories SET default_branch = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND NOT is_archived",
     )
     .bind(branch)
     .bind(repo_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }

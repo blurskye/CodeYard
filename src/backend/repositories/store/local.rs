@@ -10,8 +10,8 @@ use crate::backend::{
     db,
     git::{
         self, repository::process, BlobContent, BranchStatus, CiCommit, CiWorkflowFile,
-        CiWorkflowSource, CommitActivityLog, CommitFilter, CommitInfo, ContributorInfo, DiffInfo,
-        FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry,
+        CiWorkflowSource, CommitFilter, CommitInfo, ContributorInfo, DiffInfo, FileBlame, FileList,
+        LanguageStat, RepoInfo, TagInfo, TreeEntry,
     },
     repositories::{
         access, languages,
@@ -23,6 +23,7 @@ use crate::backend::{
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::{LazyLock, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 use uuid::Uuid;
@@ -195,23 +196,67 @@ async fn record_branch_update(
     }
 }
 
-/// Counts a ref change that Git has already made, so replicas know to copy it. The change
-/// is in place, so the request still succeeds if counting keeps failing: reporting it would
-/// leave callers, such as a merged pull request, disagreeing with Git. A short outage of the
-/// database is retried; replicas otherwise catch up at the next write.
-pub(crate) async fn record_ref_change(pool: &db::DbPool, repo_id: i64) {
-    let mut delay = std::time::Duration::from_millis(100);
-    for attempt in 1..=3 {
-        match db::cluster::bump_write_version(pool, repo_id).await {
-            Ok(_) => return,
-            Err(error) if attempt == 3 => {
-                tracing::error!(repo_id, %error, "could not record a ref change for replicas");
+/// Ref changes in progress on this node, counted per repository directory from before the
+/// database counts each one until Git has made it. A primary serves no replica copy while a
+/// change to that repository is counted, because the copy would claim a version whose change
+/// it may not hold yet.
+static REF_CHANGES: LazyLock<Mutex<HashMap<PathBuf, usize>>> = LazyLock::new(Default::default);
+
+fn ref_change_counts() -> MutexGuard<'static, HashMap<PathBuf, usize>> {
+    REF_CHANGES
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+/// The key that counts a repository directory. Every path to one directory gives the same key.
+async fn counting_key(path: &Path) -> PathBuf {
+    tokio::fs::canonicalize(path)
+        .await
+        .unwrap_or_else(|_| path.to_owned())
+}
+
+/// A ref change that Git is about to make, counted until it drops. Hold it until the change
+/// has been made or has failed.
+pub struct RefChange {
+    key: PathBuf,
+}
+
+impl Drop for RefChange {
+    fn drop(&mut self) {
+        let mut counts = ref_change_counts();
+        if let Some(count) = counts.get_mut(&self.key) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&self.key);
             }
-            Err(error) => {
-                tracing::warn!(repo_id, %error, "could not record a ref change; retrying");
-                tokio::time::sleep(delay).await;
-                delay *= 4;
-            }
+        }
+    }
+}
+
+/// Starts a ref change on the repository at `path`, before Git makes it. The change is counted
+/// in this process, then the database counts it, but only while `node_id` holds the repository;
+/// `None` skips that check, as for a store made from a bare path. A promotion that reads the
+/// version after this sees the new version and refuses a copy that is behind it. A copy that
+/// asks for its pack while the change is counted is refused, so it never claims a version whose
+/// change it lacks. If the change is refused, nothing is counted.
+pub async fn begin_ref_change(
+    pool: &db::DbPool,
+    repo_id: i64,
+    path: &Path,
+    node_id: Option<i64>,
+) -> Result<RefChange, RepoError> {
+    let key = counting_key(path).await;
+    let change = {
+        let mut counts = ref_change_counts();
+        *counts.entry(key.clone()).or_default() += 1;
+        RefChange { key }
+    };
+    match db::cluster::bump_write_version(pool, repo_id, node_id).await {
+        Ok(true) => Ok(change),
+        Ok(false) => Err(RepoError::write_denied()),
+        Err(error) => {
+            tracing::error!(repo_id, %error, "could not count a ref change for replicas");
+            Err(unavailable("Repository storage is unavailable."))
         }
     }
 }
@@ -685,15 +730,6 @@ impl LocalStore {
             .await
     }
 
-    pub(super) async fn commit_activity(
-        &self,
-        git_ref: &str,
-    ) -> Result<CommitActivityLog, RepoError> {
-        git::read_commit_activity(self.path(), git_ref)
-            .await
-            .map_err(RepoError::from)
-    }
-
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
         git::get_contributors(self.path())
             .await
@@ -874,10 +910,10 @@ impl LocalStore {
         // after waiting for the destination lock and immediately before
         // receive-pack can migrate objects and publish the exact CAS ref.
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::repository::publish_pull_head(self.path(), number, head, expected_head, &prepared)
             .await
             .map_err(RepoError::from)?;
-        record_ref_change(pool, repo_id).await;
         Ok(())
     }
 
@@ -916,11 +952,11 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_ref_create(self.path(), &reference, &target)
             .await
             .map_err(RepoError::from)?;
         let defaults = self.synchronize_default_branch(pool, repo_id).await;
-        record_ref_change(pool, repo_id).await;
         defaults?;
         Ok(target)
     }
@@ -965,10 +1001,10 @@ impl LocalStore {
         )
         .await?;
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_ref_delete(self.path(), &reference, &old)
             .await
             .map_err(RepoError::from)?;
-        record_ref_change(pool, repo_id).await;
         Ok(())
     }
 
@@ -1021,10 +1057,10 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_ref_create(self.path(), &reference, &tag.sha)
             .await
             .map_err(RepoError::from)?;
-        record_ref_change(pool, repo_id).await;
         Ok(tag)
     }
 
@@ -1051,10 +1087,10 @@ impl LocalStore {
         )
         .await?;
         let reference = git::tag_ref(name).ok_or_else(|| super::invalid_ref("tag"))?;
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_ref_delete(self.path(), &reference, &old)
             .await
             .map_err(RepoError::from)?;
-        record_ref_change(pool, repo_id).await;
         Ok(())
     }
 
@@ -1108,6 +1144,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         let commit = editor::publish(self.path(), prepared).await?;
         record_branch_update(
             pool,
@@ -1120,7 +1157,6 @@ impl LocalStore {
         )
         .await;
         let defaults = self.synchronize_default_branch(pool, repo_id).await;
-        record_ref_change(pool, repo_id).await;
         defaults?;
         Ok(commit)
     }
@@ -1258,6 +1294,7 @@ impl LocalStore {
         if !allowed_merge_methods(&repository).contains(&method) {
             return Err(RepoError::merge_method_not_allowed());
         }
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_merge(self.path(), heads, base_branch, base, result)
             .await
             .map_err(RepoError::from)?;
@@ -1271,7 +1308,6 @@ impl LocalStore {
             result,
         )
         .await;
-        record_ref_change(pool, repo_id).await;
         Ok(())
     }
 
@@ -1348,6 +1384,7 @@ impl LocalStore {
                 )
             })
             .collect();
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_restack(self.path(), base_branch, base, &ref_moves)
             .await
             .map_err(RepoError::from)?;
@@ -1363,7 +1400,6 @@ impl LocalStore {
             )
             .await;
         }
-        record_ref_change(pool, repo_id).await;
         Ok(())
     }
 
@@ -1396,6 +1432,20 @@ impl LocalStore {
         }
         let target = String::from_utf8(output).map_err(|_| unavailable("HEAD is not text"))?;
         Ok(Some(target.trim().to_owned()))
+    }
+
+    /// The refs and HEAD that a replica copy takes from this primary, read as one listing.
+    /// Refused while a ref change is counted here: the copy read the version before it asked,
+    /// and a change counted before that read may not be made yet.
+    pub(super) async fn replica_listing(
+        &self,
+    ) -> Result<(HashMap<String, String>, Option<String>), RepoError> {
+        let key = counting_key(self.path()).await;
+        let busy = ref_change_counts().contains_key(&key);
+        if busy {
+            return Err(RepoError::replica_busy());
+        }
+        Ok((self.mirror_refs().await?, self.head_target().await?))
     }
 
     /// Streams a pack of the objects that the listed refs need beyond the tips a copy
@@ -1497,12 +1547,14 @@ impl LocalStore {
         Ok(())
     }
 
-    /// Makes an existing branch the default. The database is updated first, so an archived
-    /// repository refuses the change before HEAD moves.
+    /// Makes an existing branch the default. The database is updated first, so a refused change
+    /// (no administration right, or an archived repository) leaves HEAD where it was. The actor's
+    /// right is checked after the wait for the repository lock, in the same transaction as the update.
     pub(super) async fn set_default_branch(
         &self,
         pool: &db::DbPool,
         repo_id: i64,
+        actor: i64,
         name: &str,
     ) -> Result<(), RepoError> {
         let _lock = git::locks::lock(self.path()).await;
@@ -1516,18 +1568,39 @@ impl LocalStore {
                 "That branch does not exist",
             ));
         }
-        let updated = db::repositories::records::set_repository_default_branch(pool, repo_id, name)
+        // An archived repository refuses the change, so it is not counted as a write.
+        let archived = db::repositories::records::get_repository_by_id(pool, repo_id)
             .await
-            .map_err(|_| unavailable("Repository storage is unavailable"))?;
-        if !updated {
+            .map_err(|_| unavailable("Repository storage is unavailable"))?
+            .is_some_and(|repository| repository.is_archived);
+        if archived {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
                 "This repository is archived and read-only.",
             ));
         }
+        // Replicas copy HEAD with the repository, so the change counts as a write. It is counted
+        // before the database names the new default.
+        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+        let updated =
+            db::repositories::records::set_repository_default_branch(pool, actor, repo_id, name)
+                .await
+                .map_err(|_| unavailable("Repository storage is unavailable"))?;
+        if !updated {
+            let archived = db::repositories::records::get_repository_by_id(pool, repo_id)
+                .await
+                .map_err(|_| unavailable("Repository storage is unavailable"))?
+                .is_some_and(|repository| repository.is_archived);
+            return Err(if archived {
+                RepoError::new(
+                    ErrorKind::Invalid,
+                    "This repository is archived and read-only.",
+                )
+            } else {
+                RepoError::write_denied()
+            });
+        }
         self.set_head_target(&reference).await?;
-        // Replicas copy HEAD with the repository, so the change counts as a write.
-        record_ref_change(pool, repo_id).await;
         // The stored languages describe the default branch, so store the new one's.
         languages::refresh_default_branch(
             pool.clone(),

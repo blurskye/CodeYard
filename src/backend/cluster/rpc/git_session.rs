@@ -139,19 +139,21 @@ impl RpcHandler {
     pub(super) async fn serve_session(&self, request: Request, mut link: Link) -> Result<()> {
         let caller = link.peer;
         let prepared = async {
-            let (store, _) = self.authorize_request(&request, caller).await?;
+            self.authorize_request(&request, caller).await?;
             let permit = git_process::session_permit()
                 .await
                 .map_err(RepoError::from)?;
+            // The wait for the slot can outlast the membership or copy this request was
+            // admitted on, so the same check runs again now.
+            let (store, _) = self.authorize_request(&request, caller).await?;
             let (admission, targets) = match &request.operation {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.
                 Operation::ReplicaPack { .. } => {
-                    let refs = store.mirror_refs().await?;
+                    let (refs, head) = store.replica_listing().await?;
                     let mut targets: Vec<String> = refs.values().cloned().collect();
                     targets.sort();
                     targets.dedup();
-                    let head = store.head_target().await?;
                     (serde_json::json!({ "head": head, "refs": refs }), targets)
                 }
                 _ => (Value::Null, Vec::new()),

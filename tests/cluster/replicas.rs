@@ -22,7 +22,8 @@ use codeyard::backend::{
         DbPool,
     },
     repositories::store::{
-        repo_store, ErrorKind, FileWrite, GitService, GitSession, GitStreams, RepoError, RepoStore,
+        begin_ref_change, repo_store, ErrorKind, FileWrite, GitService, GitSession, GitStreams,
+        RepoError, RepoStore,
     },
     storage::ObjectStore,
 };
@@ -121,13 +122,17 @@ async fn check_replica_rules(pool: &DbPool) {
         db::cluster::get_write_version(pool, repo).await.unwrap(),
         Some(0)
     );
-    db::cluster::bump_write_version(pool, repo).await.unwrap();
-    db::cluster::bump_write_version(pool, repo).await.unwrap();
+    db::cluster::bump_write_version(pool, repo, None)
+        .await
+        .unwrap();
+    db::cluster::bump_write_version(pool, repo, None)
+        .await
+        .unwrap();
     assert_eq!(
         db::cluster::get_write_version(pool, repo).await.unwrap(),
         Some(2)
     );
-    assert!(db::cluster::bump_write_version(pool, repo + 1000)
+    assert!(db::cluster::bump_write_version(pool, repo + 1000, None)
         .await
         .is_err());
     // A repository that no storage node holds has no replicas, so nothing is counted.
@@ -144,7 +149,7 @@ async fn check_replica_rules(pool: &DbPool) {
     )
     .await
     .unwrap();
-    db::cluster::bump_write_version(pool, unplaced.id)
+    db::cluster::bump_write_version(pool, unplaced.id, None)
         .await
         .unwrap();
     assert_eq!(
@@ -685,7 +690,7 @@ async fn empty_repositories_and_large_files_copy() {
         &[],
     )
     .unwrap();
-    db::cluster::bump_write_version(repo.pool, repo.id())
+    db::cluster::bump_write_version(repo.pool, repo.id(), None)
         .await
         .unwrap();
     assert_current(&primary, &copy, &repo).await;
@@ -1058,7 +1063,9 @@ async fn busy_repositories_do_not_starve_later_copies() {
     let mut copying = Copying::default();
     for _ in 0..3 {
         for &busy in &repositories[..2] {
-            db::cluster::bump_write_version(pool, busy).await.unwrap();
+            db::cluster::bump_write_version(pool, busy, None)
+                .await
+                .unwrap();
         }
         replicas::pass(&copy.context, &mut retry, &mut silent, &mut copying)
             .await
@@ -1079,6 +1086,141 @@ async fn busy_repositories_do_not_starve_later_copies() {
     primary.shutdown().await;
 }
 
+/// A replica copy waits while a ref change is counted at its primary. The primary refuses the
+/// pack with a busy reply, which the copy does not count as a failure, and the copy catches up
+/// once the change ends.
+#[tokio::test]
+async fn a_copy_waits_while_a_ref_change_is_counted() {
+    let database = native::PostgresDatabase::new().await;
+    let pool = &database.pool;
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(pool, root.path()).await;
+    let repo = create_repository(pool, &primary, "waiting").await;
+    repo.save("main", "a.txt", "unborn", b"a").await;
+    assert_current(&primary, &copy, &repo).await;
+    let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
+    let current = db::cluster::get_write_version(pool, repo.id())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let change = begin_ref_change(
+        pool,
+        repo.id(),
+        &primary_path(&primary, uuid),
+        Some(primary.context.node_id),
+    )
+    .await
+    .unwrap();
+    assert_eq!(applied_on(pool, repo.id(), &copy).await, Some(current));
+    let refused = copy
+        .context
+        .git_session(
+            primary.context.node_id,
+            Request {
+                repository: uuid,
+                operation: Operation::ReplicaPack { have: Vec::new() },
+                actor: None,
+                ci_run: None,
+            },
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut tokio::io::sink(),
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        refused
+            .downcast_ref::<RepoError>()
+            .is_some_and(RepoError::is_replica_busy),
+        "{refused:#}"
+    );
+    pass(&copy).await;
+    assert_eq!(
+        applied_on(pool, repo.id(), &copy).await,
+        Some(current),
+        "a busy copy records nothing"
+    );
+
+    drop(change);
+    assert_current(&primary, &copy, &repo).await;
+    copy.shutdown().await;
+    primary.shutdown().await;
+}
+
+#[tokio::test]
+async fn ref_change_counting_on_sqlite() {
+    let database = native::NativeDatabase::new().await;
+    check_ref_change_counting(&database.pool).await;
+}
+
+#[tokio::test]
+async fn ref_change_counting_on_postgres() {
+    let database = native::PostgresDatabase::new().await;
+    check_ref_change_counting(&database.pool).await;
+}
+
+/// Only the node that holds a repository counts its ref changes, and a counted change makes a
+/// promotion refuse a copy that is behind it.
+async fn check_ref_change_counting(pool: &DbPool) {
+    let holder = storage_node(pool, "count-holder").await;
+    let other = storage_node(pool, "count-other").await;
+    let repo = placed_repository(pool, holder).await;
+    assert!(db::cluster::insert_replica(pool, repo, other, holder)
+        .await
+        .unwrap());
+    assert!(
+        db::cluster::set_applied_version(pool, repo, other, holder, 0)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db::cluster::bump_write_version(pool, repo, Some(other))
+            .await
+            .unwrap(),
+        "another node does not count the change"
+    );
+    assert_eq!(
+        db::cluster::get_write_version(pool, repo).await.unwrap(),
+        Some(0)
+    );
+    assert!(db::cluster::bump_write_version(pool, repo, Some(holder))
+        .await
+        .unwrap());
+    assert_eq!(
+        db::cluster::get_write_version(pool, repo).await.unwrap(),
+        Some(1)
+    );
+    let outcome = db::cluster::promote_repository(pool, repo, holder, other, true)
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            PromoteOutcome::Stale {
+                applied_version: 0,
+                write_version: 1
+            }
+        ),
+        "{outcome:?}"
+    );
+    assert!(db::cluster::bump_write_version(pool, repo, None)
+        .await
+        .unwrap());
+    assert_eq!(
+        db::cluster::get_write_version(pool, repo).await.unwrap(),
+        Some(2)
+    );
+    assert!(
+        db::cluster::bump_write_version(pool, repo + 1000, None)
+            .await
+            .is_err(),
+        "a missing repository is an error"
+    );
+}
+
 /// Promotion refuses a copy that is behind, picks the copy with the most writes, and a
 /// forced promotion records the writes the new primary lacks.
 async fn check_promotion(pool: &DbPool) {
@@ -1089,8 +1231,12 @@ async fn check_promotion(pool: &DbPool) {
     let b = reporting_storage_node(pool, "promo-b").await;
     let c = reporting_storage_node(pool, "promo-c").await;
     let repo = placed_repository(pool, a).await;
-    db::cluster::bump_write_version(pool, repo).await.unwrap();
-    db::cluster::bump_write_version(pool, repo).await.unwrap();
+    db::cluster::bump_write_version(pool, repo, None)
+        .await
+        .unwrap();
+    db::cluster::bump_write_version(pool, repo, None)
+        .await
+        .unwrap();
     assert!(db::cluster::insert_replica(pool, repo, b, a).await.unwrap());
     assert!(db::cluster::insert_replica(pool, repo, c, a).await.unwrap());
     assert!(db::cluster::set_applied_version(pool, repo, b, a, 2)
@@ -1147,7 +1293,9 @@ async fn check_promotion(pool: &DbPool) {
     let d = storage_node(pool, "promo-d").await;
     let ahead = placed_repository(pool, d).await;
     for _ in 0..3 {
-        db::cluster::bump_write_version(pool, ahead).await.unwrap();
+        db::cluster::bump_write_version(pool, ahead, None)
+            .await
+            .unwrap();
     }
     assert!(db::cluster::insert_replica(pool, ahead, b, d)
         .await
@@ -1535,7 +1683,9 @@ async fn check_take_over(pool: &DbPool) {
     // `a` has never reported in, so it is offline. `b` holds every write and `c` does not.
     let repo = placed_repository(pool, a).await;
     for _ in 0..2 {
-        db::cluster::bump_write_version(pool, repo).await.unwrap();
+        db::cluster::bump_write_version(pool, repo, None)
+            .await
+            .unwrap();
     }
     add_copy(pool, repo, b, a, 2).await;
     add_copy(pool, repo, c, a, 1).await;
@@ -1547,7 +1697,9 @@ async fn check_take_over(pool: &DbPool) {
 
     // A primary that was revoked is left to the operator.
     let kept = placed_repository(pool, revoked).await;
-    db::cluster::bump_write_version(pool, kept).await.unwrap();
+    db::cluster::bump_write_version(pool, kept, None)
+        .await
+        .unwrap();
     add_copy(pool, kept, b, revoked, 1).await;
     cluster_revoke(pool, "store-revoked").await;
 

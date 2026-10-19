@@ -237,6 +237,15 @@ fn goto_file_icon(repo: &RepoChrome, page: &TreePage) -> Element {
 /// The Code menu: the clone URLs and the ZIP download.
 fn code_menu(repo: &RepoChrome, page: &TreePage) -> Element {
     let base = repo.base();
+    // A short name shows the branch of that name when there is one, so a tag with no branch of its
+    // own is downloaded by its full ref.
+    let archive_ref =
+        if page.tags.contains(&page.reference) && !page.branches.contains(&page.reference) {
+            format!("refs/tags/{}", page.reference)
+        } else {
+            page.reference.clone()
+        };
+    let archive_ref = crate::webui::encode_component(&archive_ref);
     rsx! {
         details { class: "native-menu repo-menu repo-code-menu",
             summary { class: "btn repo-code-button", "aria-label": "Code", {icon("code")} span { class: "repo-button-label", "Code" } {icon("chevron")} }
@@ -247,8 +256,8 @@ fn code_menu(repo: &RepoChrome, page: &TreePage) -> Element {
                 }
                 p { class: "repo-clone-help", "Copy a URL to clone this repository." }
                 if !page.empty {
-                    a { class: "repo-menu-item repo-download", href: format!("{base}/archive/{}.zip", crate::webui::encode_component(&page.reference)), {icon("download")} "Download ZIP" }
-                    a { class: "repo-menu-item repo-download", href: format!("{base}/archive/{}.tar.gz", crate::webui::encode_component(&page.reference)), {icon("download")} "Download tar.gz" }
+                    a { class: "repo-menu-item repo-download", href: format!("{base}/archive/{archive_ref}.zip"), {icon("download")} "Download ZIP" }
+                    a { class: "repo-menu-item repo-download", href: format!("{base}/archive/{archive_ref}.tar.gz"), {icon("download")} "Download tar.gz" }
                 }
             }
         }

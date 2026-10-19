@@ -10,8 +10,12 @@ use iroh::{
     protocol::{AcceptError, ProtocolHandler},
 };
 pub use repository::{authorize_operation, repository_uuid};
-use std::sync::Arc;
+use std::{
+    future::Future,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::Semaphore;
+use tokio_util::task::{task_tracker::TrackedFuture, TaskTracker};
 use wire::invalid;
 pub use wire::{
     read_frame, unavailable, write_frame, CiRunAccess, Failure, Operation, Reply, Request,
@@ -40,10 +44,50 @@ async fn refuse(
     .await?
 }
 
+/// The repository Git sessions this node is serving. Shutdown closes the gate, so no session
+/// starts after it, and then waits for the sessions already running. The caller bounds that
+/// wait; a session still running when the bound passes ends with its connection.
+#[derive(Clone, Debug)]
+pub struct SessionGate {
+    open: Arc<Mutex<bool>>,
+    running: TaskTracker,
+}
+
+impl Default for SessionGate {
+    fn default() -> Self {
+        Self {
+            open: Arc::new(Mutex::new(true)),
+            running: TaskTracker::new(),
+        }
+    }
+}
+
+impl SessionGate {
+    /// Tracks `session` while it runs. Once the gate is closed, the session is dropped instead,
+    /// which closes its connection.
+    pub fn admit<F: Future>(&self, session: F) -> Option<TrackedFuture<F>> {
+        let open = self.open.lock().unwrap_or_else(|error| error.into_inner());
+        (*open).then(|| self.running.track_future(session))
+    }
+
+    /// Refuses sessions from now on. Sessions already admitted keep running.
+    pub fn close(&self) {
+        *self.open.lock().unwrap_or_else(|error| error.into_inner()) = false;
+        self.running.close();
+    }
+
+    /// Closes the gate, then waits until every admitted session has finished.
+    pub async fn drain(&self) {
+        self.close();
+        self.running.wait().await;
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RpcHandler {
     context: NodeContext,
     slots: Arc<Semaphore>,
+    sessions: SessionGate,
 }
 
 impl RpcHandler {
@@ -51,7 +95,13 @@ impl RpcHandler {
         Self {
             context,
             slots: Arc::new(Semaphore::new(16)),
+            sessions: SessionGate::default(),
         }
+    }
+
+    /// The gate this handler admits its Git sessions through.
+    pub fn sessions(&self) -> SessionGate {
+        self.sessions.clone()
     }
 
     /// Serves one request stream. An error ends the connection the stream came on.
@@ -86,7 +136,12 @@ impl RpcHandler {
             Operation::GitSession(_) | Operation::ReplicaPack { .. }
         ) {
             drop(slot);
-            return self.serve_session(request, link).await;
+            // A session that arrives after shutdown began is refused. Its connection closes
+            // unanswered, which the peer reports as unavailable.
+            let Some(session) = self.sessions.admit(self.serve_session(request, link)) else {
+                return Ok(());
+            };
+            return session.await;
         }
         let body_limit = wire::operation_body_limit(&request.operation);
         if body_limit > 0 {
@@ -130,5 +185,64 @@ impl ProtocolHandler for RpcHandler {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SessionGate;
+    use std::{
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        time::Duration,
+    };
+
+    #[tokio::test]
+    async fn drain_waits_for_an_admitted_session_and_admits_nothing_after() {
+        let gate = SessionGate::default();
+        let finished = Arc::new(AtomicBool::new(false));
+        let flag = finished.clone();
+        let session = gate
+            .admit(async move {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                flag.store(true, Ordering::SeqCst);
+            })
+            .expect("an open gate admits a session");
+        let session = tokio::spawn(session);
+        tokio::time::timeout(Duration::from_secs(5), gate.drain())
+            .await
+            .expect("drain returns once the session has finished");
+        assert!(
+            finished.load(Ordering::SeqCst),
+            "drain returned before the session finished"
+        );
+        session.await.unwrap();
+        assert!(
+            gate.admit(async {}).is_none(),
+            "a drained gate refuses new sessions"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_past_the_deadline_is_released_when_its_connection_ends() {
+        let gate = SessionGate::default();
+        let session = gate
+            .admit(std::future::pending::<()>())
+            .expect("an open gate admits a session");
+        gate.close();
+        // The shutdown deadline passes while the session still runs.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), gate.drain())
+                .await
+                .is_err(),
+            "drain must not finish while a session runs"
+        );
+        // Shutdown then ends the connection, which drops the session.
+        drop(session);
+        tokio::time::timeout(Duration::from_secs(5), gate.drain())
+            .await
+            .expect("dropping the session releases the wait");
     }
 }

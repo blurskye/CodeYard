@@ -302,7 +302,7 @@ pub async fn create_pull_request(
     .await;
 
     if !pull_request.is_draft {
-        let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id).await;
+        let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id, false).await;
     }
     super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
         .await;
@@ -863,7 +863,7 @@ pub async fn mark_pull_request_ready(
         .await
         .map_err(|_| OperationError::Updated { number })?
         .ok_or(OperationError::Updated { number })?;
-    let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id).await;
+    let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id, false).await;
     super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
         .await;
 

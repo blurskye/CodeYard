@@ -42,7 +42,7 @@ dioxus-fullstack-core = { version = "=0.7.10", default-features = false }
 subtle = "2.6"
 argon2 = { version = "=0.5.3", features = ["std"] }
 tokio.workspace = true
-tokio-util = { version = "0.7", features = ["io"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
 # The TLS provider iroh already uses (aws-lc-rs), so node connections over TCP share it.
 tokio-rustls = "0.26"
 # TCP keepalive on node connections; tokio does not expose the socket option.
@@ -91,7 +91,7 @@ gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "Node", "Location", "History", "Navigator", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "HtmlFormElement", "KeyboardEvent", "NodeList", "Storage", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "Element", "Node", "Location", "History", "Navigator", "Performance", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "HtmlFormElement", "KeyboardEvent", "NodeList", "Storage", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
@@ -101,7 +101,7 @@ http-body-util = "0.1"
 resolver = "2"
 
 [workspace.package]
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 
 [workspace.dependencies]

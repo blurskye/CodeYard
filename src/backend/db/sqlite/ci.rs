@@ -107,6 +107,7 @@ pub async fn enqueue_ci_run(
     let mut is_fork = false;
     let mut pull_request_id = None;
     let mut pull_request_event = None;
+    let mut attempt = 1_i32;
     if input.event == "pull_request" {
         let id = match input.pull_request_id {
             Some(id) => id,
@@ -149,14 +150,19 @@ pub async fn enqueue_ci_run(
             !fork || approved,
             CiAdmissionRefusal::Denied("Fork workflows require approval for this head commit")
         );
-        if let Some(run) = sqlx::query_as::<_, CiRun>("SELECT * FROM ci_runs WHERE pull_request_id = ?1 AND event = 'pull_request' AND branch = ?2 AND head_sha = ?3 AND workflow_path = ?4")
+        // The newest attempt at this revision is the one automatic admission reuses. A request
+        // from a person starts another attempt once that one has finished.
+        if let Some(latest) = sqlx::query_as::<_, CiRun>("SELECT * FROM ci_runs WHERE pull_request_id = ?1 AND event = 'pull_request' AND branch = ?2 AND head_sha = ?3 AND workflow_path = ?4 ORDER BY attempt DESC LIMIT 1")
             .bind(id).bind(input.branch).bind(input.head_sha).bind(input.workflow_path).fetch_optional(&mut *tx).await? {
-            return Ok(run);
+            if !input.manual || matches!(latest.status.as_str(), "queued" | "running") {
+                return Ok(latest);
+            }
+            attempt = latest.attempt + 1;
         }
     }
     let run = sqlx::query_as::<_, CiRun>(
-        "INSERT INTO ci_runs (run_id, repo_id, triggered_by_id, mode, pipeline, event, pull_request_id, branch, head_sha, workflow_path, environment, workflow_sha, workflow_blobs, is_fork, pull_request_event, workflow_inputs)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?9,?12,?13,?14,?15) RETURNING *",
+        "INSERT INTO ci_runs (run_id, repo_id, triggered_by_id, mode, pipeline, event, pull_request_id, branch, head_sha, workflow_path, environment, workflow_sha, workflow_blobs, is_fork, pull_request_event, workflow_inputs, attempt)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?9,?12,?13,?14,?15,?16) RETURNING *",
     )
     .bind(Uuid::new_v4())
     .bind(input.repo_id)
@@ -173,6 +179,7 @@ pub async fn enqueue_ci_run(
     .bind(is_fork)
     .bind(pull_request_event)
     .bind(input.workflow_inputs.map(serde_json::to_string).transpose()?)
+    .bind(attempt)
     .fetch_one(&mut *tx)
     .await?;
     if cd {
@@ -239,6 +246,18 @@ async fn claim_queued_run(
             tx.rollback().await?;
             return Ok(None);
         }
+    }
+    // A claim retried after a lost reply gets back the run its first claim committed. A worker
+    // runs one job at a time, so the running run it holds is that one.
+    let held = sqlx::query_as::<_, CiRun>(
+        "SELECT * FROM ci_runs WHERE worker = ?1 AND status = 'running' ORDER BY id LIMIT 1",
+    )
+    .bind(worker)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if held.is_some() {
+        tx.commit().await?;
+        return Ok(held);
     }
     let mut after = 0_i64;
     for _ in 0..CLAIM_SCAN_LIMIT {
@@ -610,9 +629,9 @@ pub async fn latest_ci_runs_for_commit(
         "SELECT * FROM (SELECT ci_runs.*, ROW_NUMBER() OVER (
             PARTITION BY instr(workflow_path, ',') > 0,
                 CASE WHEN instr(workflow_path, ',') > 0 THEN pipeline ELSE workflow_path END
-            ORDER BY id DESC) AS attempt
+            ORDER BY id DESC) AS newest
          FROM ci_runs WHERE repo_id = ?1 AND head_sha = ?2
-            AND (pull_request_id IS NULL OR pull_request_id = ?3)) WHERE attempt = 1",
+            AND (pull_request_id IS NULL OR pull_request_id = ?3)) WHERE newest = 1",
     )
     .bind(repo_id)
     .bind(sha)
@@ -637,7 +656,7 @@ pub async fn list_pull_request_check_statuses(
             SELECT pulls.id AS pull_request_id, runs.status, ROW_NUMBER() OVER (
                 PARTITION BY pulls.id, instr(runs.workflow_path, ',') > 0,
                     CASE WHEN instr(runs.workflow_path, ',') > 0 THEN runs.pipeline ELSE runs.workflow_path END
-                ORDER BY runs.id DESC) AS attempt
+                ORDER BY runs.id DESC) AS newest
             FROM pull_requests AS pulls
             JOIN ci_runs AS runs ON runs.repo_id = pulls.repo_id AND runs.head_sha = pulls.head_sha
                 AND (runs.pull_request_id IS NULL OR runs.pull_request_id = pulls.id)
@@ -647,7 +666,7 @@ pub async fn list_pull_request_check_statuses(
     for id in pull_request_ids {
         ids.push_bind(id);
     }
-    query.push(")) WHERE attempt = 1");
+    query.push(")) WHERE newest = 1");
     Ok(query.build_query_as().fetch_all(pool).await?)
 }
 

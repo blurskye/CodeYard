@@ -1,5 +1,5 @@
-//! Webhook rows and their delivery records. Callers check who may change them; these
-//! operations only read and write the rows.
+//! Webhook rows and their delivery records. Each change checks, in its own transaction, that
+//! the actor may manage the owner's hooks. Reads do no checks; callers decide what they show.
 use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::DbPool;
 use anyhow::Result;
@@ -64,15 +64,17 @@ native_operation!(crate::backend::db::postgres::webhooks::list_webhooks, crate::
 native_operation!(crate::backend::db::postgres::webhooks::get_webhook, crate::backend::db::sqlite::webhooks::get_webhook,
     fn get_webhook(pool: &DbPool, owner: HookOwner, id: i64) -> Result<Option<Webhook>>);
 
+// The writes below return `None` when `actor_id` may not manage the owner's hooks.
 native_operation!(crate::backend::db::postgres::webhooks::insert_webhook, crate::backend::db::sqlite::webhooks::insert_webhook,
-    fn insert_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<i64>);
+    fn insert_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<Option<i64>>);
 
-// A `None` secret keeps the stored one. Returns false when the webhook is not on `owner`.
+// A `None` secret keeps the stored one. `Some(false)` means the webhook is not on `owner`.
 native_operation!(crate::backend::db::postgres::webhooks::update_webhook, crate::backend::db::sqlite::webhooks::update_webhook,
-    fn update_webhook(pool: &DbPool, owner: HookOwner, id: i64, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<bool>);
+    fn update_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, id: i64, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<Option<bool>>);
 
+// `Some(false)` means the webhook is not on `owner`.
 native_operation!(crate::backend::db::postgres::webhooks::delete_webhook, crate::backend::db::sqlite::webhooks::delete_webhook,
-    fn delete_webhook(pool: &DbPool, owner: HookOwner, id: i64) -> Result<bool>);
+    fn delete_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, id: i64) -> Result<Option<bool>>);
 
 // Records a delivery and drops the hook's deliveries past 30 days or beyond the newest 100.
 native_operation!(crate::backend::db::postgres::webhooks::insert_delivery, crate::backend::db::sqlite::webhooks::insert_delivery,

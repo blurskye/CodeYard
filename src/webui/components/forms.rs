@@ -70,6 +70,9 @@ pub fn DraftTextarea(
     // hydrates, unless the user typed in the field before hydration. A caller that passes
     // its own draft keeps it itself, so this field then stores nothing.
     #[props(default)] draft: Option<String>,
+    // The revision of the page this field belongs to, such as the one its save checks. A draft saved
+    // against another revision is shown with a notice instead of being restored silently.
+    #[props(default)] revision: Option<String>,
     #[props(default)] on_value: EventHandler<String>,
     #[props(default)] on_scroll: EventHandler<ScrollEvent>,
 ) -> Element {
@@ -89,10 +92,31 @@ pub fn DraftTextarea(
             draft_text::key(&name, id.as_deref())
         }
     });
+    // Set when the field shows a draft that was saved against another revision of the page.
+    let mut stale = use_signal(|| false);
     #[cfg(target_arch = "wasm32")]
-    let mut submit_clear = use_signal(|| None::<draft_text::SubmitClear>);
+    let mut submit_mark = use_signal(|| None::<draft_text::SubmitMark>);
     let mut value = use_signal(move || initial_value);
+    let typed_revision = revision.clone();
     rsx! {
+        if stale() {
+            p { class: "collaboration-state-banner", role: "status",
+                "This text was saved before the page changed; review it before saving. "
+                button { r#type: "button", class: "btn btn-secondary btn-sm",
+                    onclick: move |_| {
+                        // The current text is the server's, so the draft goes and the field shows it.
+                        let current = initial_text.peek().clone();
+                        if let Some(key) = stored_key.peek().as_deref() {
+                            draft_text::clear(key);
+                        }
+                        value.set(current.clone());
+                        on_value.call(current);
+                        stale.set(false);
+                    },
+                    "Use the current text"
+                }
+            }
+        }
         textarea { name, id, class, rows, required, readonly, maxlength, placeholder,
             dangerous_inner_html: native_text(),
             value: value(),
@@ -100,7 +124,7 @@ pub fn DraftTextarea(
             oninput: move |event| {
                 let text = event.value();
                 if let Some(key) = stored_key.peek().as_deref() {
-                    draft_text::save(key, &text);
+                    draft_text::save(key, &text, typed_revision.as_deref());
                 }
                 value.set(text.clone());
                 on_value.call(text);
@@ -112,23 +136,36 @@ pub fn DraftTextarea(
                   if let Some(element) = event.data().downcast::<web_sys::Element>() {
                       if let Some(input) = element.dyn_ref::<web_sys::HtmlTextAreaElement>() {
                           let mut text = input.value();
+                          let mut stale_draft = false;
                           // Hydration leaves the server text in the field. Text the user
                           // typed before hydration is kept; untouched text gives way to the draft.
                           // defaultValue keeps the LF that the server render pads in front of
                           // the text, so compare with the text itself.
                           if *initial_text.peek() == text {
-                              if let Some(draft) = restored.peek().clone().or(stored) {
+                              if let Some(draft) = restored.peek().clone() {
+                                  input.set_value(&draft);
+                                  text = draft;
+                              } else if let Some(stored) = stored {
+                                  let draft = match draft_text::restore(stored, revision.as_deref()) {
+                                      draft_text::Restore::Silently(draft) => draft,
+                                      draft_text::Restore::Stale(draft) => {
+                                          stale_draft = true;
+                                          draft
+                                      }
+                                  };
                                   input.set_value(&draft);
                                   text = draft;
                               }
                           }
+                          stale.set(stale_draft);
+                          // A stale draft keeps the revision it was typed against, so it stays stale.
                           if let Some(key) = stored_key.peek().as_deref() {
-                              if text != *initial_text.peek() {
-                                  draft_text::save(key, &text);
+                              if text != *initial_text.peek() && !stale_draft {
+                                  draft_text::save(key, &text, revision.as_deref());
                               }
                           }
                           if let Some(key) = stored_key.peek().clone() {
-                              submit_clear.set(draft_text::clear_on_submit(element, key));
+                              submit_mark.set(draft_text::mark_on_submit(element, key));
                           }
                           value.set(text.clone());
                           on_value.call(text);
@@ -136,7 +173,7 @@ pub fn DraftTextarea(
                   }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                let _ = (event, restored, initial_text, stored);
+                let _ = (event, restored, initial_text, stored, &revision);
             }
         }
     }
@@ -151,6 +188,10 @@ pub mod draft_text {
 
     /// Every draft key starts with this, so the drafts of a tab can be found and dropped.
     const DRAFT_PREFIX: &str = "codeyard-draft:";
+
+    /// A submitted draft is marked with this prefix until the page that answers the submit loads.
+    #[cfg(target_arch = "wasm32")]
+    const SENT_PREFIX: &str = "codeyard-draft-sent:";
 
     /// The account the stored drafts of this tab belong to.
     #[cfg(target_arch = "wasm32")]
@@ -199,10 +240,26 @@ pub mod draft_text {
         web_sys::window()?.session_storage().ok().flatten()
     }
 
-    pub fn load(key: &str) -> Option<String> {
+    /// A stored draft and the revision of the page it was typed against.
+    #[derive(Debug, PartialEq)]
+    pub struct Stored {
+        pub text: String,
+        pub revision: Option<String>,
+    }
+
+    /// Where a draft's revision is kept, next to its text.
+    #[cfg(target_arch = "wasm32")]
+    fn revision_key(key: &str) -> String {
+        format!("{key}@revision")
+    }
+
+    pub fn load(key: &str) -> Option<Stored> {
         #[cfg(target_arch = "wasm32")]
         {
-            storage()?.get_item(key).ok().flatten()
+            let storage = storage()?;
+            let text = storage.get_item(key).ok().flatten()?;
+            let revision = storage.get_item(&revision_key(key)).ok().flatten();
+            Some(Stored { text, revision })
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -211,15 +268,26 @@ pub mod draft_text {
         }
     }
 
-    /// Keeps the text as the draft, or drops the draft when the field is empty.
-    pub fn save(key: &str, text: &str) {
+    /// Keeps the text as the draft, or drops the draft when the field is empty. `revision` is the
+    /// revision of the page the text was typed on.
+    pub fn save(key: &str, text: &str, revision: Option<&str>) {
         if text.is_empty() {
             clear(key);
         } else {
             #[cfg(target_arch = "wasm32")]
             if let Some(storage) = storage() {
                 let _ = storage.set_item(key, text);
+                match revision {
+                    Some(revision) => {
+                        let _ = storage.set_item(&revision_key(key), revision);
+                    }
+                    None => {
+                        let _ = storage.remove_item(&revision_key(key));
+                    }
+                }
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = revision;
         }
     }
 
@@ -227,9 +295,30 @@ pub mod draft_text {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = storage() {
             let _ = storage.remove_item(key);
+            let _ = storage.remove_item(&revision_key(key));
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = key;
+    }
+
+    /// What a field does with a stored draft whose text is untouched.
+    #[derive(Debug, PartialEq)]
+    pub enum Restore {
+        /// Restored as it is.
+        Silently(String),
+        /// Restored, but the page changed after the draft was typed, so the user reviews it first.
+        Stale(String),
+    }
+
+    /// A draft typed against the page's current revision is restored. One typed against another
+    /// revision is restored too, but marked stale. A field without a revision restores its drafts.
+    pub fn restore(stored: Stored, revision: Option<&str>) -> Restore {
+        match revision {
+            Some(current) if stored.revision.as_deref() != Some(current) => {
+                Restore::Stale(stored.text)
+            }
+            _ => Restore::Silently(stored.text),
+        }
     }
 
     /// Unsent text belongs to the account that typed it. The first page that another account, or
@@ -259,16 +348,16 @@ pub mod draft_text {
         }
     }
 
-    /// Clears a draft when the form around its field is submitted. The listener stays
-    /// until this value is dropped, which happens when the field unmounts.
+    /// Marks a draft when the form around its field is submitted. The listener stays until this
+    /// value is dropped, which happens when the field unmounts.
     #[cfg(target_arch = "wasm32")]
-    pub struct SubmitClear {
+    pub struct SubmitMark {
         form: web_sys::Element,
         listener: wasm_bindgen::closure::Closure<dyn FnMut()>,
     }
 
     #[cfg(target_arch = "wasm32")]
-    impl Drop for SubmitClear {
+    impl Drop for SubmitMark {
         fn drop(&mut self) {
             use wasm_bindgen::JsCast;
             let _ = self.form.remove_event_listener_with_callback(
@@ -280,13 +369,55 @@ pub mod draft_text {
 
     /// None when the field is not inside a form.
     #[cfg(target_arch = "wasm32")]
-    pub fn clear_on_submit(field: &web_sys::Element, key: String) -> Option<SubmitClear> {
+    pub fn mark_on_submit(field: &web_sys::Element, key: String) -> Option<SubmitMark> {
         use wasm_bindgen::{closure::Closure, JsCast};
         let form = field.closest("form").ok()??;
-        let listener = Closure::<dyn FnMut()>::new(move || clear(&key));
+        let listener = Closure::<dyn FnMut()>::new(move || mark_sent(&key));
         form.add_event_listener_with_callback("submit", listener.as_ref().unchecked_ref())
             .ok()?;
-        Some(SubmitClear { form, listener })
+        Some(SubmitMark { form, listener })
+    }
+
+    /// The form was submitted, so its draft waits for the page that answers the submit.
+    #[cfg(target_arch = "wasm32")]
+    fn mark_sent(key: &str) {
+        if let Some(storage) = storage() {
+            let _ = storage.set_item(&format!("{SENT_PREFIX}{key}"), "");
+        }
+    }
+
+    /// Settles the drafts whose forms were submitted before this document loaded. Such a document is
+    /// the answer to the submit. A redirect means the server accepted the text, so the draft goes. A
+    /// page without a redirect is the form shown again for a refused submit, so the draft stays for
+    /// the user to fix. Called once, before any field restores its draft.
+    pub fn settle_submitted() {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = storage() {
+            let redirected = navigated_by_redirect();
+            let marks: Vec<String> = (0..storage.length().unwrap_or(0))
+                .filter_map(|index| storage.key(index).ok().flatten())
+                .filter(|key| key.starts_with(SENT_PREFIX))
+                .collect();
+            for mark in marks {
+                if let Some(key) = mark.strip_prefix(SENT_PREFIX).filter(|_| redirected) {
+                    clear(key);
+                }
+                let _ = storage.remove_item(&mark);
+            }
+        }
+    }
+
+    /// Whether this document came through a redirect, which an accepted submit answers with.
+    #[cfg(target_arch = "wasm32")]
+    fn navigated_by_redirect() -> bool {
+        let Some(performance) = web_sys::window().and_then(|window| window.performance()) else {
+            return false;
+        };
+        let entry = performance.get_entries_by_type("navigation").get(0);
+        js_sys::Reflect::get(&entry, &"redirectCount".into())
+            .ok()
+            .and_then(|count| count.as_f64())
+            .is_some_and(|count| count > 0.0)
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -336,6 +467,28 @@ pub mod draft_text {
                 assert_eq!(key_for("/settings", "", name, id), None, "{name} {id:?}");
             }
             assert!(key_for("/settings", "", "bio", Some("bio")).is_some());
+        }
+
+        #[test]
+        fn a_draft_typed_against_another_revision_is_marked_stale() {
+            let stored = |revision: Option<&str>| Stored {
+                text: "draft".into(),
+                revision: revision.map(str::to_owned),
+            };
+            let draft = || "draft".to_owned();
+            assert_eq!(
+                restore(stored(Some("r1")), Some("r1")),
+                Restore::Silently(draft())
+            );
+            assert_eq!(
+                restore(stored(Some("r1")), Some("r2")),
+                Restore::Stale(draft())
+            );
+            assert_eq!(restore(stored(None), Some("r2")), Restore::Stale(draft()));
+            assert_eq!(
+                restore(stored(Some("r1")), None),
+                Restore::Silently(draft())
+            );
         }
     }
 }

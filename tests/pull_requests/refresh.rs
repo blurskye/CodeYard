@@ -727,14 +727,27 @@ async fn concurrent_refresh_converges(pg: bool) {
         !first.is_finished(),
         "first refresh must be waiting on its CAS"
     );
-    store
-        .publish_file_as(f.pool(), repository.id, actor, &second_head)
-        .await
-        .unwrap();
-    store
-        .publish_file_as(f.pool(), repository.id, actor, &second_base)
-        .await
-        .unwrap();
+    // A publish writes the database before it moves a ref, and the SQLite blocker holds the whole
+    // database, so there the refs are moved with Git itself, as a push from outside would.
+    for prepared in [&second_head, &second_base] {
+        match &f {
+            Database::Postgres(_) => {
+                store
+                    .publish_file_as(f.pool(), repository.id, actor, prepared)
+                    .await
+                    .unwrap();
+            }
+            Database::Sqlite(_) => {
+                let status = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(&repository.disk_path)
+                    .args(["update-ref", &prepared.reference, &prepared.commit.sha])
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+            }
+        }
+    }
     let second = spawn_refresh();
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     assert!(

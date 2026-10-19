@@ -229,12 +229,20 @@ CREATE INDEX IF NOT EXISTS idx_gpg_keys_key_id ON gpg_keys(key_id);
 -- PART 5: TWO-FACTOR AUTHENTICATION
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS two_factor_auth (
+-- The encrypted TOTP secret, the last accepted time step (a code works once) and the hashed
+-- one-time recovery codes. users.two_factor_enabled is kept in step.
+CREATE TABLE two_factor_auth (
     user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     totp_secret_encrypted BYTEA NOT NULL,
-    backup_codes_encrypted BYTEA,
-    enabled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_used_at TIMESTAMPTZ
+    totp_nonce BYTEA NOT NULL,
+    last_used_step BIGINT,
+    enabled_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE two_factor_recovery_codes (
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    code_hash TEXT NOT NULL CHECK (char_length(code_hash) = 64),
+    PRIMARY KEY (user_id, code_hash)
 );
 
 --------------------------------------------------------------------------------
@@ -266,6 +274,20 @@ CREATE TABLE IF NOT EXISTS org_memberships (
 
 CREATE INDEX IF NOT EXISTS idx_org_memberships_org_id ON org_memberships(org_id);
 CREATE INDEX IF NOT EXISTS idx_org_memberships_user_id ON org_memberships(user_id);
+
+-- Organization invitations: a pending offer of membership. Membership starts only when the
+-- invitee accepts; a decline or a cancellation deletes the row.
+CREATE TABLE IF NOT EXISTS organization_invitations (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL DEFAULT 'member', -- owner, admin, member
+    invited_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(org_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_organization_invitations_user_id ON organization_invitations(user_id);
 
 --------------------------------------------------------------------------------
 -- PART 7: TEAMS
@@ -392,6 +414,8 @@ CREATE TABLE IF NOT EXISTS deploy_keys (
     public_key TEXT NOT NULL,
     read_only BOOLEAN NOT NULL DEFAULT TRUE,
     last_used_at TIMESTAMPTZ,
+    -- The account that added the key, which its pushes are attributed to.
+    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(repo_id, fingerprint)
 );
@@ -477,6 +501,7 @@ CREATE TABLE IF NOT EXISTS branch_protection_rules (
     require_pull_request BOOLEAN NOT NULL DEFAULT FALSE,
     required_approving_reviews INTEGER NOT NULL DEFAULT 0,
     dismiss_stale_reviews BOOLEAN NOT NULL DEFAULT FALSE,
+    require_code_owner_review BOOLEAN NOT NULL DEFAULT FALSE,
     require_status_checks BOOLEAN NOT NULL DEFAULT FALSE,
     required_status_checks TEXT[] DEFAULT '{}',
     require_up_to_date_branch BOOLEAN NOT NULL DEFAULT FALSE,
@@ -619,6 +644,8 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     head_sha VARCHAR(40) NOT NULL,
     base_branch VARCHAR(255) NOT NULL,
     base_sha VARCHAR(40) NOT NULL,
+    -- The base a stacked layer was built on, kept while its base branch moves on. NULL means base_sha is that base.
+    fork_sha VARCHAR(40),
     is_draft BOOLEAN NOT NULL DEFAULT FALSE,
     mergeable BOOLEAN,
     merged BOOLEAN NOT NULL DEFAULT FALSE,
@@ -760,6 +787,7 @@ CREATE TABLE IF NOT EXISTS releases (
     body TEXT,
     is_draft BOOLEAN NOT NULL DEFAULT FALSE,
     is_prerelease BOOLEAN NOT NULL DEFAULT FALSE,
+    is_latest BOOLEAN NOT NULL DEFAULT FALSE,
     author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ,
@@ -769,6 +797,8 @@ CREATE TABLE IF NOT EXISTS releases (
 CREATE INDEX IF NOT EXISTS idx_releases_repo_id ON releases(repo_id);
 CREATE INDEX IF NOT EXISTS idx_releases_author_id ON releases(author_id);
 CREATE INDEX IF NOT EXISTS idx_releases_created_at ON releases(created_at);
+-- One latest release per repository.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_one_latest ON releases(repo_id) WHERE is_latest;
 
 CREATE TABLE IF NOT EXISTS release_assets (
     id BIGSERIAL PRIMARY KEY,
@@ -784,6 +814,7 @@ CREATE TABLE IF NOT EXISTS release_assets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_release_assets_release_id ON release_assets(release_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_release_assets_name ON release_assets(release_id, name);
 
 --------------------------------------------------------------------------------
 -- PART 15: SOCIAL (Stars, Watches, Follows)
@@ -1157,10 +1188,12 @@ CREATE TABLE IF NOT EXISTS ci_runs (
     -- A frozen copy of the pull request fields the run was started with.
     pull_request_event JSONB,
     -- The inputs a manual run was started with: a JSON object of strings, as GitHub's event.inputs.
-    workflow_inputs JSONB
+    workflow_inputs JSONB,
+    -- The attempt at a pull request revision: 1 for the first run, one more for each run started again.
+    attempt INTEGER NOT NULL DEFAULT 1 CHECK (attempt >= 1)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_request_id, branch, head_sha, workflow_path)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_request_id, branch, head_sha, workflow_path, attempt)
     WHERE event = 'pull_request' AND pull_request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_queue ON ci_runs(status, id) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_created_at ON ci_runs(repo_id, created_at DESC);
@@ -1320,3 +1353,44 @@ END;
 $$ LANGUAGE plpgsql;
 CREATE TRIGGER repository_fork_visibility_narrowing AFTER UPDATE OF is_private ON repositories
     FOR EACH ROW EXECUTE FUNCTION narrow_descendant_fork_visibility();
+
+-- Webhooks on a repository or an organization, their encrypted secrets, and recent deliveries.
+CREATE TABLE IF NOT EXISTS webhooks (
+    id BIGSERIAL PRIMARY KEY,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    payload_url VARCHAR(2048) NOT NULL,
+    content_type VARCHAR(64) NOT NULL CHECK (content_type IN ('application/json','application/x-www-form-urlencoded')),
+    encrypted_secret BYTEA,
+    secret_nonce BYTEA,
+    events VARCHAR(1024) NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    ssl_verify BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK ((repo_id IS NULL) <> (org_id IS NULL)),
+    CHECK ((encrypted_secret IS NULL) = (secret_nonce IS NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhooks_repo_id ON webhooks(repo_id);
+
+CREATE INDEX IF NOT EXISTS idx_webhooks_org_id ON webhooks(org_id);
+
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id BIGSERIAL PRIMARY KEY,
+    webhook_id BIGINT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+    guid VARCHAR(64) NOT NULL,
+    event VARCHAR(64) NOT NULL,
+    action VARCHAR(64),
+    status_code INTEGER,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    error VARCHAR(512),
+    request_headers TEXT NOT NULL,
+    request_body TEXT NOT NULL,
+    response_headers TEXT,
+    response_body TEXT,
+    delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id, id);

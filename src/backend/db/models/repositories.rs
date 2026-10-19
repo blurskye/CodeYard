@@ -45,7 +45,6 @@ pub struct Repository {
     pub website: Option<String>,
     pub is_private: bool,
     pub is_archived: bool,
-    pub wiki_enabled: bool,
     pub is_fork: bool,
     pub forked_from_id: Option<i64>,
     pub default_branch: String,

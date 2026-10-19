@@ -10,7 +10,7 @@ use crate::backend::db::{
 use crate::backend::git::repository::process as git_process;
 use crate::backend::repositories::deploy_keys;
 use crate::backend::repositories::store::{
-    repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
+    begin_ref_change, repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
 };
 use anyhow::{ensure, Context, Result};
 use std::collections::HashMap;
@@ -626,6 +626,16 @@ impl Gateway {
         } else {
             None
         };
+        // A push can move some refs before it fails, so every receive is counted as a change
+        // before receive-pack starts. All transports, host OpenSSH included, end up here.
+        let _change = if write {
+            Some(
+                begin_ref_change(&self.pool, repo.id, &operation.path, repo.storage_node_id)
+                    .await?,
+            )
+        } else {
+            None
+        };
         let mut command_process = self.git_command(&operation, &token, write, options.stateless)?;
         if let Some(protocol) = validation::protocol(options.git_protocol.as_deref())? {
             command_process.env("GIT_PROTOCOL", protocol);
@@ -637,13 +647,7 @@ impl Gateway {
             &mut *streams.errors,
             write,
         )
-        .await;
-        if write {
-            // A push can move some refs before it fails, so every receive counts as a
-            // change. All transports, host OpenSSH included, end up here.
-            crate::backend::repositories::store::record_ref_change(&self.pool, repo.id).await;
-        }
-        let status = status?;
+        .await?;
         if operation
             .state
             .lock()

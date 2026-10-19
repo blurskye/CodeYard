@@ -150,7 +150,7 @@ pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Eleme
                 }
                 div { class: "actions-run-heading-actions",
                     if model.can_dispatch && cancellable { {run_form(model, &run.id, "cancel", "Cancel run")} }
-                    if model.can_dispatch && !cancellable && run.head_sha.is_some() && run.event != "pull_request" { {run_form(model, &run.id, "rerun", "Re-run")} }
+                    if model.can_dispatch && !cancellable && run.head_sha.is_some() { {run_form(model, &run.id, "rerun", "Re-run")} }
                     RefreshLink { href: model.url(&[]) }
                 }
             }

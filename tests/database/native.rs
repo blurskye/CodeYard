@@ -1796,7 +1796,7 @@ async fn native_schema_history_foreign_keys_and_integer_overflow_fail_closed() {
             .fetch_all(&fixture.raw)
             .await
             .unwrap();
-    assert_eq!(migrations, [1, 2, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(migrations, [1]);
     let pending_table: String = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='pending_object_deletions'",
     )
@@ -2634,6 +2634,7 @@ async fn check_ci_admission_refusals(pool: &db::DbPool) {
         workflow_blobs: &blobs,
         workflow_inputs: None,
         environment: None,
+        manual: false,
     };
 
     let denied = ci::enqueue_ci_run(pool, input(stranger.id, "push"), &[])

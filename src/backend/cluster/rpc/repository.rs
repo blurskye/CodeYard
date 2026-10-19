@@ -56,7 +56,6 @@ pub fn authorize_operation(
         Operation::FilePaths { .. } => ("FilePaths", false),
         Operation::Blame { .. } => ("Blame", false),
         Operation::Contributors => ("Contributors", false),
-        Operation::CommitActivity { .. } => ("CommitActivity", false),
         Operation::IsAncestor { .. } => ("IsAncestor", false),
         Operation::BranchStatuses { .. } => ("BranchStatuses", false),
         Operation::ResolveCiCommit { .. } => ("ResolveCiCommit", false),
@@ -469,7 +468,6 @@ impl RpcHandler {
             Operation::FilePaths { git_ref, limit } => json!(store.file_paths(&git_ref, limit)),
             Operation::Blame { git_ref, path } => json!(store.blame(&git_ref, &path)),
             Operation::Contributors => json!(store.contributors()),
-            Operation::CommitActivity { git_ref } => json!(store.commit_activity(&git_ref)),
             Operation::IsAncestor {
                 ancestor,
                 descendant,

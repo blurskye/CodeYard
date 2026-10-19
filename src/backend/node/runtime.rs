@@ -82,8 +82,8 @@ async fn shutdown_signal() -> Result<()> {
     Ok(())
 }
 
-/// How long shutdown waits for listeners to drain, then for the upload sweep and replica
-/// loop to stop. The three share this one deadline.
+/// How long shutdown waits for listeners and Git sessions to drain, then for the upload sweep
+/// and replica loop to stop. These share this one deadline.
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Runs the expiry sweeps every few minutes: pending uploads whose window passed,
@@ -341,6 +341,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     // A failed listener is dropped before it can drain the Git pushes it already accepted.
     // A clean stop has drained them, so this returns at once.
     let _ = tokio::time::timeout_at(deadline, git_tasks.drain()).await;
+    // Repository sessions from other nodes are waited for to the same deadline. One still
+    // running after it ends with its connection in `member.shutdown()`.
+    if let Some(member) = &member {
+        let _ = tokio::time::timeout_at(deadline, member.drain_sessions()).await;
+    }
     if let Some(mut expiry) = expiry {
         let finished = tokio::time::timeout_at(deadline, &mut expiry).await;
         if finished.is_err() {

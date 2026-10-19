@@ -16,6 +16,7 @@ use crate::backend::db::{
     DbPool,
 };
 use crate::backend::git::maintenance;
+use crate::backend::repositories::store::RepoError;
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
 use std::{
@@ -25,7 +26,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{sync::watch, task::JoinSet};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// How often a storage node runs a pass.
@@ -351,6 +352,13 @@ impl Copying {
                 self.directories.remove(&id);
                 match result {
                     Ok(()) => retry.succeeded(repository_id),
+                    // The primary is writing to the repository. The next pass asks again.
+                    Err(error) if busy(&error) => {
+                        debug!(
+                            repository = repository_id,
+                            "a replica copy waits for writes in progress"
+                        );
+                    }
                     Err(error) => {
                         retry.failed(repository_id);
                         warn!(repository = repository_id, %error, "could not copy a repository to this node");
@@ -393,6 +401,13 @@ impl Copying {
             self.directories.insert(handle.id(), uuid);
         }
     }
+}
+
+/// Whether a copy was refused only because its primary had a ref change in progress.
+fn busy(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<RepoError>()
+        .is_some_and(RepoError::is_replica_busy)
 }
 
 /// Brings one copy up to date. The version is read before the transfer starts, so the

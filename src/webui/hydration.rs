@@ -14,6 +14,8 @@ pub fn launch() {
 fn launch_inner() -> Result<(), &'static str> {
     use super::bootstrap::{Bootstrap, BOOTSTRAP_ID, DIOXUS_VERSION, ROOT_ID};
     use wasm_bindgen::JsValue;
+    // Before any field restores a draft: this document may answer a submit that left a draft behind.
+    super::components::draft_text::settle_submitted();
     let window = web_sys::window().ok_or("The browser window is unavailable.")?;
     let document = window
         .document()

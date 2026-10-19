@@ -20,6 +20,8 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
     initial_preview: bool,
     #[props(default)] placeholder: String,
     #[props(default)] references: References,
+    // The page's revision, which the save checks. See `DraftTextarea`.
+    #[props(default)] revision: Option<String>,
 ) -> Element {
     let mut text = use_signal(|| initial.clone());
     let mut showing = use_signal(|| initial_preview);
@@ -44,7 +46,7 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
             MarkdownToolbar { target: id.clone() }
             DraftTextarea {
                 id: Some(id), name: "body", initial_value: initial, required,
-                maxlength: Some(65536), rows: rows as u32, placeholder,
+                maxlength: Some(65536), rows: rows as u32, placeholder, revision,
                 class: "collaboration-textarea",
                 on_value: move |value| text.set(value),
             }
@@ -92,6 +94,8 @@ pub(super) fn DetailEditForm(
         preview: draft.preview,
     });
     let snapshot = snapshot.read().clone();
+    // The revision the save checks, so a draft typed before the item changed is not saved silently.
+    let revision = snapshot.expected_updated.clone();
     rsx! {
         form { method: "post", action: format!("{url}/edit"), class: "collaboration-form-fields",
             {csrf(&csrf_token)}
@@ -100,7 +104,7 @@ pub(super) fn DetailEditForm(
             label { r#for: "edit-title", "Title" }
             DraftInput { id: "edit-title", name: "title", initial_value: snapshot.title, required: true, maxlength: Some(255), class: "collaboration-input" }
             label { r#for: "edit-body", "Description (Markdown)" }
-            MarkdownEditor { id: "edit-body", initial: snapshot.body, rows: 10, required: false, initial_preview: snapshot.preview, references }
+            MarkdownEditor { id: "edit-body", initial: snapshot.body, rows: 10, required: false, initial_preview: snapshot.preview, references, revision: Some(revision) }
             div { class: "collaboration-actions", button { r#type: "submit", name: "intent", value: "save", class: "btn btn-primary", "Save changes" } }
         }
     }

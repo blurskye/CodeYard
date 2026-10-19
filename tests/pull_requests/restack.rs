@@ -707,6 +707,58 @@ fn merge_trunk_into(path: &str, branch: &str) {
     .unwrap();
 }
 
+/// Points `branch` at a new commit on `parent` that writes `file`, as an amend of its tip does. The
+/// new commit does not contain the old tip, so the layer above it is not built on it any more.
+fn amend(path: &str, branch: &str, parent: &str, file: &str, content: &str) -> String {
+    let git = git_at(path);
+    let parent = git.find_commit(oid(parent)).unwrap();
+    let blob = git.blob(content.as_bytes()).unwrap();
+    let mut builder = git.treebuilder(Some(&parent.tree().unwrap())).unwrap();
+    builder.insert(file, blob, 0o100644).unwrap();
+    let tree = git.find_tree(builder.write().unwrap()).unwrap();
+    let signature = git2::Signature::now("alice", "alice@example.invalid").unwrap();
+    let commit = git
+        .commit(None, &signature, &signature, "Amend one", &tree, &[&parent])
+        .unwrap();
+    git.reference(&format!("refs/heads/{branch}"), commit, true, "amend")
+        .unwrap();
+    commit.to_string()
+}
+
+/// The layer below is amended, so its base changes to a commit that does not contain the old one.
+/// The layer above still sits on the old commit: its restack must replay its own commit only, and
+/// the layer below's old commit must not conflict with the amended file.
+async fn amended_layer_contract(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    let path = app.repository.disk_path.clone();
+    let main0 = app.alice.save("main", "README.md", "unborn").await;
+    app.alice.branch("feature-1", &main0).await;
+    let one = app.alice.save("feature-1", "one.txt", &main0).await;
+    app.alice.open_pull("One", "feature-1", "main").await;
+    app.alice.branch("feature-2", &one).await;
+    let two = app.alice.save("feature-2", "two.txt", &one).await;
+    app.alice.open_pull("Two", "feature-2", "feature-1").await;
+    join(&app.alice, 2).await;
+
+    let amended = amend(&path, "feature-1", &main0, "one.txt", "amended\n");
+    // A write on the amended branch refreshes the layer above, which moves its base to that write.
+    let base = app.alice.save("feature-1", "extra.txt", &amended).await;
+    assert_eq!(app.alice.pull(2).await["base_sha"], base);
+
+    let (status, rebased) = rebase(&app.alice, 2).await;
+    assert_eq!(status, StatusCode::OK, "{rebased}");
+    assert_eq!(rebased["rebased"], 1);
+    let moved = branch_tip(&path, "feature-2");
+    assert_ne!(moved, two);
+    assert_eq!(parent_of(&path, &moved), base);
+    assert_eq!(commits_after(&path, &base, &moved), 1);
+    assert!(has_file(&path, &moved, "two.txt"));
+    assert!(has_file(&path, &moved, "extra.txt"));
+    f.finish().await;
+}
+
 /// Squash-merging the bottom layer leaves the layer above it behind trunk, and that layer's merge is
 /// refused until it is rebased. Once trunk is merged into it, the layer contains the current tip of
 /// its base: the hint shows no button, the rebase moves nothing, and the merge goes through.
@@ -957,4 +1009,14 @@ async fn sqlite_merged_layer_offers_no_rebase() {
 #[tokio::test]
 async fn postgres_merged_layer_offers_no_rebase() {
     merged_layer_contract(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_restack_after_the_layer_below_is_amended_replays_only_its_own_commit() {
+    amended_layer_contract(false).await;
+}
+
+#[tokio::test]
+async fn postgres_restack_after_the_layer_below_is_amended_replays_only_its_own_commit() {
+    amended_layer_contract(true).await;
 }

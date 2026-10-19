@@ -216,7 +216,6 @@ mod tests {
             website: None,
             is_private: false,
             is_archived: false,
-            wiki_enabled: true,
             is_fork: false,
             forked_from_id: None,
             default_branch: "main".into(),

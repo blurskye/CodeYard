@@ -76,8 +76,12 @@ const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 /// A running run without a heartbeat for this long has lost its worker.
 const STALE_AFTER_SECONDS: i64 = 90;
 
-/// Attempts to record a final state, with doubling waits of 1 to 8 seconds between them.
-const FINISH_ATTEMPTS: u32 = 5;
+/// The longest wait between attempts to record a final state.
+const FINISH_RETRY_MAX: Duration = Duration::from_secs(60);
+
+/// A worker error that becomes a run's final message is cut to this many characters. The
+/// database accepts at most 16 KiB, and a longer message could never be recorded.
+const RESULT_MESSAGE_CHARS: usize = 4096;
 
 /// How long a claim still in flight at shutdown may run, for a database or a remote queue.
 /// A claim that has not returned by then is dropped, so shutdown stays prompt.
@@ -207,11 +211,12 @@ async fn execute(
             Err(error) => {
                 warn!(%error, "could not persist CI container ownership");
                 record_result(
-                    service,
+                    &service.queue,
                     worker,
                     run,
                     "failed",
                     Some("CI container recovery is unavailable"),
+                    &mut stop,
                 )
                 .await;
                 return false;
@@ -220,7 +225,8 @@ async fn execute(
     } else {
         None
     };
-    let (cancel_tx, cancel) = watch::channel(false);
+    // A run handed back by a retried claim may have been cancelled since the first claim.
+    let (cancel_tx, cancel) = watch::channel(run.cancel_requested);
     let heartbeat = async {
         let mut shutdown = false;
         loop {
@@ -261,7 +267,10 @@ async fn execute(
                 ("failed", Some("The run exceeded its time limit".to_owned()))
             }
             None => {
-                let message = format!("CI could not run: {error:#}");
+                let message: String = format!("CI could not run: {error:#}")
+                    .chars()
+                    .take(RESULT_MESSAGE_CHARS)
+                    .collect();
                 let _ = send_log_lines(
                     service,
                     worker,
@@ -287,32 +296,43 @@ async fn execute(
         }
     }
     drop(names);
-    record_result(service, worker, run, status, message.as_deref()).await;
+    record_result(
+        &service.queue,
+        worker,
+        run,
+        status,
+        message.as_deref(),
+        &mut stop,
+    )
+    .await;
     // Do not let a fast runner accumulate unfinished directory removals in this slot.
     let _ = cleanup.await;
     reuse_slot
 }
 
-/// Sends the final state of a run. Finishing is idempotent (the first final state wins), so
-/// a result whose reply was lost is simply sent again. Without retries, a brief network
-/// failure would leave the run to the stale sweep, which records it as abandoned.
+/// Sends the final state of a run, and keeps trying until it is recorded or the worker stops.
+/// Finishing is idempotent (the first final state wins), so a result whose reply was lost is
+/// simply sent again. The slot claims nothing while its result is unrecorded: a claim would
+/// hand back the run it still holds, and a job that already ran would run again.
 async fn record_result(
-    service: &CiWorkers,
+    queue: &RunQueue,
     worker: &str,
     run: &CiRun,
     status: &str,
     message: Option<&str>,
+    stop: &mut watch::Receiver<bool>,
 ) {
     let mut delay = Duration::from_secs(1);
-    for attempt in 1..=FINISH_ATTEMPTS {
-        match service.queue.finish(worker, run.id, status, message).await {
+    loop {
+        match queue.finish(worker, run.id, status, message).await {
             Ok(_) => return,
-            Err(error) => warn!(%error, attempt, run = %run.run_id, "could not record CI result"),
+            Err(error) => warn!(%error, run = %run.run_id, "could not record CI result"),
         }
-        if attempt < FINISH_ATTEMPTS {
-            tokio::time::sleep(delay).await;
-            delay *= 2;
+        tokio::select! {
+            _ = tokio::time::sleep(delay) => {}
+            _ = stop.wait_for(|stopped| *stopped) => return,
         }
+        delay = (delay * 2).min(FINISH_RETRY_MAX);
     }
 }
 
@@ -1664,5 +1684,77 @@ jobs:
         assert_eq!(event["pull_request"]["head"]["sha"], head);
         assert_eq!(event["pull_request"]["base"]["ref"], "main");
         assert_eq!(github_ref(&claim).as_deref(), Some("refs/pull/7/merge"));
+    }
+
+    #[tokio::test]
+    async fn an_unrecorded_result_is_retried_until_the_worker_stops() {
+        let native = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let pool = DbPool::from(native);
+        db::run_migrations(&pool).await.unwrap();
+        let owner = db::users::accounts::create_user(&pool, "result_owner", None)
+            .await
+            .unwrap();
+        let repository = db::repositories::records::create_repository(
+            &pool,
+            owner.id,
+            "result",
+            None,
+            true,
+            "/unused/result.git",
+        )
+        .await
+        .unwrap();
+        let sha = "a".repeat(40);
+        let blobs = serde_json::json!({ ".github/workflows/ci.yml": sha });
+        let run = db::ci::enqueue_ci_run(
+            &pool,
+            db::ci::NewCiRun {
+                repo_id: repository.id,
+                triggered_by_id: owner.id,
+                pipeline: "ci",
+                event: "push",
+                pull_request_id: None,
+                branch: "main",
+                head_sha: &sha,
+                workflow_path: ".github/workflows/ci.yml",
+                workflow_blobs: &blobs,
+                workflow_inputs: None,
+                environment: None,
+                manual: false,
+            },
+            &[owner.id],
+        )
+        .await
+        .unwrap();
+        let queue = RunQueue::Database {
+            pool: pool.clone(),
+            config: Arc::new(crate::backend::ci::CiConfig::default()),
+            secrets: None,
+            context: None,
+            notifications: Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+                &pool,
+            )),
+        };
+        let (stop_sender, mut stop) = watch::channel(false);
+        // "unknown" is not a final state, so the database refuses the result every time.
+        let mut recording = tokio::spawn(async move {
+            record_result(&queue, "slot-1", &run, "unknown", None, &mut stop).await;
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3), &mut recording)
+                .await
+                .is_err(),
+            "a result the database refused was given up before the worker stopped"
+        );
+        stop_sender.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), recording)
+            .await
+            .expect("the retry stops with the worker")
+            .unwrap();
+        pool.close().await;
     }
 }

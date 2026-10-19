@@ -1,7 +1,10 @@
-use crate::backend::db::models::{Webhook, WebhookDelivery};
+use crate::backend::db::models::{OrgRole, Webhook, WebhookDelivery};
+use crate::backend::db::organizations::OrganizationOutcome;
+use crate::backend::db::postgres::discussions::lock_admin_authority;
+use crate::backend::db::postgres::organizations::authority::authority;
 use crate::backend::db::webhooks::{HookOwner, NewDelivery, SealedSecret, WebhookFields};
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at";
 const DELIVERY_COLUMNS: &str = "id, webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body, delivered_at";
@@ -29,13 +32,35 @@ pub async fn get_webhook(pool: &PgPool, owner: HookOwner, id: i64) -> Result<Opt
         .await?)
 }
 
+/// Whether `actor_id` may manage the hooks of `owner`, checked in `tx`: a repository's
+/// administrators, or an organization's owners. The locks it takes last until `tx` ends, so a
+/// membership change cannot commit between this check and the write that follows it.
+async fn may_manage_hooks(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: HookOwner,
+    actor_id: i64,
+) -> Result<bool> {
+    match owner {
+        HookOwner::Repository(repo_id) => lock_admin_authority(tx, actor_id, repo_id).await,
+        HookOwner::Organization(org) => Ok(matches!(
+            authority(tx, actor_id, org).await?,
+            OrganizationOutcome::Applied(OrgRole::Owner)
+        )),
+    }
+}
+
+/// Inserts a hook. `None` means the actor may not manage the owner's hooks.
 pub async fn insert_webhook(
     pool: &PgPool,
     owner: HookOwner,
     actor_id: i64,
     fields: &WebhookFields,
     secret: Option<&SealedSecret>,
-) -> Result<i64> {
+) -> Result<Option<i64>> {
+    let mut tx = pool.begin().await?;
+    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+        return Ok(None);
+    }
     let sql = format!(
         "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id",
         owner.column()
@@ -50,18 +75,26 @@ pub async fn insert_webhook(
         .bind(fields.active)
         .bind(fields.ssl_verify)
         .bind(actor_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
-    Ok(id)
+    tx.commit().await?;
+    Ok(Some(id))
 }
 
+/// Updates a hook. `None` means the actor may not manage the owner's hooks; `Some(false)` means
+/// the owner has no such hook.
 pub async fn update_webhook(
     pool: &PgPool,
     owner: HookOwner,
+    actor_id: i64,
     id: i64,
     fields: &WebhookFields,
     secret: Option<&SealedSecret>,
-) -> Result<bool> {
+) -> Result<Option<bool>> {
+    let mut tx = pool.begin().await?;
+    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+        return Ok(None);
+    }
     let sql = format!(
         "UPDATE webhooks SET payload_url = $3, content_type = $4, events = $5, active = $6, ssl_verify = $7, \
          encrypted_secret = COALESCE($8, encrypted_secret), secret_nonce = COALESCE($9, secret_nonce), \
@@ -78,12 +111,24 @@ pub async fn update_webhook(
         .bind(fields.ssl_verify)
         .bind(secret.map(|s| s.ciphertext.as_slice()))
         .bind(secret.map(|s| s.nonce.as_slice()))
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    Ok(result.rows_affected() > 0)
+    tx.commit().await?;
+    Ok(Some(result.rows_affected() > 0))
 }
 
-pub async fn delete_webhook(pool: &PgPool, owner: HookOwner, id: i64) -> Result<bool> {
+/// Deletes a hook. `None` means the actor may not manage the owner's hooks; `Some(false)` means
+/// the owner has no such hook.
+pub async fn delete_webhook(
+    pool: &PgPool,
+    owner: HookOwner,
+    actor_id: i64,
+    id: i64,
+) -> Result<Option<bool>> {
+    let mut tx = pool.begin().await?;
+    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+        return Ok(None);
+    }
     let sql = format!(
         "DELETE FROM webhooks WHERE id = $1 AND {} = $2",
         owner.column()
@@ -91,9 +136,10 @@ pub async fn delete_webhook(pool: &PgPool, owner: HookOwner, id: i64) -> Result<
     let result = sqlx::query(&sql)
         .bind(id)
         .bind(owner.id())
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-    Ok(result.rows_affected() > 0)
+    tx.commit().await?;
+    Ok(Some(result.rows_affected() > 0))
 }
 
 pub async fn insert_delivery(pool: &PgPool, webhook_id: i64, delivery: &NewDelivery) -> Result<()> {

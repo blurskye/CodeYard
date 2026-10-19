@@ -750,6 +750,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         workflow_blobs: &blobs,
         workflow_inputs: None,
         environment,
+        manual: false,
     };
 
     let run = db::ci::enqueue_ci_run(&pool, new_run("full", Some("production")), &[])
@@ -1473,6 +1474,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
                 head_sha: sha('1'),
                 base_branch: "main".into(),
                 base_sha: sha('2'),
+                stack_id: None,
             },
             PullRequestRevisions {
                 id: second.id,
@@ -1484,6 +1486,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
                 head_sha: sha('3'),
                 base_branch: "main".into(),
                 base_sha: sha('2'),
+                stack_id: None,
             },
         ]
     );
@@ -1512,6 +1515,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         &sha('2'),
         &sha('7'),
         "main",
+        None,
     )
     .await
     .unwrap());
@@ -1535,6 +1539,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         &sha('7'),
         &sha('8'),
         "develop",
+        None,
     )
     .await
     .unwrap());
@@ -1544,6 +1549,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         &sha('7'),
         &sha('8'),
         "main",
+        None,
     )
     .await
     .unwrap());
@@ -1562,6 +1568,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         &sha('2'),
         &sha('8'),
         "main",
+        None,
     )
     .await
     .unwrap());
@@ -1596,6 +1603,7 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             &pull.base_sha,
             &sha('8'),
             "main",
+            None,
         )
         .await
         .unwrap());

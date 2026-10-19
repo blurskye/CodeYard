@@ -87,8 +87,9 @@ pub(crate) async fn cancel_run(
     }
 }
 
-/// Queues the same workflow again at the same commit, with the inputs the run was given.
-/// Pull request runs are not run again yet: their pull request link is not part of the request.
+/// Queues the same workflow again at the same commit, with the inputs the run was given. A pull
+/// request run starts a new attempt at its pull request revision, admitted as the pull request is
+/// now: the current actor needs CI rights, and a fork head needs its approval.
 pub(crate) async fn rerun_run(
     State(state): State<Arc<AppState>>,
     Path((owner, name, run_id)): Path<(String, String, String)>,
@@ -110,12 +111,6 @@ pub(crate) async fn rerun_run(
     let Some(head_sha) = run.head_sha.clone() else {
         return ctx.error(StatusCode::CONFLICT, "This run has no commit to run again.");
     };
-    if run.event == "pull_request" {
-        return ctx.error(
-            StatusCode::CONFLICT,
-            "Pull request runs cannot be run again yet. Push a new commit or open the pull request again.",
-        );
-    }
     let inputs = run.workflow_inputs.as_ref().and_then(|value| {
         serde_json::from_value::<std::collections::BTreeMap<String, serde_json::Value>>(
             value.clone(),

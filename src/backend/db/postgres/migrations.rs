@@ -5,48 +5,11 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use tracing::info;
 
-const MIGRATIONS: &[(i64, &str, &str)] = &[
-    (
-        1,
-        "schema",
-        include_str!("../../../../schema/postgres/0001.schema.sql"),
-    ),
-    (
-        2,
-        "account_invitations",
-        include_str!("../../../../schema/postgres/0002.account_invitations.sql"),
-    ),
-    (
-        3,
-        "releases",
-        include_str!("../../../../schema/postgres/0003.releases.sql"),
-    ),
-    (
-        4,
-        "webhooks",
-        include_str!("../../../../schema/postgres/0004.webhooks.sql"),
-    ),
-    (
-        5,
-        "two_factor",
-        include_str!("../../../../schema/postgres/0005.two_factor.sql"),
-    ),
-    (
-        6,
-        "deploy_keys",
-        include_str!("../../../../schema/postgres/0006.deploy_keys.sql"),
-    ),
-    (
-        7,
-        "wiki",
-        include_str!("../../../../schema/postgres/0007.wiki.sql"),
-    ),
-    (
-        8,
-        "codeowners_rule",
-        include_str!("../../../../schema/postgres/0008.codeowners_rule.sql"),
-    ),
-];
+const MIGRATIONS: &[(i64, &str, &str)] = &[(
+    1,
+    "schema",
+    include_str!("../../../../schema/postgres/0001.schema.sql"),
+)];
 
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 

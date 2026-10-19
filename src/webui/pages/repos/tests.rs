@@ -5,9 +5,6 @@ use super::chrome::{active_tab, chrome, repo_engagement, repo_tabs, RepoChrome};
 use super::commits::{commit_detail, commits, Commit, HistoryFilter};
 use super::editor::{delete_file, editor, upload_page, DeleteFile, Editor, UploadForm};
 use super::find::{find, FindPage};
-use super::insights::{
-    insights, CommitPattern, HistoryNote, InsightsPage, InsightsView, ListedItem, Pulse, WeekCount,
-};
 use super::issues;
 use super::page::{render, Page};
 use super::pulls::{Diff, DiffFile, PullSummary};
@@ -124,31 +121,6 @@ fn fixtures() -> Vec<Page> {
                 content: String::new(),
                 editable: false,
                 ..blob
-            },
-        },
-        Page::Insights {
-            repo: repo.clone(),
-            page: InsightsPage {
-                section: "pulse".into(),
-                view: InsightsView::Pulse(Pulse {
-                    period: "1w".into(),
-                    merged_pulls: 2,
-                    opened_pulls: 3,
-                    closed_issues: 1,
-                    opened_issues: 4,
-                    merged: vec![ListedItem {
-                        number: 7,
-                        title: "Fix <b>escaping</b>".into(),
-                        date: "2026-10-18".into(),
-                    }],
-                    issues: Vec::new(),
-                    commits: 5,
-                    authors: 2,
-                    files: 6,
-                    additions: 40,
-                    deletions: 12,
-                    history: HistoryNote::Capped { commits: 5000 },
-                }),
             },
         },
         Page::Find {
@@ -309,30 +281,6 @@ fn fixtures() -> Vec<Page> {
                 ),
             ]),
         },
-        Page::Wiki {
-            repo: RepoChrome {
-                owner: "alice".into(),
-                name: "project".into(),
-                wiki_enabled: true,
-                ..Default::default()
-            },
-            page: crate::webui::pages::repos::wiki::Page::Show {
-                page: crate::webui::pages::repos::wiki::PageItem {
-                    slug: "home".into(),
-                    title: "Home </h1><script>alert(1)</script>".into(),
-                    body: "See [[Install Guide]]".into(),
-                    revision: 2,
-                    author: "alice".into(),
-                    saved_at: "2026-10-01T00:00:00Z".into(),
-                    message: String::new(),
-                },
-                sidebar: None,
-                footer: None,
-                known: vec!["home".into()],
-                can_write: true,
-                can_admin: true,
-            },
-        },
         Page::Releases {
             repo: RepoChrome {
                 owner: "alice".into(),
@@ -396,85 +344,6 @@ fn every_page_variant_roundtrips_only_presentation_data() {
 }
 
 #[test]
-fn insights_sections_render_figures_notes_and_the_section_nav() {
-    crate::webui::tests::in_scope(|| {
-        let repo = RepoChrome {
-            owner: "alice".into(),
-            name: "project".into(),
-            current_path: "/alice/project/insights".into(),
-            ..Default::default()
-        };
-        let page = InsightsPage {
-            section: "commits".into(),
-            view: InsightsView::Commits(CommitPattern {
-                weeks: (0..52)
-                    .map(|week| WeekCount {
-                        start: format!("2026-01-{:02}", week % 28 + 1),
-                        count: week,
-                    })
-                    .collect(),
-                punch: vec![vec![1; 24]; 7],
-                commits: 168,
-                history: HistoryNote::TooLarge,
-            }),
-        };
-        let html = dioxus_ssr::render_element(insights(&repo, &page));
-        // Every section is one link in the nav, and the current one is marked.
-        for (key, _) in super::insights::SECTIONS {
-            assert!(
-                html.contains(&format!("/alice/project/insights?section={key}\"")),
-                "{key}"
-            );
-        }
-        assert!(html.contains("aria-current=\"page\""));
-        assert!(html.contains("repo-settings-picker"));
-        // The charts are inline SVG with labels, and the punch card has one cell per hour.
-        assert!(html.contains("<svg"));
-        assert!(html.contains("Commits per week"));
-        assert_eq!(html.matches("class=\"repo-insights-cell\"").count(), 7 * 24);
-        assert!(html.contains("too large to summarize"));
-        assert!(
-            !html.contains("<script"),
-            "{}",
-            html.find("<script")
-                .map(|at| &html[at.saturating_sub(100)..(at + 200).min(html.len())])
-                .unwrap_or("")
-        );
-
-        let pulse = dioxus_ssr::render_element(insights(
-            &repo,
-            &InsightsPage {
-                section: "pulse".into(),
-                view: InsightsView::Pulse(Pulse {
-                    period: "1d".into(),
-                    merged_pulls: 0,
-                    opened_pulls: 0,
-                    closed_issues: 0,
-                    opened_issues: 0,
-                    merged: vec![ListedItem {
-                        number: 3,
-                        title: "<script>x</script>".into(),
-                        date: "2026-10-18".into(),
-                    }],
-                    issues: Vec::new(),
-                    commits: 0,
-                    authors: 0,
-                    files: 0,
-                    additions: 0,
-                    deletions: 0,
-                    history: HistoryNote::Complete,
-                }),
-            },
-        ));
-        assert!(pulse.contains("href=\"/alice/project/pulls/3\""));
-        assert!(!pulse.contains("<script>x"));
-        assert!(pulse.contains("No issues were opened in this period."));
-        assert!(!pulse.contains("too large"));
-        assert!(!pulse.contains("most recent"));
-    });
-}
-
-#[test]
 fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
     crate::webui::tests::in_scope(|| {
         for page in fixtures() {
@@ -483,7 +352,6 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
                 Page::Blob { repo, page } => blob(repo, page),
                 Page::Blame { repo, page } => blame(repo, page),
                 Page::Find { repo, page } => find(repo, page),
-                Page::Insights { repo, page } => insights(repo, page),
                 Page::Commits {
                     repo,
                     rows,
@@ -532,9 +400,6 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
                 } => rejected_form(repo, action, message, values),
                 Page::Releases { repo, page } => {
                     crate::webui::pages::repos::releases::render(repo, page.clone())
-                }
-                Page::Wiki { repo, page } => {
-                    crate::webui::pages::repos::wiki::render(repo, page.clone())
                 }
             };
             let expected = dioxus_ssr::render_element(expected);
@@ -2092,6 +1957,39 @@ fn protocol_links_use_existing_archive_and_slash_ref_raw_adapter() {
     assert!(html.contains("href=\"/alice/project/archive/feature%2Fx.zip\""));
     assert!(html.contains("href=\"/alice/project/archive/feature%2Fx.tar.gz\""));
 }
+#[test]
+fn a_tag_view_downloads_the_tag_by_its_full_ref_unless_a_branch_has_its_name() {
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        ..Default::default()
+    };
+    let view = |branches: Vec<String>| TreePage {
+        languages: Vec::new(),
+        releases: None,
+        reference: "v1".into(),
+        path: String::new(),
+        branches,
+        tags: vec!["v1".into()],
+        entries: vec![],
+        readme: None,
+        latest_commit: None,
+        folders: Vec::new(),
+        permalink: String::new(),
+        empty: false,
+        http_clone: "http://example.invalid".into(),
+        ssh_clone: "ssh://git@example.invalid".into(),
+        references: Default::default(),
+    };
+    let tag_only = dioxus_ssr::render_element(tree(&repo, &view(vec![])));
+    assert!(tag_only.contains("href=\"/alice/project/archive/refs%2Ftags%2Fv1.zip\""));
+    assert!(tag_only.contains("href=\"/alice/project/archive/refs%2Ftags%2Fv1.tar.gz\""));
+    // With a branch of the same name, the view shows that branch, so its links name the branch.
+    let shadowed = dioxus_ssr::render_element(tree(&repo, &view(vec!["v1".into()])));
+    assert!(shadowed.contains("href=\"/alice/project/archive/v1.zip\""));
+    assert!(!shadowed.contains("refs%2Ftags%2Fv1"));
+}
+
 #[test]
 fn empty_repository_quick_setup_is_shown_only_to_writers() {
     let page = TreePage {

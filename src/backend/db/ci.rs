@@ -33,6 +33,10 @@ pub struct NewCiRun<'a> {
     /// Input name → value for a manual `workflow_dispatch` run, as GitHub's `event.inputs`.
     pub workflow_inputs: Option<&'a serde_json::Value>,
     pub environment: Option<&'a str>,
+    /// Whether a person asked for the run, rather than an event. A pull request revision whose
+    /// newest attempt has finished gets a new attempt for such a request. Automatic admission
+    /// reuses that newest attempt, whatever its status.
+    pub manual: bool,
 }
 
 /// Recorded on queued runs that are cancelled because the person who started them
@@ -51,7 +55,9 @@ native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     crate::backend::db::sqlite::ci::claim_ci_run,
     /// Hands the oldest queued run to `worker`, after checking again that the person
     /// who started it may still run workflows here. Queued runs whose starter lost
-    /// access are cancelled instead, and the claim moves on to the next one.
+    /// access are cancelled instead, and the claim moves on to the next one. A worker
+    /// that already holds a running run gets that run back, so a claim retried after a
+    /// lost reply does not leave its run stranded.
     fn claim_ci_run(pool: &DbPool, worker: &str, mode: &str, trusted_ids: &[i64]) -> Result<Option<CiRun>>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run_on_node,

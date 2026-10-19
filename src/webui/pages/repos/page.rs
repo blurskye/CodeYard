@@ -1,6 +1,5 @@
 //! Request-specific repository HTML. Data here is safe presentation data, never persistence rows.
 //! This module is the repository lane: the `Page` enum the app renders, dispatching to each route.
-use crate::webui::pages::repos::wiki;
 use crate::webui::pages::repos::{
     blame::{blame, BlamePage},
     blob::{blob, BlobPage},
@@ -9,7 +8,6 @@ use crate::webui::pages::repos::{
     commits::{commit_detail, commits, Commit, HistoryFilter},
     editor::{delete_file, editor, upload_page, DeleteFile, Editor, UploadForm},
     find::{find, FindPage},
-    insights::{self, InsightsPage},
     pulls::Diff,
     settings::{rejected_form, settings, Settings},
     tree::{tree, TreePage},
@@ -91,10 +89,6 @@ pub enum Page {
         repo: RepoChrome,
         settings: Settings,
     },
-    Insights {
-        repo: RepoChrome,
-        page: InsightsPage,
-    },
     RejectedForm {
         repo: RepoChrome,
         action: String,
@@ -104,10 +98,6 @@ pub enum Page {
     Releases {
         repo: RepoChrome,
         page: super::releases::Page,
-    },
-    Wiki {
-        repo: RepoChrome,
-        page: wiki::Page,
     },
 }
 
@@ -126,10 +116,8 @@ impl Page {
             | Page::DeleteFile { repo, .. }
             | Page::Upload { repo, .. }
             | Page::Settings { repo, .. }
-            | Page::Insights { repo, .. }
             | Page::RejectedForm { repo, .. }
-            | Page::Releases { repo, .. }
-            | Page::Wiki { repo, .. } => repo,
+            | Page::Releases { repo, .. } => repo,
         }
     }
 }
@@ -181,9 +169,7 @@ pub fn render(page: Page) -> Element {
             repo,
             settings: state,
         } => settings(&repo, &state),
-        Page::Insights { repo, page } => insights::insights(&repo, &page),
         Page::Releases { repo, page } => super::releases::render(&repo, page),
-        Page::Wiki { repo, page } => wiki::render(&repo, page),
         Page::RejectedForm {
             repo,
             action,

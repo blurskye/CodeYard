@@ -42,8 +42,8 @@ pub(super) async fn copy(
     };
     match fetch(context, primary, repository, mirror, &have).await {
         // A tip the primary no longer has makes the incremental pack fail. Then the
-        // primary sends everything the copy needs.
-        Err(error) if !have.is_empty() => {
+        // primary sends everything the copy needs. A busy primary is asked later instead.
+        Err(error) if !have.is_empty() && !super::busy(&error) => {
             tracing::debug!(%error, "incremental replica copy failed; copying everything");
             fetch(context, primary, repository, mirror, &[]).await
         }

@@ -180,10 +180,11 @@ native_operation!(crate::backend::db::postgres::cluster::set_replicas,
 
 native_operation!(crate::backend::db::postgres::cluster::bump_write_version,
     crate::backend::db::sqlite::cluster::bump_write_version,
-    /// Records one ref change on a repository's primary. Call it after Git has made the
-    /// change: a copy synced after the bump is then known to include it. A repository that
-    /// no storage node holds has no replicas and counts nothing.
-    fn bump_write_version(pool: &DbPool, repo_id: i64) -> Result<()>);
+    /// Counts one ref change on a repository's primary, if `node_id` holds the repository
+    /// (`None` accepts any holder). Call it before Git makes the change. Returns `false`
+    /// when another node holds the repository. A repository that no storage node holds has
+    /// no replicas and counts nothing.
+    fn bump_write_version(pool: &DbPool, repo_id: i64, node_id: Option<i64>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::cluster::get_write_version,
     crate::backend::db::sqlite::cluster::get_write_version,

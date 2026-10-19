@@ -156,6 +156,7 @@ impl Database {
                 workflow_blobs: &blobs,
                 workflow_inputs: None,
                 environment: deploy.then_some("production"),
+                manual: false,
             },
             trusted,
         )
@@ -327,11 +328,14 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         "a cancelled run tells no one"
     );
 
-    // The run queued behind it is dealt with by the next claim.
-    assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
-        .await
-        .unwrap()
-        .is_none());
+    // The run queued behind it is dealt with by the next claim, from another slot, since the
+    // first slot still holds the deployment.
+    assert!(
+        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_cancelled(&db.run(later.run_id).await, ACCESS_LOST);
     let untouched = db.run(deploy.run_id).await;
     assert_eq!(untouched.status, "running");
@@ -364,7 +368,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         let run = db.enqueue(w.repo, w.collab, false, &trusted).await;
         db.execute(apply, &[id]).await;
         assert!(
-            db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
+            db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
                 .await
                 .unwrap()
                 .is_none(),
@@ -377,7 +381,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     // Being trusted to run workflows is part of the permission, and is read from the
     // configuration of the node that claims.
     let run = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
+    assert!(db::ci::claim_ci_run(db.pool(), "worker-2", "local", &[])
         .await
         .unwrap()
         .is_none());
@@ -390,10 +394,12 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         &[run.id],
     )
     .await;
-    assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_cancelled(&db.run(run.run_id).await, ACCESS_LOST);
 
     // A queued run that was flagged for cancellation before runs were cancelled on
@@ -404,10 +410,12 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         &[flagged.id],
     )
     .await;
-    assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
+            .await
+            .unwrap()
+            .is_none()
+    );
     assert_cancelled(&db.run(flagged.run_id).await, "Cancelled before it started");
 
     // A person who still has access gets the run.
@@ -651,8 +659,10 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
         running.id
     );
     let running_deploy = db.enqueue(affected.repo, runner, true, &trusted).await;
+    // A second slot holds the deployment, since the first one still holds its run.
+    let deploy_worker = "worker-2";
     assert_eq!(
-        db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
+        db::ci::claim_ci_run(db.pool(), deploy_worker, "local", &trusted)
             .await
             .unwrap()
             .unwrap()
@@ -717,12 +727,12 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     assert_cancelled(&db.run(queued_deploy.run_id).await, ACCESS_LOST);
     assert_eq!(deployment_status(db, &queued_deploy).await, "cancelled");
 
-    for run in [&running, &running_deploy] {
+    for (run, worker) in [(&running, WORKER), (&running_deploy, deploy_worker)] {
         let current = db.run(run.run_id).await;
         assert_eq!(current.status, "running");
         assert!(current.cancel_requested);
         assert_eq!(
-            db::ci::heartbeat_ci_run(db.pool(), run.id, WORKER)
+            db::ci::heartbeat_ci_run(db.pool(), run.id, worker)
                 .await
                 .unwrap(),
             Some(true)
@@ -732,7 +742,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     db::ci::finish_ci_run(
         db.pool(),
         running_deploy.id,
-        WORKER,
+        deploy_worker,
         "cancelled",
         Some(ACCESS_LOST),
     )
@@ -985,6 +995,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
                 workflow_blobs: &serde_json::json!({workflow: sha}),
                 workflow_inputs: None,
                 environment: None,
+                manual: false,
             },
             &[],
         )
@@ -1001,19 +1012,21 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         let sha = format!("{:040x}", 1000 + index);
         let failed = enqueue(db, &w, &sha, ".github/workflows/test.yml").await;
         let passed = enqueue(db, &w, &sha, ".github/workflows/lint.yaml").await;
-        for _ in 0..2 {
-            db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
+        // Two slots each take one of the runs, as two workers would.
+        let slots = [format!("{WORKER}-0"), format!("{WORKER}-1")];
+        for slot in &slots {
+            db::ci::claim_ci_run(db.pool(), slot, "local", &[])
                 .await
                 .unwrap()
                 .unwrap();
         }
         for status in order {
-            let id = if status == "failed" {
-                failed.id
+            let (id, slot) = if status == "failed" {
+                (failed.id, &slots[0])
             } else {
-                passed.id
+                (passed.id, &slots[1])
             };
-            db::ci::finish_ci_run(db.pool(), id, WORKER, status, None)
+            db::ci::finish_ci_run(db.pool(), id, slot, status, None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1683,6 +1696,7 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         workflow_blobs: &blobs,
         workflow_inputs: None,
         environment: None,
+        manual: false,
     };
 
     let denied = db::ci::enqueue_ci_run(db.pool(), input(Some(fork.id)), &[])
@@ -1766,6 +1780,7 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
         workflow_blobs: &blobs,
         workflow_inputs: None,
         environment: None,
+        manual: false,
     };
     let queued = db::ci::enqueue_ci_run(db.pool(), input(), &[])
         .await
@@ -1777,6 +1792,7 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
         &pull.base_sha,
         &"2".repeat(40),
         "main",
+        None,
     )
     .await
     .unwrap());
@@ -1817,6 +1833,228 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
     assert_eq!(claimed.id, next.id);
     assert_eq!(claimed.mode, "podman");
     assert_eq!(db.run(next.run_id).await.mode, "podman");
+}
+
+// ---- A person's request starts a new attempt once the last one has finished ----
+
+/// Admits the workflow of a same-repository or fork pull request at its head, as automatic
+/// admission (`manual` false) or a person's request (`manual` true) does.
+async fn pull_request_run(
+    db: &Database,
+    repo: i64,
+    actor: i64,
+    pull: i64,
+    head: &str,
+    manual: bool,
+) -> anyhow::Result<CiRun> {
+    let blobs = serde_json::json!({ WORKFLOW: head });
+    db::ci::enqueue_ci_run(
+        db.pool(),
+        db::ci::NewCiRun {
+            repo_id: repo,
+            triggered_by_id: actor,
+            pipeline: "ci",
+            event: "pull_request",
+            pull_request_id: Some(pull),
+            branch: "main",
+            head_sha: head,
+            workflow_path: WORKFLOW,
+            workflow_blobs: &blobs,
+            workflow_inputs: None,
+            environment: None,
+            manual,
+        },
+        &[],
+    )
+    .await
+}
+
+async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Database) {
+    let w = world(db, "attempts").await;
+    let sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    let pull = db::pull_requests::records::create_pull_request(
+        db.pool(),
+        db::pull_requests::records::NewPullRequest {
+            repo_id: w.repo,
+            head_repo_id: Some(w.repo),
+            author_id: w.owner,
+            title: "Attempts",
+            body: "",
+            head_branch: "topic",
+            head_sha: sha,
+            base_branch: "main",
+            base_sha: "1111111111111111111111111111111111111111",
+            is_draft: false,
+        },
+    )
+    .await
+    .unwrap();
+    let admit = |manual| pull_request_run(db, w.repo, w.owner, pull.id, sha, manual);
+
+    let first = admit(false).await.unwrap();
+    assert_eq!(first.attempt, 1);
+    // Automatic admission reuses the attempt, queued or finished, and so does a person's request
+    // while the attempt is still queued.
+    assert_eq!(admit(false).await.unwrap().id, first.id);
+    assert_eq!(admit(true).await.unwrap().id, first.id);
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
+        .await
+        .unwrap()
+        .expect("the attempt is claimed");
+    assert_eq!(claimed.id, first.id);
+    db::ci::finish_ci_run(
+        db.pool(),
+        first.id,
+        WORKER,
+        "failed",
+        Some("A workflow job failed"),
+    )
+    .await
+    .unwrap()
+    .expect("the attempt is finished");
+    assert_eq!(admit(false).await.unwrap().id, first.id);
+
+    // A person's request starts attempt 2. Asking again while it is queued returns it, and
+    // automatic admission reuses the newest attempt.
+    let second = admit(true).await.unwrap();
+    assert_eq!((second.attempt, second.status.as_str()), (2, "queued"));
+    assert_ne!(second.id, first.id);
+    assert_eq!(admit(true).await.unwrap().id, second.id);
+    assert_eq!(admit(false).await.unwrap().id, second.id);
+
+    // Once attempt 2 has finished, the next request starts attempt 3.
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
+        .await
+        .unwrap()
+        .expect("the second attempt is claimed");
+    db::ci::finish_ci_run(db.pool(), second.id, WORKER, "success", None)
+        .await
+        .unwrap()
+        .expect("the second attempt is finished");
+    let third = admit(true).await.unwrap();
+    assert_eq!(third.attempt, 3);
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
+        .await
+        .unwrap()
+        .expect("the third attempt is claimed");
+    assert_eq!(claimed.id, third.id);
+    db::ci::finish_ci_run(db.pool(), third.id, WORKER, "success", None)
+        .await
+        .unwrap()
+        .expect("the third attempt is finished");
+    assert_eq!(
+        db.count(
+            "SELECT COUNT(*) FROM ci_runs WHERE pull_request_id = $1",
+            &[pull.id]
+        )
+        .await,
+        3
+    );
+
+    // A fork's new attempt needs the approval of its head, as the first run did.
+    let fork_repo = db::repositories::discovery::create_forked_repository(
+        db.pool(),
+        db::repositories::discovery::NewForkedRepository {
+            owner_id: w.owner,
+            name: "attempts_fork",
+            description: None,
+            is_private: true,
+            disk_path: "/fixture/not-executed-attempts-fork.git",
+            forked_from: w.repo,
+            default_branch: "main",
+        },
+    )
+    .await
+    .unwrap()
+    .id;
+    let fork_sha = "bcdefbcdefbcdefbcdefbcdefbcdefbcdefbcdef";
+    let fork = db::pull_requests::records::create_pull_request(
+        db.pool(),
+        db::pull_requests::records::NewPullRequest {
+            repo_id: w.repo,
+            head_repo_id: Some(fork_repo),
+            author_id: w.owner,
+            title: "Fork attempts",
+            body: "",
+            head_branch: "topic",
+            head_sha: fork_sha,
+            base_branch: "main",
+            base_sha: "1111111111111111111111111111111111111111",
+            is_draft: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        pull_request_run(db, w.repo, w.owner, fork.id, fork_sha, true)
+            .await
+            .is_err()
+    );
+    assert!(db::pull_requests::records::approve_pull_request_workflows(
+        db.pool(),
+        fork.id,
+        w.owner,
+        fork_sha,
+    )
+    .await
+    .unwrap());
+    let fork_first = pull_request_run(db, w.repo, w.owner, fork.id, fork_sha, true)
+        .await
+        .unwrap();
+    assert!(fork_first.is_fork);
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
+        .await
+        .unwrap()
+        .expect("the fork attempt is claimed");
+    db::ci::finish_ci_run(db.pool(), fork_first.id, WORKER, "failed", None)
+        .await
+        .unwrap()
+        .expect("the fork attempt is finished");
+    let fork_again = pull_request_run(db, w.repo, w.owner, fork.id, fork_sha, true)
+        .await
+        .unwrap();
+    assert_eq!((fork_again.attempt, fork_again.is_fork), (2, true));
+}
+
+// ---- A retried claim gets back the run its worker holds ----
+
+async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
+    let w = world(db, "held").await;
+    let trusted = [w.collab];
+    let first = db.enqueue(w.repo, w.collab, false, &trusted).await;
+    let second = db.enqueue(w.repo, w.collab, false, &trusted).await;
+    let claimed = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted)
+        .await
+        .unwrap()
+        .expect("the first run is claimed");
+    assert_eq!(claimed.id, first.id);
+
+    // The reply to that claim was lost, so the same slot asks again and gets the same run.
+    let retried = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted)
+        .await
+        .unwrap()
+        .expect("the retried claim returns the run it holds");
+    assert_eq!(retried.id, first.id);
+    assert_eq!(retried.status, "running");
+
+    // Another slot takes the next queued run.
+    let other = db::ci::claim_ci_run(db.pool(), "node/slot-2", "local", &trusted)
+        .await
+        .unwrap()
+        .expect("another slot takes the queued run");
+    assert_eq!(other.id, second.id);
+
+    // Once the slot has recorded its result, its next claim takes new work.
+    db::ci::finish_ci_run(db.pool(), first.id, "node/slot-1", "success", None)
+        .await
+        .unwrap()
+        .expect("the slot still holds its run");
+    let third = db.enqueue(w.repo, w.collab, false, &trusted).await;
+    let next = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted)
+        .await
+        .unwrap()
+        .expect("the finished slot takes the next run");
+    assert_eq!(next.id, third.id);
 }
 
 // ---- A cluster claim needs its node to be an active actions worker ----
@@ -1951,6 +2189,8 @@ on_both_engines!(
     ignoring_the_repository_silences_run_results,
     pull_request_runs_use_exact_approval_identity,
     queued_pull_request_inputs_survive_base_and_title_changes,
+    a_person_starts_a_new_attempt_once_the_last_one_has_finished,
+    a_retried_claim_gets_back_the_run_its_worker_holds,
     cluster_claim_needs_an_active_actions_worker_node,
 );
 
@@ -2042,6 +2282,7 @@ mod interleaved {
                 workflow_blobs: &blobs,
                 workflow_inputs: None,
                 environment: None,
+                manual: false,
             },
             trusted,
         )

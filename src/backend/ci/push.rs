@@ -119,6 +119,7 @@ impl CiRuns {
                     environment: None,
                     inputs: None,
                     triggered_by_id: actor_id,
+                    manual: false,
                 })
                 .await;
             if let Err(error) = result {

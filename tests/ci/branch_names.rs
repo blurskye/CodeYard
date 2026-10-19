@@ -403,6 +403,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
         environment: None,
         inputs: None,
         triggered_by_id: f.owner.id,
+        manual: false,
     };
     // A push arrives as the full ref.
     let pushed = service

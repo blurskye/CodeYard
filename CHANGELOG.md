@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.5
+
+- **Release:** `scripts/release.sh` ships the `/nix/store` files that a binary built in the Nix shell
+  needs, since the image has none of them, so the release binary starts in the Debian image. It stops
+  with a message when `nix-store` is missing, and tags `latest` only after `codeyard --version` runs in
+  the new image.
+- **Git:** a failover promotion no longer loses a push that was still being written. A repository
+  with a push in progress serves no replica copy, and pushes to one repository share the ref limit.
+  Access is checked again after a wait for a session slot, and shutdown waits for the Git sessions
+  other nodes have open.
+- **CI:** a claim whose reply was lost returns the run the worker already holds, a finished run's
+  result is retried until it is recorded, and pull request runs can be run again.
+- **Stacks:** a rebase after the layer below was amended replays only the layer's own commits, so
+  the old commit of the layer below no longer conflicts.
+- **Drafts:** a draft survives a refused submit, such as an expired form. A draft typed before the
+  page changed is shown with a notice to review it before saving, and "Use the current text" drops it.
+- **Database:** the schema is one baseline again, without the wiki tables. A database made by 0.1.2 to 0.1.4
+  does not open with this build; start from a fresh one.
+- **Fixed:** webhook edits check the person's rights in the same transaction as the write.
+- **Removed:** the repository wiki and the insights page.
+
 ## 0.1.4
 
 - **CI:** runs of the same workflow run side by side, with a taken name made unique, so two pushes

@@ -49,6 +49,8 @@ pub struct CiRunRequest {
     /// complete set the run gets, defaults included.
     pub inputs: Option<BTreeMap<String, String>>,
     pub triggered_by_id: i64,
+    /// Whether a person asked for the run (see `NewCiRun::manual`).
+    pub manual: bool,
 }
 
 /// A form or API value as the text GitHub shows it in `event.inputs`.
@@ -192,6 +194,7 @@ impl CiRuns {
             environment,
             inputs,
             triggered_by_id: actor_id,
+            manual: true,
         })
         .await
     }
@@ -267,6 +270,7 @@ impl CiRuns {
                 workflow_blobs: &revision.blobs,
                 workflow_inputs: workflow_inputs.as_ref(),
                 environment: request.environment.as_deref(),
+                manual: request.manual,
             },
             &trusted,
         )

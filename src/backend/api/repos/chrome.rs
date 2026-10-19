@@ -105,7 +105,6 @@ pub(crate) async fn load_metadata(
         topics,
         is_private: repository.is_private,
         is_archived: repository.is_archived,
-        wiki_enabled: repository.wiki_enabled,
         stars: repository.stars_count,
         watchers: repository.watchers_count,
         forks: repository.forks_count,

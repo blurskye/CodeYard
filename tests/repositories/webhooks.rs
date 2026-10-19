@@ -12,7 +12,12 @@ use codeyard::backend::{
     app::AppState,
     ci::CiConfig,
     crypto::SecretEncryptor,
-    db::{self, webhooks::HookOwner},
+    db::{
+        self,
+        models::OrgRole,
+        organizations::{self as orgs, OrganizationOutcome},
+        webhooks::{HookOwner, WebhookFields},
+    },
     storage::ObjectStore,
     webhooks::delivery::hmac_sha256,
 };
@@ -477,4 +482,132 @@ async fn webhooks_on_sqlite_and_postgres() {
         flow(pg, &receiver, &url).await;
         pull_request_comment_hooks(pg, &url).await;
     }
+}
+
+/// Each hook write checks, in its own transaction, that the actor may manage the owner's hooks.
+/// So a demoted owner, or a user with no right to the repository, is refused by the write itself.
+async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
+    let mut database = Database::new(pg).await;
+    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    let owner = database.actor("hook_owner").await;
+    let second = database.actor("hook_second").await;
+    let outsider = database.actor("hook_outsider").await;
+    let pool = database.pool();
+    let root = tempfile::tempdir().unwrap();
+    let repo = codeyard::backend::repositories::lifecycle::provision(
+        (pool, None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "proj",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let OrganizationOutcome::Applied(org) = orgs::create_organization(
+        pool,
+        owner,
+        &orgs::NewOrganization::new(
+            "hook_org",
+            orgs::OrganizationProfile::new(None, None).unwrap(),
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap() else {
+        panic!("the organization was not created");
+    };
+    let OrganizationOutcome::Applied(_) =
+        orgs::add_organization_member(pool, owner, org.id, second, OrgRole::Owner)
+            .await
+            .unwrap()
+    else {
+        panic!("the second owner was not added");
+    };
+    // The first owner is demoted before any write of its own runs.
+    let OrganizationOutcome::Applied(_) =
+        orgs::update_organization_member_role(pool, second, org.id, owner, OrgRole::Member)
+            .await
+            .unwrap()
+    else {
+        panic!("the first owner was not demoted");
+    };
+    let fields = WebhookFields {
+        payload_url: "https://example.com/hooks".to_owned(),
+        content_type: "application/json".to_owned(),
+        events: "push".to_owned(),
+        active: true,
+        ssl_verify: true,
+    };
+    let organization = HookOwner::Organization(org.id);
+    assert_eq!(
+        db::webhooks::insert_webhook(pool, organization, owner, &fields, None)
+            .await
+            .unwrap(),
+        None,
+        "a demoted owner created an organization hook"
+    );
+    let hook = db::webhooks::insert_webhook(pool, organization, second, &fields, None)
+        .await
+        .unwrap()
+        .expect("a current owner creates a hook");
+    assert_eq!(
+        db::webhooks::update_webhook(pool, organization, owner, hook, &fields, None)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db::webhooks::delete_webhook(pool, organization, owner, hook)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db::webhooks::list_webhooks(pool, organization)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let repository = HookOwner::Repository(repo.id);
+    assert_eq!(
+        db::webhooks::insert_webhook(pool, repository, outsider, &fields, None)
+            .await
+            .unwrap(),
+        None,
+        "a user without access created a repository hook"
+    );
+    let repository_hook = db::webhooks::insert_webhook(pool, repository, owner, &fields, None)
+        .await
+        .unwrap()
+        .expect("the repository owner creates a hook");
+    assert_eq!(
+        db::webhooks::update_webhook(pool, repository, outsider, repository_hook, &fields, None)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db::webhooks::delete_webhook(pool, repository, outsider, repository_hook)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        db::webhooks::list_webhooks(pool, repository)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn hook_writes_check_authority_on_sqlite_and_postgres() {
+    hook_writes_check_authority_in_the_transaction(false).await;
+    hook_writes_check_authority_in_the_transaction(true).await;
 }

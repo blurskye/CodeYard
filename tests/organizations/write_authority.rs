@@ -237,6 +237,7 @@ async fn enqueue(
             workflow_blobs: &serde_json::json!({".github/workflows/ci.yml": SHA}),
             workflow_inputs: None,
             environment: None,
+            manual: false,
         },
         trusted,
     )

@@ -1485,3 +1485,137 @@ async fn git_http_postgres() {
         .append_pair("options", &format!("-c search_path={schema}"));
     exercise(&database.pool, url.as_str()).await;
 }
+
+/// Takes the only Git session slot the way an anonymous upload can: the request is announced and
+/// its body never comes. The server sends `100 Continue` once the handler has the slot.
+async fn hold_the_session_slot(address: std::net::SocketAddr, repo: &str) -> tokio::net::TcpStream {
+    let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
+    tokio::io::AsyncWriteExt::write_all(
+        &mut stream,
+        format!(
+            "POST /{repo}/git-upload-pack HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/x-git-upload-pack-request\r\nContent-Length: 1\r\nExpect: 100-continue\r\n\r\n"
+        )
+        .as_bytes(),
+    )
+    .await
+    .unwrap();
+    let mut status = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        while !status.ends_with(b"\r\n") {
+            status.push(tokio::io::AsyncReadExt::read_u8(&mut stream).await.unwrap());
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(status, b"HTTP/1.1 100 Continue\r\n");
+    stream
+}
+
+/// A push that waits for a session slot is refused once its write access ends during the wait.
+async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str) {
+    bundle::install();
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(raw).await.unwrap();
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let owner = db::users::accounts::create_user(pool, "slot_owner", None)
+        .await
+        .unwrap();
+    let repo = lifecycle::provision(
+        (pool, None),
+        &root.path().join("repos"),
+        repositories::RepositoryCreationOwner::personal(owner.id),
+        "open",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let session = native::token();
+    db::users::sessions::create_session(
+        pool,
+        &session,
+        owner.id,
+        None,
+        None,
+        Utc::now() + Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let value = native::token();
+    tokens::create_token(
+        pool,
+        owner.id,
+        &session,
+        "slot",
+        &hash(&value),
+        "write",
+        None,
+    )
+    .await
+    .unwrap();
+
+    // One slot, and a request waits up to 30 seconds for it.
+    let server = Server::start_with_session_slots(root.path(), url, 1, 30).await;
+    let address = server
+        .base
+        .strip_prefix("http://")
+        .unwrap()
+        .parse::<std::net::SocketAddr>()
+        .unwrap();
+    let holder = hold_the_session_slot(address, "slot_owner/open.git").await;
+    let push = tokio::spawn(
+        Client::new()
+            .post(format!(
+                "{}/slot_owner/open.git/git-receive-pack",
+                server.base
+            ))
+            .basic_auth("ignored", Some(value.clone()))
+            .header("Content-Type", "application/x-git-receive-pack-request")
+            .body("0000")
+            .send(),
+    );
+    // The push has passed its first check and is queued behind the holder.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    db::repositories::records::set_repository_archived(pool, repo.id, true)
+        .await
+        .unwrap();
+    drop(holder);
+    let response = tokio::time::timeout(std::time::Duration::from_secs(30), push)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn git_http_push_after_slot_wait_sqlite() {
+    let database = native::NativeDatabase::new().await;
+    push_rechecks_access_after_waiting_for_a_slot(&database.pool, &database.url).await;
+    database.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn git_http_push_after_slot_wait_postgres() {
+    let database = native::PostgresDatabase::new().await;
+    let DbPool::Postgres(raw) = &database.pool else {
+        unreachable!()
+    };
+    let schema: String = sqlx::query_scalar("SELECT current_schema()")
+        .fetch_one(raw)
+        .await
+        .unwrap();
+    let mut url = url::Url::parse(&std::env::var("GITSERV_TEST_DATABASE_URL").unwrap()).unwrap();
+    url.query_pairs_mut()
+        .append_pair("options", &format!("-c search_path={schema}"));
+    push_rechecks_access_after_waiting_for_a_slot(&database.pool, url.as_str()).await;
+}

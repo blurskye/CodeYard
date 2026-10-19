@@ -20,6 +20,9 @@ pub struct PullRequest {
     pub head_sha: String,
     pub base_branch: String,
     pub base_sha: String,
+    /// The base a stacked layer was built on, kept while its base branch moves on. None means
+    /// `base_sha` is that base.
+    pub fork_sha: Option<String>,
     pub is_draft: bool,
     pub mergeable: Option<bool>,
     pub merged: bool,

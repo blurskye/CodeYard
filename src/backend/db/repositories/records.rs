@@ -182,7 +182,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_merge
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_default_branch,
     crate::backend::db::sqlite::repositories::records::set_repository_default_branch,
-    fn set_repository_default_branch(pool: &DbPool, repo_id: i64, branch: &str) -> Result<bool>);
+    fn set_repository_default_branch(pool: &DbPool, actor_id: i64, repo_id: i64, branch: &str) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_archived,
     crate::backend::db::sqlite::repositories::records::set_repository_archived,

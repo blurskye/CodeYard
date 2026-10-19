@@ -243,16 +243,6 @@ fn SettingsView(repo: RepoChrome, settings: Settings) -> Element {
                             }
                         }
                         }
-                        if tab == "general" {
-                        section { class: "repo-settings-section panel",
-                            header { class: "repo-section-heading", div { h3 { "Wiki" } p { if repo.wiki_enabled { "The wiki is on. Turning it off hides its pages; they are kept." } else { "The wiki is off. Turning it on shows its pages again." } } } }
-                            form { method: "post", action: format!("{}/wiki/_settings", repo.base()), class: "repo-form-body",
-                                {csrf(&repo.csrf_token)}
-                                input { r#type: "hidden", name: "enabled", value: if repo.wiki_enabled { "0" } else { "1" } }
-                                div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", if repo.wiki_enabled { "Turn wiki off" } else { "Turn wiki on" } } }
-                            }
-                        }
-                        }
                         if tab == "merging" {
                         section { class: "repo-settings-section panel",
                             header { class: "repo-section-heading", div { h3 { "Pull request merging" } p { "Choose which merge methods pull requests may use. At least one stays allowed." } } }

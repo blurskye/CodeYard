@@ -93,6 +93,7 @@ fn revisions(
         head_sha: pull.head_sha,
         base_branch: pull.base_branch,
         base_sha: pull.base_sha,
+        stack_id: pull.stack_id,
     })
 }
 
@@ -117,7 +118,7 @@ async fn move_head(
         .await
         .map_err(|_| RefreshError::Database)?;
     if let Some(current) = current {
-        let _ = queue_pull_request_ci(pool, ci, base, &current, actor_id).await;
+        let _ = queue_pull_request_ci(pool, ci, base, &current, actor_id, false).await;
         super::code_owners::request_code_owner_reviews(pool, ci, base, &current, actor_id).await;
     }
     Ok(true)
@@ -192,6 +193,18 @@ async fn refresh_one(
 
         let mut retry = false;
         if new_base != pull.base_sha {
+            // A stacked layer built on the base it is leaving keeps that base as its fork point, so a
+            // restack replays only its own commits, even after the base moves on again.
+            let fork = match (pull.stack_id, pull.head_repo_id) {
+                (Some(_), Some(head_repo_id)) if head_repo_id == base.id => {
+                    let built_on_base = base_store
+                        .is_ancestor(&pull.base_sha, &pull.head_sha)
+                        .await
+                        .map_err(|_| RefreshError::Storage)?;
+                    built_on_base.then(|| pull.base_sha.clone())
+                }
+                _ => None,
+            };
             // The refresh read `pull.base_branch`; a re-base since then must make it stale.
             if db::pull_requests::records::move_open_pull_request_base(
                 pool,
@@ -199,6 +212,7 @@ async fn refresh_one(
                 &pull.base_sha,
                 &new_base,
                 &pull.base_branch,
+                fork.as_deref(),
             )
             .await
             .map_err(|_| RefreshError::Database)?

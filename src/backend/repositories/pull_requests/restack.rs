@@ -281,6 +281,13 @@ async fn own_commits_base(
         member.state == "open" && member.id != layer.id && member.head_branch == layer.base_branch
     });
     if stacked_on_open {
+        // Once the base has moved past the one the layer was built on, the fork point is the base
+        // it was built on. Replaying from the new base would replay the commits of the layer below.
+        if let Some(fork) = &layer.fork_sha {
+            if !is_ancestor(store, &layer.base_sha, head).await? {
+                return Ok(fork.clone());
+            }
+        }
         return Ok(layer.base_sha.clone());
     }
     let mut merged_below: Option<&PullRequest> = None;

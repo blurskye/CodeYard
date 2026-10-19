@@ -113,6 +113,7 @@ pub async fn enqueue_ci_run(
     let mut is_fork = false;
     let mut pull_request_id = None;
     let mut pull_request_event = None;
+    let mut attempt = 1_i32;
     if input.event == "pull_request" {
         let id = match input.pull_request_id {
             Some(id) => id,
@@ -155,14 +156,19 @@ pub async fn enqueue_ci_run(
             !fork || approved,
             CiAdmissionRefusal::Denied("Fork workflows require approval for this head commit")
         );
-        if let Some(run) = sqlx::query_as::<_, CiRun>("SELECT * FROM ci_runs WHERE pull_request_id = $1 AND event = 'pull_request' AND branch = $2 AND head_sha = $3 AND workflow_path = $4")
+        // The newest attempt at this revision is the one automatic admission reuses. A request
+        // from a person starts another attempt once that one has finished.
+        if let Some(latest) = sqlx::query_as::<_, CiRun>("SELECT * FROM ci_runs WHERE pull_request_id = $1 AND event = 'pull_request' AND branch = $2 AND head_sha = $3 AND workflow_path = $4 ORDER BY attempt DESC LIMIT 1")
             .bind(id).bind(input.branch).bind(input.head_sha).bind(input.workflow_path).fetch_optional(&mut *tx).await? {
-            return Ok(run);
+            if !input.manual || matches!(latest.status.as_str(), "queued" | "running") {
+                return Ok(latest);
+            }
+            attempt = latest.attempt + 1;
         }
     }
     let run = sqlx::query_as::<_, CiRun>(
-        "INSERT INTO ci_runs (run_id, repo_id, triggered_by_id, mode, pipeline, event, pull_request_id, branch, head_sha, workflow_path, environment, workflow_sha, workflow_blobs, is_fork, pull_request_event, workflow_inputs)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$9,$12,$13,$14,$15) RETURNING *",
+        "INSERT INTO ci_runs (run_id, repo_id, triggered_by_id, mode, pipeline, event, pull_request_id, branch, head_sha, workflow_path, environment, workflow_sha, workflow_blobs, is_fork, pull_request_event, workflow_inputs, attempt)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$9,$12,$13,$14,$15,$16) RETURNING *",
     )
     .bind(Uuid::new_v4())
     .bind(input.repo_id)
@@ -179,6 +185,7 @@ pub async fn enqueue_ci_run(
     .bind(is_fork)
     .bind(pull_request_event)
     .bind(input.workflow_inputs)
+    .bind(attempt)
     .fetch_one(&mut *tx)
     .await?;
     if cd {
@@ -217,6 +224,45 @@ pub async fn claim_ci_run_on_node(
     claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids).await
 }
 
+/// The running run `worker` holds, if an earlier claim committed it and its reply was lost. A
+/// worker runs one job at a time, so that run is the one a retried claim should get back. It is
+/// locked the same way as a claim: the repository first, then the node, then the run.
+async fn held_run(pool: &PgPool, node_key: Option<&str>, worker: &str) -> Result<Option<CiRun>> {
+    let found: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT id, repo_id FROM ci_runs WHERE worker = $1 AND status = 'running' ORDER BY id LIMIT 1",
+    )
+    .bind(worker)
+    .fetch_optional(pool)
+    .await?;
+    let Some((id, repo_id)) = found else {
+        return Ok(None);
+    };
+    let mut tx = pool.begin().await?;
+    lock_run_repository(&mut tx, repo_id).await?;
+    if let Some(node_key) = node_key {
+        let active = sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM nodes WHERE public_key = $1 AND status = 'active'
+             AND 'actions-worker' = ANY(roles) FOR SHARE",
+        )
+        .bind(node_key)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if active.is_none() {
+            tx.rollback().await?;
+            return Ok(None);
+        }
+    }
+    let run = sqlx::query_as::<_, CiRun>(
+        "SELECT * FROM ci_runs WHERE id = $1 AND worker = $2 AND status = 'running' FOR SHARE",
+    )
+    .bind(id)
+    .bind(worker)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(run)
+}
+
 /// Each candidate is checked in its own transaction, so no lock is held while the
 /// next one is examined. Within a candidate the locks are taken in the order
 /// organization, starter's account, repository, node, then run. Enqueue and the
@@ -234,6 +280,9 @@ async fn claim_queued_run(
         matches!(mode, "local" | "podman"),
         "invalid CI execution mode"
     );
+    if let Some(run) = held_run(pool, node_key, worker).await? {
+        return Ok(Some(run));
+    }
     let mut after = 0_i64;
     for _ in 0..CLAIM_SCAN_LIMIT {
         let next = sqlx::query_as::<_, CiRun>(

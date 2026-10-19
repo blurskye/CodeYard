@@ -30,7 +30,7 @@ pub async fn queue_moved_pull_requests_ci(
 ) {
     let queued = tokio::time::timeout(MOVED_CI_WAIT, async {
         for pull in pulls {
-            let _ = queue_pull_request_ci(pool, ci, repository, pull, actor_id).await;
+            let _ = queue_pull_request_ci(pool, ci, repository, pull, actor_id, false).await;
         }
     })
     .await;
@@ -43,8 +43,9 @@ pub async fn queue_moved_pull_requests_ci(
     }
 }
 
-/// Runs head code and workflows, filtering on the base branch. The database admits
-/// each workflow once per commit and requires explicit approval for fork heads.
+/// Runs head code and workflows, filtering on the base branch. Automatic admission queues
+/// each workflow once per commit, and fork heads need explicit approval. `manual` is set
+/// when a person asked for the workflows, which starts them again after a finished run.
 /// Returns the first reason a workflow was not queued. A refused workflow does not stop
 /// the others. Automatic callers ignore the result; an explicit approval reports it.
 pub async fn queue_pull_request_ci(
@@ -53,6 +54,7 @@ pub async fn queue_pull_request_ci(
     repository: &Repository,
     pull: &PullRequest,
     actor_id: i64,
+    manual: bool,
 ) -> Result<(), AdmissionError> {
     if pull.state != "open"
         || pull.is_draft
@@ -206,6 +208,7 @@ pub async fn queue_pull_request_ci(
                 environment: None,
                 inputs: None,
                 triggered_by_id: actor_id,
+                manual,
             })
             .await
         {
@@ -314,7 +317,7 @@ pub async fn run_pull_request_workflows(
         .await
         .map_err(|_| OperationError::Updated { number })?
         .ok_or(OperationError::Updated { number })?;
-    queue_pull_request_ci(pool, ci, &repository, &pull, user.id)
+    queue_pull_request_ci(pool, ci, &repository, &pull, user.id, true)
         .await
         .map_err(workflows_not_queued)?;
     Ok(pull)

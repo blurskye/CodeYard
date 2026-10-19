@@ -15,6 +15,10 @@ pub struct CiRun {
     pub event: String,
     #[serde(default)]
     pub pull_request_id: Option<i64>,
+    /// The attempt at a pull request revision: 1 for the first run, and one more for each run
+    /// started again by hand. Other runs are attempt 1.
+    #[serde(default)]
+    pub attempt: i32,
     #[serde(default)]
     pub pull_request_event: Option<serde_json::Value>,
     /// Inputs of a manual `workflow_dispatch` run; NULL for other events.

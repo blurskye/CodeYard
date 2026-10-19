@@ -278,6 +278,7 @@ mod tests {
             head_sha: "a".repeat(40),
             base_branch: base.to_owned(),
             base_sha: "b".repeat(40),
+            fork_sha: None,
             is_draft: false,
             mergeable: None,
             merged: state == "merged",

@@ -81,6 +81,7 @@ async fn enqueue(
             workflow_blobs: &json!({".github/workflows/ci.yml": blob}),
             workflow_inputs: None,
             environment: None,
+            manual: false,
         },
         &[owner],
     )
@@ -1463,6 +1464,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
                 ],
                 environment: None,
                 triggered_by_id: owner.id,
+                manual: true,
             })
             .await
             .unwrap();
@@ -1529,7 +1531,7 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
         .await
         .unwrap();
         codeyard::backend::repositories::pull_requests::workflows::queue_pull_request_ci(
-            pool, &ci, &repo, &pull, owner.id,
+            pool, &ci, &repo, &pull, owner.id, false,
         )
         .await
         .unwrap();
@@ -3322,17 +3324,18 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
         .await
         .unwrap();
     let mut held = Vec::new();
-    for _ in 0..16 {
+    for index in 0..16 {
         let queued = fixture.queue_run().await;
         let connection = slow
             .connect(fixture.peer.endpoint_addr().unwrap(), cluster::ALPN_EVENTS)
             .await
             .unwrap();
         let (mut send, mut recv) = connection.open_bi().await.unwrap();
+        // Each stalled claim is a different slot, so it takes its own queued run.
         rpc::write_frame(
             &mut send,
             &serde_json::to_vec(
-                &json!({"worker": "slot-1", "operation": {"Claim": {"mode": "local"}}}),
+                &json!({"worker": format!("stalled-{index}"), "operation": {"Claim": {"mode": "local"}}}),
             )
             .unwrap(),
             rpc::MAX_JSON,
@@ -3440,6 +3443,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         &repo,
         &pull,
         fixture.owner,
+        false,
     )
     .await
     .unwrap();

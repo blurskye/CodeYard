@@ -12,6 +12,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 const WORKER: &str = "access-change-worker";
+const SECOND_WORKER: &str = "access-change-worker-2";
 
 async fn repository_with_writer(pool: &db::DbPool, name: &str) -> (i64, i64, i64) {
     let owner = db::users::accounts::create_user(pool, &format!("{name}_owner"), None)
@@ -61,6 +62,7 @@ async fn enqueue(
             workflow_blobs: &blobs,
             workflow_inputs: None,
             environment: None,
+            manual: false,
         },
         trusted,
     )
@@ -82,9 +84,12 @@ async fn grant_changes(pool: &db::DbPool) {
     ] {
         let (owner, writer, repo) = repository_with_writer(pool, name).await;
         let trusted = [owner, writer];
+        // Each case has its own slots, since an earlier case may still hold its running run.
+        let slot = format!("{WORKER}-{name}");
+        let other = format!("{SECOND_WORKER}-{name}");
         let running = enqueue(pool, repo, writer, &trusted).await.unwrap();
         assert_eq!(
-            db::ci::claim_ci_run(pool, WORKER, "podman", &trusted)
+            db::ci::claim_ci_run(pool, &slot, "podman", &trusted)
                 .await
                 .unwrap()
                 .unwrap()
@@ -107,7 +112,7 @@ async fn grant_changes(pool: &db::DbPool) {
         assert_eq!(running_now.status, "running", "{name}");
         assert_eq!(running_now.cancel_requested, reduced, "{name}");
         assert_eq!(
-            db::ci::heartbeat_ci_run(pool, running.id, WORKER)
+            db::ci::heartbeat_ci_run(pool, running.id, &slot)
                 .await
                 .unwrap(),
             Some(reduced),
@@ -115,7 +120,8 @@ async fn grant_changes(pool: &db::DbPool) {
         );
 
         let queued_now = run(pool, queued.run_id).await;
-        let claimed = db::ci::claim_ci_run(pool, WORKER, "podman", &trusted)
+        // Another slot asks, since the first one still holds its running run.
+        let claimed = db::ci::claim_ci_run(pool, &other, "podman", &trusted)
             .await
             .unwrap();
         if reduced {
@@ -206,7 +212,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     );
     let admin_run = enqueue(&fixture.pool, repo, admin, &trusted).await.unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(&fixture.pool, WORKER, "podman", &trusted)
+        db::ci::claim_ci_run(&fixture.pool, SECOND_WORKER, "podman", &trusted)
             .await
             .unwrap()
             .unwrap()
@@ -251,7 +257,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
         db::ci::finish_ci_run(
             &fixture.pool,
             admin_run.id,
-            WORKER,
+            SECOND_WORKER,
             "failed",
             Some("A workflow job failed"),
         ),

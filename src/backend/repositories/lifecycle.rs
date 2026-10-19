@@ -197,8 +197,9 @@ pub async fn provision(
                 .map_err(git_storage_error)?;
         }
         // A fork's branches and tags are a change that replicas have to copy.
-        db::cluster::bump_write_version(pool, repository.id)
+        db::cluster::bump_write_version(pool, repository.id, None)
             .await
+            .map(|_| ())
             .map_err(|_| unavailable())
     }
     .await;

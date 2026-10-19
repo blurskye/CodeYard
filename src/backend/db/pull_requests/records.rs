@@ -36,6 +36,7 @@ pub struct PullRequestRevisions {
     pub head_sha: String,
     pub base_branch: String,
     pub base_sha: String,
+    pub stack_id: Option<i64>,
 }
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_open_pull_request_revisions,
@@ -71,7 +72,8 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::move_ope
 
 // Moves base_sha from `old_base` to `new_base`, only while the pull request is open, still has
 // `old_base` and still targets `base_branch`. A refresh that read an earlier base branch cannot
-// move the sha of a pull request that has been re-based since.
+// move the sha of a pull request that has been re-based since. `fork` keeps the base the layer was
+// built on, when the caller knows it.
 native_operation!(crate::backend::db::postgres::pull_requests::records::move_open_pull_request_base,
     crate::backend::db::sqlite::pull_requests::records::move_open_pull_request_base,
     fn move_open_pull_request_base(
@@ -80,6 +82,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::move_ope
     old_base: &str,
     new_base: &str,
     base_branch: &str,
+    fork: Option<&str>,
 ) -> Result<bool>);
 
 /// What came of asking to take a pull request out of draft.
@@ -369,6 +372,7 @@ mod tests {
             head_sha: "a".repeat(40),
             base_branch: base.to_owned(),
             base_sha: "b".repeat(40),
+            fork_sha: None,
             is_draft: false,
             mergeable: None,
             merged: false,

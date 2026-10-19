@@ -11,6 +11,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 IMAGE=${IMAGE:-localhost/codeyard-backend}
 TAG=${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)}
+if [[ $TAG == latest ]]; then
+    echo "Give a version tag; latest is tagged after the image has started." >&2
+    exit 1
+fi
 
 if [[ -n $(git status --porcelain) && ${ALLOW_DIRTY:-} != 1 ]]; then
     echo "The working tree has uncommitted changes; commit them or set ALLOW_DIRTY=1." >&2
@@ -23,8 +27,22 @@ mkdir -p dist/release
 WEBUI_DIST="$PWD/dist/release/webui" bash scripts/build-webui.sh release
 cargo build --release --locked --bin codeyard
 install -m 0755 "${CARGO_TARGET_DIR:-target}/release/codeyard" dist/release/codeyard
-# The image expects this archive. It is empty: no extra runtime files are shipped.
-tar -czf dist/release/runtime-nix.tar.gz --files-from /dev/null
+# A binary built in a Nix shell loads its interpreter and libraries from /nix/store, and the
+# image has none of those paths. Ship their closure in the archive the image unpacks. A binary
+# that names no store path gets an empty archive.
+store_roots=$(python3 -I scripts/elf-store-paths.py dist/release/codeyard)
+store_paths=$PWD/dist/store-paths.txt
+: >"$store_paths"
+if [[ -n $store_roots ]]; then
+    if ! command -v nix-store >/dev/null; then
+        echo "codeyard names these /nix/store paths, but nix-store is not on PATH to find their closure:" >&2
+        echo "$store_roots" >&2
+        exit 1
+    fi
+    printf '%s\n' "$store_roots" | xargs nix-store -qR | sort -u | sed 's|^/||' >"$store_paths"
+fi
+tar -czf dist/release/runtime-nix.tar.gz --owner=0 --group=0 --numeric-owner \
+    -C / --files-from="$store_paths"
 (
     cd dist/release
     {
@@ -36,5 +54,12 @@ tar -czf dist/release/runtime-nix.tar.gz --files-from /dev/null
 echo "== Build the image $IMAGE:$TAG"
 podman build -f Containerfile \
     --label "org.opencontainers.image.revision=$(git rev-parse HEAD)" \
-    -t "$IMAGE:$TAG" -t "$IMAGE:latest" .
+    -t "$IMAGE:$TAG" .
+# The binary has to start inside the image. A /nix/store path or library that the image lacks
+# fails here, before the image is tagged latest.
+podman run --rm "$IMAGE:$TAG" codeyard --version >/dev/null || {
+    echo "codeyard does not run in $IMAGE:$TAG; see the error above. A file it needs may be missing from the image." >&2
+    exit 1
+}
+podman tag "$IMAGE:$TAG" "$IMAGE:latest"
 podman image inspect "$IMAGE:$TAG" --format 'built {{.Id}} ({{.Size}} bytes)'

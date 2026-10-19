@@ -2211,7 +2211,7 @@ async fn every_ref_change_moves_the_write_version() {
     )
     .await
     .unwrap();
-    db::cluster::bump_write_version(pool, repo_id)
+    db::cluster::bump_write_version(pool, repo_id, None)
         .await
         .unwrap();
     assert_eq!(write_version(&authority).await, 0, "no node holds it yet");
@@ -2354,6 +2354,43 @@ async fn every_ref_change_moves_the_write_version() {
         9,
         "a missing default branch"
     );
+    // The right to administer is checked in the update's transaction, not only by the caller.
+    let outsider = db::users::accounts::create_user(pool, "default_outsider", None)
+        .await
+        .unwrap();
+    assert!(f
+        .store
+        .set_default_branch_as(pool, repo_id, outsider.id, "main")
+        .await
+        .is_err());
+    // The refused attempt may count as a write, since it is counted before the update decides, but
+    // the default branch stays where it was.
+    let default = db::repositories::records::get_repository_by_id(pool, repo_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .default_branch;
+    assert_eq!(
+        default, "topic",
+        "a default branch change by a user who may not administer"
+    );
+    // An archived repository refuses the change before it counts as a write.
+    let before = write_version(&authority).await;
+    assert!(
+        db::repositories::records::set_repository_archived(pool, repo_id, true)
+            .await
+            .unwrap()
+    );
+    assert!(f
+        .store
+        .set_default_branch_as(pool, repo_id, actor, "main")
+        .await
+        .is_err());
+    assert_eq!(
+        write_version(&authority).await,
+        before,
+        "a default branch change on an archived repository"
+    );
 }
 
 /// A storage node registered in the database, to place or copy a repository on.
@@ -2488,6 +2525,84 @@ async fn a_store_for_the_old_primary_refuses_writes_after_promotion() {
         .await
         .unwrap();
     assert!(f.repo.find_reference("refs/heads/plain").is_ok());
+}
+
+/// A ref change that is counted but not yet made keeps the primary from handing a copy to a
+/// promotion that would lose the change, and from listing its refs for a replica copy.
+#[tokio::test]
+async fn a_counted_ref_change_blocks_promotion_and_the_replica_listing() {
+    let f = fixture().await;
+    let authority = authority(&f).await;
+    let pool = &authority.pool;
+    let repo_id = authority.repo_id;
+    let old = storage_node(pool, "fence-listing-old").await;
+    let new = storage_node(pool, "fence-listing-new").await;
+    assert!(db::cluster::place_repository(pool, repo_id, old)
+        .await
+        .unwrap());
+    assert!(db::cluster::insert_replica(pool, repo_id, new, old)
+        .await
+        .unwrap());
+    assert!(db::cluster::set_applied_version(pool, repo_id, new, old, 0)
+        .await
+        .unwrap());
+    let writer = RepoStore::on_node(f.store.location(), old);
+
+    let change = begin_ref_change(
+        pool,
+        repo_id,
+        std::path::Path::new(f.store.location()),
+        Some(old),
+    )
+    .await
+    .unwrap();
+    let busy = writer.replica_listing().await.unwrap_err();
+    assert!(busy.is_replica_busy(), "{busy}");
+    let outcome = db::cluster::promote_repository(pool, repo_id, old, new, true)
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            db::cluster::PromoteOutcome::Stale {
+                applied_version: 0,
+                write_version: 1
+            }
+        ),
+        "{outcome:?}"
+    );
+
+    drop(change);
+    assert!(writer.replica_listing().await.is_ok());
+}
+
+/// A change the database refuses, because another node holds the repository, is not counted,
+/// so the primary that refused it keeps listing its refs for copies.
+#[tokio::test]
+async fn a_refused_ref_change_is_not_counted() {
+    let f = fixture().await;
+    let authority = authority(&f).await;
+    let pool = &authority.pool;
+    let repo_id = authority.repo_id;
+    let holder = storage_node(pool, "refused-holder").await;
+    let other = storage_node(pool, "refused-other").await;
+    assert!(db::cluster::place_repository(pool, repo_id, holder)
+        .await
+        .unwrap());
+
+    let refused = begin_ref_change(
+        pool,
+        repo_id,
+        std::path::Path::new(f.store.location()),
+        Some(other),
+    )
+    .await;
+    assert!(matches!(&refused, Err(error) if error.is_write_denied()));
+    assert_eq!(write_version(&authority).await, 0, "nothing was counted");
+    assert!(RepoStore::on_node(f.store.location(), holder)
+        .replica_listing()
+        .await
+        .is_ok());
 }
 
 /// An annotation larger than the tag readers accept would make every tag listing fail, so it

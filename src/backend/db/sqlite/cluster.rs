@@ -332,25 +332,34 @@ pub async fn set_replicas(pool: &SqlitePool, value: &str) -> Result<bool> {
         == 1)
 }
 
-pub async fn bump_write_version(pool: &SqlitePool, repo_id: i64) -> Result<()> {
-    // A repository that no storage node holds has no replicas, so its changes are not
-    // counted. The read comes first so that such repositories never take the write lock.
+pub async fn bump_write_version(
+    pool: &SqlitePool,
+    repo_id: i64,
+    node_id: Option<i64>,
+) -> Result<bool> {
+    // BEGIN IMMEDIATE: the read and the bump see the state a promotion sees, as in
+    // `promote_repository`.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let held_by: Option<Option<i64>> =
         sqlx::query_scalar("SELECT storage_node_id FROM repositories WHERE id = ?1")
             .bind(repo_id)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *tx)
             .await?;
-    match held_by {
-        None => bail!("repository {repo_id} not found"),
-        Some(None) => Ok(()),
-        Some(Some(_)) => {
-            sqlx::query("UPDATE repositories SET write_version = write_version + 1 WHERE id = ?1")
-                .bind(repo_id)
-                .execute(pool)
-                .await?;
-            Ok(())
-        }
+    let Some(held_by) = held_by else {
+        bail!("repository {repo_id} not found");
+    };
+    if node_id.is_some_and(|node| held_by != Some(node)) {
+        return Ok(false);
     }
+    // A repository that no storage node holds has no replicas, so its changes are not counted.
+    if held_by.is_some() {
+        sqlx::query("UPDATE repositories SET write_version = write_version + 1 WHERE id = ?1")
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
 }
 
 pub async fn get_write_version(pool: &SqlitePool, repo_id: i64) -> Result<Option<i64>> {

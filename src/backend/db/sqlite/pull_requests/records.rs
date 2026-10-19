@@ -17,7 +17,7 @@ pub async fn list_open_pull_request_revisions(
     repo_id: i64,
 ) -> Result<Vec<PullRequestRevisions>> {
     let rows = sqlx::query_as::<_, PullRequestRevisions>(
-        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha FROM pull_requests WHERE (repo_id = ?1 OR head_repo_id = ?1) AND state = 'open' ORDER BY id",
+        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE (repo_id = ?1 OR head_repo_id = ?1) AND state = 'open' ORDER BY id",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -33,7 +33,7 @@ pub async fn list_open_pull_request_revisions_on_branches(
     branches: &[&str],
 ) -> Result<Vec<PullRequestRevisions>> {
     let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
-        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha FROM pull_requests WHERE state = 'open' AND ((repo_id = ",
+        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE state = 'open' AND ((repo_id = ",
     );
     query.push_bind(repo_id).push(" AND base_branch IN (");
     let mut names = query.separated(",");
@@ -109,6 +109,7 @@ pub async fn move_open_pull_request_base(
     old_base: &str,
     new_base: &str,
     base_branch: &str,
+    fork: Option<&str>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let stored: Option<String> = sqlx::query_scalar(
@@ -126,13 +127,14 @@ pub async fn move_open_pull_request_base(
         crate::backend::db::sqlite::time::decode(&stored)?,
     )?;
     let changed = sqlx::query(
-        "UPDATE pull_requests SET base_sha = ?2, updated_at = ?3 WHERE id = ?1 AND state = 'open' AND base_sha = ?4 AND base_branch = ?5",
+        "UPDATE pull_requests SET base_sha = ?2, fork_sha = COALESCE(?6, fork_sha), updated_at = ?3 WHERE id = ?1 AND state = 'open' AND base_sha = ?4 AND base_branch = ?5",
     )
     .bind(pull_request_id)
     .bind(new_base)
     .bind(next)
     .bind(old_base)
     .bind(base_branch)
+    .bind(fork)
     .execute(&mut *tx)
     .await?
     .rows_affected();
@@ -500,6 +502,7 @@ pub async fn update_pull_request(
             title = COALESCE(?2, title), body = COALESCE(?3, body),
             state = COALESCE(?4, state),
             base_branch = COALESCE(?9, base_branch), base_sha = COALESCE(?10, base_sha),
+            fork_sha = CASE WHEN ?9 IS NULL THEN fork_sha ELSE NULL END,
             closed_at = CASE WHEN ?4 = 'open' THEN NULL WHEN ?4 = 'closed' AND state <> 'closed' THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now') ELSE closed_at END,
             updated_at = ?7
         WHERE id = ?1 AND state = ?5 AND updated_at = ?6 AND repo_id = ?8
@@ -686,7 +689,7 @@ pub async fn retarget_stacked_pull_requests(
         )?;
         // The row comes back from the statement that moves it, so it is what the move wrote.
         let row = sqlx::query_as::<_, PullRequest>(
-            "UPDATE pull_requests SET base_branch = ?2, base_sha = ?3, updated_at = ?4 WHERE id = ?1 AND state = 'open' AND base_branch = ?5 AND updated_at = ?6 RETURNING *",
+            "UPDATE pull_requests SET base_branch = ?2, base_sha = ?3, fork_sha = NULL, updated_at = ?4 WHERE id = ?1 AND state = 'open' AND base_branch = ?5 AND updated_at = ?6 RETURNING *",
         )
         .bind(id)
         .bind(to)

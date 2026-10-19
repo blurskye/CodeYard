@@ -497,6 +497,7 @@ async fn stack_merge_and_retarget_contract(pg: bool) {
         main_head,
         main0.as_str(),
         "main",
+        None,
     )
     .await
     .unwrap();

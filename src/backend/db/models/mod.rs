@@ -13,7 +13,6 @@ pub mod releases;
 pub mod repositories;
 pub mod users;
 pub mod webhooks;
-pub mod wiki;
 
 pub use ci::*;
 pub use cluster::*;
@@ -29,4 +28,3 @@ pub use releases::*;
 pub use repositories::*;
 pub use users::*;
 pub use webhooks::*;
-pub use wiki::*;

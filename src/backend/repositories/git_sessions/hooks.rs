@@ -10,6 +10,7 @@ use crate::backend::{
         self,
         models::{AccessLevel, Repository},
     },
+    git::{branches_and_tags_in_use, ref_listing_bytes, RefsInUse},
     repositories::{
         languages,
         protection::{
@@ -21,8 +22,9 @@ use crate::backend::{
 };
 use anyhow::{ensure, Context, Result};
 use std::{
+    collections::HashMap,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 /// The directory where Git holds the objects of a push it has not accepted yet. The helper
@@ -44,9 +46,83 @@ async fn quarantine_directory(repository: &Path, claimed: &str) -> Option<PathBu
         .then_some(directory)
 }
 
+/// The branches and tags a push creates. Each one counts against the repository's ref limit.
+fn created_refs(updates: &[RefUpdate]) -> Vec<&str> {
+    updates
+        .iter()
+        .filter(|update| {
+            update.old == ZERO_SHA
+                && (update.reference.starts_with("refs/heads/")
+                    || update.reference.starts_with("refs/tags/"))
+        })
+        .map(|update| update.reference.as_str())
+        .collect()
+}
+
+/// The refs that the other admitted pushes to the repository of `operation` will create. Those
+/// pushes' proposed updates hold the reservation, and an operation leaves the map when it ends,
+/// so the reservation ends with it.
+fn reserved_by_others(
+    operations: &HashMap<String, Arc<Operation>>,
+    operation: &Arc<Operation>,
+) -> Result<RefsInUse> {
+    let mut reserved = RefsInUse { count: 0, bytes: 0 };
+    for other in operations.values() {
+        if other.repo_id != operation.repo_id || Arc::ptr_eq(other, operation) {
+            continue;
+        }
+        let state = other
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+        for name in created_refs(state.proposed.as_deref().unwrap_or(&[])) {
+            reserved.count += 1;
+            reserved.bytes += ref_listing_bytes(name);
+        }
+    }
+    Ok(reserved)
+}
+
+/// Admits a push as proposed. The refs it creates are checked against the repository's ref limit
+/// together with the refs that the other admitted pushes will create. The count and the other
+/// pushes' reservations are read while the operations lock is held, and this push's proposed
+/// updates are stored under the same hold, so two pushes cannot both pass.
+fn admit_updates(
+    operations: &Mutex<HashMap<String, Arc<Operation>>>,
+    operation: &Arc<Operation>,
+    path: &Path,
+    updates: &[RefUpdate],
+) -> Result<()> {
+    let operations = operations
+        .lock()
+        .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+    let created = created_refs(updates);
+    if !created.is_empty() {
+        let held = branches_and_tags_in_use(path)?;
+        let reserved = reserved_by_others(&operations, operation)?;
+        ensure_ref_room(
+            RefsInUse {
+                count: held.count + reserved.count,
+                bytes: held.bytes + reserved.bytes,
+            },
+            &created,
+        )?;
+    }
+    let mut state = operation
+        .state
+        .lock()
+        .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+    ensure!(
+        state.proposed.is_none() && !state.post_started,
+        "duplicate pre-receive hook"
+    );
+    state.proposed = Some(updates.to_vec());
+    Ok(())
+}
+
 impl Gateway {
     pub(super) async fn hook(
-        &self,
+        self: &Arc<Self>,
         operation: &Arc<Operation>,
         post: bool,
         updates: &[RefUpdate],
@@ -127,32 +203,18 @@ impl Gateway {
                         })),
                 "the default branch cannot be deleted"
             );
-            let created: Vec<&str> = updates
-                .iter()
-                .filter(|update| {
-                    update.old == ZERO_SHA
-                        && (update.reference.starts_with("refs/heads/")
-                            || update.reference.starts_with("refs/tags/"))
-                })
-                .map(|update| update.reference.as_str())
-                .collect();
-            if !created.is_empty() {
-                let repo_path = path.clone();
-                let held = tokio::task::spawn_blocking(move || {
-                    crate::backend::git::branches_and_tags_in_use(&repo_path)
-                })
-                .await??;
-                ensure_ref_room(held, &created)?;
-            }
-            let mut state = operation
-                .state
-                .lock()
-                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
-            ensure!(
-                state.proposed.is_none() && !state.post_started,
-                "duplicate pre-receive hook"
-            );
-            state.proposed = Some(updates.to_vec());
+            let gateway = self.clone();
+            let (admitted, admitted_path, admitted_updates) =
+                (operation.clone(), path.clone(), updates.to_vec());
+            tokio::task::spawn_blocking(move || {
+                admit_updates(
+                    &gateway.operations,
+                    &admitted,
+                    &admitted_path,
+                    &admitted_updates,
+                )
+            })
+            .await??;
             return Ok(());
         }
         {
@@ -416,6 +478,7 @@ impl Gateway {
                         environment: None,
                         inputs: None,
                         triggered_by_id: fresh_identity.id,
+                        manual: false,
                     })
                     .await;
                 if result.is_err() {
@@ -477,5 +540,79 @@ impl Gateway {
                 .await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::broker::HookState;
+    use super::*;
+
+    fn creates(prefix: &str, count: usize) -> Vec<RefUpdate> {
+        (0..count)
+            .map(|index| RefUpdate {
+                old: ZERO_SHA.to_owned(),
+                new: "1".repeat(40),
+                reference: format!("refs/heads/{prefix}-{index}"),
+            })
+            .collect()
+    }
+
+    fn operation(repo_id: i64) -> Arc<Operation> {
+        Arc::new(Operation {
+            credential: ReceiveCredential::SshKey(1),
+            repo_id,
+            owner: "owner".to_owned(),
+            path: PathBuf::new(),
+            hooks: tempfile::tempdir().unwrap(),
+            state: Mutex::new(HookState::default()),
+        })
+    }
+
+    /// Pushes that are admitted at the same time share the ref limit. The second push is refused
+    /// when the first one's creations and its own would pass it, and a push that ends stops
+    /// reserving its refs.
+    #[test]
+    fn admitted_pushes_share_the_ref_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("shared.git");
+        let repo = git2::Repository::init_bare(&path).unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        let signature = git2::Signature::now("Tester", "tester@example.invalid").unwrap();
+        let commit = repo
+            .commit(None, &signature, &signature, "root", &tree, &[])
+            .unwrap();
+        for index in 0..crate::backend::git::MAX_REPOSITORY_REFS - 10 {
+            repo.reference(&format!("refs/heads/held-{index}"), commit, false, "held")
+                .unwrap();
+        }
+        let operations = Mutex::new(HashMap::new());
+        let first = operation(7);
+        let second = operation(7);
+        let third = operation(7);
+
+        operations
+            .lock()
+            .unwrap()
+            .insert("first".to_owned(), first.clone());
+        admit_updates(&operations, &first, &path, &creates("first", 5)).unwrap();
+        operations
+            .lock()
+            .unwrap()
+            .insert("second".to_owned(), second.clone());
+        // 9,990 refs are on disk and 5 are reserved, so six more would pass the limit.
+        assert!(admit_updates(&operations, &second, &path, &creates("second", 6)).is_err());
+        admit_updates(&operations, &second, &path, &creates("second", 5)).unwrap();
+        operations
+            .lock()
+            .unwrap()
+            .insert("third".to_owned(), third.clone());
+        assert!(admit_updates(&operations, &third, &path, &creates("third", 1)).is_err());
+
+        // The first push ends, and its reservation ends with it.
+        operations.lock().unwrap().remove("first");
+        admit_updates(&operations, &third, &path, &creates("third", 1)).unwrap();
     }
 }

@@ -13,8 +13,6 @@ pub mod templates;
 
 pub mod engagement;
 pub mod git_sessions;
-pub mod insights;
 pub mod reads;
 pub mod refs;
 pub mod releases;
-pub mod wiki;

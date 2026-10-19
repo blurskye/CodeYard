@@ -121,7 +121,8 @@ pub async fn save(
         None => {
             let id = hooks::insert_webhook(pool, owner, actor.id, &fields, secret.as_ref())
                 .await
-                .map_err(unavailable)?;
+                .map_err(unavailable)?
+                .ok_or(HookError::Denied)?;
             // A hook that was saved stays saved when its ping cannot be queued.
             if ping(pool, owner, actor, id).await.is_err() {
                 tracing::warn!(webhook_id = id, "could not queue the webhook ping");
@@ -129,9 +130,11 @@ pub async fn save(
             Ok(id)
         }
         Some(id) => {
-            let updated = hooks::update_webhook(pool, owner, id, &fields, secret.as_ref())
-                .await
-                .map_err(unavailable)?;
+            let updated =
+                hooks::update_webhook(pool, owner, actor.id, id, &fields, secret.as_ref())
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or(HookError::Denied)?;
             if !updated {
                 return Err(HookError::NotFound);
             }
@@ -147,10 +150,11 @@ pub async fn delete(
     id: i64,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
-    if hooks::delete_webhook(pool, owner, id)
+    let deleted = hooks::delete_webhook(pool, owner, actor.id, id)
         .await
         .map_err(unavailable)?
-    {
+        .ok_or(HookError::Denied)?;
+    if deleted {
         Ok(())
     } else {
         Err(HookError::NotFound)

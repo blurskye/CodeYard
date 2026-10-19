@@ -233,6 +233,8 @@ pub struct Cluster {
     storage_path: Option<PathBuf>,
     /// The TCP addresses this node reports to peers.
     tcp_advertised: Vec<SocketAddr>,
+    /// Admits the repository sessions this node serves. `None` on a node without storage.
+    sessions: Option<rpc::SessionGate>,
     pub context: NodeContext,
 }
 
@@ -313,7 +315,11 @@ impl Cluster {
     /// Stops publishing this node as live: the heartbeat ends and `last_seen` is cleared,
     /// so placement skips the node at once. Shutdown calls this before the node drains.
     /// The clear is best effort: after `WITHDRAW_TIMEOUT` shutdown goes on without it.
+    /// Repository sessions from other nodes are refused from here on.
     pub async fn withdraw(&self) {
+        if let Some(sessions) = &self.sessions {
+            sessions.close();
+        }
         let heartbeat = self
             .heartbeat
             .lock()
@@ -329,6 +335,15 @@ impl Cluster {
             Ok(Ok(())) => {}
             Ok(Err(error)) => warn!(%error, "could not clear this node's heartbeat"),
             Err(_) => warn!("could not clear this node's heartbeat within {WITHDRAW_TIMEOUT:?}"),
+        }
+    }
+
+    /// Waits for the repository sessions this node is serving to finish. Call it after
+    /// [`Cluster::withdraw`]; the caller bounds the wait. Sessions still running after
+    /// [`Cluster::shutdown`] are ended with their connections.
+    pub async fn drain_sessions(&self) {
+        if let Some(sessions) = &self.sessions {
+            sessions.drain().await;
         }
     }
 
@@ -443,6 +458,7 @@ pub async fn start(
     let rpc = storage_path
         .is_some()
         .then(|| rpc::RpcHandler::new(context.clone()));
+    let sessions = rpc.as_ref().map(rpc::RpcHandler::sessions);
     let ci_config = std::sync::Arc::new(crate::backend::ci::CiConfig::from_env()?);
     let queue = crate::backend::ci::queue::RunQueue::Database {
         pool: pool.clone(),
@@ -493,6 +509,7 @@ pub async fn start(
         pool: pool.clone(),
         storage_path,
         tcp_advertised,
+        sessions,
         context,
     })
 }

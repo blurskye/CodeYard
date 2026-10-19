@@ -17,7 +17,7 @@ pub async fn list_open_pull_request_revisions(
     repo_id: i64,
 ) -> Result<Vec<PullRequestRevisions>> {
     let rows = sqlx::query_as::<_, PullRequestRevisions>(
-        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha FROM pull_requests WHERE (repo_id = $1 OR head_repo_id = $1) AND state = 'open' ORDER BY id",
+        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE (repo_id = $1 OR head_repo_id = $1) AND state = 'open' ORDER BY id",
     )
     .bind(repo_id)
     .fetch_all(pool)
@@ -33,7 +33,7 @@ pub async fn list_open_pull_request_revisions_on_branches(
     branches: &[&str],
 ) -> Result<Vec<PullRequestRevisions>> {
     let rows = sqlx::query_as::<_, PullRequestRevisions>(
-        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha FROM pull_requests WHERE state = 'open' AND ((repo_id = $1 AND base_branch = ANY($2)) OR (head_repo_id = $1 AND head_branch = ANY($2))) ORDER BY id",
+        "SELECT id, repo_id, number, author_id, head_repo_id, head_branch, head_sha, base_branch, base_sha, stack_id FROM pull_requests WHERE state = 'open' AND ((repo_id = $1 AND base_branch = ANY($2)) OR (head_repo_id = $1 AND head_branch = ANY($2))) ORDER BY id",
     )
     .bind(repo_id)
     .bind(branches)
@@ -83,14 +83,16 @@ pub async fn move_open_pull_request_base(
     old_base: &str,
     new_base: &str,
     base_branch: &str,
+    fork: Option<&str>,
 ) -> Result<bool> {
     let changed = sqlx::query(
-        "UPDATE pull_requests SET base_sha = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND base_sha = $3 AND base_branch = $4",
+        "UPDATE pull_requests SET base_sha = $2, fork_sha = COALESCE($5, fork_sha), updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND base_sha = $3 AND base_branch = $4",
     )
     .bind(pull_request_id)
     .bind(new_base)
     .bind(old_base)
     .bind(base_branch)
+    .bind(fork)
     .execute(pool)
     .await?
     .rows_affected();
@@ -468,6 +470,7 @@ pub async fn update_pull_request(
             title = COALESCE($2, title), body = COALESCE($3, body),
             state = COALESCE($4, state),
             base_branch = COALESCE($8, base_branch), base_sha = COALESCE($9, base_sha),
+            fork_sha = CASE WHEN $8::TEXT IS NULL THEN fork_sha ELSE NULL END,
             closed_at = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN clock_timestamp() ELSE closed_at END,
             updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond')
         WHERE id = $1 AND state = $5 AND updated_at = $6 AND repo_id = $7
@@ -680,7 +683,7 @@ pub async fn retarget_stacked_pull_requests(
     // A member whose head is `to` would be based on itself, and one whose move would duplicate
     // another open pull request stays on `from`.
     let moved = sqlx::query_as::<_, PullRequest>(
-        "UPDATE pull_requests SET base_branch = $4, base_sha = $5, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') \
+        "UPDATE pull_requests SET base_branch = $4, base_sha = $5, fork_sha = NULL, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') \
          WHERE repo_id = $1 AND stack_id = $2 AND head_repo_id = $1 AND state = 'open' AND base_branch = $3 \
          AND head_branch <> $4 \
          AND NOT EXISTS (SELECT 1 FROM pull_requests o WHERE o.repo_id = pull_requests.repo_id \

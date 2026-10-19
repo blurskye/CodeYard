@@ -17,8 +17,6 @@ pub struct RepoChrome {
     pub topics: Vec<String>,
     pub is_private: bool,
     pub is_archived: bool,
-    /// Off makes the wiki pages answer 404.
-    pub wiki_enabled: bool,
     pub can_write: bool,
     pub can_admin: bool,
     pub is_owner: bool,
@@ -440,7 +438,6 @@ pub(crate) fn icon(kind: &str) -> Element {
                 "branches" => rsx! { path { d: "M6 3v12M18 9a9 9 0 0 1-9 9" } circle { cx: "18", cy: "6", r: "3" } circle { cx: "6", cy: "18", r: "3" } },
                 "smile" => rsx! { circle { cx: "12", cy: "12", r: "10" } path { d: "M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" } },
                 "releases" => rsx! { path { d: "m7.5 4.27 9 5.15M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" } path { d: "m3.3 7 8.7 5 8.7-5M12 22V12" } },
-                "wiki" => rsx! { path { d: "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" } },
                 "tags" => rsx! { path { d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" } circle { cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor" } },
                 "watch" => rsx! { path { d: "M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" } circle { cx: "12", cy: "12", r: "3" } },
                 "fork" => rsx! { circle { cx: "12", cy: "18", r: "3" } circle { cx: "6", cy: "6", r: "3" } circle { cx: "18", cy: "6", r: "3" } path { d: "M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9M12 12v3" } },

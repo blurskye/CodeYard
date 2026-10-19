@@ -176,15 +176,8 @@ pub async fn info_refs(
         Some("git-receive-pack") => GitService::ReceivePack,
         _ => return StatusCode::NOT_FOUND.into_response(),
     };
-    let (repo, _) = match repository(
-        &state,
-        &owner,
-        &name,
-        &headers,
-        matches!(service, GitService::ReceivePack),
-    )
-    .await
-    {
+    let write = matches!(service, GitService::ReceivePack);
+    let (repo, _) = match repository(&state, &owner, &name, &headers, write).await {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -195,6 +188,15 @@ pub async fn info_refs(
         Ok(refs) => refs,
         Err(error) => return store_unavailable(&error),
     };
+    // The advertisement may have waited for a session slot, and access can change meanwhile. The
+    // check is for the repository the refs came from, even if its name has been reused.
+    let found = match db::repositories::records::get_repository_by_id(&state.pool, repo.id).await {
+        Ok(found) => found,
+        Err(_) => return unavailable(),
+    };
+    if let Err(response) = authorize_repository(&state, found, &headers, write).await {
+        return response;
+    }
     let service = query.service.unwrap();
     let line = format!("# service={service}\n");
     let mut body = format!("{:04x}{line}0000", line.len() + 4).into_bytes();
@@ -267,7 +269,7 @@ async fn rpc(
     {
         return (StatusCode::BAD_REQUEST, "Invalid content type").into_response();
     }
-    let (repo, token_id) = match repository(&state, &owner, &name, &parts.headers, write).await {
+    let (repo, _) = match repository(&state, &owner, &name, &parts.headers, write).await {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -293,20 +295,16 @@ async fn rpc(
             Err(response) => return response,
         }
     };
-    let repo = if write {
-        repo
-    } else {
-        // Buffering can outlive credentials or access. Keep the original repository
-        // identity even if its name was reused while the client withheld the body.
-        let found =
-            match db::repositories::records::get_repository_by_id(&state.pool, repo.id).await {
-                Ok(found) => found,
-                Err(_) => return unavailable(),
-            };
-        match authorize_repository(&state, found, &parts.headers, false).await {
-            Ok((repo, _)) => repo,
-            Err(response) => return response,
-        }
+    // The wait for the slot and the body can both outlast credentials or access, so access is
+    // checked again now. It is keyed by the original repository id, so a name reused meanwhile
+    // does not stand in for it.
+    let found = match db::repositories::records::get_repository_by_id(&state.pool, repo.id).await {
+        Ok(found) => found,
+        Err(_) => return unavailable(),
+    };
+    let (repo, token_id) = match authorize_repository(&state, found, &parts.headers, write).await {
+        Ok(authorized) => authorized,
+        Err(response) => return response,
     };
     let mut options = GitSession::new(
         if write {

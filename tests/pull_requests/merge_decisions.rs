@@ -57,6 +57,7 @@ async fn enqueue(
             workflow_blobs: &json!({}),
             workflow_inputs: None,
             environment: None,
+            manual: false,
         },
         &[actor],
     )
@@ -412,11 +413,17 @@ async fn contract(pg: bool) {
                     .await;
                 assert_eq!(error["error"], "reserved_context");
             }
+            // Each run is taken by its own slot, since a slot holds one run at a time.
             for expected in [&a, &b] {
-                let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner])
-                    .await
-                    .unwrap()
-                    .unwrap();
+                let claimed = db::ci::claim_ci_run(
+                    f.pool(),
+                    &format!("worker-{}", expected.id),
+                    "local",
+                    &[owner],
+                )
+                .await
+                .unwrap()
+                .unwrap();
                 assert_eq!(claimed.id, expected.id);
             }
             let order = if success_first {
@@ -425,12 +432,16 @@ async fn contract(pg: bool) {
                 [(&a, "failed"), (&b, "success")]
             };
             for (index, (run, status)) in order.into_iter().enumerate() {
-                assert!(
-                    db::ci::finish_ci_run(f.pool(), run.id, "worker", status, None)
-                        .await
-                        .unwrap()
-                        .is_some()
-                );
+                assert!(db::ci::finish_ci_run(
+                    f.pool(),
+                    run.id,
+                    &format!("worker-{}", run.id),
+                    status,
+                    None
+                )
+                .await
+                .unwrap()
+                .is_some());
                 blocked(
                     &alice,
                     number,
@@ -471,15 +482,16 @@ async fn contract(pg: bool) {
             );
             let retry = enqueue(f.pool(), repository.id, owner, &head, pipeline_a, path_a).await;
             blocked(&alice, number, "pending").await;
+            // Another slot takes the retry, since the first one still holds its run.
             assert_eq!(
-                db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner])
+                db::ci::claim_ci_run(f.pool(), "worker-2", "local", &[owner])
                     .await
                     .unwrap()
                     .unwrap()
                     .id,
                 retry.id
             );
-            db::ci::finish_ci_run(f.pool(), retry.id, "worker", "success", None)
+            db::ci::finish_ci_run(f.pool(), retry.id, "worker-2", "success", None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1112,6 +1124,7 @@ async fn enqueue_pull_request_run(
             workflow_blobs: &json!({}),
             workflow_inputs: None,
             environment: None,
+            manual: false,
         },
         &[actor],
     )
