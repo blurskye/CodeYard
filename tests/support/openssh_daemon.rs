@@ -13,10 +13,14 @@ async fn output(mut command: Command) -> Output {
     .expect("fixture command timeout")
     .expect("fixture command start")
 }
+/// `name` from PATH, then the directories where distributions keep sshd, then the NixOS system
+/// profile as a last resort.
 pub(super) fn tool(name: &str) -> PathBuf {
-    let path = Path::new("/run/current-system/sw/bin").join(name);
-    assert!(path.is_file(), "required fixture tool: {}", path.display());
-    path
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .chain(["/usr/sbin", "/usr/local/sbin", "/run/current-system/sw/bin"].map(PathBuf::from))
+        .map(|directory| directory.join(name))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| panic!("required fixture tool: {name}"))
 }
 fn success(result: Output) -> Output {
     assert!(
@@ -173,7 +177,7 @@ async fn real_fixture(act: Option<PathBuf>) {
     command
         .env(
             "PATH",
-            "/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin",
+            "/usr/local/bin:/usr/bin:/bin:/run/current-system/sw/bin",
         )
         .env("LD_PRELOAD", &shim)
         .args(["-D", "-E"])

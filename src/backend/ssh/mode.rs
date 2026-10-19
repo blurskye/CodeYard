@@ -193,9 +193,10 @@ pub fn detect() -> Detection {
         return Detection::Unknown;
     }
     for binary in [
-        "/run/current-system/sw/bin/systemctl",
         "/usr/bin/systemctl",
         "/bin/systemctl",
+        // NixOS keeps system binaries here.
+        "/run/current-system/sw/bin/systemctl",
     ] {
         if !Path::new(binary).is_file() {
             continue;

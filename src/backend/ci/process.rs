@@ -466,18 +466,19 @@ mod tests {
             .arg(&pids);
         let (_tx, cancel) = watch::channel(false);
         let started = Instant::now();
-        let error = run(child, Duration::from_millis(200), cancel, |_, _| async {
-            Ok(())
-        })
-        .await
-        .unwrap_err();
+        // The shell must have installed its trap before the timeout fires, which a busy
+        // machine can take a while to do.
+        let limit = Duration::from_secs(1);
+        let error = run(child, limit, cancel, |_, _| async { Ok(()) })
+            .await
+            .unwrap_err();
         assert!(matches!(error.downcast_ref(), Some(Stopped::TimedOut)));
         assert!(
             term_marker.exists(),
             "SIGTERM was not delivered before SIGKILL"
         );
         assert!(started.elapsed() >= TERM_GRACE);
-        assert!(started.elapsed() < TERM_GRACE + KILL_GRACE + Duration::from_secs(2));
+        assert!(started.elapsed() < limit + TERM_GRACE + KILL_GRACE + Duration::from_secs(2));
         for pid in std::fs::read_to_string(pids)
             .unwrap()
             .split_whitespace()
