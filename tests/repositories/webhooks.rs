@@ -30,6 +30,8 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
+mod regressions;
+
 const SECRET: &str = "s3cret-value";
 
 /// What the local receiver saw: lower-case header names and the body.
@@ -772,7 +774,7 @@ async fn server_ref_events(pg: bool, url: &str) {
             repository.id,
             actor,
             &FileWrite {
-                branch: "main".into(),
+                branch: "trunk".into(),
                 path: "README".into(),
                 message: "first".into(),
                 expected_revision: "unborn".into(),
@@ -811,7 +813,7 @@ async fn server_ref_events(pg: bool, url: &str) {
     let merged = store
         .prepare_merge(&MergeRequest {
             head_branch: "topic".into(),
-            base_branch: "main".into(),
+            base_branch: "trunk".into(),
             head: head.sha.clone(),
             base: first.sha.clone(),
             message: "merge".into(),
@@ -829,7 +831,7 @@ async fn server_ref_events(pg: bool, url: &str) {
             repository.id,
             actor,
             "topic",
-            "main",
+            "trunk",
             &head.sha,
             &first.sha,
             &merged,
@@ -869,7 +871,12 @@ async fn server_ref_events(pg: bool, url: &str) {
         .collect::<Vec<_>>();
     assert!(pushed
         .iter()
-        .any(|body| body["ref"] == "refs/heads/main" && body["after"] == merged));
+        .any(|body| body["ref"] == "refs/heads/trunk" && body["after"] == merged));
+    let first_push = pushed
+        .iter()
+        .find(|body| body["after"] == first.sha)
+        .unwrap();
+    assert_eq!(first_push["repository"]["default_branch"], "trunk");
 }
 
 /// One test runs both engines, because the receiver needs `WEBHOOKS_ALLOW_PRIVATE` for the
@@ -884,6 +891,8 @@ async fn webhooks_on_sqlite_and_postgres() {
         let receiver = Receiver::default();
         let url = receiver.start().await;
         flow(pg, &receiver, &url).await;
+        regressions::retry_backoff_frees_send_slots(pg).await;
+        regressions::queued_delivery_recovers_from_database_failure(pg).await;
         pull_request_comment_hooks(pg, &url).await;
         pull_request_head_synchronize_hook(pg, &url).await;
         stale_hooks_and_binary_responses(pg).await;

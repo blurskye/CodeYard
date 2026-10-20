@@ -75,23 +75,38 @@ pub fn redelivery(recorded: &WebhookDelivery) -> Outgoing {
     }
 }
 
-async fn current_hook(pool: &DbPool, hook: &Webhook, outgoing: &Outgoing) -> bool {
+async fn current_hook(
+    pool: &DbPool,
+    hook: &Webhook,
+    outgoing: &Outgoing,
+) -> Result<bool, &'static str> {
     let owner = match (hook.repo_id, hook.org_id) {
         (Some(id), None) => hooks::HookOwner::Repository(id),
         (None, Some(id)) => hooks::HookOwner::Organization(id),
-        _ => return false,
+        _ => return Ok(false),
     };
-    let Ok(Some(current)) = hooks::get_webhook(pool, owner, hook.id).await else {
-        return false;
+    let mut retries = RETRY_DELAYS.iter();
+    let current = loop {
+        match hooks::get_webhook(pool, owner, hook.id).await {
+            Ok(Some(current)) => break current,
+            Ok(None) => return Ok(false),
+            Err(error) => {
+                tracing::warn!(webhook_id = hook.id, %error, "could not recheck a queued webhook");
+                match retries.next() {
+                    Some(delay) => tokio::time::sleep(*delay).await,
+                    None => return Err("Webhook storage is unavailable"),
+                }
+            }
+        }
     };
-    current.payload_url == hook.payload_url
+    Ok(current.payload_url == hook.payload_url
         && current.content_type == hook.content_type
         && current.encrypted_secret == hook.encrypted_secret
         && current.secret_nonce == hook.secret_nonce
         && current.ssl_verify == hook.ssl_verify
         && current.updated_at == hook.updated_at
         && (!outgoing.automatic
-            || (current.active && super::events::subscribes(&current.events, &outgoing.event)))
+            || (current.active && super::events::subscribes(&current.events, &outgoing.event))))
 }
 
 async fn transmit(
@@ -99,7 +114,7 @@ async fn transmit(
     hook: &Webhook,
     outgoing: &Outgoing,
 ) -> Result<Option<NewDelivery>, &'static str> {
-    if !current_hook(pool, hook, outgoing).await {
+    if !current_hook(pool, hook, outgoing).await? {
         return Ok(None);
     }
     let secret = open_secret(hook)?;
@@ -122,11 +137,17 @@ async fn transmit(
     }
     let mut retries = RETRY_DELAYS.iter();
     let attempt = loop {
-        if !current_hook(pool, hook, outgoing).await {
+        if !current_hook(pool, hook, outgoing).await? {
             return Ok(None);
         }
+        let slot = super::SLOTS
+            .acquire()
+            .await
+            .map_err(|_| "Webhook sends are stopped")?;
         let started_attempt = Instant::now();
         let attempt = attempt(&url, hook.ssl_verify, &headers, &outgoing.body).await;
+        let elapsed = started_attempt.elapsed();
+        drop(slot);
         let retry = match &attempt {
             Attempt::Responded { status, .. } => *status >= 500,
             Attempt::Failed { retry, .. } => *retry,
@@ -136,7 +157,7 @@ async fn transmit(
                 tokio::time::sleep(*delay).await;
                 continue;
             }
-            _ => break (attempt, started_attempt.elapsed()),
+            _ => break (attempt, elapsed),
         }
     };
     let (attempt, elapsed) = attempt;

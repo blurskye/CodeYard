@@ -57,7 +57,7 @@ pub async fn download_archive(
         Some(git_ref) => git_ref,
         None => repository_default_branch(&state, &repository).await?,
     };
-    let archive_prefix = format!("{}-{}", repo, git_ref.replace('/', "-"));
+    let archive_prefix = archive_prefix(&repo, &git_ref);
     let filename = format!("{}.zip", archive_prefix);
 
     let permit = state
@@ -179,9 +179,7 @@ pub(in crate::backend::api::repos) async fn page(
     {
         return ctx.error(status, "Unable to download this repository archive.");
     }
-    // A tag arrives as `refs/tags/NAME`; the folder and file keep the short name.
-    let short = reference.strip_prefix("refs/tags/").unwrap_or(reference);
-    let prefix = format!("{}-{}", name, short.replace('/', "-"));
+    let prefix = archive_prefix(&name, reference);
     let Ok(permit) = ctx.state.repository_downloads.clone().try_acquire_owned() else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -211,6 +209,33 @@ pub(in crate::backend::api::repos) async fn page(
     }
 }
 
+/// Leave room for the extension below common filesystems' 255-byte component limit.
+fn archive_prefix(repo: &str, reference: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let short = reference.strip_prefix("refs/tags/").unwrap_or(reference);
+    let original = format!("{repo}-{}", short.replace('/', "-"));
+    let mut prefix: String = original
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if prefix.len() > 200 || prefix != original {
+        prefix.truncate(180);
+        prefix.push_str(
+            &format!(
+                "-{:x}",
+                Sha256::digest(format!("{repo}-{short}").as_bytes())
+            )[..13],
+        );
+    }
+    prefix
+}
+
 /// The ref and format named by `{ref}.zip` or `{ref}.tar.gz`. An empty ref has no archive.
 fn parse_archive_name(name: &str) -> Option<(&str, ArchiveFormat)> {
     let (reference, format) = match name.strip_suffix(".tar.gz") {
@@ -223,6 +248,19 @@ fn parse_archive_name(name: &str) -> Option<(&str, ArchiveFormat)> {
 #[cfg(test)]
 mod archive_error_tests {
     use super::*;
+
+    #[test]
+    fn archive_folders_are_bounded_and_disambiguated() {
+        let reference = vec!["x".repeat(100); 3].join("/");
+        let prefix = archive_prefix("demo", &reference);
+        assert!(prefix.len() <= 200);
+        assert!(prefix
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)));
+        assert_ne!(prefix, archive_prefix("demo", &format!("{reference}y")));
+        assert_eq!(archive_prefix("demo", "refs/tags/v1"), "demo-v1");
+        assert!(archive_prefix("demo", "é\"test").is_ascii());
+    }
 
     #[test]
     fn archive_failures_map_by_kind() {

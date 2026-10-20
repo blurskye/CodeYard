@@ -66,11 +66,19 @@ pub struct PageQuery {
 pub struct ReleaseRequest {
     tag_name: Option<String>,
     target_commitish: Option<String>,
-    name: Option<String>,
-    body: Option<String>,
+    #[serde(default, deserialize_with = "nullable_text")]
+    name: Option<Option<String>>,
+    #[serde(default, deserialize_with = "nullable_text")]
+    body: Option<Option<String>>,
     draft: Option<bool>,
     prerelease: Option<bool>,
     make_latest: Option<bool>,
+}
+
+fn nullable_text<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 fn json_error(error: ReleaseError) -> Failure {
@@ -78,6 +86,7 @@ fn json_error(error: ReleaseError) -> Failure {
     let code = match status {
         StatusCode::NOT_FOUND => "not_found",
         StatusCode::FORBIDDEN => "forbidden",
+        StatusCode::CONFLICT => "revision_conflict",
         StatusCode::UNPROCESSABLE_ENTITY => "validation_error",
         _ => "unavailable",
     };
@@ -227,6 +236,7 @@ pub(super) async fn create(
         .map_err(|_| json_error(ReleaseError::Unavailable))?
         .ok_or_else(|| json_error(ReleaseError::NotFound))?;
     let input = ReleaseInput {
+        repository_id: repository.id,
         tag: request.tag_name.clone().unwrap_or_default(),
         target: request
             .target_commitish
@@ -234,8 +244,16 @@ pub(super) async fn create(
             .filter(|target| !target.trim().is_empty())
             .unwrap_or(repository.default_branch.clone()),
         fields: ReleaseFields {
-            name: request.name.clone().filter(|name| !name.is_empty()),
-            body: request.body.clone().filter(|body| !body.is_empty()),
+            name: request
+                .name
+                .clone()
+                .flatten()
+                .filter(|name| !name.is_empty()),
+            body: request
+                .body
+                .clone()
+                .flatten()
+                .filter(|body| !body.is_empty()),
             is_draft: request.draft.unwrap_or(false),
             is_prerelease: request.prerelease.unwrap_or(false),
             make_latest: request.make_latest.unwrap_or(true),
@@ -276,12 +294,13 @@ pub(super) async fn update(
 ) -> Result<Json<ReleaseResponse>, Failure> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let fields = ReleaseChanges {
+        expected_revision: None,
         name: request
             .name
-            .map(|name| Some(name).filter(|name| !name.is_empty())),
+            .map(|name| name.filter(|name| !name.is_empty())),
         body: request
             .body
-            .map(|body| Some(body).filter(|body| !body.is_empty())),
+            .map(|body| body.filter(|body| !body.is_empty())),
         is_draft: request.draft,
         is_prerelease: request.prerelease,
         make_latest: request.make_latest,

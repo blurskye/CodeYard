@@ -36,6 +36,8 @@ pub struct ClaimedRun {
     #[serde(default)]
     pub pull_request: Option<PullRequestEvent>,
     pub storage_peer: Option<cluster::CorePeer>,
+    #[serde(default)]
+    pub storage_replicas: Vec<(i64, cluster::CorePeer)>,
     // Used only by a database worker; never sent to a remote worker.
     #[serde(skip)]
     pub(crate) store: Option<RepoStore>,
@@ -53,6 +55,7 @@ pub enum RunQueue {
     Remote {
         context: NodeContext,
         peers: Vec<cluster::CorePeer>,
+        preferred: Arc<std::sync::Mutex<Option<String>>>,
     },
 }
 
@@ -115,6 +118,9 @@ pub(crate) enum Operation {
     Heartbeat {
         id: i64,
     },
+    Storage {
+        run_id: Uuid,
+    },
     Logs {
         id: i64,
         lines: Vec<LogLine>,
@@ -160,10 +166,65 @@ impl RunQueue {
                     .as_deref()
                     .context("the CI run has no worker")?;
                 context.remember_peer(id, peer.clone());
-                Ok(RepoStore::remote(claim.repository, id, context)
+                for (id, peer) in &claim.storage_replicas {
+                    context.remember_peer(*id, peer.clone());
+                }
+                let mut context = context.clone();
+                context.ci_replicas =
+                    Arc::new(std::sync::RwLock::new(std::collections::HashMap::from([(
+                        claim.repository,
+                        claim.storage_replicas.iter().map(|(id, _)| *id).collect(),
+                    )])));
+                Ok(RepoStore::remote(claim.repository, id, &context)
                     .for_ci_run(claim.run.id, worker))
             }
         }
+    }
+
+    /// Checkout retries a remote worker's stale placement once, through its authenticated core.
+    pub async fn checkout(
+        &self,
+        claim: &ClaimedRun,
+        destination: &std::path::Path,
+    ) -> Result<RepoStore> {
+        let mut store = self.store(claim)?;
+        let sha = claim
+            .run
+            .head_sha
+            .as_deref()
+            .context("the run has no commit")?;
+        if let Err(error) = store.checkout(destination, sha).await {
+            let Self::Remote { context, .. } = self else {
+                return Err(error.into());
+            };
+            let worker = claim
+                .run
+                .worker
+                .as_deref()
+                .context("the CI run has no worker")?;
+            let local_worker = worker
+                .strip_prefix(&format!("{}/", context.key.public_hex()))
+                .context("the CI run belongs to another worker")?;
+            let (node, peer): (i64, cluster::CorePeer) = self
+                .call(
+                    local_worker,
+                    Operation::Storage {
+                        run_id: claim.run.run_id,
+                    },
+                    None,
+                )
+                .await?;
+            context.remember_peer(node, peer);
+            store =
+                RepoStore::remote(claim.repository, node, context).for_ci_run(claim.run.id, worker);
+            let _lock = crate::backend::git::locks::lock(destination).await;
+            if destination.exists() {
+                tokio::fs::remove_dir_all(destination).await?;
+            }
+            drop(_lock);
+            store.checkout(destination, sha).await?;
+        }
+        Ok(store)
     }
 
     pub async fn claim(&self, worker: &str, mode: CiExecutionMode) -> Result<Option<ClaimedRun>> {
@@ -270,6 +331,28 @@ impl RunQueue {
                         }
                         None => None,
                     };
+                    let mut storage_replicas = Vec::new();
+                    if let (Some(context), Some(primary)) = (context, storage_id) {
+                        for (id, _) in context.read_copies(uuid, primary).await {
+                            let Some(node) = db::cluster::get_node_by_id(pool, id).await? else {
+                                continue;
+                            };
+                            let Some(address) = node
+                                .addr_hint
+                                .as_deref()
+                                .and_then(|hint| serde_json::from_str(hint).ok())
+                            else {
+                                continue;
+                            };
+                            storage_replicas.push((
+                                id,
+                                cluster::CorePeer {
+                                    public_key: node.public_key,
+                                    address,
+                                },
+                            ));
+                        }
+                    }
                     let worker = run.worker.as_deref().context("the CI run has no worker")?;
                     let store =
                         Some(repo_store(&repository, context.as_ref()).for_ci_run(run.id, worker));
@@ -283,6 +366,7 @@ impl RunQueue {
                         secrets,
                         pull_request,
                         storage_peer,
+                        storage_replicas,
                         store,
                     })
                 }
@@ -308,7 +392,8 @@ impl RunQueue {
         }
     }
 
-    pub async fn logs(&self, worker: &str, id: i64, lines: &[LogLine]) -> Result<()> {
+    /// Returns false once the run's stored log is closed.
+    pub async fn logs(&self, worker: &str, id: i64, lines: &[LogLine]) -> Result<bool> {
         let lines = prepare_logs(lines)?;
         match self {
             Self::Database { pool, .. } => db::ci::append_ci_logs(pool, id, worker, &lines).await,
@@ -364,7 +449,12 @@ impl RunQueue {
         operation: Operation,
         mut stop: Option<&mut watch::Receiver<bool>>,
     ) -> Result<T> {
-        let Self::Remote { context, peers } = self else {
+        let Self::Remote {
+            context,
+            peers,
+            preferred,
+        } = self
+        else {
             unreachable!()
         };
         // Log appends are not idempotent. Once sent, a lost reply must not replay the batch.
@@ -374,7 +464,16 @@ impl RunQueue {
             operation,
         })?;
         let mut last = anyhow::anyhow!("core node unavailable");
-        for peer in peers {
+        let first = preferred.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let ordered = peers
+            .iter()
+            .filter(|peer| Some(&peer.public_key) == first.as_ref())
+            .chain(
+                peers
+                    .iter()
+                    .filter(|peer| Some(&peer.public_key) != first.as_ref()),
+            );
+        for peer in ordered {
             let node = peer.node()?;
             // dial_node bounds each attempt itself. An outer timeout here would cut the
             // fallback short, so the other addresses and iroh would never be tried. A stop
@@ -415,7 +514,12 @@ impl RunQueue {
             link.close(0, b"CI request complete");
             match result {
                 Ok(Ok(reply)) => match reply.result {
-                    Ok(value) => return serde_json::from_value(value).map_err(Into::into),
+                    Ok(value) => {
+                        let value = serde_json::from_value(value)?;
+                        *preferred.lock().unwrap_or_else(|e| e.into_inner()) =
+                            Some(peer.public_key.clone());
+                        return Ok(value);
+                    }
                     Err(error) if error == CORE_UNAVAILABLE => {
                         last = anyhow::anyhow!(CORE_UNAVAILABLE)
                     }

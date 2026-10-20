@@ -35,6 +35,75 @@ use tracing_subscriber::prelude::*;
 use uuid::Uuid;
 
 #[tokio::test]
+async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let state = root.path().join("state");
+    let records = state.join("ci-containers");
+    std::fs::create_dir_all(&records).unwrap();
+    let socket = root.path().join("podman.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let run = Uuid::new_v4();
+    std::fs::write(
+        records.join(format!("{run}.json")),
+        serde_json::to_vec(&json!({"socket": socket, "run_id": run})).unwrap(),
+    )
+    .unwrap();
+    let log = root.path().join("server.log");
+    let output = std::fs::File::create(&log).unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("DATABASE_URL", database.connection_url())
+        .env("GITSERV_STATE_DIR", &state)
+        .env("REPOS_PATH", root.path().join("repos"))
+        .env("NODE_NAME", "startup-stop")
+        .env("SECRETS_MASTER_KEY", "2a".repeat(32))
+        .env("IROH_BIND", "127.0.0.1:0")
+        .current_dir(root.path())
+        .args([
+            "serve",
+            "--roles",
+            "storage,actions-worker",
+            "--ssh-mode",
+            "disabled",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    // An unanswered recovery request holds startup after the node publishes its heartbeat.
+    let (_connection, _) = tokio::time::timeout(Duration::from_secs(15), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        unsafe { libc::kill(child.id().unwrap() as i32, libc::SIGTERM) },
+        0
+    );
+    let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        status.success(),
+        "{status}: {}",
+        std::fs::read_to_string(log).unwrap()
+    );
+    let db::DbPool::Postgres(pg) = &database.pool else {
+        unreachable!()
+    };
+    let withdrawn: bool =
+        sqlx::query_scalar("SELECT last_seen IS NULL FROM nodes WHERE name='startup-stop'")
+            .fetch_one(pg)
+            .await
+            .unwrap();
+    assert!(withdrawn);
+}
+
+#[tokio::test]
 async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories() {
     let database = native::PostgresDatabase::new().await;
     let root = tempfile::tempdir().unwrap();
@@ -101,6 +170,7 @@ async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories(
         .env("GITSERV_STATE_DIR", root.path().join("state"))
         .env("REPOS_PATH", &repos)
         .env("NODE_NAME", "startup-node")
+        .env("SECRETS_MASTER_KEY", "2a".repeat(32))
         .env("IROH_BIND", "127.0.0.1:0")
         .env("CI_EXECUTION_MODE", "local")
         .env("CI_ACT_BINARY", &act)
@@ -173,6 +243,7 @@ async fn client(key: &cluster::NodeKey) -> NodeContext {
         repos_path: Default::default(),
         peers: Default::default(),
         unreachable: Default::default(),
+        ci_replicas: Default::default(),
     }
 }
 
@@ -337,6 +408,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         repos_path: root.path().to_owned(),
         peers: Default::default(),
         unreachable: Default::default(),
+        ci_replicas: Default::default(),
     };
     let owner = db::users::accounts::create_user(pool, "ci_owner", None)
         .await
@@ -347,7 +419,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     });
     let encryptor = Arc::new(SecretEncryptor::new(&[42; 32]));
     let notifications = Arc::new(NotificationBroadcaster::new(pool));
-    let mut subscriber = notifications.subscribe();
+    let mut subscriber = notifications.subscribe(owner.id);
     let session = Uuid::new_v4().simple().to_string().repeat(2);
     db::users::sessions::create_session(
         pool,
@@ -481,14 +553,17 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     assert!(worker.pool.is_none());
     let peer = peers[0].clone();
     let remote = RunQueue::Remote {
+        preferred: Default::default(),
         context: worker.clone(),
         peers,
     };
     let foreign = RunQueue::Remote {
+        preferred: Default::default(),
         context: other.clone(),
         peers: vec![peer.clone()],
     };
     let fallback = RunQueue::Remote {
+        preferred: Default::default(),
         context: worker.clone(),
         peers: vec![
             cluster::CorePeer {
@@ -551,6 +626,22 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     assert_eq!(claimed.secrets, [("TOKEN".into(), "private-value".into())]);
     let worker_store = remote.store(&claimed).unwrap();
     assert_eq!(worker_store.blob_by_id(&blob).await.unwrap(), workflow);
+    // An obsolete, unreachable placement from a claim is refreshed through the core.
+    let mut stale_claim = claimed.clone();
+    stale_claim.storage_node_id = Some(core_node.id + 100_000);
+    stale_claim.storage_peer = Some(cluster::CorePeer {
+        public_key: cluster::NodeKey::generate().public_hex(),
+        address: cluster::NodeAddress {
+            tcp: vec!["127.0.0.1:1".parse().unwrap()],
+            ..Default::default()
+        },
+    });
+    let refreshed = root.path().join("refreshed-checkout");
+    remote.checkout(&stale_claim, &refreshed).await.unwrap();
+    assert_eq!(
+        std::fs::read(refreshed.join(".github/workflows/ci.yml")).unwrap(),
+        workflow
+    );
     let checkout = root.path().join("worker-checkout");
     worker_store
         .checkout(&checkout, &revision.sha)
@@ -1023,6 +1114,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     connection.close(0u32.into(), b"test complete");
     let unknown = client(&cluster::NodeKey::generate()).await;
     let unknown_queue = RunQueue::Remote {
+        preferred: Default::default(),
         context: unknown.clone(),
         peers: vec![peer.clone()],
     };
@@ -1031,6 +1123,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .await
         .is_err());
     let nonworker = RunQueue::Remote {
+        preferred: Default::default(),
         context: nonworker_context.clone(),
         peers: vec![peer],
     };
@@ -1679,7 +1772,13 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
         .await
         .unwrap();
         codeyard::backend::repositories::pull_requests::workflows::queue_pull_request_ci(
-            pool, &ci, &repo, &pull, owner.id, false,
+            pool,
+            &ci,
+            &repo,
+            &pull,
+            owner.id,
+            false,
+            codeyard::backend::db::models::AccessLevel::Owner,
         )
         .await
         .unwrap();
@@ -1967,7 +2066,7 @@ async fn manual_dispatch_upper_layer_contract(pool: &db::DbPool) {
             axum::http::StatusCode::OK,
         )
         .await;
-    let runs = db::ci::latest_ci_runs_for_commit(pool, repo.id, &two, upper_id)
+    let runs = db::ci::latest_ci_runs_for_commit(pool, repo.id, &two, upper_id, "main")
         .await
         .unwrap();
     assert!(
@@ -2025,6 +2124,89 @@ impl ProtocolHandler for StalledWorkflowReads {
 }
 
 #[tokio::test]
+async fn actions_history_survives_a_stalled_git_preflight() {
+    let fixture = ci_fixture().await;
+    let run = fixture.queue_run().await;
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .alpns(vec![cluster::ALPN_RPC.to_vec()])
+        .bind()
+        .await
+        .unwrap();
+    let (reads, _started) = mpsc::unbounded_channel();
+    let router = iroh::protocol::Router::builder(endpoint.clone())
+        .accept(cluster::ALPN_RPC, StalledWorkflowReads(reads))
+        .spawn();
+    cluster::wait_for_address(&endpoint).await;
+    let node = db::cluster::register_own_node(
+        fixture.pool(),
+        &endpoint.id().to_string(),
+        "stalled-storage",
+        &["storage".into()],
+        "test",
+    )
+    .await
+    .unwrap();
+    db::cluster::record_node_heartbeat(
+        fixture.pool(),
+        &endpoint.id().to_string(),
+        "test",
+        &serde_json::to_string(&cluster::NodeAddress::of(&endpoint.addr())).unwrap(),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let db::DbPool::Postgres(pg) = fixture.pool() else {
+        unreachable!()
+    };
+    sqlx::query("UPDATE repositories SET storage_node_id=$1 WHERE id=$2")
+        .bind(node.id)
+        .bind(fixture.repo)
+        .execute(pg)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(pg).await.unwrap();
+    crate::support::fake_webui_bundle::install();
+    let mut context = fixture.worker.clone();
+    context.pool = Some(fixture.pool().clone());
+    let app = codeyard::backend::api::create_router(codeyard::backend::app::AppState::new(
+        fixture.pool().clone(),
+        fixture.root.path().to_owned(),
+        Arc::new(
+            codeyard::backend::storage::ObjectStore::open(fixture.root.path(), None)
+                .await
+                .unwrap(),
+        ),
+        None,
+        CiConfig {
+            trusted_actor_ids: BTreeSet::from([fixture.owner]),
+            ..CiConfig::default()
+        },
+        Some(context),
+    ));
+    let client =
+        crate::support::pull_requests::Client::login(&app, fixture.pool(), fixture.owner).await;
+    let (status, page) = tokio::time::timeout(
+        Duration::from_secs(8),
+        client.model(&format!("/ci_owner/project/actions?job={}", run.run_id)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(model)) =
+        page
+    else {
+        panic!("Actions model")
+    };
+    assert!(model.workflow_warning.is_some());
+    assert_eq!(model.selected.unwrap().run.id, run.run_id.to_string());
+    assert!(model.can_cancel);
+    endpoint.close().await;
+    router.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
     use codeyard::backend::ci::list_workflows_for_ref;
     let fixture = ci_fixture().await;
@@ -2074,6 +2256,7 @@ async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
     .unwrap()
     .unwrap();
     assert_eq!(workflows.len(), 1);
+    endpoint.close().await;
     for task in tasks {
         assert!(tokio::time::timeout(Duration::from_secs(5), task)
             .await
@@ -2800,6 +2983,122 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
 }
 
 #[tokio::test]
+async fn ownership_record_failure_does_not_permanently_remove_worker_capacity() {
+    let fixture = ci_fixture().await;
+    let runner = fixture.root.path().join("runner");
+    std::fs::write(&runner, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let state = fixture.root.path().join("worker-state");
+    let workers = CiWorkers::new(
+        fixture.remote(),
+        Arc::new(CiConfig {
+            mode: CiExecutionMode::Local,
+            act_binary: runner.to_str().unwrap().into(),
+            max_active_runs: 1,
+            run_timeout_seconds: 30,
+            ..Default::default()
+        }),
+        true,
+        &state,
+    );
+    workers.startup().await.unwrap();
+    let records = state.join("ci-containers");
+    std::fs::remove_dir(&records).unwrap();
+    std::fs::write(&records, "filesystem unavailable").unwrap();
+    let first = fixture.queue_run().await;
+    let second = fixture.queue_run().await;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let current = db::ci::get_ci_run_by_run_id(fixture.pool(), first.run_id)
+                .await
+                .unwrap()
+                .unwrap();
+            if current.completed_at.is_some() {
+                assert_eq!(current.status, "failed");
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        db::ci::get_ci_run_by_run_id(fixture.pool(), second.run_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        "queued"
+    );
+    std::fs::remove_file(&records).unwrap();
+    std::fs::create_dir(&records).unwrap();
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let current = db::ci::get_ci_run_by_run_id(fixture.pool(), second.run_id)
+                .await
+                .unwrap()
+                .unwrap();
+            if current.completed_at.is_some() {
+                assert_eq!(current.status, "success", "{:?}", current.error_message);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    workers.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn discovery_allows_stalled_tcp_to_fall_back_to_iroh() {
+    let fixture = ci_fixture().await;
+    // Discovery runs on a web node, not an actions-worker-only node.
+    db::cluster::upsert_declared_nodes(
+        fixture.pool(),
+        &[db::cluster::DeclaredMember {
+            public_key: fixture.worker.key.public_hex(),
+            name: "ci-worker".into(),
+            roles: vec!["actions-worker".into(), "web".into()],
+        }],
+    )
+    .await
+    .unwrap();
+    fixture.queue_run().await;
+    let queue = fixture.remote();
+    let claim = queue
+        .claim("discovery", CiExecutionMode::Local)
+        .await
+        .unwrap()
+        .unwrap();
+    let store = queue.store(&claim).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut peer = claim.storage_peer.clone().unwrap();
+    peer.address.tcp.push(listener.local_addr().unwrap());
+    fixture
+        .worker
+        .remember_peer(claim.storage_node_id.unwrap(), peer);
+    let stalled = tokio::spawn(async move {
+        let mut sockets = Vec::new();
+        loop {
+            sockets.push(listener.accept().await.unwrap().0);
+        }
+    });
+    let workflows = tokio::time::timeout(
+        Duration::from_secs(25),
+        codeyard::backend::ci::list_workflows_for_ref(&store, "main"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(workflows.len(), 1);
+    stalled.abort();
+    assert!(stalled.await.unwrap_err().is_cancelled());
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn a_run_whose_commit_is_missing_fails_and_frees_its_slot() {
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
@@ -3121,22 +3420,24 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
         )
         .await;
 
-        db::ci::append_ci_logs(
+        assert!(!db::ci::append_ci_logs(
             pool,
             run.id,
             "worker",
             &[line("kept"), line("dropped"), line("dropped too")],
         )
         .await
-        .unwrap();
+        .unwrap());
         let stored = db::ci::list_ci_logs(pool, run.id, 100).await.unwrap();
         assert_eq!(stored.len(), 2);
         assert_eq!(stored[0].line, "kept");
         assert_eq!(stored[1].level, "warn");
 
-        db::ci::append_ci_logs(pool, run.id, "worker", &[line("after the limit")])
-            .await
-            .unwrap();
+        assert!(
+            !db::ci::append_ci_logs(pool, run.id, "worker", &[line("after the limit")])
+                .await
+                .unwrap()
+        );
         assert_eq!(
             db::ci::list_ci_logs(pool, run.id, 100).await.unwrap().len(),
             2
@@ -3393,6 +3694,7 @@ impl CiFixture {
 
     fn remote(&self) -> RunQueue {
         RunQueue::Remote {
+            preferred: Default::default(),
             context: self.worker.clone(),
             peers: vec![self.peer.clone()],
         }
@@ -3453,6 +3755,7 @@ async fn ci_fixture() -> CiFixture {
         repos_path: root.path().to_owned(),
         peers: Default::default(),
         unreachable: Default::default(),
+        ci_replicas: Default::default(),
     };
     let owner = db::users::accounts::create_user(&pool, "ci_owner", None)
         .await
@@ -3861,6 +4164,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         &pull,
         fixture.owner,
         false,
+        codeyard::backend::db::models::AccessLevel::Owner,
     )
     .await
     .unwrap();
@@ -3971,6 +4275,7 @@ struct LogReplyProxy {
     upstream: iroh::Endpoint,
     peer: iroh::EndpointAddr,
     stall: bool,
+    heartbeat: bool,
     logs: mpsc::UnboundedSender<()>,
 }
 
@@ -3983,7 +4288,9 @@ impl ProtocolHandler for LogReplyProxy {
         let header = rpc::read_frame(&mut recv, rpc::MAX_JSON).await.unwrap();
         let request: serde_json::Value = serde_json::from_slice(&header).unwrap();
         let logs = request["operation"].get("Logs").is_some();
-        if logs && self.stall {
+        if (logs && self.stall)
+            || (self.heartbeat && request["operation"].get("Heartbeat").is_some())
+        {
             let _ = self.logs.send(());
             let _ = recv.read_to_end(1).await;
             connection.closed().await;
@@ -4015,6 +4322,131 @@ impl ProtocolHandler for LogReplyProxy {
 }
 
 #[tokio::test]
+async fn successful_core_is_tried_first_for_subsequent_log_batches() {
+    let fixture = ci_fixture().await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let count = attempts.clone();
+    let stalled = tokio::spawn(async move {
+        let mut connections = Vec::new();
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            count.fetch_add(1, Ordering::SeqCst);
+            connections.push(stream);
+        }
+    });
+    let queue = RunQueue::Remote {
+        context: fixture.worker.clone(),
+        preferred: Default::default(),
+        peers: vec![
+            cluster::CorePeer {
+                public_key: cluster::NodeKey::generate().public_hex(),
+                address: cluster::NodeAddress {
+                    tcp: vec![address],
+                    ..Default::default()
+                },
+            },
+            fixture.peer.clone(),
+        ],
+    };
+    let run = fixture.queue_run().await;
+    queue
+        .claim("slot", CiExecutionMode::Local)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        queue.logs("slot", run.id, &[line("after failover")]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        db::ci::list_ci_logs(fixture.pool(), run.id, 10)
+            .await
+            .unwrap()[0]
+            .line,
+        "after failover"
+    );
+    stalled.abort();
+    let _ = stalled.await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
+    let fixture = ci_fixture().await;
+    let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+        .relay_mode(iroh::RelayMode::Disabled)
+        .alpns(vec![cluster::ALPN_EVENTS.to_vec()])
+        .bind()
+        .await
+        .unwrap();
+    let (logs, mut heartbeat) = mpsc::unbounded_channel();
+    let router = iroh::protocol::Router::builder(endpoint.clone())
+        .accept(
+            cluster::ALPN_EVENTS,
+            LogReplyProxy {
+                upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
+                peer: fixture.peer.endpoint_addr().unwrap(),
+                stall: false,
+                heartbeat: true,
+                logs,
+            },
+        )
+        .spawn();
+    cluster::wait_for_address(&endpoint).await;
+    let runner = fixture.root.path().join("runner");
+    std::fs::write(&runner, "#!/bin/sh\nsleep 60\n").unwrap();
+    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let run = fixture.queue_run().await;
+    let queue = RunQueue::Remote {
+        context: fixture.worker.clone(),
+        preferred: Default::default(),
+        peers: vec![cluster::CorePeer {
+            public_key: endpoint.id().to_string(),
+            address: cluster::NodeAddress::of(&endpoint.addr()),
+        }],
+    };
+    let workers = CiWorkers::new(
+        queue,
+        Arc::new(CiConfig {
+            mode: CiExecutionMode::Local,
+            act_binary: runner.to_str().unwrap().into(),
+            max_active_runs: 1,
+            run_timeout_seconds: 60,
+            ..CiConfig::default()
+        }),
+        true,
+        fixture.root.path(),
+    );
+    workers.startup().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(15), heartbeat.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(6), workers.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+    let current = db::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        current.error_message.as_deref(),
+        Some("The CI worker shut down during the run")
+    );
+    endpoint.close().await;
+    router.shutdown().await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
     let fixture = ci_fixture().await;
     let run = fixture.queue_run().await;
@@ -4038,12 +4470,14 @@ async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
                 stall: false,
+                heartbeat: false,
                 logs,
             },
         )
         .spawn();
     cluster::wait_for_address(&endpoint).await;
     let queue = RunQueue::Remote {
+        preferred: Default::default(),
         context: fixture.worker.clone(),
         peers: vec![
             cluster::CorePeer {
@@ -4066,6 +4500,97 @@ async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
 }
 
 #[tokio::test]
+async fn stalled_database_logs_do_not_block_timed_out_container_cleanup() {
+    let fixture = ci_fixture().await;
+    let socket = fixture.root.path().join("podman.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (cleaned, cleanup) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut headers = Vec::new();
+        loop {
+            let mut bytes = [0; 1024];
+            let count = stream.read(&mut bytes).await.unwrap();
+            assert!(count > 0);
+            headers.extend_from_slice(&bytes[..count]);
+            if headers.windows(4).any(|part| part == b"\r\n\r\n") {
+                break;
+            }
+        }
+        assert!(headers.starts_with(b"GET /v1.40/containers/json?"));
+        stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n[]").await.unwrap();
+        let _ = cleaned.send(());
+    });
+    let runner = fixture.root.path().join("runner");
+    let ready = fixture.root.path().join("ready");
+    let release = fixture.root.path().join("release");
+    std::fs::write(&runner, format!("#!/bin/sh\ntouch '{}'\nwhile ! test -f '{}'; do sleep .05; done\necho output\nsleep 60\n", ready.display(), release.display())).unwrap();
+    std::fs::set_permissions(&runner, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let run = fixture.queue_run().await;
+    let config = Arc::new(CiConfig {
+        mode: CiExecutionMode::Podman,
+        podman_socket: socket.to_str().unwrap().into(),
+        act_binary: runner.to_str().unwrap().into(),
+        trusted_actor_ids: BTreeSet::from([fixture.owner]),
+        max_active_runs: 1,
+        run_timeout_seconds: 10,
+        ..CiConfig::default()
+    });
+    let queue = RunQueue::Database {
+        pool: fixture.pool().clone(),
+        config: config.clone(),
+        secrets: None,
+        context: None,
+        notifications: Arc::new(NotificationBroadcaster::new(fixture.pool())),
+    };
+    let workers = CiWorkers::new(queue, config, true, fixture.root.path());
+    workers.startup().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !ready.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let db::DbPool::Postgres(pg) = fixture.pool() else {
+        unreachable!()
+    };
+    let mut tx = pg.begin().await.unwrap();
+    sqlx::query("SELECT id FROM ci_runs WHERE id=$1 FOR UPDATE")
+        .bind(run.id)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+    std::fs::write(&release, "go").unwrap();
+    tokio::time::timeout(Duration::from_secs(14), cleanup)
+        .await
+        .expect("container cleanup must not wait for a locked log write")
+        .unwrap();
+    tx.commit().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = db::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
+                .await
+                .unwrap()
+                .unwrap();
+            if current.completed_at.is_some() {
+                assert_eq!(
+                    current.error_message.as_deref(),
+                    Some("The run exceeded its time limit")
+                );
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    workers.shutdown().await.unwrap();
+    server.await.unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
@@ -4082,6 +4607,7 @@ async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
                 stall: true,
+                heartbeat: false,
                 logs,
             },
         )
@@ -4096,6 +4622,7 @@ async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
         ..CiConfig::default()
     });
     let queue = RunQueue::Remote {
+        preferred: Default::default(),
         context: fixture.worker.clone(),
         peers: vec![cluster::CorePeer {
             public_key: endpoint.id().to_string(),

@@ -2,7 +2,7 @@
 use super::{
     run::run_duration,
     runs::{icon, preserved_inputs, status_icon, status_label},
-    ActionsPage, SelectedRun,
+    ActionsPage, Run,
 };
 use crate::webui::{
     components::{current_time, relative_age, DraftSelect, SelectOption},
@@ -30,6 +30,8 @@ pub struct Step {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowJob {
+    pub key: String,
+    pub stage: String,
     pub name: String,
     pub steps: Vec<Step>,
 }
@@ -302,25 +304,52 @@ fn steps(lines: &[&LogLine], run_status: &str) -> Vec<Step> {
 
 /// Preserve every delivered persisted line, including prelude/trailer and malformed text.
 pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
-    let mut buckets: Vec<(String, Vec<&LogLine>)> = Vec::new();
-    let mut current = "Runner".to_string();
+    let mut buckets: Vec<(String, String, String, Vec<&LogLine>)> = Vec::new();
+    let mut current = std::collections::HashMap::<&str, String>::new();
     for line in lines {
-        if let Some(name) = act_job_name(&line.line) {
-            current = name;
+        let identity = current
+            .entry(&line.stage)
+            .or_insert_with(|| "Runner".into());
+        if act_job_name(&line.line).is_some() {
+            *identity = line.line[1..line.line.find(']').expect("job prefix")]
+                .trim()
+                .to_owned();
         }
-        if let Some((_, bucket)) = buckets.iter_mut().find(|(name, _)| name == &current) {
+        if let Some((_, _, _, bucket)) = buckets
+            .iter_mut()
+            .find(|(stage, job, _, _)| stage == &line.stage && job == identity)
+        {
             bucket.push(line);
         } else {
-            buckets.push((current.clone(), vec![line]));
+            let name = act_job_name(&line.line).unwrap_or_else(|| "Runner".into());
+            buckets.push((line.stage.clone(), identity.clone(), name, vec![line]));
         }
     }
     buckets
         .into_iter()
-        .map(|(name, lines)| WorkflowJob {
+        .map(|(stage, identity, name, lines)| WorkflowJob {
+            key: format!("{}:{stage}:{identity}", stage.len()),
+            stage,
             name,
             steps: steps(&lines, run_status),
         })
         .collect()
+}
+
+pub fn selected_job(jobs: &[WorkflowJob], selection: &str) -> Option<usize> {
+    if selection.is_empty() {
+        return (!jobs.is_empty()).then_some(0);
+    }
+    jobs.iter()
+        .position(|job| job.key == selection)
+        .or_else(|| {
+            let mut matches = jobs
+                .iter()
+                .enumerate()
+                .filter(|(_, job)| job.name == selection);
+            let (index, _) = matches.next()?;
+            matches.next().is_none().then_some(index)
+        })
 }
 
 pub fn search_steps<'a>(steps: &'a [Step], query: &str) -> Vec<(&'a Step, Vec<&'a LogLine>)> {
@@ -346,7 +375,10 @@ pub fn search_steps<'a>(steps: &'a [Step], query: &str) -> Vec<(&'a Step, Vec<&'
 #[component]
 pub(super) fn LogOutput(
     model: ActionsPage,
-    selected: SelectedRun,
+    run: Run,
+    logs_empty: bool,
+    fetched_lines: usize,
+    logs_truncated: bool,
     jobs: std::rc::Rc<Vec<WorkflowJob>>,
 ) -> Element {
     let initial_query = model.value("log_q").to_string();
@@ -354,16 +386,11 @@ pub(super) fn LogOutput(
     let mut query = use_signal(move || initial_query);
     let mut wrap = use_signal(move || initial_wrap);
     // One job at a time: the job the sidebar chose, or the first job when none is chosen.
+    let chosen = selected_job(&jobs, model.value("workflow_job"));
     let visible_jobs: Vec<_> = jobs
         .iter()
         .enumerate()
-        .filter(|(index, job)| {
-            if model.value("workflow_job").is_empty() {
-                *index == 0
-            } else {
-                model.value("workflow_job") == job.name
-            }
-        })
+        .filter(|(index, _)| Some(*index) == chosen)
         .collect();
     let heading = match visible_jobs.first() {
         Some((_, job)) => job.name.clone(),
@@ -374,14 +401,14 @@ pub(super) fn LogOutput(
             header { class: "actions-log-heading",
                 div {
                     h2 { "{heading}" }
-                    p { "{status_label(&selected.run.status)} · {run_duration(&selected.run)}" }
+                    p { "{status_label(&run.status)} · {run_duration(&run)}" }
                 }
                 form { method: "get", action: model.base_path.clone(), class: "actions-log-controls",
                     {preserved_inputs(&model, &["log_q", "wrap"])}
                     label { class: "actions-search-field actions-log-search",
                         span { class: "actions-sr-only", "Search logs" }
                         {icon("search")}
-                        input { class: "actions-search", name: "log_q", r#type: "search", placeholder: "Search logs", value: query(), maxlength: "300", oninput: move |event| query.set(event.value()) }
+                        crate::webui::components::DraftInput { class: "actions-search", name: "log_q", input_type: "search", placeholder: "Search logs", initial_value: query(), maxlength: Some(300), on_value: move |value| query.set(value) }
                     }
                     label { class: "actions-wrap-control", title: "Wrap log lines",
                         {icon("wrap")} span { class: "actions-sr-only", "Wrap lines" }
@@ -392,12 +419,12 @@ pub(super) fn LogOutput(
                 }
             }
             div { class: "actions-log-jobs",
-                if selected.logs.is_empty() {
+                if logs_empty {
                     div { class: "actions-log-empty",
-                        match normalize_status(&selected.run.status) {
+                        match normalize_status(&run.status) {
                             "queued" => rsx! {
                                 p { "Waiting for the runner to start; logs appear here as the job runs." }
-                                p { class: "actions-log-meta", "Queued " span { title: timestamp(selected.run.created_at), "{relative_time(selected.run.created_at)}" } }
+                                p { class: "actions-log-meta", "Queued " span { title: timestamp(run.created_at), "{relative_time(run.created_at)}" } }
                             },
                             "running" => rsx! { p { "Waiting for the first log lines; logs appear here as the job runs." } },
                             _ => rsx! { p { "No logs were recorded for this run." } },
@@ -409,18 +436,18 @@ pub(super) fn LogOutput(
                         div { class: "actions-step-list", {render_steps(*job_index, job, &query(), wrap())} }
                     }
                 }
-                if !model.value("workflow_job").is_empty() && visible_jobs.is_empty() && !selected.logs.is_empty() {
+                if !model.value("workflow_job").is_empty() && visible_jobs.is_empty() && !logs_empty {
                     p { class: "actions-log-empty", "This job is not available in the recent logs." }
                 }
             }
             footer { class: "actions-log-footer",
-                if selected.logs_truncated {
+                if logs_truncated {
                     p { class: "actions-log-limit", role: "status", "Recent logs were shortened to fit this page. Run status continues to update." }
-                } else if selected.fetched_lines >= model.log_limit {
+                } else if fetched_lines >= model.log_limit {
                     p { class: "actions-log-limit", role: "status", "Only the most recent {model.log_limit} lines are shown." }
                 }
-                if selected.logs_truncated || selected.fetched_lines >= model.log_limit {
-                    a { class: "actions-history-link", href: format!("/api/ci/jobs/{}/history", selected.run.id), "Full log history (paginated JSON)" }
+                if logs_truncated || fetched_lines >= model.log_limit {
+                    a { class: "actions-history-link", href: format!("/api/ci/jobs/{}/history", run.id), "Full log history (paginated JSON)" }
                 }
                 details { class: "actions-help",
                     summary { "About these logs" }
@@ -509,6 +536,26 @@ mod tests {
             timestamp: id,
         }
     }
+    #[test]
+    fn job_identity_includes_workflow_stage_and_the_full_act_prefix() {
+        let mut lines = vec![
+            log(1, "[CI/test] ⭐ Run Main first"),
+            log(2, "[CI/test] ⭐ Run Main second"),
+            log(3, "[Deploy/test] ⭐ Run Main third"),
+        ];
+        lines[0].stage = "ci.yml".into();
+        lines[1].stage = "deploy-image.yml".into();
+        lines[2].stage = "ci.yml".into();
+        let jobs = project_logs(&lines, "running");
+        assert_eq!(jobs.len(), 3);
+        assert!(jobs.iter().all(|job| job.name == "test"));
+        for (index, job) in jobs.iter().enumerate() {
+            assert_eq!(selected_job(&jobs, &job.key), Some(index));
+            assert_eq!(job.steps[0].lines[0].id, index as i64 + 1);
+        }
+        assert_eq!(selected_job(&jobs, "test"), None);
+    }
+
     #[test]
     fn real_act_markers_project_steps_without_losing_output() {
         let lines = vec![

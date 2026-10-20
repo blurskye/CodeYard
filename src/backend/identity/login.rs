@@ -151,22 +151,26 @@ pub async fn second_factor_login(
     let recovery = (!normalized.is_empty()
         && !(normalized.len() == 6 && normalized.bytes().all(|b| b.is_ascii_digit())))
     .then(|| two_factor::recovery_code_hash(&normalized));
-    if recovery.is_none()
-        && !two_factor::verify_totp_code(pool, encryptor, user.id, code, now)
-            .await
-            .map_err(|error| match error {
-                TwoFactorError::KeyUnavailable => LoginError::TwoFactorUnavailable,
-                _ => LoginError::AccountUnavailable,
-            })?
-    {
-        return Err(LoginError::InvalidTwoFactorCode);
-    }
+    let totp = if recovery.is_none() {
+        Some(
+            two_factor::verify_totp_code(pool, encryptor, user.id, code, now)
+                .await
+                .map_err(|error| match error {
+                    TwoFactorError::KeyUnavailable => LoginError::TwoFactorUnavailable,
+                    _ => LoginError::AccountUnavailable,
+                })?
+                .ok_or(LoginError::InvalidTwoFactorCode)?,
+        )
+    } else {
+        None
+    };
     let credential = db::users::sessions::SessionCredential::SecondFactor {
         password: user
             .password_hash
             .as_deref()
             .ok_or(LoginError::PendingLoginExpired)?,
         recovery_hash: recovery.as_deref(),
+        totp: totp.as_ref().map(|(nonce, step)| (nonce.as_slice(), *step)),
     };
     let session_id = sessions::issue_authenticated_session(pool, session, user.id, credential)
         .await

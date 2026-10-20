@@ -35,9 +35,13 @@ pub fn map_job_info(run: db::models::CiRun) -> JobInfo {
         status: run.status,
         mode: run.mode,
         pipeline: run.pipeline,
+        // Pull request bases are literal branch names, not full refs.
+        branch: if run.event == "pull_request" {
+            run.branch
+        } else {
+            crate::backend::ci::branch_name(&run.branch).to_owned()
+        },
         event: run.event,
-        // Runs stored before short branch names were used still have the full ref.
-        branch: crate::backend::ci::branch_name(&run.branch).to_owned(),
         head_sha: run.head_sha,
         workflow_path: run.workflow_path,
         environment: run.environment,

@@ -1,6 +1,10 @@
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+#[derive(Debug, thiserror::Error)]
+#[error("An unrestricted account is required")]
+pub struct FollowRestricted;
+
 native_operation!(crate::backend::db::postgres::following::follow_user,
     crate::backend::db::sqlite::following::follow_user,
     fn follow_user(pool: &DbPool, follower_id: i64, following_id: i64) -> Result<bool>);

@@ -169,9 +169,24 @@ native_operation!(crate::backend::db::postgres::repositories::records::update_re
     actor_id: i64,
     repo_id: i64,
     description: Option<&str>,
-    is_private: bool,
+    is_private: impl Into<VisibilityUpdate>,
     merge_methods: MergeMethodUpdate,
 ) -> Result<()>);
+
+/// Unconfirmed native saves may keep visibility, but must not change it concurrently.
+pub struct VisibilityUpdate {
+    pub is_private: bool,
+    pub expected: Option<bool>,
+}
+
+impl From<bool> for VisibilityUpdate {
+    fn from(is_private: bool) -> Self {
+        Self {
+            is_private,
+            expected: None,
+        }
+    }
+}
 
 /// A change to the merge methods that pull requests may use. A method left as `None` keeps
 /// its stored value.
@@ -202,6 +217,14 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_repos
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_archived,
     crate::backend::db::sqlite::repositories::records::set_repository_archived,
     fn set_repository_archived(pool: &DbPool, actor_id: i64, repo_id: i64, archived: bool) -> Result<bool>);
+
+native_operation!(crate::backend::db::postgres::repositories::records::update_repo_default_branch,
+    crate::backend::db::sqlite::repositories::records::update_repo_default_branch,
+    fn update_repo_default_branch(pool: &DbPool, repo_id: i64, branch: &str) -> Result<()>);
+
+native_operation!(crate::backend::db::postgres::repositories::records::update_repo_size,
+    crate::backend::db::sqlite::repositories::records::update_repo_size,
+    fn update_repo_size(pool: &DbPool, repo_id: i64, size: i64) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_default_branch_and_size,
     crate::backend::db::sqlite::repositories::records::update_repo_default_branch_and_size,

@@ -26,7 +26,8 @@ impl NodeContext {
         body: &[u8],
         response_body_limit: usize,
     ) -> Result<(Reply, Vec<u8>), RepoError> {
-        tokio::time::timeout(TIMEOUT, async {
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        tokio::time::timeout_at(deadline, async {
             if body.len() > operation_body_limit(&request.operation) {
                 return Err(invalid("RPC frame exceeds its limit"));
             }
@@ -36,14 +37,30 @@ impl NodeContext {
                 return Err(invalid("RPC frame exceeds its limit"));
             }
             let first = self
-                .exchange(node_id, &header, body, response_body_limit)
+                .exchange(
+                    node_id,
+                    &header,
+                    body,
+                    response_body_limit,
+                    if request.operation.is_read_only() {
+                        attempt_deadline(deadline)
+                    } else {
+                        deadline
+                    },
+                )
                 .await;
             if first.is_ok() || !request.operation.is_read_only() {
                 return first;
             }
             for (copy, moved) in self.read_copies(request.repository, node_id).await {
                 let answer = self
-                    .exchange(copy, &header, body, response_body_limit)
+                    .exchange(
+                        copy,
+                        &header,
+                        body,
+                        response_body_limit,
+                        attempt_deadline(deadline),
+                    )
                     .await;
                 if !cannot_serve(answer.as_ref().ok().map(|(reply, _)| reply), moved) {
                     log_failover(request.repository, node_id, copy);
@@ -56,20 +73,28 @@ impl NodeContext {
         .map_err(|_| unavailable())?
     }
 
-    /// One request and its reply from `node_id`. An `Err` means the node gave no reply.
+    /// One attempt leaves half the remaining request budget for failover.
     async fn exchange(
         &self,
         node_id: i64,
         header: &[u8],
         body: &[u8],
         response_body_limit: usize,
+        deadline: tokio::time::Instant,
     ) -> Result<(Reply, Vec<u8>), RepoError> {
         if node_id == self.node_id {
             // Boxed: the handler's store operations lead back to `exchange`.
-            return Box::pin(self.exchange_here(header, body, response_body_limit)).await;
+            return tokio::time::timeout_at(
+                deadline,
+                Box::pin(self.exchange_here(header, body, response_body_limit)),
+            )
+            .await
+            .map_err(|_| unavailable())?;
         }
-        let mut link = self.dial(node_id, transport::ALPN_RPC).await?;
-        let result = tokio::time::timeout(TIMEOUT, async {
+        let mut link = tokio::time::timeout_at(deadline, self.dial(node_id, transport::ALPN_RPC))
+            .await
+            .map_err(|_| unavailable())??;
+        let result = tokio::time::timeout_at(deadline, async {
             write_frame(&mut link.writer, header, MAX_JSON).await?;
             write_frame(&mut link.writer, body, MAX_BYTES).await?;
             link.finish().await?;
@@ -153,9 +178,19 @@ impl NodeContext {
     /// other than `primary` whose copy has been brought up to date at least once, the most
     /// recently updated first. Only looked up after such a failure. Each node is paired with
     /// whether it is the primary that moved.
-    pub(super) async fn read_copies(&self, repository: Uuid, primary: i64) -> Vec<(i64, bool)> {
+    pub(crate) async fn read_copies(&self, repository: Uuid, primary: i64) -> Vec<(i64, bool)> {
         let Ok(pool) = self.database() else {
-            return Vec::new();
+            return self
+                .ci_replicas
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&repository)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|id| *id != primary)
+                .map(|id| (id, false))
+                .collect();
         };
         let Ok(Some(row)) =
             db::cluster::get_repository_by_uuid(pool, &repository.to_string()).await
@@ -188,6 +223,12 @@ impl NodeContext {
             .chain(copies.into_iter().map(|(node, _)| (node, false)))
             .collect()
     }
+}
+
+/// Reserves time for another candidate even when a connected peer never responds.
+pub(super) fn attempt_deadline(deadline: tokio::time::Instant) -> tokio::time::Instant {
+    let now = tokio::time::Instant::now();
+    now + deadline.saturating_duration_since(now) / 2
 }
 
 /// Whether a candidate's reply means it cannot serve the read: no reply at all, or a reply

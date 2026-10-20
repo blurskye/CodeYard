@@ -36,9 +36,16 @@ pub async fn upsert_node_configuration(
 }
 
 /// Returns false when the node is not set up yet, so there is no row to change.
-pub async fn set_ai_crawlers(pool: &SqlitePool, actor: i64, value: &str) -> Result<bool> {
+pub async fn set_ai_crawlers(
+    pool: &SqlitePool,
+    actor: i64,
+    session: &str,
+    value: &str,
+) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !super::users::transitions::active_admin(&mut tx, actor).await? {
+    if !super::users::transitions::active_admin(&mut tx, actor).await?
+        || !super::users::transitions::live_session(&mut tx, actor, session).await?
+    {
         return Ok(false);
     }
     let result = sqlx::query(
@@ -47,6 +54,10 @@ pub async fn set_ai_crawlers(pool: &SqlitePool, actor: i64, value: &str) -> Resu
     .bind(value)
     .execute(&mut *tx)
     .await?;
+    if result.rows_affected() == 1 {
+        sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'node.ai_crawlers','node_configuration',1,?2)")
+            .bind(actor).bind(serde_json::json!({"ai_crawlers":value}).to_string()).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }

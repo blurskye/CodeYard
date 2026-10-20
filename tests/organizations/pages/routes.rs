@@ -169,6 +169,27 @@ pub async fn section_tabs(f: &Fixture) {
             .await;
         assert_eq!(reply.status, StatusCode::OK);
         let open = query.strip_prefix("?tab=").unwrap_or("overview");
+        let page = f
+            .get(&f.owner, &format!("{}{query}", f.path()))
+            .await
+            .organization();
+        if open != "members" {
+            assert!(page.members.is_empty());
+            assert!(page.pending_invitations.is_empty());
+        }
+        if open != "teams" {
+            assert!(page.teams.is_empty());
+            assert!(page.selected_team.is_none());
+            assert!(page.repositories.is_empty());
+        }
+        for (tab, id) in [
+            ("overview", "organization-overview"),
+            ("members", "organization-members"),
+            ("teams", "organization-teams"),
+            ("webhooks", "organization-webhooks"),
+        ] {
+            assert_eq!(reply.body.contains(&format!("id=\"{id}\"")), tab == open);
+        }
         let tabs = tab_links(&reply.body);
         // Owners also see the webhooks tab.
         assert_eq!(tabs.len(), 4, "{query}");
@@ -222,7 +243,7 @@ pub async fn teams(f: &Fixture) {
         .await
         .redirect(&f.path());
         let team = f
-            .get(&f.owner, &f.path())
+            .get(&f.owner, &format!("{}?tab=teams", f.path()))
             .await
             .organization()
             .teams
@@ -253,7 +274,7 @@ pub async fn teams(f: &Fixture) {
     .await
     .redirect(&f.path());
     let visible = f
-        .get(&f.owner, &f.path())
+        .get(&f.owner, &format!("{}?tab=teams", f.path()))
         .await
         .organization()
         .teams
@@ -274,7 +295,7 @@ pub async fn teams(f: &Fixture) {
     .await
     .redirect(&f.path());
     let blank = f
-        .get(&f.owner, &f.path())
+        .get(&f.owner, &format!("{}?tab=teams", f.path()))
         .await
         .organization()
         .teams
@@ -525,7 +546,7 @@ pub async fn teams(f: &Fixture) {
         .await;
     assert_eq!(bad.status, StatusCode::BAD_REQUEST);
     assert_eq!(bad.organization().draft["name"], "Bounded name");
-    assert!(!bad.organization().draft.contains_key("description"));
+    assert_eq!(bad.organization().draft["description"], huge);
     assert!(!bad.body.contains("never-echo"));
     let invalid = f
         .form(
@@ -730,7 +751,7 @@ pub async fn teams(f: &Fixture) {
     // A full page of grantable repositories keeps the select. One more switches the grant
     // form to a typed ID, the only way to name repositories past the page.
     let listed = f
-        .get(&f.owner, &f.path())
+        .get(&f.owner, &format!("{}?tab=teams", f.path()))
         .await
         .organization()
         .repositories
@@ -740,13 +761,19 @@ pub async fn teams(f: &Fixture) {
             .organization_repository(f.org, &format!("bulk_{index:03}"), false)
             .await;
     }
-    let full = f.get(&f.owner, &f.path()).await.organization();
+    let full = f
+        .get(&f.owner, &format!("{}?tab=teams", f.path()))
+        .await
+        .organization();
     assert_eq!(full.repositories.len(), 100);
     assert!(!full.more_repositories);
     f.database
         .organization_repository(f.org, "bulk_over_limit", false)
         .await;
-    let over = f.get(&f.owner, &f.path()).await.organization();
+    let over = f
+        .get(&f.owner, &format!("{}?tab=teams", f.path()))
+        .await
+        .organization();
     assert_eq!(over.repositories.len(), 100);
     assert!(over.more_repositories);
 }

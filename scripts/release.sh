@@ -18,7 +18,7 @@ fi
 
 if git rev-parse --git-dir >/dev/null 2>&1; then
     revision=$(git rev-parse --verify HEAD) || exit 1
-    source_status=$(git status --porcelain) || exit 1
+    source_status=$(git status --porcelain --untracked-files=all) || exit 1
     dirty=0
     [[ -z $source_status ]] || dirty=1
 else
@@ -38,8 +38,17 @@ echo "== Build dist/release"
 rm -rf dist/release
 mkdir -p dist/release
 WEBUI_DIST="$PWD/dist/release/webui" bash scripts/build-webui.sh release
-cargo build --release --locked --bin codeyard
-install -m 0755 "${CARGO_TARGET_DIR:-target}/release/codeyard" dist/release/codeyard
+cargo build --release --locked --bin codeyard --message-format=json >dist/release/cargo-artifacts.json
+executable=$(python3 -I -c '
+import json, sys
+paths = [m["executable"] for line in sys.stdin if (m := json.loads(line)).get("reason") == "compiler-artifact"
+         and m["target"]["name"] == "codeyard" and "bin" in m["target"]["kind"] and m.get("executable")]
+if len(paths) != 1:
+    sys.exit("Expected one codeyard executable from Cargo")
+print(paths[0])
+' <dist/release/cargo-artifacts.json)
+rm dist/release/cargo-artifacts.json
+install -m 0755 "$executable" dist/release/codeyard
 # A binary built in a Nix shell loads its interpreter and libraries from /nix/store, and the
 # image has none of those paths. Ship their closure in the archive the image unpacks. A binary
 # that names no store path gets an empty archive.

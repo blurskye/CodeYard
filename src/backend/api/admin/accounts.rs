@@ -16,7 +16,7 @@ use crate::webui::pages::{
     admin::{normalize_days, Account, Activity, Admin},
     fields::preserved_values,
 };
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
@@ -46,12 +46,22 @@ pub struct SetUserBanRequest {
 
 pub async fn admin_list_accounts(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<AdminAccountResponse>>, (StatusCode, Json<ApiError>)> {
     let _admin = require_admin_user(&state, &headers).await?;
-    let accounts = crate::backend::db::users::accounts::list_admin_account_summaries(&state.pool)
-        .await
-        .map_err(|_| database_failure())?;
+    let page = query
+        .get("page")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(1)
+        .clamp(1, 10_000);
+    let accounts = crate::backend::db::users::accounts::list_admin_account_summaries(
+        &state.pool,
+        100,
+        i64::from(page - 1) * 100,
+    )
+    .await
+    .map_err(|_| database_failure())?;
     Ok(Json(
         accounts
             .into_iter()
@@ -111,23 +121,6 @@ pub(crate) async fn require_admin_user(
     Ok(user)
 }
 
-fn overview_accounts(
-    mut accounts: Vec<db::models::AdminAccountSummary>,
-) -> (Vec<Account>, (usize, usize, i64)) {
-    let totals = (
-        accounts.len(),
-        accounts.iter().filter(|account| account.is_banned).count(),
-        accounts.iter().map(|account| account.total_bytes).sum(),
-    );
-    accounts.sort_by(|a, b| {
-        b.created_at
-            .cmp(&a.created_at)
-            .then_with(|| b.id.cmp(&a.id))
-    });
-    accounts.truncate(5);
-    (accounts.into_iter().map(account_row).collect(), totals)
-}
-
 /// The account as the admin pages show it.
 pub(crate) fn account_row(account: db::models::AdminAccountSummary) -> Account {
     Account {
@@ -155,16 +148,26 @@ pub(crate) async fn load_admin(
     let admin = require_account(ctx, true)?;
     let manage_access = private_access(ctx).await?;
     // Reads persisted facts only: repository sizes are recorded after pushes, never by a GET.
-    let (accounts, totals) = overview_accounts(
-        db::users::accounts::list_admin_account_summaries(&ctx.state.pool)
-            .await
-            .map_err(|_| {
-                ctx.error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Unable to load account statistics.",
-                )
-            })?,
-    );
+    let accounts = db::users::accounts::recent_admin_accounts(&ctx.state.pool)
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load account statistics.",
+            )
+        })?
+        .into_iter()
+        .map(account_row)
+        .collect();
+    let (users, banned, bytes) = db::users::accounts::admin_totals(&ctx.state.pool)
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load account statistics.",
+            )
+        })?;
+    let totals = (users as usize, banned as usize, bytes);
     let activity = db::users::accounts::list_admin_activity_points(&ctx.state.pool, days)
         .await
         .map_err(|_| {
@@ -182,11 +185,12 @@ pub(crate) async fn load_admin(
             cumulative_bytes: point.cumulative_storage_bytes,
         })
         .collect();
-    let requests = if manage_access {
-        load_requests(ctx).await?
+    let (requests, requests_count, requests_page) = if manage_access {
+        load_requests(ctx, 5).await?
     } else {
-        Vec::new()
+        (Vec::new(), 0, 1)
     };
+    let pending_requests = requests_count as i64;
     let mut values = submitted.map(preserved_values).unwrap_or_default();
     values.days = days.to_string();
     let ai_crawlers = db::node_config::get_node_configuration(&ctx.state.pool)
@@ -209,6 +213,9 @@ pub(crate) async fn load_admin(
         days,
         manage_access,
         requests,
+        pending_requests,
+        requests_count,
+        requests_page,
         values,
         ai_crawlers,
     })
@@ -285,8 +292,8 @@ pub(crate) async fn access_result<T>(
 mod tests {
     use super::*;
     #[test]
-    fn overview_transfers_only_five_recent_accounts_with_full_totals() {
-        let rows = (0..1000)
+    fn account_projection_keeps_recorded_statistics() {
+        let rows: Vec<_> = (0..5)
             .map(|id| db::models::AdminAccountSummary {
                 id,
                 username: format!("user-{id}"),
@@ -303,10 +310,9 @@ mod tests {
                 contributions_total: 0,
             })
             .collect();
-        let (recent, totals) = overview_accounts(rows);
-        assert_eq!(totals, (1000, 500, 10_000));
-        assert_eq!(recent.len(), 5);
-        assert_eq!(recent[0].id, 999);
-        assert_eq!(recent[4].id, 995);
+        let projected: Vec<_> = rows.into_iter().map(account_row).collect();
+        assert_eq!(projected.len(), 5);
+        assert_eq!(projected[0].bytes, 10);
+        assert!(projected[0].banned);
     }
 }

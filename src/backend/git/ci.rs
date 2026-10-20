@@ -235,10 +235,6 @@ pub(crate) fn load_push_workflows(
 ) -> Result<(String, Vec<(String, String)>)> {
     let git = Repository::open_bare(path)?;
     let commit = peel_to_commit_checked(&git, sha)?;
-    ensure!(
-        commit.message_bytes().len() <= 65536,
-        "commit message too large for push admission"
-    );
     let commit_sha = commit.id().to_string();
     let files = match workflow_files_in_commit(&git, &commit) {
         Ok(files) => files,
@@ -253,4 +249,31 @@ pub(crate) fn load_push_workflows(
             .map(|file| (file.path, file.content))
             .collect(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepted_commits_with_large_messages_can_load_push_workflows() {
+        let root = tempfile::tempdir().unwrap();
+        let git = Repository::init_bare(root.path()).unwrap();
+        let tree_id = git.treebuilder(None).unwrap().write().unwrap();
+        let tree = git.find_tree(tree_id).unwrap();
+        let author = git2::Signature::now("Writer", "writer@example.test").unwrap();
+        let sha = git
+            .commit(
+                Some("refs/heads/main"),
+                &author,
+                &author,
+                &"m".repeat(70 * 1024),
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let (loaded, workflows) = load_push_workflows(root.path(), &sha.to_string()).unwrap();
+        assert_eq!(loaded, sha.to_string());
+        assert!(workflows.is_empty());
+    }
 }

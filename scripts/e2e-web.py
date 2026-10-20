@@ -93,6 +93,17 @@ class FormParser(HTMLParser):
         self._select = None
         self._option = None
         self._textarea = None
+        self._controls = []
+
+    def close(self):
+        super().close()
+        by_id = {form.attrs["id"]: form for form in reversed(self.forms) if form.attrs.get("id")}
+        for owner, control in self._controls:
+            form = by_id.get(owner) if isinstance(owner, str) else owner
+            if form is not None:
+                form.fields.extend(control.fields)
+                form.files.extend(control.files)
+                form.buttons.extend(control.buttons)
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -100,9 +111,12 @@ class FormParser(HTMLParser):
             self._form = Form(a)
             self.forms.append(self._form)
             return
-        form = self._form
-        if form is None:
-            return
+        form = None
+        if tag in ("input", "button", "textarea", "select"):
+            # Explicit owners can appear later in the document or outside the enclosing form.
+            owner = a.get("form") if "form" in a else self._form
+            form = Form({})
+            self._controls.append((owner, form))
         if tag == "input":
             name = a.get("name")
             kind = (a.get("type") or "text").lower()
@@ -124,9 +138,9 @@ class FormParser(HTMLParser):
             if a.get("formaction") and not truthy(a, "disabled"):
                 form.buttons.append((a.get("name"), a.get("value") or "", a["formaction"]))
         elif tag == "textarea":
-            self._textarea = [a.get("name"), [], truthy(a, "disabled")]
+            self._textarea = [a.get("name"), [], truthy(a, "disabled"), form]
         elif tag == "select":
-            self._select = {"name": a.get("name"), "options": [], "disabled": truthy(a, "disabled")}
+            self._select = {"name": a.get("name"), "options": [], "disabled": truthy(a, "disabled"), "form": form}
         elif tag == "option" and self._select is not None:
             self._option = {"value": a.get("value"), "selected": truthy(a, "selected"), "text": []}
             self._select["options"].append(self._option)
@@ -135,7 +149,7 @@ class FormParser(HTMLParser):
         if tag == "form":
             self._form = None
         elif tag == "textarea" and self._textarea is not None:
-            name, chunks, disabled = self._textarea
+            name, chunks, disabled, form = self._textarea
             self._textarea = None
             text = "".join(chunks)
             # A browser drops one newline right after <textarea>.
@@ -143,17 +157,17 @@ class FormParser(HTMLParser):
                 text = text[2:]
             elif text.startswith("\n"):
                 text = text[1:]
-            if name and not disabled and self._form is not None:
-                self._form.fields.append((name, text))
+            if name and not disabled:
+                form.fields.append((name, text))
         elif tag == "option":
             self._option = None
         elif tag == "select" and self._select is not None:
             select, self._select = self._select, None
-            if select["name"] and not select["disabled"] and select["options"] and self._form is not None:
+            if select["name"] and not select["disabled"] and select["options"]:
                 chosen = [o for o in select["options"] if o["selected"]] or select["options"][:1]
                 option = chosen[0]
                 value = option["value"] if option["value"] is not None else "".join(option["text"]).strip()
-                self._form.fields.append((select["name"], value))
+                select["form"].fields.append((select["name"], value))
 
     def handle_data(self, data):
         if self._textarea is not None:
@@ -318,8 +332,11 @@ class Client:
         if not base:
             raise SystemExit("e2e-web: --base (or E2E_BASE) is required")
         parts = urllib.parse.urlsplit(base)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise SystemExit("e2e-web: --base must be an HTTP or HTTPS URL")
         self.host = parts.hostname
-        self.port = parts.port or 80
+        self.port = parts.port or (443 if parts.scheme == "https" else 80)
+        self.connection = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
         self.jar_path = jar
         self.who = who or "anon"
         self.cookies = {}
@@ -355,7 +372,7 @@ class Client:
         if cookie:
             send["Cookie"] = cookie
         started = time.time()
-        connection = http.client.HTTPConnection(self.host, self.port, timeout=timeout)
+        connection = self.connection(self.host, self.port, timeout=timeout)
         try:
             connection.request(method, path, body=body, headers=send)
             raw = connection.getresponse()

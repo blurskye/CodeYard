@@ -180,6 +180,12 @@ pub async fn check_write(
         .await
         .map_err(|_| AccessError::Unavailable)?
         .ok_or(AccessError::NotFound)?;
+    if !can_read(pool, Some(&user), &repository)
+        .await
+        .map_err(|_| AccessError::Unavailable)?
+    {
+        return Err(AccessError::NotFound);
+    }
     if can_write(pool, &user, &repository)
         .await
         .map_err(|_| AccessError::Unavailable)?

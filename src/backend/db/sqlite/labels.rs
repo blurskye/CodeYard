@@ -66,7 +66,8 @@ pub async fn create_label(
     .bind(color)
     .bind(description)
     .fetch_one(&mut *tx)
-    .await?;
+    .await
+    .map_err(crate::backend::db::labels::label_database_error)?;
     tx.commit().await?;
 
     Ok(label)
@@ -156,7 +157,8 @@ pub async fn update_label(
     .bind(color)
     .bind(description)
     .fetch_optional(&mut *tx)
-    .await?
+    .await
+    .map_err(crate::backend::db::labels::label_database_error)?
     .ok_or(LabelWriteRefusal::InvalidLabels)?;
     tx.commit().await?;
     Ok(label)

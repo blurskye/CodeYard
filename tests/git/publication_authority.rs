@@ -388,7 +388,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .is_empty());
     assert!(
-        db::ci::latest_ci_runs_for_commit(fixture.pool(), repository.id, &initial, 0)
+        db::ci::latest_ci_runs_for_commit(fixture.pool(), repository.id, &initial, 0, "main")
             .await
             .unwrap()
             .is_empty()

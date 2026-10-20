@@ -2,8 +2,8 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::api::repos::chrome::{
-    commit, default_ref, load_refs_from_repo, ref_names_under, resolve, root_if_missing,
-    store_error, Loaded,
+    branch_name, commit, default_ref, load_refs_from_repo, ref_names_under, resolve,
+    root_if_missing, store_error, Loaded,
 };
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::api::repos::responses::CommitResponse;
@@ -202,6 +202,9 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         let reference = resolved.reference.clone();
         let fail = |error| store_error(ctx, Some(&loaded.chrome), error);
         let last = store.commit(&reference).await.map_err(fail)?;
+        if !super::super::chrome::is_branch(loaded, &reference) && !reference.starts_with("refs/") {
+            page.reference = last.sha.clone();
+        }
         // The size check and blob read must refer to the same commit, even during a push.
         let entries = match store.tree(&last.sha, &resolved.path).await {
             Ok(entries) => entries,
@@ -263,8 +266,13 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         );
         page.latest_commit = folder_commit.map(commit);
         if resolved.path.is_empty() {
-            page.languages =
-                about_languages(&ctx.state, loaded, &store, &default_ref(loaded)).await;
+            page.languages = about_languages(
+                &ctx.state,
+                loaded,
+                &store,
+                branch_name(&default_ref(loaded)),
+            )
+            .await;
             let viewer = ctx.user.as_ref().map(|user| user.id);
             page.releases = releases::summary(&ctx.state.pool, viewer, &loaded.repository)
                 .await

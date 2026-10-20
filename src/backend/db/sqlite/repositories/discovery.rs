@@ -124,6 +124,45 @@ pub async fn count_repositories(
     Ok(statement.bind(cap).fetch_one(pool).await?)
 }
 
+struct SearchConnection(Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>);
+
+impl std::ops::Deref for SearchConnection {
+    type Target = sqlx::SqliteConnection;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("search connection")
+    }
+}
+impl std::ops::DerefMut for SearchConnection {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().expect("search connection")
+    }
+}
+impl SearchConnection {
+    async fn finish(mut self) -> Result<()> {
+        self.lock_handle().await?.remove_progress_handler();
+        self.0.take();
+        Ok(())
+    }
+}
+impl Drop for SearchConnection {
+    fn drop(&mut self) {
+        // Cancellation must not leave an expired callback on a pooled connection.
+        if let Some(connection) = self.0.as_mut() {
+            connection.close_on_drop();
+        }
+    }
+}
+
+async fn search_connection(pool: &SqlitePool) -> Result<SearchConnection> {
+    let mut connection = SearchConnection(Some(pool.acquire().await?));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    connection
+        .lock_handle()
+        .await?
+        .set_progress_handler(1000, move || std::time::Instant::now() < deadline);
+    Ok(connection)
+}
+
 pub async fn search_issues(
     pool: &SqlitePool,
     viewer: Option<i64>,
@@ -132,6 +171,8 @@ pub async fn search_issues(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Issue>> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let sql = format!(
@@ -141,13 +182,15 @@ pub async fn search_issues(
         readable_condition(),
         sort.order_by("i")
     );
-    Ok(sqlx::query_as::<_, Issue>(&sql)
+    let result = sqlx::query_as::<_, Issue>(&sql)
         .bind(viewer)
         .bind(contains(query))
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
-        .await?)
+        .await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 pub async fn count_issues(
@@ -156,18 +199,22 @@ pub async fn count_issues(
     query: &str,
     cap: i64,
 ) -> Result<i64> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let sql = format!(
         "SELECT COUNT(*) FROM (SELECT 1 FROM issues i CROSS JOIN repositories r ON r.id=i.repo_id \
          LEFT JOIN users u ON u.id = ?1 \
          WHERE {} AND (i.title REGEXP ?2 OR i.body REGEXP ?2) LIMIT ?3) AS matches",
         readable_condition()
     );
-    Ok(sqlx::query_scalar::<_, i64>(&sql)
+    let result = sqlx::query_scalar::<_, i64>(&sql)
         .bind(viewer)
         .bind(contains(query))
         .bind(cap)
         .fetch_one(pool)
-        .await?)
+        .await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 pub async fn search_pull_requests(
@@ -178,6 +225,8 @@ pub async fn search_pull_requests(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<PullRequest>> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let sql = format!(
@@ -187,13 +236,15 @@ pub async fn search_pull_requests(
         readable_condition(),
         sort.order_by("p")
     );
-    Ok(sqlx::query_as::<_, PullRequest>(&sql)
+    let result = sqlx::query_as::<_, PullRequest>(&sql)
         .bind(viewer)
         .bind(contains(query))
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)
-        .await?)
+        .await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 pub async fn count_pull_requests(
@@ -202,18 +253,22 @@ pub async fn count_pull_requests(
     query: &str,
     cap: i64,
 ) -> Result<i64> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let sql = format!(
         "SELECT COUNT(*) FROM (SELECT 1 FROM pull_requests p CROSS JOIN repositories r ON r.id=p.repo_id \
          LEFT JOIN users u ON u.id = ?1 \
          WHERE {} AND (p.title REGEXP ?2 OR p.body REGEXP ?2) LIMIT ?3) AS matches",
         readable_condition()
     );
-    Ok(sqlx::query_scalar::<_, i64>(&sql)
+    let result = sqlx::query_scalar::<_, i64>(&sql)
         .bind(viewer)
         .bind(contains(query))
         .bind(cap)
         .fetch_one(pool)
-        .await?)
+        .await;
+    connection.finish().await?;
+    Ok(result?)
 }
 
 pub async fn search_users(
@@ -243,4 +298,34 @@ pub async fn count_users(pool: &SqlitePool, query: &str, cap: i64) -> Result<i64
     .bind(cap)
     .fetch_one(pool)
     .await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn native_search_deadline_stops_work_and_clears_the_callback() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        let mut connection = search_connection(&pool).await.unwrap();
+        let error = sqlx::query_scalar::<_,i64>("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n")
+            .fetch_one(&mut *connection).await.unwrap_err();
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("9")
+        );
+        connection.finish().await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT 1")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+        pool.close().await;
+    }
 }

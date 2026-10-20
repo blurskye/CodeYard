@@ -202,8 +202,23 @@ pub struct RepositoryChoice {
     pub name: String,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct RepositoryChoices {
+    pub repositories: Vec<RepositoryChoice>,
+    pub page: u32,
+    pub query: String,
+    pub has_older: bool,
+}
+
 /// `/issues/new`: the repositories to open an issue in. Each one links to its new issue form.
-pub fn choose_repository(choices: &[RepositoryChoice]) -> Element {
+pub fn choose_repository(model: &RepositoryChoices) -> Element {
+    let choices = &model.repositories;
+    let href = |page| {
+        format!(
+            "/issues/new?page={page}&q={}",
+            encode_component(&model.query)
+        )
+    };
     rsx! {
         style { dangerous_inner_html: include_str!("../repos/style.css") }
         div { class: "repo-content",
@@ -212,6 +227,10 @@ pub fn choose_repository(choices: &[RepositoryChoice]) -> Element {
                     div { class: "collaboration-title-block",
                         h2 { "New issue" }
                         p { "Choose the repository for the issue." }
+                    }
+                    form { method: "get", action: "/issues/new",
+                        input { name: "q", value: model.query.clone(), maxlength: 256, aria_label: "Find a repository" }
+                        button { r#type: "submit", class: "btn", "Search" }
                     }
                 }
                 div { class: "collaboration-panel collaboration-list-panel",
@@ -231,6 +250,10 @@ pub fn choose_repository(choices: &[RepositoryChoice]) -> Element {
                             }
                         }
                     }
+                }
+                nav { aria_label: "Repository pages",
+                    if model.page > 1 { NavLink { href: href(model.page-1), class: "btn", "Previous page" } }
+                    if model.has_older { NavLink { href: href(model.page+1), class: "btn", "Next page" } }
                 }
             }
         }
@@ -332,13 +355,17 @@ mod tests {
             owner: "alice".into(),
             name: "project".into(),
         }];
-        let html = dioxus_ssr::render_element(choose_repository(&choices));
+        let html = dioxus_ssr::render_element(choose_repository(&RepositoryChoices {
+            repositories: choices,
+            page: 1,
+            ..Default::default()
+        }));
         assert!(
             html.contains("href=\"/alice/project/issues/new\""),
             "{html}"
         );
         assert!(!html.contains("No repositories yet"), "{html}");
-        let empty = dioxus_ssr::render_element(choose_repository(&[]));
+        let empty = dioxus_ssr::render_element(choose_repository(&RepositoryChoices::default()));
         assert!(empty.contains("No repositories yet"), "{empty}");
         assert!(empty.contains("href=\"/new\""), "{empty}");
     }

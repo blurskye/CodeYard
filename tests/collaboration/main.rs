@@ -3,10 +3,12 @@ mod comment_changes;
 mod inputs;
 mod list_views;
 mod mention_notifications;
+mod milestone_pagination;
 mod milestones_and_assignees;
 mod notification_badge;
 mod notification_privacy;
 mod notification_views;
+mod page_regressions;
 mod reactions;
 mod references;
 mod sidebar;
@@ -14,3 +16,4 @@ mod submission_regressions;
 #[path = "../support/mod.rs"]
 mod support;
 mod templates;
+mod webui_regressions;

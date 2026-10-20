@@ -825,13 +825,13 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
         assert_eq!(permissions["can_write"], effective.can_write());
         assert_eq!(permissions["can_admin"], effective.can_admin());
     }
-    // Supported inputs keep their meaning; an omitted or unknown level falls back to read.
-    for (input, expected) in [
-        (Some("read"), "read"),
-        (Some("write"), "write"),
-        (Some("admin"), "admin"),
-        (None, "read"),
-        (Some("unknown"), "read"),
+    // Only omission defaults to read; an unknown supplied value preserves the existing grant.
+    for (input, expected, expected_status) in [
+        (Some("read"), "read", StatusCode::OK),
+        (Some("write"), "write", StatusCode::OK),
+        (Some("unknown"), "write", StatusCode::BAD_REQUEST),
+        (Some("admin"), "admin", StatusCode::OK),
+        (None, "read", StatusCode::OK),
     ] {
         let (status, response) = fixture
             .api(
@@ -841,8 +841,12 @@ async fn collaborator_api_projects_canonical_levels_without_changing_privileges_
                 json!({"username":"member", "access_level":input}),
             )
             .await;
-        assert_eq!(status, StatusCode::OK);
-        assert_eq!(response["access_level"], expected);
+        assert_eq!(status, expected_status);
+        if status == StatusCode::OK {
+            assert_eq!(response["access_level"], expected);
+        } else {
+            assert_eq!(response["error"], "validation_error");
+        }
         let (_, list) = fixture
             .api(
                 &fixture.owner,

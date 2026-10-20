@@ -78,6 +78,7 @@ pub(super) fn refused(error: &ReleaseError) -> (StatusCode, String) {
             "Release storage is unavailable. Try again.",
         ),
         ReleaseError::Invalid(message) => (StatusCode::UNPROCESSABLE_ENTITY, *message),
+        ReleaseError::Conflict => (StatusCode::CONFLICT, "The release changed. Your draft is preserved; review the latest release before retrying."),
         ReleaseError::TagTaken => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "A release already uses this tag.",
@@ -153,6 +154,7 @@ fn field(form: &HashMap<String, String>, name: &str) -> String {
 /// The release form as submitted. A checkbox is in the form only when it is ticked.
 fn submitted_draft(form: &HashMap<String, String>) -> ReleaseDraft {
     ReleaseDraft {
+        revision: field(form, "revision"),
         tag: field(form, "tag"),
         target: field(form, "target"),
         title: field(form, "title"),
@@ -237,7 +239,8 @@ async fn edit_form(
     };
     let base = repo.base();
     let tag = found.release.release.tag_name.clone();
-    let draft = draft.unwrap_or_else(|| ReleaseDraft {
+    let mut draft = draft.unwrap_or_else(|| ReleaseDraft {
+        revision: crate::backend::db::releases::release_revision(&found.release.release),
         tag: tag.clone(),
         target: found.release.release.target_commitish.clone(),
         title: found.release.release.name.clone().unwrap_or_default(),
@@ -247,6 +250,9 @@ async fn edit_form(
         latest: found.release.release.is_latest,
         preview: false,
     });
+    if error.is_some() {
+        draft.revision = crate::backend::db::releases::release_revision(&found.release.release);
+    }
     let assets = found
         .assets
         .iter()
@@ -279,7 +285,10 @@ pub(crate) async fn list(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -329,7 +338,10 @@ pub(crate) async fn detail(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -370,7 +382,10 @@ pub(crate) async fn new_page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -395,7 +410,10 @@ pub(crate) async fn create(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -417,6 +435,7 @@ pub(crate) async fn create(
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to publish a release.");
     };
     let input = ReleaseInput {
+        repository_id: repo.id,
         tag: draft.tag.trim().to_owned(),
         target: draft.target.trim().to_owned(),
         fields: fields_of(&draft),
@@ -455,7 +474,10 @@ pub(crate) async fn edit_page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -476,7 +498,10 @@ pub(crate) async fn update(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -487,6 +512,8 @@ pub(crate) async fn update(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to edit a release.");
     };
+    let mut changes: releases::ReleaseChanges = (&fields_of(&draft)).into();
+    changes.expected_revision = Some(draft.revision.clone());
     match releases::update(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
@@ -494,7 +521,7 @@ pub(crate) async fn update(
         &owner,
         &name,
         id,
-        &(&fields_of(&draft)).into(),
+        &changes,
     )
     .await
     {
@@ -527,7 +554,10 @@ pub(crate) async fn delete(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -618,7 +648,10 @@ pub(crate) async fn upload_asset(
     if let Err(response) = authorize_post(&ctx, &fields) {
         return response;
     }
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -662,7 +695,10 @@ pub(crate) async fn delete_asset(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_chrome(&ctx, &owner, &name).await {
+    let repo = match chrome::load_database(&ctx, &owner, &name)
+        .await
+        .map(|loaded| loaded.chrome)
+    {
         Ok(repo) => repo,
         Err(response) => return response,
     };
@@ -688,6 +724,7 @@ pub(crate) async fn delete_asset(
 /// `/releases/download/{tag}/{asset}`. A tag may contain slashes, so the asset is the last part.
 pub(crate) async fn download(
     State(state): State<Arc<AppState>>,
+    method: axum::http::Method,
     Path((owner, name, rest)): Path<(String, String, String)>,
     headers: HeaderMap,
     uri: Uri,
@@ -711,11 +748,14 @@ pub(crate) async fn download(
     )
     .await
     {
-        Ok(opened) => match asset_response(opened) {
+        Ok(opened) => match asset_response(opened, method) {
             Ok(response) => response,
             Err(failure) => failure.into_response(),
         },
-        Err(error) => match chrome::load_chrome(&ctx, &owner, &name).await {
+        Err(error) => match chrome::load_database(&ctx, &owner, &name)
+            .await
+            .map(|loaded| loaded.chrome)
+        {
             Ok(repo) => refusal(&ctx, &repo, error),
             Err(response) => response,
         },

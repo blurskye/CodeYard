@@ -18,14 +18,14 @@ pub async fn create_notification(
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
-    if input.kind == "user_followed" {
+    if matches!(input.kind, "user_followed" | "repository_starred") {
         let _: Option<i64> =
             sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
                 .bind(input.user_id)
                 .fetch_optional(&mut *tx)
                 .await?;
-        let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND actor_id=$2 AND kind='user_followed' AND created_at>clock_timestamp()-INTERVAL '1 day')")
-            .bind(input.user_id).bind(input.actor_id).fetch_one(&mut *tx).await?;
+        let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND actor_id=$2 AND kind=$3 AND ($3='user_followed' OR repo_id=$4) AND created_at>clock_timestamp()-INTERVAL '1 day')")
+            .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);
     }
     if matches!(input.kind, "issue_comment" | "mention") {
@@ -48,6 +48,27 @@ pub async fn create_notification(
             .await?;
             anyhow::ensure!(comment.is_some(), NotificationSuppressed);
         }
+    }
+    let pull_comment_id = match input.kind {
+        "pull_request_comment" | "pull_request_comment_reply" => input.metadata.get("comment_id"),
+        "mention" => input.metadata.get("pull_request_comment_id"),
+        _ => None,
+    }
+    .and_then(serde_json::Value::as_i64);
+    if let Some(comment_id) = pull_comment_id {
+        sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
+            .bind(input.repo_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let comment: Option<i64> = sqlx::query_scalar(
+            "SELECT c.id FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id
+             WHERE c.id=$1 AND p.repo_id=$2 AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state='pending') FOR SHARE OF c",
+        )
+        .bind(comment_id)
+        .bind(input.repo_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        anyhow::ensure!(comment.is_some(), NotificationSuppressed);
     }
     let notification = sqlx::query_as::<_, Notification>(
         r#"
@@ -202,7 +223,7 @@ pub async fn list_notifications_for_user(
         return Ok(Vec::new());
     };
     let mut scopes = notification_scopes(&mut tx, user_id).await?;
-    let (notifications, _) = notification_list(
+    let (mut notifications, _) = notification_list(
         &mut tx,
         user_id,
         &mut scopes,
@@ -211,6 +232,7 @@ pub async fn list_notifications_for_user(
         None,
     )
     .await?;
+    refresh_links(&mut tx, &mut notifications).await?;
     tx.commit().await?;
     Ok(notifications)
 }
@@ -248,6 +270,13 @@ async fn notification_list(
         if page.is_empty() {
             break;
         }
+        decide_scopes(
+            connection,
+            user_id,
+            scopes,
+            &page.iter().map(|c| c.1).collect::<Vec<_>>(),
+        )
+        .await?;
         let mut authorized = Vec::new();
         let mut more = false;
         for candidate in page {
@@ -305,8 +334,77 @@ async fn unread_groups(
     .await?)
 }
 
-/// Unread inbox rows grouped by repository, ordered by repository ID. The unread badge
-/// authorizes only the repositories that still have one.
+/// Lock organizations before repositories (including fork sources), in batches. Organization
+/// changes lock their parent; direct grant changes lock the repository exclusively. Along
+/// with the shared membership lock, these rows retain every fact used by the projection.
+async fn decide_scopes(
+    connection: &mut sqlx::PgConnection,
+    user_id: i64,
+    scopes: &mut NotificationScopes,
+    ids: &[i64],
+) -> Result<()> {
+    let ids: Vec<i64> = ids
+        .iter()
+        .copied()
+        .filter(|id| *id > 0 && !scopes.readable.contains_key(id))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let before: Vec<(i64, Option<i64>)> = sqlx::query_as(
+        "WITH RECURSIVE family(id) AS (
+            SELECT id FROM repositories WHERE id=ANY($1)
+            UNION SELECT r.forked_from_id FROM repositories r JOIN family f ON f.id=r.id
+                WHERE r.forked_from_id IS NOT NULL
+         ) SELECT id,owner_org_id FROM repositories WHERE id IN (SELECT id FROM family)",
+    )
+    .bind(&ids)
+    .fetch_all(&mut *connection)
+    .await?;
+    let orgs: Vec<i64> = before.iter().filter_map(|r| r.1).collect();
+    let locked_orgs: Vec<i64> =
+        sqlx::query_scalar("SELECT id FROM organizations WHERE id=ANY($1) ORDER BY id FOR SHARE")
+            .bind(&orgs)
+            .fetch_all(&mut *connection)
+            .await?;
+    let family: Vec<i64> = before.iter().map(|r| r.0).collect();
+    let locked: Vec<(i64, Option<i64>)> = sqlx::query_as(
+        "SELECT id,owner_org_id FROM repositories WHERE id=ANY($1) ORDER BY id FOR SHARE",
+    )
+    .bind(&family)
+    .fetch_all(&mut *connection)
+    .await?;
+    // A transfer during the wait may use a parent already locked for another scope,
+    // but must never adopt an unlocked organization.
+    let retained: Vec<i64> = locked
+        .iter()
+        .filter(|r| {
+            ids.binary_search(&r.0).is_ok()
+                && r.1
+                    .is_none_or(|org| locked_orgs.binary_search(&org).is_ok())
+        })
+        .map(|r| r.0)
+        .collect();
+    let _: Vec<i64> = sqlx::query_scalar(
+        "SELECT repo_id FROM repo_access WHERE user_id=$1 AND repo_id=ANY($2) ORDER BY repo_id FOR SHARE",
+    ).bind(user_id).bind(&retained).fetch_all(&mut *connection).await?;
+    let readable = scope_readable_condition();
+    let decisions: Vec<(i64, bool)> = sqlx::query_as(&format!(
+        "SELECT r.id, ({readable}) FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=ANY($2)"
+    ))
+    .bind(user_id)
+    .bind(retained)
+    .fetch_all(connection)
+    .await?;
+    for id in ids {
+        scopes.readable.insert(id, false);
+    }
+    scopes.readable.extend(decisions);
+    Ok(())
+}
+
 async fn unread_inbox_groups(
     connection: &mut sqlx::PgConnection,
     user_id: i64,
@@ -323,19 +421,25 @@ async fn unread_inbox_groups(
     .await?)
 }
 
-/// Unread notifications in the inbox. Done rows are not counted.
+/// Unread notifications in the inbox, authorized together under retained scope locks.
 async fn notification_unread_count(
     connection: &mut sqlx::PgConnection,
     user_id: i64,
     scopes: &mut NotificationScopes,
 ) -> Result<i64> {
-    let mut count = 0;
-    for (scope, unread) in unread_inbox_groups(connection, user_id, scopes.high_water).await? {
-        if scope_readable(connection, user_id, scopes, scope).await? {
-            count += unread;
-        }
-    }
-    Ok(count)
+    let groups = unread_inbox_groups(connection, user_id, scopes.high_water).await?;
+    decide_scopes(
+        connection,
+        user_id,
+        scopes,
+        &groups.iter().map(|g| g.0).collect::<Vec<_>>(),
+    )
+    .await?;
+    Ok(groups
+        .into_iter()
+        .filter(|(id, _)| *id == 0 || scopes.readable.get(id) == Some(&true))
+        .map(|(_, count)| count)
+        .sum())
 }
 
 /// Counts per repository scope, ordered by repository ID: inbox, saved and done rows. The
@@ -367,9 +471,15 @@ async fn notification_counts(
 ) -> Result<NotificationCounts> {
     let mut counts = NotificationCounts::default();
     let mut repositories = Vec::new();
-    for (scope, inbox, saved, done) in
-        notification_scope_counts(connection, user_id, scopes.high_water).await?
-    {
+    let groups = notification_scope_counts(connection, user_id, scopes.high_water).await?;
+    decide_scopes(
+        connection,
+        user_id,
+        scopes,
+        &groups.iter().map(|g| g.0).collect::<Vec<_>>(),
+    )
+    .await?;
+    for (scope, inbox, saved, done) in groups {
         if scope_readable(connection, user_id, scopes, scope).await? {
             counts.views.inbox += inbox;
             counts.views.saved += saved;
@@ -447,6 +557,24 @@ pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
     .await?)
 }
 
+async fn refresh_links(
+    connection: &mut sqlx::PgConnection,
+    notifications: &mut [Notification],
+) -> Result<()> {
+    let ids: Vec<_> = notifications.iter().filter_map(|n| n.repo_id).collect();
+    let names: Vec<(i64,String,String)> = sqlx::query_as("SELECT r.id,COALESCE(u.username,o.name),r.name FROM repositories r LEFT JOIN users u ON r.owner_kind='user' AND u.id=r.owner_user_id LEFT JOIN organizations o ON r.owner_kind='org' AND o.id=r.owner_org_id WHERE r.id=ANY($1)")
+        .bind(&ids).fetch_all(connection).await?;
+    for notification in notifications {
+        if let Some((_, owner, name)) = names
+            .iter()
+            .find(|(id, _, _)| Some(*id) == notification.repo_id)
+        {
+            crate::backend::db::notifications::records::refresh_link(notification, owner, name);
+        }
+    }
+    Ok(())
+}
+
 pub async fn notification_delivery(
     pool: &PgPool,
     session_id: &str,
@@ -481,6 +609,9 @@ pub async fn notification_delivery(
         }
     }
     let unread_count = notification_unread_count(&mut tx, user_id, &mut scopes).await?;
+    if let Some(notification) = notification.as_mut() {
+        refresh_links(&mut tx, std::slice::from_mut(notification)).await?;
+    }
     let alive: bool = sqlx::query_scalar("SELECT $1::timestamptz>clock_timestamp()")
         .bind(expiry)
         .fetch_one(&mut *tx)
@@ -714,7 +845,7 @@ async fn notification_inbox_once(
     let mut scopes = notification_scopes(&mut tx, user_id).await?;
     let mut next_cursor = None;
     let wants_counts = matches!(action, NotificationInboxAction::List { .. });
-    let (notifications, updated) = match action {
+    let (mut notifications, updated) = match action {
         NotificationInboxAction::List {
             filter,
             limit,
@@ -775,6 +906,7 @@ async fn notification_inbox_once(
     } else {
         None
     };
+    refresh_links(&mut tx, &mut notifications).await?;
     let alive: bool = sqlx::query_scalar("SELECT $1::timestamptz>clock_timestamp()")
         .bind(expiry)
         .fetch_one(&mut *tx)

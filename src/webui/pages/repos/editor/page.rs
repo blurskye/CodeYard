@@ -45,7 +45,7 @@ pub const SAVED_FOLLOWUP_FAILED: &str = "File saved; follow-up failed";
 
 /// Unsaved file text, kept in this tab's session storage so that leaving the page and
 /// coming back (Back, a link) does not lose it. The key holds the revision the text was
-/// started from, so a file that changed meanwhile starts a new draft.
+/// started from, which must also be kept when recovering older text.
 mod saved_draft {
     #[cfg(target_arch = "wasm32")]
     fn storage() -> Option<web_sys::Storage> {
@@ -68,6 +68,7 @@ mod saved_draft {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = storage() {
             let _ = storage.set_item(key, text);
+            let _ = storage.set_item(&format!("{key}@modified"), &js_sys::Date::now().to_string());
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = (key, text);
@@ -77,29 +78,47 @@ mod saved_draft {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = storage() {
             let _ = storage.remove_item(key);
+            let _ = storage.remove_item(&format!("{key}@modified"));
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = key;
     }
 
-    /// Prefer this revision, otherwise recover a draft without discarding its original revision.
-    pub fn recover(prefix: &str, current: &str) -> Option<(String, bool)> {
-        if let Some(text) = load(current) {
-            return Some((text, false));
-        }
-        let key = recovery_key(stored_keys(), prefix, current)?;
-        load(&key).map(|text| (text, true))
+    /// Recover the most recently edited text with its original save revision.
+    pub fn recover(prefix: &str, current: &str) -> Option<(String, String)> {
+        let keys = stored_keys()
+            .into_iter()
+            .map(|key| {
+                let modified = load(&format!("{key}@modified"))
+                    .and_then(|time| time.parse::<u64>().ok())
+                    .unwrap_or(0);
+                (key, modified)
+            })
+            .collect();
+        let key = recovery_key(keys, prefix, current)?;
+        let revision = key.strip_prefix(prefix)?.to_owned();
+        load(&key).map(|text| (text, revision))
     }
 
     pub(super) fn recovery_key(
-        mut keys: Vec<String>,
+        mut keys: Vec<(String, u64)>,
         prefix: &str,
         current: &str,
     ) -> Option<String> {
-        keys.sort();
+        keys.sort_by_key(|(_, modified)| *modified);
         keys.into_iter()
             .rev()
-            .find(|key| is_other_revision(key, prefix, current))
+            .map(|(key, _)| key)
+            .find(|key| key == current || is_other_revision(key, prefix, current))
+    }
+
+    pub fn keys_for(prefix: &str, current: &str) -> Vec<String> {
+        let mut keys: Vec<_> = stored_keys()
+            .into_iter()
+            .filter(|key| is_other_revision(key, prefix, current))
+            .collect();
+        keys.push(current.to_owned());
+        keys
     }
 
     fn stored_keys() -> Vec<String> {
@@ -116,7 +135,9 @@ mod saved_draft {
     /// cannot pass for another file's draft.
     pub fn is_other_revision(key: &str, prefix: &str, keep: &str) -> bool {
         match key.strip_prefix(prefix) {
-            Some(revision) => key != keep && !revision.contains(':'),
+            Some(revision) => {
+                key != keep && !revision.contains(':') && !revision.ends_with("@modified")
+            }
             None => false,
         }
     }
@@ -142,6 +163,14 @@ fn draft_prefix(repo: &RepoChrome, editor: &Editor) -> String {
 
 /// The references a preview links: the page's own, only while the file being typed is Markdown. A
 /// file that is not Markdown is not previewed as a document, so it links nothing.
+fn preview_base(base: &str, branch: &str, path: &str) -> crate::webui::components::LinkBase {
+    link_base(
+        base,
+        branch,
+        path.rsplit_once('/').map_or("", |(directory, _)| directory),
+    )
+}
+
 fn preview_references(live_path: &str, references: &References) -> References {
     if is_markdown_path(live_path) {
         references.clone()
@@ -158,6 +187,14 @@ fn preview_offered(creating: bool, hydrated: bool, typed_path: &str, path: &str)
         return is_markdown_path(path);
     }
     !hydrated || typed_path.is_empty() || is_markdown_path(typed_path)
+}
+
+/// Restored text retains the revision it was based on, so a stale save still conflicts.
+fn restore_draft(editor: &mut Editor, text: String, revision: String) -> bool {
+    let stale = revision != editor.expected_revision;
+    editor.content = text;
+    editor.expected_revision = revision;
+    stale
 }
 
 const HIGHLIGHT_ID: &str = "repository-file-content-highlight";
@@ -246,32 +283,35 @@ fn line_numbers(lines: usize) -> String {
 fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
     // Preserve the loaded revision together with the draft across unrelated page refreshes.
     // A new repository/branch/path gets a different component key and a new snapshot.
-    let (draft_key, original) = use_hook(|| {
+    let (draft_key, original, editor, recovered_stale) = use_hook(|| {
         let prefix = draft_prefix(&repo, &editor);
-        let key = format!("{prefix}{}", editor.expected_revision);
-        (key, editor.content.clone())
-    });
-    // A page that came back from the server with an error or a preview already carries
-    // the text; otherwise the draft left in this tab comes back.
-    let mut stale_draft = use_signal(|| false);
-    let (editor, recovered_stale) = use_hook(|| {
         let mut start = editor.clone();
+        let original = editor.content.clone();
         let mut recovered_stale = false;
-        if start.error.is_none() && !start.preview {
-            if let Some((text, stale)) =
-                saved_draft::recover(&draft_prefix(&repo, &editor), &draft_key)
+        // A refused save or preview already carries the submitted text and revision.
+        if !start.saved && start.error.is_none() && !start.preview {
+            if let Some((text, revision)) =
+                saved_draft::recover(&prefix, &format!("{prefix}{}", start.expected_revision))
             {
-                start.content = text;
-                recovered_stale = stale;
+                recovered_stale = restore_draft(&mut start, text, revision);
             }
         }
-        (start, recovered_stale)
+        let key = format!("{prefix}{}", start.expected_revision);
+        (key, original, start, recovered_stale)
     });
+    let mut stale_draft = use_signal(|| false);
     use_effect(move || stale_draft.set(recovered_stale));
+    let submit_keys = saved_draft::keys_for(&draft_prefix(&repo, &editor), &draft_key);
+    if editor.saved {
+        for key in &submit_keys {
+            saved_draft::clear(key);
+        }
+    }
     let input_key = draft_key.clone();
     // After a rejected save or a preview the page's text is the submitted text, not the file
     // as Git has it, so it stays saved as a draft until the file is committed.
     let keep_draft = editor.error.is_some() || editor.preview;
+    let saved = editor.saved;
     // DraftTextarea owns the live field; this observer only drives Markdown preview.
     // The field starts from the server's text, the same text the server rendered. The unsent
     // draft comes back through the field's own restore, which reports it through `on_value`, so
@@ -289,14 +329,7 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
     use_effect(move || hydrated.set(true));
     let offer_preview = preview_offered(editor.creating, hydrated(), &live_path(), &editor.path);
     // The preview renders as the saved file will: the same document mode and relative links.
-    let preview_base = link_base(
-        &repo.base(),
-        &editor.branch,
-        editor
-            .path
-            .rsplit_once('/')
-            .map_or("", |(directory, _)| directory),
-    );
+    let preview_base = preview_base(&repo.base(), &editor.branch, &live_path());
     let mut preview = use_signal(|| editor.preview);
     let previewing = preview() && offer_preview;
     let cancel_url = if editor.creating {
@@ -340,7 +373,7 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
                 }
                 if let Some(error) = &editor.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { if editor.saved { "{SAVED_FOLLOWUP_FAILED}" } else { "Changes were not saved" } } p { "{error}" } } }
                 if stale_draft() {
-                    p { class: "collaboration-state-banner", role: "status", "Recovered unsaved text from an older revision. Review it against the current file before saving." }
+                    p { class: "collaboration-state-banner", role: "status", "Recovered unsaved text from an older revision. Saving will check that original revision; copy your changes into the current file to reconcile them." }
                 }
                 form { id: "repo-editor-form", method: "post", action: write_action, class: "repo-editor-form",
                     {csrf(&repo.csrf_token)}
@@ -382,8 +415,8 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
                             pre { class: "repo-code-editor-gutter", aria_hidden: "true", {gutter()} }
                             div { class: "repo-editor-stack",
                                 EditorHighlight { text: content, path: live_path, enabled: hydrated() }
-                                DraftTextarea { id: "repository-file-content", class: "repo-editor-textarea", name: "content", rows: lines().max(10) as u32, initial_value: original.clone(), draft: Some(editor.content.clone()), on_value: move |next: String| {
-                                    if next == original && !keep_draft { saved_draft::clear(&input_key) } else { saved_draft::save(&input_key, &next) }
+                                DraftTextarea { id: "repository-file-content", class: "repo-editor-textarea", name: "content", rows: lines().max(10) as u32, initial_value: original.clone(), draft: Some(editor.content.clone()), submit_keys, on_value: move |next: String| {
+                                    if saved || (next == original && !keep_draft) { saved_draft::clear(&input_key) } else { saved_draft::save(&input_key, &next) }
                                     content.set(next);
                                 }, on_scroll: move |event: ScrollEvent| follow_scroll(event.data().scroll_top(), event.data().scroll_left()) }
                             }
@@ -422,6 +455,31 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
 mod tests {
     use super::saved_draft::is_other_revision;
     use super::References;
+
+    #[test]
+    fn new_file_preview_links_follow_the_typed_directory() {
+        let nested = super::preview_base("/u/r", "main", "docs/new.md");
+        assert_eq!(nested.directory, "docs");
+        assert_eq!(nested.blob, "/u/r/blob/refs/heads/main");
+        assert_eq!(super::preview_base("/u/r", "main", "new.md").directory, "");
+    }
+
+    #[test]
+    fn committed_drafts_register_all_revisions_for_cleanup() {
+        let repo = super::RepoChrome::default();
+        let editor = super::Editor {
+            expected_revision: "abc".into(),
+            ..Default::default()
+        };
+        let prefix = super::draft_prefix(&repo, &editor);
+        let key = format!("{prefix}abc");
+        assert_eq!(super::saved_draft::keys_for(&prefix, &key), vec![key]);
+        assert!(!is_other_revision(
+            &format!("{prefix}abc@modified"),
+            &prefix,
+            "current"
+        ));
+    }
 
     #[test]
     fn gutter_numbers_cover_every_source_line() {
@@ -481,11 +539,48 @@ mod tests {
         let old = format!("{prefix}old");
         assert_eq!(
             super::saved_draft::recovery_key(
-                vec![old.clone(), "unrelated".into()],
+                vec![(old.clone(), 10), ("unrelated".into(), 20)],
                 prefix,
                 &format!("{prefix}new")
             ),
             Some(old)
+        );
+    }
+
+    #[test]
+    fn recovered_text_keeps_its_original_save_revision() {
+        let mut editor = super::Editor {
+            content: "writer B".into(),
+            expected_revision: "B".into(),
+            ..Default::default()
+        };
+        assert!(super::restore_draft(
+            &mut editor,
+            "draft from A".into(),
+            "A".into()
+        ));
+        assert_eq!(editor.content, "draft from A");
+        assert_eq!(editor.expected_revision, "A");
+        assert!(!super::restore_draft(
+            &mut editor,
+            "more edits".into(),
+            "A".into()
+        ));
+        assert_eq!(editor.expected_revision, "A");
+    }
+
+    #[test]
+    fn recovery_prefers_the_last_edit_not_the_largest_revision() {
+        let prefix = "repo-editor:1:2:main:a.md:false:";
+        let older = format!("{prefix}ffff");
+        let newer = format!("{prefix}aaaa");
+        assert_eq!(
+            super::saved_draft::recovery_key(
+                vec![(older, 1), (newer.clone(), 2)],
+                prefix,
+                &format!("{prefix}current")
+            ),
+            Some(newer)
         );
     }
 

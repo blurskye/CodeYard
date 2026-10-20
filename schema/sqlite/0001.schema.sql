@@ -79,6 +79,8 @@ CREATE TABLE cluster_ssh_host_key (
 CREATE TABLE signup_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     username TEXT NOT NULL CHECK (length(username)<=255),
+    username_key TEXT NOT NULL,
+    email_key TEXT,
     email TEXT CHECK (length(email)<=255),
     password_hash TEXT NOT NULL CHECK (length(password_hash)<=255),
     status TEXT NOT NULL DEFAULT 'pending' CHECK (length(status)<=20), 
@@ -128,6 +130,7 @@ CREATE TABLE oauth_states (
     pkce_verifier TEXT NOT NULL CHECK (length(pkce_verifier)<=128),
     provider TEXT NOT NULL CHECK (length(provider)<=50),
     redirect_uri TEXT,
+    return_to TEXT NOT NULL DEFAULT '/',
     expires_at TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     browser_binding TEXT CHECK (length(browser_binding)<=64)
@@ -255,6 +258,7 @@ CREATE TABLE repositories (
     forked_from_id INTEGER REFERENCES repositories(id) ON DELETE SET NULL CHECK (forked_from_id IS NULL OR typeof(forked_from_id)='integer'),
     -- Canonical Git refs can contain 1024 bytes.
     default_branch TEXT NOT NULL DEFAULT 'main' CHECK (length(default_branch)<=1024),
+    milestone_number INTEGER NOT NULL DEFAULT 0 CHECK (milestone_number BETWEEN 0 AND 2147483647),
     allow_merge_commit INTEGER NOT NULL DEFAULT 1 CHECK (allow_merge_commit IN (0,1)),
     allow_squash_merge INTEGER NOT NULL DEFAULT 1 CHECK (allow_squash_merge IN (0,1)),
     allow_rebase_merge INTEGER NOT NULL DEFAULT 1 CHECK (allow_rebase_merge IN (0,1)),
@@ -315,12 +319,20 @@ CREATE TABLE deploy_keys (
     UNIQUE(repo_id, fingerprint)
 );
 
+CREATE TABLE repo_language_cache (
+    repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    branch TEXT NOT NULL,
+    storage_node_id INTEGER,
+    write_version INTEGER NOT NULL,
+    revision TEXT NOT NULL
+);
+
 CREATE TABLE repo_languages (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
     language TEXT NOT NULL CHECK (length(language)<=100),
     bytes INTEGER NOT NULL CHECK (bytes IS NULL OR typeof(bytes)='integer'),
-    percentage DECIMAL(5,2) NOT NULL CHECK (typeof(percentage) IN ('integer','real') AND percentage BETWEEN -999.99 AND 999.99),
+    percentage REAL NOT NULL CHECK (typeof(percentage) IN ('integer','real') AND percentage BETWEEN -999.99 AND 999.99),
     color TEXT CHECK (length(color)<=7),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     UNIQUE(repo_id, language)
@@ -362,7 +374,7 @@ CREATE TABLE repository_pushes (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
     actor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (actor_id IS NULL OR typeof(actor_id)='integer'),
-    branch TEXT NOT NULL CHECK (length(branch)<=255),
+    branch TEXT NOT NULL CHECK (length(branch)<=1024),
     commit_count INTEGER NOT NULL DEFAULT 0 CHECK (typeof(commit_count)='integer'),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
@@ -627,6 +639,7 @@ CREATE TABLE release_assets (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_release_assets_name ON release_assets(release_id, name);
+CREATE INDEX IF NOT EXISTS idx_release_assets_file_id ON release_assets(file_id);
 
 CREATE TABLE stars (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
@@ -895,17 +908,19 @@ CREATE INDEX IF NOT EXISTS idx_files_reason ON files(reason);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_avatar_file ON users(avatar_file_id) WHERE avatar_file_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_signup_requests_username_pending
-ON signup_requests (LOWER(username))
+ON signup_requests (username_key)
 WHERE status = 'pending';
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_signup_requests_email_pending
-ON signup_requests (LOWER(email))
+ON signup_requests (email_key)
 WHERE email IS NOT NULL AND status = 'pending';
 
 CREATE INDEX IF NOT EXISTS idx_signup_requests_status_created_at
-ON signup_requests (status, created_at DESC);
+ON signup_requests (status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_signup_requests_processed_hash ON signup_requests(id) WHERE status <> 'pending' AND password_hash <> '';
 
 CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_id ON oauth_accounts(user_id);
 
@@ -926,6 +941,7 @@ CREATE INDEX IF NOT EXISTS idx_gpg_keys_user_id ON gpg_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_gpg_keys_key_id ON gpg_keys(key_id);
 
 CREATE INDEX IF NOT EXISTS idx_organizations_name ON organizations(name);
+CREATE INDEX IF NOT EXISTS idx_organizations_avatar_file ON organizations(avatar_file_id) WHERE avatar_file_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_org_memberships_org_id ON org_memberships(org_id);
 
@@ -940,8 +956,10 @@ CREATE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user
 CREATE INDEX IF NOT EXISTS idx_repositories_owner_user_id ON repositories(owner_user_id);
 
 CREATE INDEX IF NOT EXISTS idx_repositories_owner_org_id ON repositories(owner_org_id);
+CREATE INDEX IF NOT EXISTS idx_repositories_storage_node ON repositories(storage_node_id, id);
 
 CREATE INDEX IF NOT EXISTS idx_repositories_name ON repositories(name);
+CREATE INDEX IF NOT EXISTS idx_repositories_storage_node ON repositories(storage_node_id, id);
 CREATE INDEX IF NOT EXISTS idx_repositories_storage_uuid ON repositories (substr(disk_path, -40));
 
 CREATE INDEX IF NOT EXISTS idx_repositories_is_private ON repositories(is_private);
@@ -1021,6 +1039,9 @@ CREATE INDEX IF NOT EXISTS idx_pull_requests_created_at ON pull_requests(created
 CREATE INDEX IF NOT EXISTS idx_pull_requests_updated_at ON pull_requests(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_stack ON pull_requests(repo_id, stack_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_milestone_id ON pull_requests(milestone_id);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id, merged_at) WHERE merged_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_issue_labels_label ON issue_labels(label_id);
+CREATE INDEX IF NOT EXISTS idx_pr_labels_label ON pr_labels(label_id);
 
 CREATE INDEX IF NOT EXISTS idx_pr_comments_pr_id ON pr_comments(pull_request_id);
 
@@ -1079,6 +1100,7 @@ CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_reason ON upload_rate_limit(rea
 
 CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_ip ON upload_rate_limit(ip_address);
 CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_file_id ON upload_rate_limit(file_id);
+CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_user_reason_time ON upload_rate_limit(user_id, reason, uploaded_at);
 
 CREATE INDEX IF NOT EXISTS idx_download_rate_limit_user_id ON download_rate_limit(user_id);
 
@@ -1098,12 +1120,15 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_saved ON notifications(user_id
 CREATE INDEX IF NOT EXISTS idx_notifications_user_done ON notifications(user_id, done_at, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_notifications_actor_id ON notifications(actor_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_repo_id ON notifications(repo_id);
 
 CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_created_at ON ci_runs(repo_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_head ON ci_runs(repo_id, head_sha, id);
 
 CREATE INDEX IF NOT EXISTS idx_ci_runs_user_created_at ON ci_runs(triggered_by_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_ci_runs_status ON ci_runs(status);
+CREATE INDEX IF NOT EXISTS idx_ci_runs_push_created_at ON ci_runs(created_at) WHERE event = 'push' AND triggered_by_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_ci_runs_push_user_created_at ON ci_runs(triggered_by_id, created_at DESC)
     WHERE event = 'push';
@@ -1113,6 +1138,7 @@ CREATE INDEX IF NOT EXISTS idx_ci_logs_run_id_id ON ci_logs(run_id, id);
 CREATE INDEX IF NOT EXISTS idx_ci_artifacts_run_id ON ci_artifacts(run_id);
 
 CREATE INDEX IF NOT EXISTS idx_ci_deployments_repo_env ON ci_deployments(repo_id, environment, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_deployments_run ON ci_deployments(run_id);
 
 CREATE INDEX IF NOT EXISTS idx_auth_login_limits_expiry ON auth_login_limits (window_ends_at)
     WHERE account_key <> 'global';
@@ -1122,6 +1148,8 @@ CREATE INDEX IF NOT EXISTS idx_ci_runs_queue ON ci_runs(status, id)
 CREATE INDEX IF NOT EXISTS idx_files_pending ON files(upload_expires_at) WHERE NOT is_active;
 CREATE INDEX IF NOT EXISTS idx_notifications_scope ON notifications(user_id, scope_repository_id);
 CREATE INDEX IF NOT EXISTS idx_repository_pushes_actor ON repository_pushes(actor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_repository_pushes_created_at ON repository_pushes(created_at);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id, merged_at) WHERE merged_at IS NOT NULL;
 
 INSERT INTO file_reason_limits (reason, max_file_size_bytes, max_uploads_per_hour, max_bytes_per_hour, max_uploads_per_day, max_bytes_per_day, allowed_content_types, description) VALUES
 ('avatar', 2097152, 5, 10485760, 20, 41943040, '["image/jpeg", "image/png", "image/gif", "image/webp"]', 'User profile avatars'),

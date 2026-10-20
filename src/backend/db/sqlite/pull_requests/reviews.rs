@@ -34,6 +34,17 @@ async fn insert_comment(
 ) -> Result<PullRequestComment> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     discussions::lock_pull_request_contribution(&mut tx, input.author_id, input.pr_id).await?;
+    if let Some((head, base)) = input.expected_revisions {
+        let current: (String, String) =
+            sqlx::query_as("SELECT head_sha, base_sha FROM pull_requests WHERE id=?1")
+                .bind(input.pr_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        anyhow::ensure!(
+            current.0 == head && current.1 == base,
+            crate::backend::db::discussions::DiscussionWriteRefusal::RevisionChanged
+        );
+    }
     let review_id = match input.in_reply_to_comment_id {
         Some(parent) => {
             // Another author's pending comment is not a parent, because its review is private.
@@ -66,7 +77,7 @@ async fn insert_comment(
         None => None,
     };
     if let Some(review_id) = review_id {
-        let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pr_comments WHERE review_id=?1")
+        let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.review_id=?1 AND v.state='pending'")
             .bind(review_id)
             .fetch_one(&mut *tx)
             .await?;
@@ -217,6 +228,26 @@ pub async fn list_review_comments(
 ) -> Result<Vec<PullRequestCommentEntry>> {
     debug_assert!(review_ids.len() <= 1000);
     comments_in(pool, "i.review_id", review_ids).await
+}
+
+pub async fn review_comment_position(
+    pool: &SqlitePool,
+    review_ids: &[i64],
+    comment_id: i64,
+) -> Result<(i64, i64)> {
+    if review_ids.is_empty() {
+        return Ok((0, 0));
+    }
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        "SELECT MAX(COUNT(*) - 1, 0), COALESCE(SUM(6 * (length(CAST(c.body AS BLOB)) + COALESCE(MIN(length(CAST(c.path AS BLOB)), 4096), 0)) + 4096), 0) FROM pr_comments c WHERE c.review_id IN (",
+    );
+    let mut ids = query.separated(",");
+    for id in review_ids {
+        ids.push_bind(id);
+    }
+    query.push(") AND (c.created_at,c.id) <= (SELECT created_at,id FROM pr_comments WHERE id=");
+    query.push_bind(comment_id).push(")");
+    Ok(query.build_query_as().fetch_one(pool).await?)
 }
 
 /// Select sizes before bodies, so nested reviews cannot bypass the discussion page limit.
@@ -701,7 +732,7 @@ pub async fn dismiss_pull_request_review(
         r#"
         UPDATE pr_reviews
         SET state = 'dismissed', dismissed_by_id = ?1, dismissed_reason = ?2, dismissed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
-        WHERE id = ?3 AND pull_request_id = ?4
+        WHERE id = ?3 AND pull_request_id = ?4 AND state IN ('approved', 'changes_requested')
         RETURNING *
         "#,
     )
@@ -790,19 +821,21 @@ pub async fn request_code_owner_reviews(
     }) else {
         return Ok(Vec::new());
     };
-    let mut added = Vec::new();
-    for &id in owners {
-        if id == current.author_id
-            || !discussions::lock_write_authority(&mut tx, id, pull.repo_id).await?
-        {
-            continue;
-        }
-        let inserted = sqlx::query("INSERT INTO pr_reviewers (pull_request_id, user_id) SELECT ?1, ?2 WHERE NOT EXISTS (SELECT 1 FROM pr_reviews WHERE pull_request_id = ?1 AND author_id = ?2 AND state <> 'pending') ON CONFLICT DO NOTHING")
-            .bind(pull.id).bind(id).execute(&mut *tx).await?;
-        if inserted.rows_affected() > 0 {
-            added.push(id);
-        }
-    }
+    anyhow::ensure!(
+        owners.len() <= crate::backend::repositories::code_owners::MAX_REVIEWERS,
+        "Too many code owners"
+    );
+    let access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
+    let added: Vec<i64> = sqlx::query_scalar(&format!(
+        "INSERT INTO pr_reviewers (pull_request_id, user_id)
+         SELECT ?1, u.id FROM repositories r CROSS JOIN users u
+         WHERE r.id=?2 AND u.id IN (SELECT value FROM json_each(?3)) AND u.id<>?4
+           AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password
+           AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=3)
+           AND NOT EXISTS (SELECT 1 FROM pr_reviews WHERE pull_request_id=?1 AND author_id=u.id AND state<>'pending')
+         ON CONFLICT DO NOTHING RETURNING user_id"
+    )).bind(pull.id).bind(pull.repo_id).bind(serde_json::to_string(owners)?).bind(current.author_id)
+        .fetch_all(&mut *tx).await?;
     let users = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE id IN (SELECT value FROM json_each(?1))",
     )

@@ -169,6 +169,15 @@ pub(in crate::webui::pages) fn access_forms(
                         }
                     }
                 }
+                if requests.len() == if prefix.starts_with("/admin/") { 5 } else { 100 } {
+                    if let Some(last) = requests.last() {
+                        a { class: "identity-button", href: if prefix.starts_with("/admin/") {
+                            format!("/admin?days={}&requests_after={}", crate::webui::pages::admin::normalize_days(Some(&values.days)), last.id)
+                        } else {
+                            format!("/settings?tab=access&requests_after={}", last.id)
+                        }, "Next requests" }
+                    }
+                }
             }
         }
     }

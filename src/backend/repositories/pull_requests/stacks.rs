@@ -191,16 +191,24 @@ pub async fn chain_below(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<Ch
 /// The branch that merging `pull` lands in, and the numbers of the pull requests that merge with it,
 /// bottom first and `pull` last. The branch is the base of the bottom open layer of the stack, and
 /// a pull request outside a stack, or one whose stack is broken, merges into its own base alone.
-pub async fn merge_target(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<(String, Vec<i32>)> {
+pub async fn merge_target(
+    pool: &DbPool,
+    pull: &PullRequest,
+) -> anyhow::Result<(String, String, Vec<i32>)> {
     Ok(match chain_below(pool, pull).await? {
         Chain::Open(layers) => (
             layers.first().map_or_else(
                 || pull.base_branch.clone(),
                 |bottom| bottom.base_branch.clone(),
             ),
+            layers.first().unwrap_or(pull).base_sha.clone(),
             layers.iter().map(|layer| layer.number).collect(),
         ),
-        Chain::BelowClosed(_) | Chain::Broken => (pull.base_branch.clone(), vec![pull.number]),
+        Chain::BelowClosed(_) | Chain::Broken => (
+            pull.base_branch.clone(),
+            pull.base_sha.clone(),
+            vec![pull.number],
+        ),
     })
 }
 

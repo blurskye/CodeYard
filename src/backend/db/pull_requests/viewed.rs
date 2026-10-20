@@ -8,4 +8,4 @@ native_operation!(crate::backend::db::postgres::pull_requests::viewed::set_pull_
 
 native_operation!(crate::backend::db::postgres::pull_requests::viewed::list_pull_request_viewed_files,
     crate::backend::db::sqlite::pull_requests::viewed::list_pull_request_viewed_files,
-    fn list_pull_request_viewed_files(pool: &DbPool, pr_id: i64, user_id: i64) -> Result<Vec<(String, String)>>);
+    fn list_pull_request_viewed_files(pool: &DbPool, pr_id: i64, user_id: i64, paths: &[String]) -> Result<Vec<(String, String)>>);

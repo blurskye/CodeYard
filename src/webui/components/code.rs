@@ -101,6 +101,14 @@ pub fn highlight_lines(code: &str, language: &str) -> Vec<String> {
 /// The highlighted HTML of each line of `code`, newline included. Syntax state carries from
 /// one line to the next, so a comment that spans lines is coloured on every line it covers.
 fn highlight_each_line(code: &str, language: &str) -> Vec<String> {
+    const MAX_BYTES: usize = 64 * 1024;
+    const MAX_LINE_BYTES: usize = 64 * 1024;
+    const MAX_TOKENS: usize = 4096;
+    const MAX_HTML_BYTES: usize = 256 * 1024;
+    let plain = || LinesWithEndings::from(code).map(escape_code).collect();
+    if code.len() > MAX_BYTES || code.lines().any(|line| line.len() > MAX_LINE_BYTES) {
+        return plain();
+    }
     static SYNTAX: OnceLock<SyntaxSet> = OnceLock::new();
     let set = SYNTAX.get_or_init(SyntaxSet::load_defaults_newlines);
     let normalized = language.trim().to_lowercase();
@@ -111,23 +119,35 @@ fn highlight_each_line(code: &str, language: &str) -> Vec<String> {
         return LinesWithEndings::from(code).map(escape_code).collect();
     }
     let mut highlighter = HighlightLines::new(syntax, theme());
-    LinesWithEndings::from(code)
-        .map(|line| match highlighter.highlight_line(line, set) {
-            Ok(tokens) => tokens
-                .into_iter()
-                .map(|(style, token)| {
-                    format!(
-                        "<span style=\"color:#{:02x}{:02x}{:02x}\">{}</span>",
-                        style.foreground.r,
-                        style.foreground.g,
-                        style.foreground.b,
-                        escape_code(token)
-                    )
-                })
-                .collect(),
-            Err(_) => escape_code(line),
-        })
-        .collect()
+    let mut lines = Vec::new();
+    let mut token_count = 0;
+    let mut output_bytes = 0;
+    for line in LinesWithEndings::from(code) {
+        let Ok(tokens) = highlighter.highlight_line(line, set) else {
+            return plain();
+        };
+        token_count += tokens.len();
+        if token_count > MAX_TOKENS {
+            return plain();
+        }
+        let mut html = String::new();
+        for (style, token) in tokens {
+            let span = format!(
+                "<span style=\"color:#{:02x}{:02x}{:02x}\">{}</span>",
+                style.foreground.r,
+                style.foreground.g,
+                style.foreground.b,
+                escape_code(token)
+            );
+            output_bytes += span.len();
+            if output_bytes > MAX_HTML_BYTES {
+                return plain();
+            }
+            html.push_str(&span);
+        }
+        lines.push(html);
+    }
+    lines
 }
 
 /// Map only generated token tags to theme variables; untrusted source stays escaped.
@@ -173,6 +193,18 @@ mod tests {
         assert!(lines[1].contains("two"));
         assert_eq!(highlight("a < b\n", "txt"), "a &lt; b\n");
         assert_eq!(highlight_lines("a < b\nc\n", "txt"), ["a &lt; b", "c"]);
+    }
+
+    #[test]
+    fn expensive_highlighting_falls_back_to_escaped_lines() {
+        for code in [
+            format!("[{}]\n<end>\n", "0,".repeat(450_000)),
+            format!("{}\n", "let x = 0;\n".repeat(10_000)),
+            "[0,0,0,0,0,0,0,0]\n".repeat(500),
+        ] {
+            assert_eq!(highlight(&code, "json"), escape_code(&code));
+            assert_eq!(highlight_lines(&code, "json").len(), code.lines().count());
+        }
     }
 
     #[test]

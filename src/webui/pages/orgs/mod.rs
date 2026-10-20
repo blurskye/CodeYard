@@ -12,8 +12,8 @@ mod tests;
 
 use page::privacy_label;
 pub use page::{
-    render, Invitation, Member, Organization, Page, RepositoryChoice, RepositoryGrant, Team,
-    TeamDetail, REPOSITORY_CHOICE_LIMIT,
+    render, Invitation, Member, Organization, Page, PendingInvitation, RepositoryChoice,
+    RepositoryGrant, Team, TeamDetail, REPOSITORY_CHOICE_LIMIT,
 };
 pub use profile::{profile_page, OrganizationProfile};
 pub use team_page::{team_page, TeamPage};

@@ -10,9 +10,9 @@ use chrono::{DateTime, Utc};
 /// access; a web request acts as an account, which must still be an active administrator
 /// when the change commits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Authority {
+pub enum Authority<'a> {
     Operator,
-    Administrator(i64),
+    Administrator { user_id: i64, session: &'a str },
 }
 
 /// One entry of the declared membership list.
@@ -21,6 +21,9 @@ pub struct DeclaredMember {
     pub name: String,
     pub roles: Vec<String>,
 }
+
+/// A primary repository and one optional copy: id, path, holder, applied version, size.
+pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64);
 
 pub struct NewJoinToken<'a> {
     /// Hex SHA-256 of the invite secret; the secret itself is never stored.
@@ -63,6 +66,10 @@ native_operation!(crate::backend::db::postgres::cluster::place_repository,
     crate::backend::db::sqlite::cluster::place_repository,
     /// Gives a repository without a storage node to `node_id`. False if it already has one.
     fn place_repository(pool: &DbPool, repo_id: i64, node_id: i64) -> Result<bool>);
+
+native_operation!(crate::backend::db::postgres::cluster::place_fork_family,
+    crate::backend::db::sqlite::cluster::place_fork_family,
+    fn place_fork_family(pool: &DbPool, repo_id: i64, node_id: i64, local: &[i64]) -> Result<Vec<i64>>);
 
 native_operation!(crate::backend::db::postgres::cluster::join_with_token,
     crate::backend::db::sqlite::cluster::join_with_token,
@@ -112,7 +119,7 @@ native_operation!(crate::backend::db::postgres::cluster::set_node_status,
     crate::backend::db::sqlite::cluster::set_node_status,
     /// Makes the named node `active` (approve) or `revoked`. An administrator must still be
     /// active when the change commits: the check and the write share one transaction.
-    fn set_node_status(pool: &DbPool, authority: Authority, name: &str, status: &str) -> Result<NodeStatusChange>);
+    fn set_node_status(pool: &DbPool, authority: Authority<'_>, name: &str, status: &str) -> Result<NodeStatusChange>);
 
 native_operation!(crate::backend::db::postgres::cluster::record_node_heartbeat,
     crate::backend::db::sqlite::cluster::record_node_heartbeat,
@@ -195,7 +202,11 @@ native_operation!(crate::backend::db::postgres::cluster::list_primary_repositori
     /// Repositories whose primary is `node_id`: id, disk path, and one row per copy with
     /// the node that holds it and the version that copy has applied (`None` for both when
     /// there are no copies).
-    fn list_primary_repositories(pool: &DbPool, node_id: i64) -> Result<Vec<(i64, String, Option<i64>, Option<i64>)>>);
+    fn list_primary_repositories(pool: &DbPool, node_id: i64) -> Result<Vec<PrimaryReplicaRow>>);
+
+native_operation!(crate::backend::db::postgres::cluster::pending_replica_bytes,
+    crate::backend::db::sqlite::cluster::pending_replica_bytes,
+    fn pending_replica_bytes(pool: &DbPool) -> Result<Vec<(i64, i64)>>);
 
 native_operation!(crate::backend::db::postgres::cluster::list_held_replicas,
     crate::backend::db::sqlite::cluster::list_held_replicas,

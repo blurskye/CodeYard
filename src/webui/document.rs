@@ -38,6 +38,9 @@ impl Theme {
 /// Only explicit presentation data crosses the server/browser boundary.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Chrome {
+    /// This page contains values from a native POST, not GET defaults.
+    #[serde(default)]
+    pub submitted_form: Option<String>,
     pub username: Option<String>,
     pub is_admin: bool,
     pub csrf_token: String,

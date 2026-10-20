@@ -54,8 +54,15 @@ pub async fn contracts(f: &Fixture) {
         source.matches("method=\"post\"").count(),
         source.matches("name=\"csrf_token\"").count()
     );
-    assert!(source.contains("value=\"add-member\""));
-    assert!(source.contains("value=\"member-role\""));
+    assert!(!source.contains("value=\"add-member\""));
+    assert!(!source.contains("value=\"member-role\""));
+    let members = html(
+        f.get(&f.owner, &format!("{}?tab=members", f.path()))
+            .await
+            .organization(),
+    );
+    assert!(members.contains("value=\"add-member\""));
+    assert!(members.contains("value=\"member-role\""));
     assert!(!source.contains("action=\"/orgs"));
     assert!(form.contains("value=\"Stored display\""));
     assert!(form.contains("name=\"description\""));
@@ -159,7 +166,7 @@ pub async fn contracts(f: &Fixture) {
     assert_eq!(bad.organization().draft["description"], xss);
     let source = html(bad.organization());
     assert!(!profile_form(&source).contains("<script>"));
-    // Known bounded values survive errors; unknown/secret/oversized fields do not.
+    // Known request-bounded descriptions survive rejection; unknown/secret fields do not.
     let oversized = "x".repeat(4097);
     let bad = f
         .form(
@@ -177,11 +184,28 @@ pub async fn contracts(f: &Fixture) {
     assert_eq!(bad.status, StatusCode::BAD_REQUEST);
     let draft = bad.organization().draft;
     assert_eq!(draft["display_name"], "Bounded draft");
-    for excluded in ["description", "billing_email", "password", "csrf_token"] {
+    assert_eq!(draft["description"], oversized);
+    for excluded in ["billing_email", "password", "csrf_token"] {
         assert!(!draft.contains_key(excluded));
     }
     assert!(!bad.body.contains("secret-not-for-model"));
     assert!(!bad.body.contains("private@example.test"));
+    let unicode = "é".repeat(3000);
+    let refused = f
+        .form(
+            &f.owner,
+            &f.path(),
+            &[("action", "profile"), ("description", &unicode)],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    let recovered = refused.organization();
+    assert_eq!(recovered.draft["description"], unicode);
+    assert_eq!(
+        recovered.message.as_deref(),
+        Some("Description must be at most 4096 UTF-8 bytes.")
+    );
+    assert!(profile_form(&html(recovered)).contains(&unicode));
     let unknown = f
         .form(
             &f.owner,

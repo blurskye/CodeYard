@@ -192,6 +192,24 @@ fn signup_and_setup_retain_private_approval_and_genuine_conditional_fields() {
 }
 
 #[test]
+fn oauth_links_keep_the_requested_return_target() {
+    let output = html(auth_page(
+        AuthMode::Login,
+        "/login",
+        "csrf",
+        FormValues::default(),
+        false,
+        vec!["github".into()],
+        "/alice/project/issues/7?tab=comments",
+        None,
+        false,
+    ));
+    assert!(output.contains(
+        "href=\"/api/auth/oauth/github?redirect=%2Falice%2Fproject%2Fissues%2F7%3Ftab%3Dcomments\""
+    ));
+}
+
+#[test]
 fn provider_controls_render_one_link_per_configured_provider() {
     const LINKS: [(&str, &str); 5] = [
         ("github", "Continue with GitHub"),
@@ -367,6 +385,8 @@ fn oauth_only_accounts_have_no_password_mutation_form() {
             must_change_password: false,
             manage_access: false,
             requests: vec![],
+            requests_count: 0,
+            requests_page: 1,
             values: FormValues::default(),
         },
         "token",

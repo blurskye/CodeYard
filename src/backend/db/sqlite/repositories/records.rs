@@ -188,8 +188,8 @@ pub async fn list_user_repository_page(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Repository>, i64)> {
-    let condition = "owner_kind='user' AND owner_user_id=?1 AND (?2 OR NOT is_private) AND (instr(lower(name),?3)>0 OR instr(lower(COALESCE(description,'')),?3)>0)";
-    let needle = text.trim().to_lowercase();
+    let condition = "owner_kind='user' AND owner_user_id=?1 AND (?2 OR NOT is_private) AND (name REGEXP ?3 OR COALESCE(description,'') REGEXP ?3)";
+    let needle = super::super::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
     ))
@@ -219,10 +219,10 @@ pub async fn list_shared_repository_page(
     offset: i64,
 ) -> Result<(Vec<SharedRepository>, i64)> {
     let condition = format!(
-        "{} AND (instr(lower(r.name),?2)>0 OR instr(lower(COALESCE(r.description,'')),?2)>0)",
+        "{} AND (r.name REGEXP ?2 OR COALESCE(r.description,'') REGEXP ?2)",
         shared_repository_condition()
     );
-    let needle = text.trim().to_lowercase();
+    let needle = super::super::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=?1 WHERE {condition}"
     ))
@@ -248,7 +248,7 @@ pub async fn search_public_repositories(
 ) -> Result<Vec<Repository>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
-    let pattern = crate::backend::db::discussions::contains_pattern(text);
+    let pattern = super::super::search::contains(text);
     let (index, order) = match sort {
         RepositorySort::Recent => ("", "created_at DESC, id DESC"),
         RepositorySort::Stars => (
@@ -260,7 +260,7 @@ pub async fn search_public_repositories(
     };
     let sql = format!(
         r#"SELECT * FROM repositories {index} WHERE is_private = false
-            AND (name LIKE ?2 ESCAPE '\' OR description LIKE ?2 ESCAPE '\')
+            AND (name REGEXP ?2 OR description REGEXP ?2)
             AND (?4 = '' OR id IN (SELECT repo_id FROM repo_languages WHERE language = ?4))
             AND (?5 = '' OR id IN (SELECT repo_id FROM repository_topics WHERE topic = ?5))
             AND {kind}
@@ -294,7 +294,7 @@ pub async fn update_repository(
     actor_id: i64,
     repo_id: i64,
     description: Option<&str>,
-    is_private: bool,
+    is_private: impl Into<crate::backend::db::repositories::records::VisibilityUpdate>,
     merge_methods: MergeMethodUpdate,
 ) -> Result<()> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
@@ -304,10 +304,17 @@ pub async fn update_repository(
             .await?,
         Refusal::Denied
     );
-    let locked: bool = sqlx::query_scalar("SELECT visibility_locked FROM repositories WHERE id=?1")
-        .bind(repo_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let update = is_private.into();
+    let is_private = update.is_private;
+    let (locked, current): (bool, bool) =
+        sqlx::query_as("SELECT visibility_locked, is_private FROM repositories WHERE id=?1")
+            .bind(repo_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    anyhow::ensure!(
+        update.expected.is_none_or(|expected| expected == current),
+        Refusal::Denied
+    );
     anyhow::ensure!(is_private || !locked, Refusal::VisibilityLocked);
     apply_merge_methods(&mut tx, repo_id, merge_methods).await?;
     let result = sqlx::query(
@@ -374,6 +381,36 @@ async fn apply_merge_methods(
     Ok(())
 }
 
+pub async fn update_repo_default_branch(
+    pool: &SqlitePool,
+    repo_id: i64,
+    branch: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE repositories SET default_branch=?1, updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?2")
+        .bind(branch).bind(repo_id).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn update_repo_size(pool: &SqlitePool, repo_id: i64, size: i64) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    let changed =
+        sqlx::query("UPDATE repositories SET size_bytes=?1 WHERE id=?2 AND size_bytes<>?1")
+            .bind(size)
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+    if changed > 0 {
+        sqlx::query("INSERT INTO repo_storage_history (repo_id, size_bytes) VALUES (?1, ?2)")
+            .bind(repo_id)
+            .bind(size)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn update_repo_default_branch_and_size(
     pool: &SqlitePool,
     repo_id: i64,
@@ -416,7 +453,7 @@ pub async fn delete_repository(
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
+        crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor_id, repo_id)
             .await?,
         Refusal::Denied
     );

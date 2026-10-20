@@ -103,6 +103,31 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(private["is_private"], true, "{private}");
 
+    // An unconfirmed save based on the earlier public row must not reopen it.
+    let refused = db::repositories::records::update_repository(
+        f.pool(),
+        alice_id,
+        repo.parse().unwrap(),
+        Some("stale description"),
+        db::repositories::records::VisibilityUpdate {
+            is_private: false,
+            expected: Some(false),
+        },
+        db::repositories::records::MergeMethodUpdate {
+            merge: None,
+            squash: None,
+            rebase: None,
+        },
+    )
+    .await;
+    assert!(refused.is_err());
+    let kept = db::repositories::records::get_repository_by_id(f.pool(), repo.parse().unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(kept.is_private);
+    assert_eq!(kept.description.as_deref(), Some("Edited"));
+
     // A description-only save of a private repository needs no confirmation either.
     let reply = alice
         .form_reply(

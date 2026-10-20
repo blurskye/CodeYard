@@ -51,9 +51,18 @@ pub async fn contracts(f: &Fixture) {
         .database
         .organization_repository(f.org, "kept", false)
         .await;
+    let disk_path = f.database.repository(repository).await.disk_path;
+    let disk_path = std::path::Path::new(&disk_path);
+    assert!(disk_path.starts_with(match &f.database {
+        super::Database::Sqlite(db) => db.installation_directory(),
+        super::Database::Postgres(db) => db.temp.path(),
+    }));
+    std::fs::create_dir_all(disk_path).unwrap();
+    std::fs::write(disk_path.join("owned-fixture"), b"disposable").unwrap();
     f.form(&f.owner, &path, &delete)
         .await
         .redirect(&format!("{INDEX}?notice=organization-deleted"));
+    assert!(!disk_path.exists());
     let notice = f
         .get(&f.owner, &format!("{INDEX}?notice=organization-deleted"))
         .await

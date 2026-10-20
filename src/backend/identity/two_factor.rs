@@ -349,34 +349,28 @@ pub async fn confirm_setup(
     Ok(codes)
 }
 
-/// Checks and spends a TOTP step against the enrollment whose secret was verified.
-/// Recovery codes are spent by the session-issuance transaction instead.
+/// Verifies a TOTP and returns its enrollment and step for atomic session issuance.
 pub async fn verify_totp_code(
     pool: &DbPool,
     encryptor: &SecretEncryptor,
     user_id: i64,
     input: &str,
     now: u64,
-) -> Result<bool, TwoFactorError> {
+) -> Result<Option<(Vec<u8>, i64)>, TwoFactorError> {
     let code = normalize_code(input);
     if !is_totp_code(&code) {
-        return Ok(false);
+        return Ok(None);
     }
     let Some(stored) = db::users::two_factor::get_two_factor(pool, user_id)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let secret = encryptor
         .decrypt(&stored.secret_encrypted, &stored.nonce)
         .map_err(|_| TwoFactorError::KeyUnavailable)?;
-    let Some(step) = matching_step(&secret, &code, now) else {
-        return Ok(false);
-    };
-    db::users::two_factor::use_totp_step(pool, user_id, &stored.nonce, step)
-        .await
-        .map_err(|_| TwoFactorError::Unavailable)
+    Ok(matching_step(&secret, &code, now).map(|step| (stored.nonce, step)))
 }
 
 /// Replaces the recovery codes after the current password is checked.

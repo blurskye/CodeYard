@@ -894,7 +894,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         .execute(&fixture.raw)
         .await
         .unwrap();
-    assert_eq!(db::ci::fail_stale_ci_runs(&pool, 90).await.unwrap(), 1);
+    assert_eq!(db::ci::fail_stale_ci_runs(&pool, 90).await.unwrap().0, 1);
     let failed = db::ci::get_ci_run_by_run_id(&pool, running.run_id)
         .await
         .unwrap()
@@ -1175,9 +1175,11 @@ async fn test_signup_requests_flow() {
     assert!(!approved.must_change_password);
 
     let pending_after_approval =
-        codeyard::backend::db::users::signup_requests::list_signup_requests(&pool, "pending")
-            .await
-            .expect("Failed to list pending requests");
+        codeyard::backend::db::users::signup_requests::list_signup_requests(
+            &pool, "pending", 100, 0, 0,
+        )
+        .await
+        .expect("Failed to list pending requests");
     assert!(!pending_after_approval.iter().any(|r| r.id == pending.id));
 
     let second_name = unique_name("rejectuser");
@@ -1198,16 +1200,18 @@ async fn test_signup_requests_flow() {
     .await
     .expect("Failed to reject signup request");
 
-    let pending_after_reject =
-        codeyard::backend::db::users::signup_requests::list_signup_requests(&pool, "pending")
-            .await
-            .expect("Failed to list pending after reject");
+    let pending_after_reject = codeyard::backend::db::users::signup_requests::list_signup_requests(
+        &pool, "pending", 100, 0, 0,
+    )
+    .await
+    .expect("Failed to list pending after reject");
     assert!(!pending_after_reject.iter().any(|r| r.id == rejected.id));
 
-    let rejected_items =
-        codeyard::backend::db::users::signup_requests::list_signup_requests(&pool, "rejected")
-            .await
-            .expect("Failed to list rejected requests");
+    let rejected_items = codeyard::backend::db::users::signup_requests::list_signup_requests(
+        &pool, "rejected", 100, 0, 0,
+    )
+    .await
+    .expect("Failed to list rejected requests");
     assert!(rejected_items.iter().any(|r| r.id == rejected.id));
 }
 

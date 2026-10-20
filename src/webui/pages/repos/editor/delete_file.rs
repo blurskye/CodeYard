@@ -15,6 +15,8 @@ pub struct DeleteFile {
     pub expected_revision: String,
     pub message: String,
     pub error: Option<String>,
+    #[serde(default)]
+    pub saved: bool,
     /// The branch refuses direct commits to this user, so the commit goes to `new_branch`.
     pub protected: bool,
     pub commit_to_new_branch: bool,
@@ -49,7 +51,8 @@ fn DeleteFileView(repo: RepoChrome, file: DeleteFile) -> Element {
                         p { {icon("branches")} code { "{file.branch}" } " / " strong { "{file.path}" } }
                     }
                 }
-                if let Some(error) = &file.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { "{DELETE_REFUSED}" } p { "{error}" } } }
+                if let Some(error) = &file.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { if file.saved { "{super::SAVED_FOLLOWUP_FAILED}" } else { "{DELETE_REFUSED}" } } p { "{error}" } } }
+                if !file.saved {
                 form { method: "post", action: form_action, class: "repo-editor-form",
                     {csrf(&repo.csrf_token)}
                     input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
@@ -67,6 +70,7 @@ fn DeleteFileView(repo: RepoChrome, file: DeleteFile) -> Element {
                             }
                         }
                     }
+                }
                 }
             }
         },

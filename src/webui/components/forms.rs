@@ -70,6 +70,8 @@ pub fn DraftTextarea(
     // hydrates, unless the user typed in the field before hydration. A caller that passes
     // its own draft keeps it itself, so this field then stores nothing.
     #[props(default)] draft: Option<String>,
+    // Caller-owned drafts still participate in successful native-submit cleanup.
+    #[props(default)] submit_keys: Vec<String>,
     // The revision of the page this field belongs to, such as the one its save checks. A draft saved
     // against another revision is shown with a notice instead of being restored silently.
     #[props(default)] revision: Option<String>,
@@ -97,7 +99,9 @@ pub fn DraftTextarea(
     // Set when the field shows a draft that was saved against another revision of the page.
     let mut stale = use_signal(|| false);
     #[cfg(target_arch = "wasm32")]
-    let mut submit_mark = use_signal(|| None::<draft_text::SubmitMark>);
+    let mut submit_marks = use_signal(Vec::<draft_text::SubmitMark>::new);
+    let submitted_form = try_consume_context::<crate::webui::app::CurrentPage>()
+        .and_then(|page| page.0.peek().chrome.submitted_form.clone());
     let mut value = use_signal(move || initial_value);
     let mut typed_revision = use_signal(|| revision.clone());
     let reset_revision = revision.clone();
@@ -154,6 +158,10 @@ pub fn DraftTextarea(
                           if stored_key.peek().is_some() {
                               stored_key.set(draft_text::form_key(element));
                           }
+                          let action = element.closest("form").ok().flatten().and_then(|form| form.get_attribute("action"));
+                          // Other composers on the page post to the same path but carry no submitted text.
+                          let submitted = draft_text::submitted_form_matches(submitted_form.as_deref(), action.as_deref())
+                              && !initial_text.peek().is_empty();
                           let stored = stored_key.peek().as_deref().and_then(draft_text::load);
                           let mut text = input.value();
                           let mut stale_draft = false;
@@ -161,7 +169,7 @@ pub fn DraftTextarea(
                           // typed before hydration is kept; untouched text gives way to the draft.
                           // defaultValue keeps the LF that the server render pads in front of
                           // the text, so compare with the text itself.
-                          if *initial_text.peek() == text {
+                          if draft_text::should_restore(submitted, &initial_text.peek(), &text) {
                               if let Some(draft) = restored.peek().clone() {
                                   input.set_value(&draft);
                                   text = draft;
@@ -182,20 +190,19 @@ pub fn DraftTextarea(
                           stale.set(stale_draft);
                           // A stale draft keeps the revision it was typed against, so it stays stale.
                           if let Some(key) = stored_key.peek().as_deref() {
-                              if text != *initial_text.peek() && !stale_draft {
+                              if (submitted || text != *initial_text.peek()) && !stale_draft {
                                   draft_text::save(key, &text, revision.as_deref());
                               }
                           }
-                          if let Some(key) = stored_key.peek().clone() {
-                              submit_mark.set(draft_text::mark_on_submit(element, key));
-                          }
+                          let keys = stored_key.peek().clone().into_iter().chain(submit_keys.iter().cloned());
+                          submit_marks.set(keys.filter_map(|key| draft_text::mark_on_submit(element, key)).collect());
                           value.set(text.clone());
                           on_value.call(text);
                       }
                   }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                let _ = (event, restored, initial_text, &revision);
+                let _ = (event, restored, initial_text, &revision, &submit_keys, &submitted_form);
             }
         }
     }
@@ -243,21 +250,39 @@ pub mod draft_text {
         let Some(action) = form.get_attribute("action") else {
             return key(&name, id.as_deref());
         };
-        let mut identity = String::new();
-        for target in ["path", "side", "line", "in_reply_to"] {
-            if let Some(value) = form
-                .query_selector(&format!("input[name='{target}']"))
+        key_for_form(&action, &name, id.as_deref(), |target| {
+            form.query_selector(&format!("input[name='{target}']"))
                 .ok()
                 .flatten()
                 .and_then(|field| field.get_attribute("value"))
-            {
+        })
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn key_for_form(
+        action: &str,
+        name: &str,
+        id: Option<&str>,
+        mut field_value: impl FnMut(&str) -> Option<String>,
+    ) -> Option<String> {
+        let mut identity = String::new();
+        for target in [
+            "repository_id",
+            "template",
+            "template_revision",
+            "path",
+            "side",
+            "line",
+            "in_reply_to",
+        ] {
+            if let Some(value) = field_value(target) {
                 identity.push_str(&format!(
                     ":{target}={}",
                     crate::webui::encode_component(&value)
                 ));
             }
         }
-        key_for_action(&action, &identity, &name, id.as_deref())
+        key_for_action(action, &identity, name, id)
     }
 
     #[cfg(any(target_arch = "wasm32", test))]
@@ -361,9 +386,20 @@ pub mod draft_text {
         if let Some(storage) = storage() {
             let _ = storage.remove_item(key);
             let _ = storage.remove_item(&revision_key(key));
+            let _ = storage.remove_item(&format!("{key}@modified"));
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = key;
+    }
+
+    pub fn submitted_form_matches(submitted: Option<&str>, action: Option<&str>) -> bool {
+        submitted.is_some_and(|submitted| {
+            action.is_some_and(|action| action.split(['?', '#']).next() == Some(submitted))
+        })
+    }
+
+    pub fn should_restore(submitted: bool, initial: &str, text: &str) -> bool {
+        !submitted && initial == text
     }
 
     /// What a field does with a stored draft whose text is untouched.
@@ -444,7 +480,32 @@ pub mod draft_text {
     pub fn mark_on_submit(field: &web_sys::Element, key: String) -> Option<SubmitMark> {
         use wasm_bindgen::{closure::Closure, JsCast};
         let form = field.closest("form").ok()??;
-        let listener = Closure::<dyn FnMut()>::new(move || mark_sent(&key));
+        let submitted_form = form.clone();
+        let listener = Closure::<dyn FnMut()>::new(move || {
+            let field = submitted_form
+                .query_selector("input[name='draft_submission']")
+                .ok()
+                .flatten()
+                .or_else(|| {
+                    let field = web_sys::window()?
+                        .document()?
+                        .create_element("input")
+                        .ok()?;
+                    field.set_attribute("type", "hidden").ok()?;
+                    field.set_attribute("name", "draft_submission").ok()?;
+                    field
+                        .set_attribute(
+                            "value",
+                            &format!("{:.0}-{}", js_sys::Date::now(), js_sys::Math::random()),
+                        )
+                        .ok()?;
+                    submitted_form.append_child(&field).ok()?;
+                    Some(field)
+                });
+            if let Some(token) = field.and_then(|field| field.get_attribute("value")) {
+                mark_sent(&key, &token);
+            }
+        });
         form.add_event_listener_with_callback("submit", listener.as_ref().unchecked_ref())
             .ok()?;
         Some(SubmitMark { form, listener })
@@ -452,49 +513,94 @@ pub mod draft_text {
 
     /// The form was submitted, so its draft waits for the page that answers the submit.
     #[cfg(target_arch = "wasm32")]
-    fn mark_sent(key: &str) {
+    fn mark_sent(key: &str, token: &str) {
         if let Some(storage) = storage() {
-            let _ = storage.set_item(&format!("{SENT_PREFIX}{key}"), "");
+            let _ = storage.set_item(&format!("{SENT_PREFIX}{key}"), token);
         }
     }
 
-    /// Settles the drafts whose forms were submitted before this document loaded. Such a document is
-    /// the answer to the submit. A redirect means the server accepted the text, so the draft goes. A
-    /// page without a redirect is the form shown again for a refused submit, so the draft stays for
-    /// the user to fix. Called once, before any field restores its draft.
+    /// Only an explicit server acknowledgment of this submission can clear its drafts.
     pub fn settle_submitted() {
         #[cfg(target_arch = "wasm32")]
         if let Some(storage) = storage() {
-            let redirected = navigated_by_redirect();
+            let acknowledged = web_sys::window()
+                .and_then(|window| window.document())
+                .and_then(|document| {
+                    use wasm_bindgen::JsCast;
+                    document.dyn_into::<web_sys::HtmlDocument>().ok()
+                })
+                .and_then(|document| document.cookie().ok())
+                .and_then(|cookies| {
+                    cookies.split(';').find_map(|cookie| {
+                        cookie
+                            .trim()
+                            .strip_prefix("codeyard-draft-accepted=")
+                            .map(str::to_owned)
+                    })
+                });
             let marks: Vec<String> = (0..storage.length().unwrap_or(0))
                 .filter_map(|index| storage.key(index).ok().flatten())
                 .filter(|key| key.starts_with(SENT_PREFIX))
                 .collect();
             for mark in marks {
-                if let Some(key) = mark.strip_prefix(SENT_PREFIX).filter(|_| redirected) {
-                    clear(key);
+                let sent = storage.get_item(&mark).ok().flatten();
+                if acknowledged_submission(sent.as_deref(), acknowledged.as_deref()) {
+                    if let Some(key) = mark.strip_prefix(SENT_PREFIX) {
+                        clear(key);
+                    }
                 }
                 let _ = storage.remove_item(&mark);
             }
         }
     }
 
-    /// Whether this document came through a redirect, which an accepted submit answers with.
-    #[cfg(target_arch = "wasm32")]
-    fn navigated_by_redirect() -> bool {
-        let Some(performance) = web_sys::window().and_then(|window| window.performance()) else {
-            return false;
-        };
-        let entry = performance.get_entries_by_type("navigation").get(0);
-        js_sys::Reflect::get(&entry, &"redirectCount".into())
-            .ok()
-            .and_then(|count| count.as_f64())
-            .is_some_and(|count| count > 0.0)
+    #[cfg(any(target_arch = "wasm32", test))]
+    fn acknowledged_submission(sent: Option<&str>, accepted: Option<&str>) -> bool {
+        sent.is_some_and(|sent| !sent.is_empty() && Some(sent) == accepted)
     }
 
     #[cfg(all(test, not(target_arch = "wasm32")))]
     mod tests {
         use super::*;
+
+        #[test]
+        fn only_matching_success_acknowledgments_clear_drafts() {
+            assert!(!acknowledged_submission(Some("failed"), None));
+            assert!(!acknowledged_submission(Some("failed"), Some("another")));
+            assert!(acknowledged_submission(Some("saved"), Some("saved")));
+            assert!(!acknowledged_submission(None, None));
+        }
+
+        #[test]
+        fn submitted_values_and_pre_hydration_typing_win_over_storage() {
+            assert!(submitted_form_matches(
+                Some("/a/r/comments"),
+                Some("/a/r/comments?view=split")
+            ));
+            assert!(!submitted_form_matches(
+                Some("/a/r/comments"),
+                Some("/a/r/edit")
+            ));
+            assert!(!submitted_form_matches(None, Some("/a/r/comments")));
+            assert!(!should_restore(true, "body B", "body B"));
+            assert!(!should_restore(false, "default", "typed"));
+            assert!(should_restore(false, "default", "default"));
+        }
+
+        #[test]
+        fn templates_and_repositories_never_share_drafts() {
+            let key = |identity| {
+                key_for_action("/a/r/issues/new", identity, "form_0", Some("form-field-0"))
+            };
+            assert_ne!(
+                key(":repository_id=1:template=a"),
+                key(":repository_id=1:template=b")
+            );
+            assert_ne!(
+                key(":repository_id=1:template=a"),
+                key(":repository_id=2:template=a")
+            );
+        }
 
         #[test]
         fn get_and_refused_post_use_the_same_logical_form_key() {
@@ -520,6 +626,27 @@ pub mod draft_text {
                     Some("line-comment-body")
                 )
             );
+        }
+
+        #[test]
+        fn new_issue_drafts_belong_to_the_original_repository_and_template() {
+            let key =
+                |repository: &str, template: &str, revision: &str| {
+                    key_for_form("/alice/repo/issues/new", "body", Some("new-body"), |name| {
+                        match name {
+                            "repository_id" => Some(repository.to_owned()),
+                            "template" => Some(template.to_owned()),
+                            "template_revision" => Some(revision.to_owned()),
+                            _ => None,
+                        }
+                    })
+                };
+            let original = key("1", "bug.yml", "A");
+            assert_eq!(original, key("1", "bug.yml", "A"));
+            assert_ne!(original, key("2", "bug.yml", "A"));
+            assert_ne!(original, key("1", "feature.yml", "A"));
+            assert_ne!(original, key("1", "bug.yml", "B"));
+            assert_ne!(original, key("1", "", ""));
         }
 
         #[test]
@@ -672,6 +799,10 @@ fn typed_char(text: &str) -> Option<char> {
     }
 }
 
+fn type_ahead_allowed(modifiers: Modifiers) -> bool {
+    !modifiers.intersects(Modifiers::CONTROL | Modifiers::META | Modifiers::ALT)
+}
+
 /// Numbers the dropdowns on a page, so that each list and option has its own DOM ids.
 static SELECT_INSTANCES: AtomicUsize = AtomicUsize::new(0);
 
@@ -693,10 +824,23 @@ pub fn DraftSelect(
 ) -> Element {
     let mut value = use_signal(move || initial_value);
     let mut enhanced = use_signal(|| false);
-    use_effect(move || enhanced.set(true));
+    let enhance = options.len() <= 100;
+    use_effect(move || enhanced.set(enhance));
     let mut open = use_signal(|| false);
     let mut active = use_signal(|| 0usize);
     let instance = use_hook(|| SELECT_INSTANCES.fetch_add(1, Ordering::Relaxed));
+    if !enhance {
+        // The browser owns large lists. Arrow keys must not rebuild thousands of VDOM options.
+        let current = value.peek().clone();
+        return rsx! {
+            select { name, id, class, required, disabled, form, aria_label,
+                oninput: move |event| on_value.call(event.value()),
+                for option in &options {
+                    option { key: "{option.value}", value: option.value.clone(), selected: current == option.value, "{option.label}" }
+                }
+            }
+        };
+    }
     let native_id = format!("app-select-{instance}-native");
     let list_id = format!("app-select-{instance}-list");
     let button_id = id
@@ -747,6 +891,10 @@ pub fn DraftSelect(
                         }
                     },
                     onkeydown: move |event| {
+                        use dioxus::html::ModifiersInteraction;
+                        if !type_ahead_allowed(event.modifiers()) {
+                            return;
+                        }
                         let key = event.key();
                         if !open() {
                             // Enter and Space reach the click handler, which opens the list.
@@ -953,6 +1101,22 @@ mod tests {
     }
 
     #[test]
+    fn large_selects_stay_native_after_hydration() {
+        fn root() -> Element {
+            rsx! { DraftSelect { name: "branch", initial_value: "0", options: (0..10_000).map(|n| SelectOption::new(n.to_string(), n.to_string())).collect::<Vec<_>>() } }
+        }
+        let mut dom = VirtualDom::new(root);
+        dom.rebuild_in_place();
+        for _ in 0..3 {
+            dom.render_immediate_to_vec();
+        }
+        let html = dioxus_ssr::render(&dom);
+        assert!(html.contains("<select"));
+        assert!(!html.contains("combobox"));
+        assert_eq!(html.matches("<option").count(), 10_000);
+    }
+
+    #[test]
     fn arrow_keys_stop_at_the_ends_of_the_list() {
         assert_eq!(next_index(0, 3), 1);
         assert_eq!(next_index(2, 3), 2);
@@ -975,6 +1139,16 @@ mod tests {
         assert_eq!(type_ahead_index(&options, 0, 'B'), Some(1));
         assert_eq!(type_ahead_index(&options, 0, 'z'), None);
         assert_eq!(type_ahead_index(&[], 0, 'a'), None);
+    }
+
+    #[test]
+    fn browser_shortcuts_never_type_ahead() {
+        for modifier in [Modifiers::CONTROL, Modifiers::META, Modifiers::ALT] {
+            assert!(!type_ahead_allowed(modifier));
+            assert!(!type_ahead_allowed(modifier | Modifiers::SHIFT));
+        }
+        assert!(type_ahead_allowed(Modifiers::empty()));
+        assert!(type_ahead_allowed(Modifiers::SHIFT));
     }
 
     #[test]

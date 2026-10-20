@@ -18,9 +18,9 @@ async fn an_event_reaches_the_other_node_and_is_not_echoed_back() {
     );
     a.start().await;
     b.start().await;
-    let (mut on_a, mut on_b) = (a.subscribe(), b.subscribe());
     // An id no other test uses: every test database node hears the same channel.
     let user_id = 9_000_000_001;
+    let (mut on_a, mut on_b) = (a.subscribe(user_id), b.subscribe(user_id));
     let event = || NotificationEvent::ReadAll {
         user_id,
         unread_count: 3,
@@ -66,7 +66,7 @@ async fn sqlite_delivery_needs_no_remote_listener() {
     let pool = DbPool::from(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
     let broadcaster = NotificationBroadcaster::new(&pool);
     broadcaster.start().await;
-    let mut receiver = broadcaster.subscribe();
+    let mut receiver = broadcaster.subscribe(42);
     broadcaster
         .send(NotificationEvent::ReadAll {
             user_id: 42,

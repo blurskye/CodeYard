@@ -32,6 +32,35 @@ use serde::{Deserialize, Serialize};
 /// commits.
 pub(super) const RESULTS_PER_PAGE: usize = 30;
 
+static SEARCHES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+
+fn admit_search() -> Result<tokio::sync::SemaphorePermit<'static>, DiscoveryReadError> {
+    SEARCHES
+        .try_acquire()
+        .map_err(|_| DiscoveryReadError::Unavailable)
+}
+
+fn badge_count(
+    result: anyhow::Result<i64>,
+    tab: &str,
+    unavailable: &mut Vec<String>,
+) -> Result<usize, DiscoveryReadError> {
+    match result {
+        Ok(count) => Ok(count_as_usize(count)),
+        Err(error) => {
+            let timed_out = error
+                .downcast_ref::<sqlx::Error>()
+                .and_then(sqlx::Error::as_database_error)
+                .is_some_and(|error| matches!(error.code().as_deref(), Some("57014" | "9")));
+            if !timed_out {
+                return Err(DiscoveryReadError::Unavailable);
+            }
+            unavailable.push(tab.to_owned());
+            Ok(0)
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct SearchQuery {
     pub q: String,
@@ -70,7 +99,7 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, (StatusCode, Json<ApiError>)> {
     let q = query.q.trim();
-    if q.len() > 256 {
+    if !bounded_search_text(q) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -91,6 +120,15 @@ pub async fn search(
         }));
     }
 
+    let _permit = admit_search().map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError::new(
+                "unavailable",
+                "Search is busy. Try again shortly.",
+            )),
+        )
+    })?;
     let viewer = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);
@@ -256,9 +294,37 @@ struct SearchFilters {
     page: usize,
 }
 
+fn bounded_search_text(text: &str) -> bool {
+    if text.len() <= 256 {
+        return true;
+    }
+    // The phone picker appends one bounded repository scope to the user's search term.
+    if text.len() > 256 + 1 + 5 + 512 {
+        return false;
+    }
+    let mut scope_seen = false;
+    let terms = text
+        .split_whitespace()
+        .filter(|word| {
+            if !scope_seen
+                && word
+                    .strip_prefix("repo:")
+                    .is_some_and(|scope| scope.len() <= 512 && scope.contains('/'))
+            {
+                scope_seen = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    terms.len() <= 256
+}
+
 fn search_filters(query: &HashMap<String, String>) -> Result<SearchFilters, &'static str> {
     let text = query.get("q").cloned().unwrap_or_default();
-    if text.len() > 256 {
+    if !bounded_search_text(&text) {
         return Err("Search text must be at most 256 bytes.");
     }
     let tab = match query.get("type").map(String::as_str) {
@@ -376,6 +442,7 @@ async fn load_search(
     viewer: Option<i64>,
     filters: SearchFilters,
 ) -> Result<SearchModel, DiscoveryReadError> {
+    let _permit = admit_search()?;
     let SearchFilters {
         text,
         tab,
@@ -405,16 +472,17 @@ async fn load_search(
                     .await
                     .map_err(unavailable)?,
             ),
-            issues: count_as_usize(
-                db::repositories::discovery::count_issues(&state.pool, viewer, &query, cap)
-                    .await
-                    .map_err(unavailable)?,
-            ),
-            pulls: count_as_usize(
+            issues: badge_count(
+                db::repositories::discovery::count_issues(&state.pool, viewer, &query, cap).await,
+                "issues",
+                &mut model.counts_unavailable,
+            )?,
+            pulls: badge_count(
                 db::repositories::discovery::count_pull_requests(&state.pool, viewer, &query, cap)
-                    .await
-                    .map_err(unavailable)?,
-            ),
+                    .await,
+                "pulls",
+                &mut model.counts_unavailable,
+            )?,
             users: count_as_usize(
                 db::repositories::discovery::count_users(&state.pool, &query, cap)
                     .await
@@ -625,6 +693,21 @@ mod tests {
     }
 
     #[test]
+    fn repository_scope_has_a_separate_bounded_allowance() {
+        let scope = format!("repo:{}/r", "a".repeat(250));
+        assert!(bounded_search_text(&format!("x {scope}")));
+        assert!(bounded_search_text(&format!("{} {scope}", "x".repeat(256))));
+        assert!(!bounded_search_text(&format!(
+            "{} {scope}",
+            "x".repeat(257)
+        )));
+        assert!(!bounded_search_text(&format!(
+            "x repo:{}/r",
+            "a".repeat(513)
+        )));
+    }
+
+    #[test]
     fn search_pages_start_at_one_and_refuse_zero_or_non_numbers() {
         assert_eq!(
             search_filters(&query(&[("type", "code"), ("page", "3")]))
@@ -648,6 +731,14 @@ mod tests {
         assert_eq!(item_sort("oldest"), ItemSort::Oldest);
         assert_eq!(item_sort("newest"), ItemSort::Newest);
         assert_eq!(item_sort("stars"), ItemSort::Updated);
+    }
+
+    #[test]
+    fn search_admission_fails_without_waiting() {
+        let permits = SEARCHES.try_acquire_many(4).unwrap();
+        assert!(admit_search().is_err());
+        drop(permits);
+        assert!(admit_search().is_ok());
     }
 
     #[test]

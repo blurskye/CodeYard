@@ -6,7 +6,7 @@ use crate::backend::db;
 use crate::backend::db::issues::IssueRelation;
 use crate::backend::db::pull_requests::records::PullRequestRelation;
 use crate::webui::app::Page;
-use crate::webui::pages::dashboard::{RepositoryChoice, WorkItem, WorkList};
+use crate::webui::pages::dashboard::{RepositoryChoice, RepositoryChoices, WorkItem, WorkList};
 use crate::webui::pages::repos::actions::logs::relative_time;
 use crate::webui::pages::repos::issues::{Kind, Label};
 use axum::{
@@ -46,16 +46,45 @@ async fn new_issue_page(
             "Repositories are temporarily unavailable. Try again shortly.",
         )
     };
-    let own =
-        match db::repositories::records::list_user_repositories(&ctx.state.pool, user.id).await {
-            Ok(repos) => repos,
-            Err(_) => return unavailable(),
-        };
-    let shared =
-        match db::repositories::records::list_shared_repositories(&ctx.state.pool, user.id).await {
-            Ok(rows) => rows,
-            Err(_) => return unavailable(),
-        };
+    let page = ctx
+        .query
+        .get("page")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(1)
+        .clamp(1, 10_000);
+    let query = ctx.query.get("q").map(String::as_str).unwrap_or("");
+    if query.len() > 256 {
+        return ctx.error(
+            StatusCode::BAD_REQUEST,
+            "Search text must be at most 256 bytes.",
+        );
+    }
+    let offset = i64::from(page - 1) * 30;
+    let (own, own_count) = match db::repositories::records::list_user_repository_page(
+        &ctx.state.pool,
+        user.id,
+        true,
+        query,
+        30,
+        offset,
+    )
+    .await
+    {
+        Ok(repos) => repos,
+        Err(_) => return unavailable(),
+    };
+    let (shared, shared_count) = match db::repositories::records::list_shared_repository_page(
+        &ctx.state.pool,
+        user.id,
+        query,
+        30,
+        offset,
+    )
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return unavailable(),
+    };
     let repos: Vec<_> = own
         .into_iter()
         .chain(shared.into_iter().map(|row| row.repository))
@@ -77,7 +106,15 @@ async fn new_issue_page(
         })
         .collect();
     choices.sort_by(|a, b| (&a.owner, &a.name).cmp(&(&b.owner, &b.name)));
-    ctx.page_model("New issue", Page::IssueRepositories(choices))
+    ctx.page_model(
+        "New issue",
+        Page::IssueRepositories(RepositoryChoices {
+            repositories: choices,
+            page,
+            query: query.to_owned(),
+            has_older: offset + 30 < own_count || offset + 30 < shared_count,
+        }),
+    )
 }
 
 async fn issues_page(

@@ -111,6 +111,12 @@ pub(crate) async fn check_repo_write_access(
     {
         return Ok(user);
     }
+    if !access::can_read(pool, Some(&user), &repository)
+        .await
+        .map_err(|_| access_error(AccessError::Unavailable))?
+    {
+        return Err(access_error(AccessError::NotFound));
+    }
     if repository.is_archived || user.must_change_password {
         return Err(access_error(AccessError::WriteDenied));
     }

@@ -9,7 +9,7 @@ use crate::backend::{
     db::repositories::records::RepositorySort,
     git::CommitFilter,
     repositories::access::{self, AccessError},
-    repositories::store::{repo_store, ErrorKind, RepoError, RepoStore},
+    repositories::store::{repo_store, RepoError, RepoStore},
 };
 use crate::webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures::{stream, StreamExt};
@@ -112,6 +112,9 @@ async fn page_hits(
     limit: usize,
     deadline: std::time::Instant,
 ) -> Result<Vec<Hit>, RepoError> {
+    if store.refs().await?.is_empty() {
+        return Ok(Vec::new());
+    }
     if query.code {
         let matches = store
             .search_code(&repo.default_branch, query.needle, offset, limit)
@@ -230,7 +233,6 @@ async fn repository_page(
     .await;
     let mut hits = match outcome {
         Ok(Ok(hits)) => hits,
-        Ok(Err(error)) if error.kind == ErrorKind::NotFound => Vec::new(),
         Ok(Err(error)) => {
             // The message can name paths, so the log keeps only the kind of failure.
             tracing::warn!(repository = repo.id, kind = ?error.kind, "Search could not read a repository");
@@ -242,6 +244,11 @@ async fn repository_page(
             Vec::new()
         }
     };
+    match access::check_read(&state.pool, repo.id, viewer).await {
+        Ok(_) => {}
+        Err(AccessError::NotFound) => return Ok(ContentPage::default()),
+        Err(_) => return Err(DiscoveryReadError::Unavailable),
+    }
     content.has_older = hits.len() > RESULTS_PER_PAGE;
     hits.truncate(RESULTS_PER_PAGE);
     for hit in hits {
@@ -264,6 +271,7 @@ async fn walk(
     let end = skip.saturating_add(RESULTS_PER_PAGE);
     let mut position = 0usize;
     let mut kept = Vec::new();
+    let mut truncated = Vec::new();
     let mut searched = 0usize;
     let mut admitted = 0usize;
     let mut bytes = 0i64;
@@ -331,8 +339,6 @@ async fn walk(
             searched += 1;
             let mut hits = match outcome {
                 Ok(hits) => hits,
-                // No default branch yet: an empty repository has nothing to find.
-                Err(error) if error.kind == ErrorKind::NotFound => Vec::new(),
                 Err(error) => {
                     // The message can name paths, so the log keeps only the kind of failure.
                     tracing::warn!(repository = repo_id, kind = ?error.kind, "Search could not read a repository");
@@ -343,7 +349,7 @@ async fn walk(
             let more = hits.len() > HITS_PER_REPOSITORY;
             hits.truncate(HITS_PER_REPOSITORY);
             if more && position < end && position + hits.len() > skip {
-                content.truncated.push(full_name);
+                truncated.push((repo_id, full_name));
             }
             for hit in hits {
                 if position >= end {
@@ -351,7 +357,7 @@ async fn walk(
                     break 'walk;
                 }
                 if position >= skip {
-                    kept.push(hit);
+                    kept.push((repo_id, hit));
                 }
                 position += 1;
             }
@@ -375,15 +381,109 @@ async fn walk(
             total: usize::try_from(total).unwrap_or(usize::MAX),
         });
     }
-    for hit in kept {
-        keep(&mut content, hit);
+    let ids = kept
+        .iter()
+        .map(|(id, _)| *id)
+        .collect::<std::collections::HashSet<_>>();
+    let readable = readable_repositories(state, viewer, ids).await?;
+    content.truncated = truncated
+        .into_iter()
+        .filter(|(id, _)| readable.contains(id))
+        .map(|(_, name)| name)
+        .collect();
+    for (id, hit) in kept {
+        if readable.contains(&id) {
+            keep(&mut content, hit);
+        }
     }
     Ok(content)
+}
+
+async fn readable_repositories(
+    state: &AppState,
+    viewer: Option<i64>,
+    ids: std::collections::HashSet<i64>,
+) -> Result<std::collections::HashSet<i64>, DiscoveryReadError> {
+    let mut readable = std::collections::HashSet::new();
+    for id in ids {
+        match access::check_read(&state.pool, id, viewer).await {
+            Ok(_) => {
+                readable.insert(id);
+            }
+            Err(AccessError::NotFound) => {}
+            Err(_) => return Err(DiscoveryReadError::Unavailable),
+        }
+    }
+    Ok(readable)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn search_candidates_are_reauthorized_after_visibility_changes() {
+        let pool = db::init_db("sqlite::memory:").await.unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let user = db::users::accounts::create_user(&pool, "alice", None)
+            .await
+            .unwrap();
+        let candidate = crate::backend::repositories::lifecycle::provision(
+            (&pool, None),
+            root.path(),
+            db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+            "proj",
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let state = AppState::new(
+            pool.clone(),
+            root.path().to_owned(),
+            std::sync::Arc::new(
+                crate::backend::storage::ObjectStore::open(root.path(), None)
+                    .await
+                    .unwrap(),
+            ),
+            None,
+            crate::backend::ci::CiConfig::default(),
+            None,
+        );
+        let ids = std::collections::HashSet::from([candidate.id]);
+        assert!(readable_repositories(&state, None, ids.clone())
+            .await
+            .unwrap()
+            .contains(&candidate.id));
+        db::repositories::records::update_repository(
+            &pool,
+            user.id,
+            candidate.id,
+            None,
+            true,
+            db::repositories::records::MergeMethodUpdate {
+                merge: None,
+                squash: None,
+                rebase: None,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            !candidate.is_private,
+            "the search candidate still has its old visibility"
+        );
+        assert!(readable_repositories(&state, None, ids.clone())
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(readable_repositories(&state, Some(user.id), ids)
+            .await
+            .unwrap()
+            .contains(&candidate.id));
+    }
 
     #[test]
     fn scope_words_are_removed_from_the_text_and_name_the_scope() {

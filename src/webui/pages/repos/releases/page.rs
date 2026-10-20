@@ -37,6 +37,8 @@ pub struct AssetItem {
 /// What the release form holds: what the writer typed, or the release being edited.
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct ReleaseDraft {
+    #[serde(default)]
+    pub revision: String,
     pub tag: String,
     pub target: String,
     pub title: String,
@@ -361,6 +363,7 @@ fn form(
             form { method: "post", action: action.clone(), class: "releases-form", id: "release-form",
                 {csrf(&repo.csrf_token)}
                 input { r#type: "hidden", name: "repository_id", value: repo.id.to_string() }
+                if editing.is_some() { input { r#type: "hidden", name: "revision", value: draft.revision.clone() } }
                 div { class: "collaboration-form-fields",
                     if editing.is_some() {
                         p { class: "releases-tag-fixed", {icon("tags")} " Tag " code { "{draft.tag}" } }

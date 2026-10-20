@@ -607,10 +607,11 @@ fn submitted_rule(
         required_approving_reviews: field(form, "required_approving_reviews"),
         dismiss_stale_reviews: checkbox(form, "dismiss_stale_reviews"),
         require_status_checks: checkbox(form, "require_status_checks"),
-        required_status_checks: view::settings::split_status_checks(&field(
-            form,
-            "required_status_checks",
-        )),
+        required_status_checks: if checkbox(form, "require_status_checks") {
+            view::settings::split_status_checks(&field(form, "required_status_checks"))
+        } else {
+            Vec::new()
+        },
         require_up_to_date_branch: checkbox(form, "require_up_to_date_branch"),
         require_linear_history: checkbox(form, "require_linear_history"),
         require_conversation_resolution: checkbox(form, "require_conversation_resolution"),
@@ -1048,10 +1049,16 @@ pub(super) async fn post_form(
     {
         return ctx.error(StatusCode::NOT_FOUND, "Repository action not found.");
     }
-    let database_only = matches!(
-        action.as_str(),
-        "star" | "unstar" | "watch" | "unwatch" | "watch-level"
-    );
+    let needs_git = [
+        "create-branch",
+        "delete-branch",
+        "default-branch",
+        "create-tag",
+        "delete-tag",
+        "delete-file",
+        "fork",
+    ];
+    let database_only = action != "write-file" && !needs_git.contains(&action.as_str());
     let loaded = match if database_only {
         super::chrome::load_database(&ctx, owner, name).await
     } else {
@@ -1076,9 +1083,13 @@ pub(super) async fn post_form(
         "delete",
         "collaborator",
         "remove-collaborator",
+        "label",
+        "edit-label",
+        "delete-label",
         "protection-save",
         "protection-delete",
         "delete-file",
+        "label",
         "archive",
         "unarchive",
         "default-branch",
@@ -1105,17 +1116,7 @@ pub(super) async fn post_form(
     if action == "write-file" && field(&form, "repository_id") != repository_id {
         return replaced_repository_editor(ctx, &loaded, &form).await;
     }
-    // Actions that write Git data or remove its storage wait for Git, as the page loads do.
-    let needs_git = [
-        "create-branch",
-        "delete-branch",
-        "default-branch",
-        "create-tag",
-        "delete-tag",
-        "delete-file",
-        "fork",
-        "delete",
-    ];
+    // Only actions that consume Git metadata need readable storage.
     if loaded.git_unavailable && needs_git.contains(&action.as_str()) {
         return git_unavailable_response(&ctx);
     }
@@ -1247,7 +1248,7 @@ pub(super) async fn post_form(
         Err((status, Json(error))) => {
             let message = if matches!(
                 error.error.as_str(),
-                "followup_failed" | "storage_unavailable" | "validation_error"
+                "followup_failed" | "storage_unavailable" | "validation_error" | "duplicate_label"
             ) {
                 error.message.as_str()
             } else {
@@ -1291,14 +1292,8 @@ fn label_id(form: &HashMap<String, String>) -> ApiResult<i64> {
 }
 
 /// A label write that the database refused or could not finish.
-fn label_mutation_error(_error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        Json(ApiError::new(
-            "unavailable",
-            "Label mutation could not be confirmed",
-        )),
-    )
+fn label_mutation_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
+    super::labels::label_write_error(error)
 }
 
 async fn mutate(
@@ -1477,7 +1472,14 @@ async fn mutate(
                 actor.id,
                 repository.id,
                 Some(&field(form, "description")),
-                private,
+                db::repositories::records::VisibilityUpdate {
+                    is_private: private,
+                    expected: if confirmation(form).is_ok() {
+                        None
+                    } else {
+                        Some(repository.is_private)
+                    },
+                },
                 db::repositories::records::MergeMethodUpdate {
                     merge: None,
                     squash: None,
@@ -1624,7 +1626,9 @@ async fn mutate(
                 id,
                 Some(&name),
                 Some(&color),
-                Some(&description),
+                (serde_json::to_string(&description).unwrap_or_default()
+                    != field(form, "original_description"))
+                .then_some(description.as_str()),
             )
             .await
             .map_err(label_mutation_error)?;
@@ -1657,7 +1661,17 @@ pub(super) async fn page(
             Ok(ctx) => ctx,
             Err(response) => return response,
         };
-    let loaded = match load_metadata(&ctx, &params["owner"], &params["repo"]).await {
+    let tab = view::settings::settings_tab(
+        ctx.query.get("tab").map_or("", String::as_str),
+        ctx.user
+            .as_ref()
+            .is_some_and(|user| user.username == params["owner"]),
+    );
+    let loaded = match if tab == "general" || tab.is_empty() {
+        load_metadata(&ctx, &params["owner"], &params["repo"]).await
+    } else {
+        super::chrome::load_database(&ctx, &params["owner"], &params["repo"]).await
+    } {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };

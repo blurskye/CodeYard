@@ -81,6 +81,7 @@ async fn contract(pg: bool) {
         .form_reply(
             "/alice/proj/milestones/new",
             &[
+                ("repository_id", &proj.id.to_string()),
                 ("title", "v1"),
                 ("description", "First"),
                 ("due_date", "2026-10-20"),
@@ -93,7 +94,10 @@ async fn contract(pg: bool) {
         Some("/alice/proj/milestones/1")
     );
     let (status, page) = alice
-        .form("/alice/proj/milestones/new", &[("title", "V1")])
+        .form(
+            "/alice/proj/milestones/new",
+            &[("repository_id", &proj.id.to_string()), ("title", "V1")],
+        )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{page}");
     assert!(page.contains("A milestone with this title already exists."));
@@ -104,7 +108,11 @@ async fn contract(pg: bool) {
     let (status, _) = alice
         .form(
             "/alice/proj/milestones/new",
-            &[("title", "v8"), ("due_date", "2026-02-30")],
+            &[
+                ("repository_id", &proj.id.to_string()),
+                ("title", "v8"),
+                ("due_date", "2026-02-30"),
+            ],
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -500,7 +508,10 @@ async fn new_issue_picks(pg: bool) {
         .await;
     let label_id = label["id"].as_i64().unwrap().to_string();
     let milestone = alice
-        .form_reply("/alice/proj/milestones/new", &[("title", "v1")])
+        .form_reply(
+            "/alice/proj/milestones/new",
+            &[("repository_id", &proj.id.to_string()), ("title", "v1")],
+        )
         .await;
     assert_eq!(milestone.status, StatusCode::SEE_OTHER);
 

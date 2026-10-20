@@ -125,7 +125,7 @@ with sync_playwright() as playwright:
         if page.locator(".actions-run-heading .ci-status-running").count():
             screenshot = "running.png"
         else:
-            expect(page.locator(".actions-run-heading .ci-status-success")).to_be_visible(timeout=30_000)
+            expect(page.locator(".actions-run-heading .actions-status-chip.ci-status-success")).to_be_visible(timeout=30_000)
             screenshot = "completed-early.png"
         page.screenshot(path=str(args.output_dir / screenshot), full_page=True)
 
@@ -165,7 +165,7 @@ with sync_playwright() as playwright:
 
         # A fresh document must retain the terminal state and the real output.
         page.goto(deep_url)
-        expect(page.locator(".actions-run-heading .ci-status-success")).to_be_visible(timeout=30_000)
+        expect(page.locator(".actions-run-heading .actions-status-chip.ci-status-success")).to_be_visible(timeout=30_000)
         expect(page.locator("#job-logs")).to_contain_text("LIVE_CI_PASSED")
         finish = page.locator("#job-logs summary").filter(has_text="Finish")
         expect(finish).to_be_visible()

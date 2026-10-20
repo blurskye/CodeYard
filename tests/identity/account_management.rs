@@ -170,7 +170,7 @@ async fn administrator_roles(pg: bool) {
     .await
     .is_err());
     assert_eq!(
-        db::users::signup_requests::list_signup_requests(pool, "pending")
+        db::users::signup_requests::list_signup_requests(pool, "pending", 100, 0, 0)
             .await
             .unwrap()
             .len(),
@@ -262,6 +262,11 @@ async fn email_changes(pg: bool) {
         Err(EmailChangeError::Taken)
     ));
 
+    f.execute(
+        "UPDATE users SET email_verified=TRUE WHERE id=$1",
+        &[user.id],
+    )
+    .await;
     let saved = identity::accounts::change_email(
         pool,
         Some("email-session"),
@@ -271,6 +276,10 @@ async fn email_changes(pg: bool) {
     .await
     .unwrap();
     assert_eq!(saved.email.as_deref(), Some("new@example.test"));
+    assert!(
+        !saved.email_verified,
+        "verification must not survive an address change"
+    );
     // A request that verified a snapshot must retain its original credentials and session.
     db::users::sessions::delete_session(pool, "email-session")
         .await
@@ -504,9 +513,13 @@ async fn invitations(pg: bool) {
         OrganizationOutcome::Applied(rows) => assert_eq!(rows.len(), 1),
         _ => panic!("the owner lists invitations"),
     }
-    let received = db::organizations::list_received_organization_invitations(pool, invitee)
-        .await
-        .unwrap();
+    let received = db::organizations::list_received_organization_invitations(
+        pool,
+        invitee,
+        OrganizationPage::new(0, 100).unwrap(),
+    )
+    .await
+    .unwrap();
     assert_eq!(received.len(), 1);
     assert_eq!(received[0].org_name, "invite-org");
 

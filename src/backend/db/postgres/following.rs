@@ -3,25 +3,44 @@ use anyhow::Result;
 use sqlx::PgPool;
 
 pub async fn follow_user(pool: &PgPool, follower_id: i64, following_id: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    require_active(&mut tx, follower_id).await?;
     let result = sqlx::query(
         "INSERT INTO follows (follower_id, following_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
     )
     .bind(follower_id)
     .bind(following_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
-
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
 }
 
 pub async fn unfollow_user(pool: &PgPool, follower_id: i64, following_id: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    require_active(&mut tx, follower_id).await?;
     let result = sqlx::query("DELETE FROM follows WHERE follower_id = $1 AND following_id = $2")
         .bind(follower_id)
         .bind(following_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
-
+    tx.commit().await?;
     Ok(result.rows_affected() > 0)
+}
+
+async fn require_active(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: i64) -> Result<()> {
+    super::users::transitions::lock_membership_shared(tx).await?;
+    let active: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE",
+    )
+    .bind(actor)
+    .fetch_optional(&mut **tx)
+    .await?;
+    anyhow::ensure!(
+        active.is_some(),
+        crate::backend::db::following::FollowRestricted
+    );
+    Ok(())
 }
 
 pub async fn is_user_following(pool: &PgPool, follower_id: i64, following_id: i64) -> Result<bool> {

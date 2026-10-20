@@ -148,6 +148,14 @@ pub async fn count_repositories(
     Ok(statement.bind(cap).fetch_one(pool).await?)
 }
 
+async fn search_connection(pool: &PgPool) -> Result<sqlx::Transaction<'_, sqlx::Postgres>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout='1s'")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
 pub async fn search_issues(
     pool: &PgPool,
     viewer: Option<i64>,
@@ -156,6 +164,8 @@ pub async fn search_issues(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Issue>> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     let sql = format!(
@@ -182,6 +192,8 @@ pub async fn count_issues(
     query: &str,
     cap: i64,
 ) -> Result<i64> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let sql = format!(
         "SELECT COUNT(*) FROM (SELECT 1 FROM issues i \
          INNER JOIN repositories r ON i.repo_id = r.id \
@@ -205,6 +217,8 @@ pub async fn search_pull_requests(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<PullRequest>> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     let sql = format!(
@@ -231,6 +245,8 @@ pub async fn count_pull_requests(
     query: &str,
     cap: i64,
 ) -> Result<i64> {
+    let mut connection = search_connection(pool).await?;
+    let pool = &mut *connection;
     let sql = format!(
         "SELECT COUNT(*) FROM (SELECT 1 FROM pull_requests p \
          INNER JOIN repositories r ON p.repo_id = r.id \

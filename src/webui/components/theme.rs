@@ -26,6 +26,9 @@ pub fn ThemeForm(
     #[props(default)] menu: bool,
 ) -> Element {
     let notice = use_signal(String::new);
+    let local_saving = use_signal(|| false);
+    let saving = try_consume_context::<crate::webui::app::ThemeSaving>()
+        .map_or(local_saving, |shared| shared.0);
     let next = theme.next();
     #[cfg(target_arch = "wasm32")]
     let (form_token, form_target) = (csrf_token.clone(), return_to.clone());
@@ -44,18 +47,47 @@ pub fn ThemeForm(
         form { action: "/_forms/theme", method: "post", class: form_class,
             onsubmit: move |event| {
                 event.prevent_default();
+                let Some(guard) = ThemeSaveGuard::acquire(saving) else { return; };
+                #[cfg(not(target_arch = "wasm32"))]
+                let _ = guard;
                 #[cfg(target_arch = "wasm32")]
-                spawn(save_theme(form_token.clone(), form_target.clone(), next, notice));
+                {
+                    let (token, target) = (form_token.clone(), form_target.clone());
+                    spawn(async move {
+                        let _guard = guard;
+                        save_theme(token, target, next, notice).await;
+                    });
+                }
             },
             input { r#type: "hidden", name: "csrf_token", value: csrf_token }
             input { r#type: "hidden", name: "return_to", value: return_to }
             input { r#type: "hidden", name: "theme", value: next.as_str() }
-            button { r#type: "submit", class: button_class, "aria-label": hint,
+            button { r#type: "submit", disabled: saving(), class: button_class, "aria-label": hint,
                 {shell_icon(icon)}
                 if menu { span { "Theme: {current_label}" } }
             }
             span { class: "site-sr-only", role: "status", "Theme: {current_label}" }
             span { class: "site-theme-error", role: "alert", "{notice}" }
+        }
+    }
+}
+
+struct ThemeSaveGuard(Signal<bool>);
+
+impl ThemeSaveGuard {
+    fn acquire(mut saving: Signal<bool>) -> Option<Self> {
+        if *saving.peek() {
+            return None;
+        }
+        saving.set(true);
+        Some(Self(saving))
+    }
+}
+
+impl Drop for ThemeSaveGuard {
+    fn drop(&mut self) {
+        if let Ok(mut saving) = self.0.try_write() {
+            *saving = false;
         }
     }
 }
@@ -132,6 +164,17 @@ mod tests {
         dioxus_ssr::render_element(rsx! {
             ThemeForm { csrf_token: "csrf-1".to_string(), return_to: "/alice".to_string(), theme }
         })
+    }
+
+    #[test]
+    fn header_and_menu_share_one_save_until_completion_or_cancellation() {
+        crate::webui::tests::in_scope(|| {
+            let saving = Signal::new(false);
+            let first = ThemeSaveGuard::acquire(saving).unwrap();
+            assert!(ThemeSaveGuard::acquire(saving).is_none());
+            drop(first);
+            assert!(ThemeSaveGuard::acquire(saving).is_some());
+        });
     }
 
     #[test]

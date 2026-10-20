@@ -1119,10 +1119,28 @@ async fn membership_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
+    db::users::sessions::create_session(
+        pool,
+        "node-plain-session",
+        plain.id,
+        None,
+        None,
+        Utc::now() + Age::hours(1),
+    )
+    .await
+    .unwrap();
     assert_eq!(
-        db::cluster::set_node_status(pool, Authority::Administrator(plain.id), "b", "active")
-            .await
-            .unwrap(),
+        db::cluster::set_node_status(
+            pool,
+            Authority::Administrator {
+                user_id: plain.id,
+                session: "node-plain-session"
+            },
+            "b",
+            "active"
+        )
+        .await
+        .unwrap(),
         NodeStatusChange::Denied
     );
     assert!(!db::cluster::is_active_node(pool, &key_b).await.unwrap());
@@ -1152,20 +1170,57 @@ async fn membership_contract(pool: &DbPool) {
             .unwrap(),
         db::users::transitions::BanChange::Updated(_)
     ));
+    db::users::sessions::create_session(
+        pool,
+        "node-banned-session",
+        banned.id,
+        None,
+        None,
+        Utc::now() + Age::hours(1),
+    )
+    .await
+    .unwrap();
     assert_eq!(
-        db::cluster::set_node_status(pool, Authority::Administrator(banned.id), "b", "active")
-            .await
-            .unwrap(),
+        db::cluster::set_node_status(
+            pool,
+            Authority::Administrator {
+                user_id: banned.id,
+                session: "node-banned-session"
+            },
+            "b",
+            "active"
+        )
+        .await
+        .unwrap(),
         NodeStatusChange::Denied
     );
     assert!(!db::cluster::is_active_node(pool, &key_b).await.unwrap());
 
+    let admin_session = uuid::Uuid::new_v4().simple().to_string();
+    db::users::sessions::create_session(
+        pool,
+        &admin_session,
+        admin.id,
+        None,
+        None,
+        Utc::now() + Age::hours(1),
+    )
+    .await
+    .unwrap();
     let NodeStatusChange::Changed {
         before,
         node: approved,
-    } = db::cluster::set_node_status(pool, Authority::Administrator(admin.id), "b", "active")
-        .await
-        .unwrap()
+    } = db::cluster::set_node_status(
+        pool,
+        Authority::Administrator {
+            user_id: admin.id,
+            session: &admin_session,
+        },
+        "b",
+        "active",
+    )
+    .await
+    .unwrap()
     else {
         panic!("an active administrator may approve");
     };

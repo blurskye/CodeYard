@@ -32,6 +32,7 @@ impl From<FollowStatus> for UserFollowResponse {
 
 pub(crate) fn follow_failure(error: FollowError) -> (StatusCode, Json<ApiError>) {
     let (status, code) = match error {
+        FollowError::Restricted => (StatusCode::FORBIDDEN, "forbidden"),
         FollowError::Missing => (StatusCode::NOT_FOUND, "not_found"),
         FollowError::SelfFollow | FollowError::SelfUnfollow => {
             (StatusCode::BAD_REQUEST, "validation_error")

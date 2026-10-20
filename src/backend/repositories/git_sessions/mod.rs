@@ -55,6 +55,9 @@ impl GitTasks {
             return false;
         };
         while tasks.try_join_next().is_some() {}
+        if tasks.len() >= 2 * crate::backend::git::repository::process::session_capacity() {
+            return false;
+        }
         tasks.spawn(task);
         true
     }
@@ -70,6 +73,21 @@ impl GitTasks {
         if let Some(mut tasks) = tasks {
             while tasks.join_next().await.is_some() {}
         }
+    }
+}
+
+#[cfg(test)]
+mod task_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn detached_git_tasks_have_a_lifetime_bound() {
+        let tasks = GitTasks::default();
+        for _ in 0..2 * crate::backend::git::repository::process::session_capacity() {
+            assert!(tasks.spawn(std::future::pending()));
+        }
+        assert!(!tasks.spawn(async {}));
+        // Dropping the owner aborts the pending work.
     }
 }
 

@@ -101,7 +101,7 @@ pub struct Page {
     pub viewer_id: i64,
     /// Shows the Administration section of the account settings navigation.
     pub manage_access: bool,
-    /// The section the URL names: `overview`, `members`, `teams` or `webhooks`. The others render hidden.
+    /// The section the URL names: `overview`, `members`, `teams` or `webhooks`.
     pub tab: String,
     /// The webhooks section, built only on the webhooks tab of an owner. Boxed: most pages lack it.
     pub webhooks: Option<Box<WebhookPanel>>,
@@ -136,15 +136,27 @@ pub struct Page {
     /// Organizations this viewer has been invited to join. The organizations list shows them.
     pub invitations: Vec<Invitation>,
     /// Invitations this organization has sent and nobody has answered. Owners and admins see them.
-    pub pending_invitations: Vec<Member>,
+    pub pending_invitations: Vec<PendingInvitation>,
+    pub invitations_next: Option<String>,
+    pub pending_invitations_next: Option<String>,
+    pub ownerless_next: Option<String>,
 }
 
 /// An invitation the signed-in viewer can accept or decline.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Invitation {
+    pub id: i64,
     pub org_id: i64,
     pub name: String,
     pub display_name: Option<String>,
+    pub role: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PendingInvitation {
+    pub id: i64,
+    pub user_id: i64,
+    pub username: String,
     pub role: String,
 }
 
@@ -177,9 +189,9 @@ pub fn render(page: Page) -> Element {
                     }
                     div { class: "identity-settings-content",
                         {governance::suspension(org)}
-                        {overview(&page, org, &target)}
-                        {membership::panel(&page, &target)}
-                        {teams::panel(&page, &target)}
+                        if page.tab == "overview" { {overview(&page, org, &target)} }
+                        if page.tab == "members" { {membership::panel(&page, &target)} }
+                        if page.tab == "teams" { {teams::panel(&page, &target)} }
                         if page.tab == "webhooks" {
                             section { id: "organization-webhooks", class: "org-section", aria_labelledby: "webhooks-title",
                                 if let Some(panel) = &page.webhooks { WebhookSection { panel: panel.as_ref().clone() } }
@@ -340,6 +352,9 @@ fn index(page: &Page) -> Element {
                     }
                 }
             }
+        }
+        if let Some(href) = &page.invitations_next {
+            NavLink { href: href.clone(), class: "org-pagination", "Next invitations" }
         }
         header { class: "org-index-header",
             div {

@@ -55,12 +55,18 @@ impl Database {
     pub async fn organization_repository(&self, org: i64, name: &str, private: bool) -> i64 {
         // Fixture-only direct organization row: not personal-to-org conversion or
         // a production storage reservation/creation implementation.
-        let sql = "INSERT INTO repositories(owner_kind,owner_org_id,name,is_private,disk_path) VALUES('org',$1,$2,$3,'/fixture/not-executed.git') RETURNING id";
+        let root = match self {
+            Self::Sqlite(db) => db.installation_directory(),
+            Self::Postgres(db) => db.temp.path(),
+        };
+        let path = root.join(format!("{}.git", uuid::Uuid::new_v4()));
+        let sql = "INSERT INTO repositories(owner_kind,owner_org_id,name,is_private,disk_path) VALUES('org',$1,$2,$3,$4) RETURNING id";
         match self {
             Self::Sqlite(db) => sqlx::query_scalar(sql)
                 .bind(org)
                 .bind(name)
                 .bind(private)
+                .bind(path.to_str().unwrap())
                 .fetch_one(&db.raw)
                 .await
                 .unwrap(),
@@ -68,6 +74,7 @@ impl Database {
                 .bind(org)
                 .bind(name)
                 .bind(private)
+                .bind(path.to_str().unwrap())
                 .fetch_one(&db.raw)
                 .await
                 .unwrap(),

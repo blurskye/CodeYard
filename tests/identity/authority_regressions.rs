@@ -293,9 +293,11 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
                 .await
                 .is_err());
             } else {
-                assert!(!db::node_config::set_ai_crawlers(&pool, actor, "allow")
-                    .await
-                    .unwrap());
+                assert!(
+                    !db::node_config::set_ai_crawlers(&pool, actor, &original, "allow")
+                        .await
+                        .unwrap()
+                );
             }
         });
         blocked(raw, blocker).await;

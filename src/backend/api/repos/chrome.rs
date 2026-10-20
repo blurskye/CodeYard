@@ -234,15 +234,6 @@ pub(crate) async fn load_database(
     })
 }
 
-/// Shared repository chrome for the collaboration/actions page owners.
-pub async fn load_chrome(
-    ctx: &PageContext,
-    owner: &str,
-    name: &str,
-) -> Result<RepoChrome, Response> {
-    Ok(load_metadata(ctx, owner, name).await?.chrome)
-}
-
 pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
     let mut names: Vec<_> = loaded
         .refs
@@ -261,6 +252,10 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
             .filter(|name| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
             .cloned(),
     );
+    if loaded.refs.is_empty() {
+        names.push(loaded.default_branch.clone());
+        names.push(format!("refs/heads/{}", loaded.default_branch));
+    }
     names.sort();
     names.dedup();
     names
@@ -269,7 +264,19 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
 /// Whether `reference` is a branch. Only a branch takes a commit from the file pages, so only a
 /// branch offers edit and delete there.
 pub(crate) fn is_branch(loaded: &Loaded, reference: &str) -> bool {
-    loaded.refs.contains_key(&format!("refs/heads/{reference}"))
+    if reference.len() == 40 && hex_revision(reference) {
+        return false;
+    }
+    if reference.starts_with("refs/") {
+        reference.starts_with("refs/heads/") && loaded.refs.contains_key(reference)
+    } else {
+        loaded.refs.contains_key(&format!("refs/heads/{reference}"))
+    }
+}
+
+/// Mutation APIs take branch names, while Git reads keep fully qualified refs.
+pub(crate) fn branch_name(reference: &str) -> &str {
+    reference.strip_prefix("refs/heads/").unwrap_or(reference)
 }
 
 /// The names under one ref prefix, `refs/heads/` or `refs/tags/`, sorted.
@@ -291,11 +298,17 @@ pub(crate) fn default_ref(loaded: &Loaded) -> String {
         || loaded.refs.is_empty()
         || loaded.refs.contains_key(&format!("refs/heads/{stored}"))
     {
-        return branch;
+        return if branch.starts_with("refs/") || hex_revision(&branch) {
+            format!("refs/heads/{branch}")
+        } else {
+            branch
+        };
     }
-    ref_names(loaded)
-        .into_iter()
-        .next()
+    loaded
+        .refs
+        .keys()
+        .min()
+        .cloned()
         .unwrap_or_else(|| stored.clone())
 }
 
@@ -331,7 +344,15 @@ pub(crate) fn resolve(
     tail: &str,
     require_path: bool,
 ) -> Result<view::ref_path::ResolvedRefPath, Response> {
-    let names = if tail.starts_with("refs/heads/") || tail.starts_with("refs/tags/") {
+    if tail.len() > 4096 {
+        return Err(ctx.error(StatusCode::URI_TOO_LONG, "Repository path is too long."));
+    }
+    let names = if loaded.refs.is_empty() {
+        vec![
+            loaded.default_branch.clone(),
+            format!("refs/heads/{}", loaded.default_branch),
+        ]
+    } else if tail.starts_with("refs/heads/") || tail.starts_with("refs/tags/") {
         loaded.refs.keys().cloned().collect()
     } else {
         ref_names(loaded)
@@ -353,8 +374,13 @@ pub(crate) fn resolve(
     } else {
         ensure_ref(ctx, loaded, &resolved.reference)?;
     }
-    if let Some(branch) = resolved.reference.strip_prefix("refs/heads/") {
-        resolved.reference = branch.to_owned();
+    if resolved.reference.starts_with("refs/")
+        && !loaded.refs.contains_key(&resolved.reference)
+        && loaded
+            .refs
+            .contains_key(&format!("refs/heads/{}", resolved.reference))
+    {
+        resolved.reference = format!("refs/heads/{}", resolved.reference);
     } else if !resolved.reference.starts_with("refs/")
         && !is_branch(loaded, &resolved.reference)
         && loaded
@@ -538,20 +564,13 @@ pub(crate) async fn load_refs_from_repo(
         })
 }
 
-/// Metadata may use the stored branch when optional Git enrichment is unavailable;
-/// a bounded read refusal remains explicit rather than looking like valid metadata.
+/// Metadata may use the stored branch when optional Git enrichment is unavailable.
 pub(crate) async fn repository_default_branch_or_db(
     state: &crate::backend::app::AppState,
     repository: &db::models::Repository,
 ) -> ApiResult<String> {
     match repo_store(repository, state.cluster.as_ref()).info().await {
         Ok(info) => Ok(info.default_branch),
-        Err(error) if error.is_response_too_large() => {
-            Err(crate::backend::api::repos::responses::repo_store_error(
-                error,
-                StatusCode::SERVICE_UNAVAILABLE,
-            ))
-        }
         Err(_) => Ok(repository.default_branch.clone()),
     }
 }

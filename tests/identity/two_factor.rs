@@ -449,6 +449,12 @@ async fn settings_forms(pg: bool) {
         .await
         .unwrap());
 
+    if pg {
+        database.execute("CREATE FUNCTION remove_settings_configuration() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN DELETE FROM node_configuration; RETURN NEW; END $$", &[]).await;
+        database.execute("CREATE TRIGGER remove_settings_configuration AFTER INSERT ON two_factor_recovery_codes FOR EACH ROW EXECUTE FUNCTION remove_settings_configuration()", &[]).await;
+    } else {
+        database.execute("CREATE TRIGGER remove_settings_configuration AFTER INSERT ON two_factor_recovery_codes BEGIN DELETE FROM node_configuration; END", &[]).await;
+    }
     let enabled = client
         .exchange(
             "POST",
@@ -463,6 +469,54 @@ async fn settings_forms(pg: bool) {
     assert_eq!(enabled.status, StatusCode::OK);
     let shown = recovery_codes_in(&String::from_utf8_lossy(&enabled.body));
     assert_eq!(shown.len(), 10, "codes are shown once in the response");
+    assert!(
+        db::node_config::get_node_configuration(database.pool())
+            .await
+            .unwrap()
+            .is_none(),
+        "mutation committed while a later settings load would fail"
+    );
+    database
+        .execute(
+            "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE)",
+            &[],
+        )
+        .await;
+    let regenerated = client
+        .form_reply(
+            "/settings/two-factor/recovery-codes",
+            &[("current_password", PASSWORD)],
+        )
+        .await;
+    assert_eq!(regenerated.status, StatusCode::OK);
+    let new_codes = recovery_codes_in(&regenerated.text());
+    assert_eq!(new_codes.len(), 10);
+    assert_ne!(new_codes, shown);
+    assert!(db::node_config::get_node_configuration(database.pool())
+        .await
+        .unwrap()
+        .is_none());
+    database
+        .execute(
+            "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE)",
+            &[],
+        )
+        .await;
+    if pg {
+        database
+            .execute(
+                "DROP TRIGGER remove_settings_configuration ON two_factor_recovery_codes",
+                &[],
+            )
+            .await;
+        database
+            .execute("DROP FUNCTION remove_settings_configuration()", &[])
+            .await;
+    } else {
+        database
+            .execute("DROP TRIGGER remove_settings_configuration", &[])
+            .await;
+    }
     assert!(two_factor::is_enabled(database.pool(), alice.id)
         .await
         .unwrap());
@@ -1089,6 +1143,9 @@ async fn enrollment_authority(pg: bool) {
         .unwrap());
     database.finish().await;
 }
+
+#[path = "two_factor/session.rs"]
+mod session_tests;
 
 #[tokio::test]
 async fn sqlite_enrollment_and_factor_replacement_authority() {

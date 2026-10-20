@@ -57,6 +57,8 @@ pub fn list(
     counts: ListCounts,
     items: &[Milestone],
     sort: &str,
+    page_number: usize,
+    has_next: bool,
 ) -> Element {
     let url = repo.url();
     let sort = if sort.is_empty() {
@@ -126,6 +128,10 @@ pub fn list(
                         }
                     }
                 }
+                nav { class: "collaboration-pagination", aria_label: "Milestone pages",
+                    if page_number > 1 { NavLink { class: "btn btn-secondary", href: format!("{url}/milestones?state={state}&sort={sort}&page={}", page_number - 1), "Previous" } }
+                    if has_next { NavLink { class: "btn btn-secondary", href: format!("{url}/milestones?state={state}&sort={sort}&page={}", page_number + 1), "Next" } }
+                }
             }
         },
     )
@@ -141,6 +147,7 @@ pub fn new(repo: &Repository, draft: &MilestoneDraft, error: Option<&str>) -> El
                 header { class: "collaboration-detail-heading", h2 { "New milestone" } }
                 form { method: "post", action: format!("{url}/milestones/new"), class: "collaboration-panel collaboration-milestone-form",
                     {csrf(&repo.csrf)}
+                    input { r#type: "hidden", name: "repository_id", value: draft.repository_id.clone().unwrap_or_else(|| repo.chrome.id.to_string()) }
                     {fields(draft)}
                     div { class: "collaboration-card-footer",
                         NavLink { class: "btn btn-secondary", href: format!("{url}/milestones"), "Cancel" }
@@ -152,12 +159,17 @@ pub fn new(repo: &Repository, draft: &MilestoneDraft, error: Option<&str>) -> El
     )
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The milestone page's rendered fields."
+)]
 pub fn detail(
     repo: &Repository,
     milestone: &Milestone,
     state: &str,
     items: &[Item],
     pull_requests: &[Item],
+    pagination: (usize, bool),
     draft: &MilestoneDraft,
     error: Option<&str>,
 ) -> Element {
@@ -230,6 +242,20 @@ pub fn detail(
                     if items.is_empty() && pull_requests.is_empty() { div { class: "collaboration-empty", h3 { "No issues or pull requests here" } p { "Set a milestone from the sidebar of an issue or pull request to list it here." } } }
                     {rows(&issues_url, Kind::Issue, items)}
                     {rows(&pulls_url, Kind::Pull, pull_requests)}
+                    nav { class: "repo-pagination", aria_label: "All milestone items",
+                        NavLink { href: format!("{issues_url}?milestone={}&state=all", milestone.number), "View all issues" }
+                        NavLink { href: format!("{pulls_url}?milestone={}&state=all", milestone.number), "View all pull requests" }
+                    }
+                    if pagination.0 > 1 || pagination.1 {
+                        nav { class: "collaboration-card-footer", aria_label: "Milestone pagination",
+                            if pagination.0 > 1 {
+                                NavLink { class: "btn btn-secondary", href: format!("{url}?state={state}&page={}", pagination.0 - 1), "Previous" }
+                            }
+                            if pagination.1 {
+                                NavLink { class: "btn btn-secondary", href: format!("{url}?state={state}&page={}", pagination.0 + 1), "Next" }
+                            }
+                        }
+                    }
                 }
             }
         },

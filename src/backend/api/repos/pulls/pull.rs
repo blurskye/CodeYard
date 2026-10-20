@@ -312,6 +312,7 @@ pub(crate) fn field(form: &HashMap<String, String>, name: &str) -> String {
 pub(crate) fn submitted_new(form: &HashMap<String, String>) -> NewDraft {
     NewDraft {
         repository_id: field(form, "repository_id"),
+        template: field(form, "template"),
         template_revision: field(form, "template_revision"),
         head_repo: field(form, "head_repo"),
         title: field(form, "title"),
@@ -332,6 +333,9 @@ pub(crate) fn submitted_detail(form: &HashMap<String, String>, action: &str) -> 
         },
         "comment" => DetailDraft {
             comment: field(form, "body"),
+            repository_id: form.get("repository_id").cloned(),
+            issue_id: form.get("issue_id").cloned(),
+            expected_body: field(form, "expected_body"),
             preview: field(form, "intent") == "preview",
             ..Default::default()
         },
@@ -386,7 +390,9 @@ pub(crate) async fn repository(
     };
     // Reuse the Code page's authorized projection, including visibility, real
     // engagement counts and actor-scoped actions. Never serialize the DB record.
-    let chrome = crate::backend::api::repos::chrome::load_chrome(ctx, owner, name).await?;
+    let chrome = crate::backend::api::repos::chrome::load_database(ctx, owner, name)
+        .await?
+        .chrome;
     Ok(RepositoryData {
         record,
         view: view::Repository {
@@ -426,6 +432,7 @@ pub(crate) fn issue_item(
     labels: Vec<db::models::Label>,
 ) -> view::Item {
     view::Item {
+        id: issue.id,
         number: issue.number,
         title: issue.title,
         body: issue.body,
@@ -601,12 +608,9 @@ pub(crate) fn pull_item(
             .user
             .as_ref()
             .is_some_and(|user| user.id != pull.author_id);
-    let can_tick = repo.view.can_write
-        || ctx
-            .user
-            .as_ref()
-            .is_some_and(|user| user.id == pull.author_id);
+    let can_tick = repo.view.can_write;
     Ok(view::Item {
+        id: pull.id,
         number: pull.number,
         title: pull.title,
         body: pull.body,
@@ -759,7 +763,7 @@ pub(crate) async fn item(
             let stack_candidate = stacks::join_candidate(&ctx.state.pool, &value)
                 .await
                 .map_err(|_| unavailable(ctx))?;
-            let (merge_target, merge_with) = stacks::merge_target(&ctx.state.pool, &value)
+            let (merge_target, _, merge_with) = stacks::merge_target(&ctx.state.pool, &value)
                 .await
                 .map_err(|_| unavailable(ctx))?;
             // Only a writer sees the button, so readers do not pay for the check.
@@ -805,6 +809,7 @@ pub(crate) async fn item(
                 repo.record.id,
                 &head_sha,
                 current,
+                &merge_target,
             )
             .await
             .map_err(|_| unavailable(ctx))?;
@@ -814,7 +819,12 @@ pub(crate) async fn item(
                 &head_sha,
             )
             .await
-            .map_err(|_| unavailable(ctx))?;
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .filter(|status| {
+                !db::repositories::protection::server_owned_status_context(&status.context)
+            })
+            .collect::<Vec<_>>();
             view_item.check_count = runs.len() as i64;
             // The Commits tab counts the commits of the pull request. When Git cannot count them the
             // count is left out, so the tab shows no number instead of a wrong one.
@@ -975,6 +985,9 @@ pub(crate) async fn discussion(
                 let mut shown = view::Comment {
                     id: comment.id,
                     author,
+                    revision: crate::backend::api::repos::issues::tasks::comment_revision(
+                        &comment.body,
+                    ),
                     body: comment.body,
                     created: comment.created_at.to_rfc3339(),
                     location: None,
@@ -1040,7 +1053,8 @@ pub(crate) async fn discussion(
             reviews = review_forms::page_reviews(ctx, repo, &pull, page_reviews).await?;
         }
     }
-    let event_page = chrome::number(ctx, "event_page", 1, MAX_COMMENT_PAGE)?;
+    let max_event_page = (i64::MAX / db::timeline::EVENT_LIMIT) as usize;
+    let event_page = chrome::number(ctx, "event_page", 1, max_event_page)?;
     if event_page == 0 {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Page numbers start at 1."));
     }
@@ -1056,8 +1070,13 @@ pub(crate) async fn discussion(
     )
     .await
     .map_err(|_| unavailable(ctx))?;
-    let events_next =
-        (event_rows.len() > db::timeline::EVENT_LIMIT as usize).then_some(event_page + 1);
+    let events_next = chrome::has_next_page(
+        event_page,
+        event_rows.len(),
+        db::timeline::EVENT_LIMIT as usize,
+        max_event_page,
+    )
+    .then_some(event_page + 1);
     event_rows.truncate(db::timeline::EVENT_LIMIT as usize);
     let events = event_rows
         .into_iter()
@@ -1123,6 +1142,7 @@ pub(crate) async fn render_detail(
             .find(|comment| comment.id == id)
         {
             comment.edit = Some(view::CommentEdit {
+                original_body: serde_json::from_str(&draft.expected_body).unwrap_or_default(),
                 body: draft.comment.clone(),
                 preview: draft.preview,
             });
@@ -1170,12 +1190,16 @@ pub(crate) async fn render_detail(
     .await;
     // The label picker lists every label of the repository. A label the item has is removed by
     // clicking it, and any other label is added the same way.
-    let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .into_iter()
-        .map(label)
-        .collect();
+    let labels = if repo.view.can_admin {
+        db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(label)
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Choices are offered to a writer only. Each form checks the write right again when it is sent.
     let (assignable, milestones): (Vec<String>, Vec<view::Milestone>) = if repo.view.can_write {
         let assignable = if (value.assignees.len() as i64) < db::assignees::MAX_ASSIGNEES {
@@ -1198,6 +1222,23 @@ pub(crate) async fn render_detail(
     } else {
         (Vec::new(), Vec::new())
     };
+    let mut ctx = ctx.clone();
+    ctx.return_to = Some(crate::backend::issues::discussion_link(
+        &format!("{}/{}", repo.view.family_url(kind), value.number),
+        comments.page,
+        "",
+    ));
+    let ctx = &ctx;
+    let reviewer_choices = if kind == Kind::Pull && repo.view.can_write {
+        db::repositories::access::list_write_access_users(&ctx.state.pool, repo.record.id, -1)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect()
+    } else {
+        Vec::new()
+    };
     let reviewers = match &value.comparison {
         Some(compare) if kind == Kind::Pull => {
             review_forms::reviewers(ctx, repo, value.number, &compare.head_sha).await?
@@ -1217,6 +1258,7 @@ pub(crate) async fn render_detail(
                 error: error.map(str::to_owned),
                 references: Box::new(references),
                 reviewers,
+                reviewer_choices,
                 assignable,
                 milestones,
             }),
@@ -1364,7 +1406,7 @@ pub(crate) async fn head_choices(
             .await
             .map_err(|_| unavailable(ctx))?;
     // The user's own fork and an explicitly selected head stay reachable beyond the first
-    // page. The loop below still checks read access for each of them.
+    // page. The batch below still checks read access for each of them.
     let own_fork = match &ctx.user {
         Some(user) => {
             db::repositories::discovery::get_user_fork(&ctx.state.pool, user.id, base.record.id)
@@ -1387,13 +1429,20 @@ pub(crate) async fn head_choices(
             forks.push(fork);
         }
     }
-    for fork in forks {
-        match check_repo_read_access(&ctx.state.pool, &fork, &ctx.headers).await {
-            Ok(()) => candidates.push(fork),
-            Err((StatusCode::NOT_FOUND, _)) => {}
-            Err(error) => return Err(api_error(ctx, error)),
-        }
+    let ids: Vec<_> = forks.iter().map(|fork| fork.id).collect();
+    let mut readable = Vec::new();
+    for ids in ids.chunks(100) {
+        readable.extend(
+            db::repositories::access::readable_repository_ids(
+                &ctx.state.pool,
+                ctx.user.as_ref().map(|user| user.id),
+                ids,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?,
+        );
     }
+    candidates.extend(forks.into_iter().filter(|fork| readable.contains(&fork.id)));
     if draft.head_repo.is_empty() {
         let own = candidates.iter().find(|head| {
             head.id != base.record.id

@@ -164,7 +164,7 @@ pub fn auth_page(
                         p { class: "identity-auth-provider-separator", "or" }
                         div { class: "identity-auth-provider-links",
                             for (id, label) in provider_links {
-                                a { href: format!("/api/auth/oauth/{id}"), "Continue with {label}" }
+                                a { href: if redirect == "/" { format!("/api/auth/oauth/{id}") } else { format!("/api/auth/oauth/{id}?redirect={redirect_query}") }, "Continue with {label}" }
                             }
                         }
                     }

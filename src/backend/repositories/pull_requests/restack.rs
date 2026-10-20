@@ -122,7 +122,7 @@ pub async fn rebase_stack(
         return Ok(RestackResponse { rebased: 0 });
     }
 
-    store
+    let published = store
         .publish_restack_as(
             pool,
             repository.id,
@@ -131,8 +131,12 @@ pub async fn rebase_stack(
             &base_tip,
             &moves,
         )
-        .await
-        .map_err(publish_failure)?;
+        .await;
+    let followup_failed = match published {
+        Ok(()) => false,
+        Err(error) if error.is_applied_followup_failed() => true,
+        Err(error) => return Err(publish_failure(error)),
+    };
     // Finish admission after recording the heads; an unchanged refresh cannot retry it.
     branches_moved(pool, &repository, ci, actor_id).await;
     for restack in &moves {
@@ -148,6 +152,15 @@ pub async fn rebase_stack(
             },
         )
         .await;
+    }
+    if followup_failed {
+        return Err(OperationError::Unavailable {
+            code: "restack_followup_failed",
+            message: format!(
+                "{} branches were rebased, but repository metadata could not be updated.",
+                moves.len()
+            ),
+        });
     }
     Ok(RestackResponse {
         rebased: moves.len(),
@@ -270,12 +283,7 @@ async fn own_commits_base(
     if stacked_on_open {
         // Once the base has moved past the one the layer was built on, the fork point is the base
         // it was built on. Replaying from the new base would replay the commits of the layer below.
-        if let Some(fork) = &layer.fork_sha {
-            if !is_ancestor(store, &layer.base_sha, head).await? {
-                return Ok(fork.clone());
-            }
-        }
-        return Ok(layer.base_sha.clone());
+        return recorded_boundary(store, layer, head).await;
     }
     let mut merged_below: Option<&PullRequest> = None;
     for member in members
@@ -293,12 +301,43 @@ async fn own_commits_base(
             merged_below = Some(member);
         }
     }
+    // A rewritten parent may no longer be an ancestor, while an older merged layer still is.
+    // Keep the recorded fork when it is a verified, nearer boundary in this head's history.
+    if let Some(fork) = &layer.fork_sha {
+        if !is_ancestor(store, &layer.base_sha, head).await?
+            && is_ancestor(store, fork, head).await?
+        {
+            let nearer = match merged_below {
+                Some(merged) => is_ancestor(store, &merged.head_sha, fork).await?,
+                None => true,
+            };
+            if nearer {
+                return Ok(fork.clone());
+            }
+        }
+    }
     Ok(match merged_below {
         Some(merged) => merged.head_sha.clone(),
-        None => match &layer.fork_sha {
-            Some(fork) if !is_ancestor(store, &layer.base_sha, head).await? => fork.clone(),
-            _ => layer.base_sha.clone(),
-        },
+        None => recorded_boundary(store, layer, head).await?,
+    })
+}
+
+async fn recorded_boundary(
+    store: &RepoStore,
+    layer: &PullRequest,
+    head: &str,
+) -> Result<String, OperationError> {
+    for boundary in [Some(layer.base_sha.as_str()), layer.fork_sha.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        if is_ancestor(store, boundary, head).await? {
+            return Ok(boundary.to_owned());
+        }
+    }
+    Err(OperationError::Conflict {
+        code: "unknown_rebase_boundary",
+        message: format!("The own commits of #{} cannot be determined after its base was rewritten. Rebase this branch manually.", layer.number),
     })
 }
 

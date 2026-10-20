@@ -17,6 +17,8 @@ pub struct WebhookPanel {
     /// Hidden on repository forms, which refuse a form for another repository.
     pub repository_id: Option<i64>,
     pub hooks: Vec<HookRow>,
+    pub first_href: Option<String>,
+    pub next_href: Option<String>,
     pub editing: Option<HookDraft>,
     pub detail: Option<HookDetail>,
     pub notice: Option<String>,
@@ -173,6 +175,10 @@ fn HookList(panel: WebhookPanel) -> Element {
                     }
                 }
             }
+        }
+        nav { aria_label: "Webhook pages",
+            if let Some(href) = panel.first_href { a { class: "btn btn-secondary", href, "First page" } }
+            if let Some(href) = panel.next_href { a { class: "btn btn-secondary", href, "Next page" } }
         }
     }
 }

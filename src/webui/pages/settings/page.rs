@@ -36,6 +36,8 @@ pub struct Settings {
     pub must_change_password: bool,
     pub manage_access: bool,
     pub requests: Vec<Signup>,
+    pub requests_count: usize,
+    pub requests_page: usize,
     pub values: FormValues,
     /// The theme saved on this device, read from the same cookie as the header toggle.
     pub theme: Theme,
@@ -273,6 +275,11 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 }
                             }
                         }
+                        if model.keys.len() == 100 {
+                            if let Some(last) = model.keys.last() {
+                                NavLink { href: format!("/settings?tab=keys&keys_after={}",last.id), class: "identity-button", "Next SSH keys" }
+                            }
+                        }
                         section { class: "identity-settings-section", aria_labelledby: "settings-add-key-title",
                             header { class: "identity-section-header", h2 { id: "settings-add-key-title", "Add SSH key" } }
                             form { method: "post", action: "/settings/keys", class: "identity-form",
@@ -449,7 +456,8 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                     } else if model.tab == "two-factor" {
                         {two_factor_section(&model.two_factor, model.password_supported, token)}
                     } else if model.tab == "access" && model.manage_access {
-                        section { class: "identity-settings-section identity-access-section", {access_forms(&model.requests, token, values, "/settings/access")} }
+                        section { class: "identity-settings-section identity-access-section", {access_forms(&model.requests, token, values, "/settings/access")}
+                            {crate::webui::pages::admin::signup_pagination(model.requests_page, model.requests_count, "/settings?tab=access")} }
                     }
                 }
             }

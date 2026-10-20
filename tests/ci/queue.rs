@@ -27,6 +27,8 @@ use std::{
 };
 use uuid::Uuid;
 
+mod filtered_history;
+
 const WORKER: &str = "worker-1";
 const ACCESS_LOST: &str = db::ci::ACCESS_LOST_MESSAGE;
 const WORKFLOW: &str = ".github/workflows/ci.yml";
@@ -831,7 +833,10 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .unwrap()
         .expect("the worker owns the run");
     assert_eq!(finished.status, "success");
-    assert_eq!(db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(), 0);
+    assert_eq!(
+        db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap().0,
+        0
+    );
     let after = db.run(run.run_id).await;
     assert_eq!(
         (after.status.as_str(), after.error_message.as_deref()),
@@ -859,7 +864,10 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    assert_eq!(db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(), 1);
+    let (failed, created) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
+    assert_eq!(failed, 1);
+    assert_eq!(created.len(), 1);
+    assert_eq!(created[0].0, w.owner);
     assert!(
         db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
             .await
@@ -886,7 +894,10 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .unwrap();
     assert_eq!(statuses[0].state, "failure");
     assert_eq!(notified().await, 1, "one outcome, one notification");
-    assert_eq!(db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(), 0);
+    assert_eq!(
+        db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(),
+        (0, vec![])
+    );
 
     // Cancelling something that already ended does nothing.
     assert!(
@@ -948,7 +959,10 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .unwrap()
     .expect("the worker owns the run");
     db.stop_heartbeat(running.id).await;
-    assert_eq!(db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(), 0);
+    assert_eq!(
+        db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(),
+        (0, vec![])
+    );
     assert_eq!(db.run(running.run_id).await.status, "cancelled");
 }
 
@@ -1124,7 +1138,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
     use std::sync::Arc;
     let w = world(db, "live").await;
     let broadcaster = Arc::new(NotificationBroadcaster::new(db.pool()));
-    let mut subscriber = broadcaster.subscribe();
+    let mut subscriber = broadcaster.subscribe(w.owner);
     let config = Arc::new(CiConfig::default());
     let service = CiRuns::new(
         db.pool().clone(),
@@ -2279,7 +2293,132 @@ macro_rules! on_both_engines {
     };
 }
 
+async fn stale_failures_are_broadcast_after_commit(db: &Database) {
+    use codeyard::backend::{
+        ci::{queue::RunQueue, CiConfig, CiWorkers},
+        notifications::{NotificationBroadcaster, NotificationEvent},
+    };
+    use std::sync::Arc;
+    let w = world(db, "stale_live").await;
+    let run = db.enqueue(w.repo, w.owner, false, &[]).await;
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
+        .await
+        .unwrap()
+        .unwrap();
+    db.stop_heartbeat(run.id).await;
+    let broadcaster = Arc::new(NotificationBroadcaster::new(db.pool()));
+    let mut subscriber = broadcaster.subscribe(w.owner);
+    let config = Arc::new(CiConfig::default());
+    let root = tempfile::tempdir().unwrap();
+    let workers = CiWorkers::new(
+        RunQueue::Database {
+            pool: db.pool().clone(),
+            config: config.clone(),
+            secrets: None,
+            context: None,
+            notifications: broadcaster,
+        },
+        config,
+        false,
+        root.path(),
+    );
+    workers.startup().await.unwrap();
+    let event = promptly("stale failure announcement", subscriber.recv())
+        .await
+        .unwrap();
+    assert!(matches!(event, NotificationEvent::Created { user_id, .. } if user_id == w.owner));
+    assert_eq!(db.run(run.run_id).await.status, "failed");
+    assert_eq!(db.notifications(w.owner).await, 1);
+    workers.shutdown().await.unwrap();
+}
+
+async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
+    let w = world(db, "ci_links").await;
+    let run = db.enqueue(w.repo, w.owner, false, &[]).await;
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
+        .await
+        .unwrap()
+        .unwrap();
+    db::ci::finish_ci_run(db.pool(), run.id, WORKER, "failed", None)
+        .await
+        .unwrap()
+        .unwrap();
+    db::repositories::records::rename_repository(db.pool(), w.owner, w.repo, "renamed")
+        .await
+        .unwrap();
+    for owner in [w.owner, w.collab] {
+        if owner == w.collab {
+            db::repositories::access::grant_repo_access(
+                db.pool(),
+                w.collab,
+                w.repo,
+                AccessLevel::Admin,
+            )
+            .await
+            .unwrap();
+            db::repositories::records::transfer_repository(
+                db.pool(),
+                w.collab,
+                w.repo,
+                db::repositories::creation::RepositoryTarget::Personal(w.collab),
+            )
+            .await
+            .unwrap();
+        }
+        let notices =
+            db::notifications::records::list_notifications_for_user(db.pool(), w.owner, 10, false)
+                .await
+                .unwrap();
+        let name = db::users::accounts::get_user_by_id(db.pool(), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .username;
+        assert_eq!(
+            notices[0].link.as_deref(),
+            Some(format!("/{name}/renamed/actions?job={}", run.run_id).as_str())
+        );
+    }
+}
+
+async fn ci_lookup_indexes_and_one_deployment_per_run(db: &Database) {
+    match db {
+        Database::Postgres(_) => {
+            assert_eq!(db.count("WITH indexes AS MATERIALIZED (SELECT indexrelid FROM pg_index WHERE indrelid = 'ci_runs'::regclass) SELECT COUNT(*) FROM indexes WHERE pg_get_indexdef(indexrelid) LIKE '%(repo_id, head_sha, id)'", &[]).await, 1);
+        }
+        Database::Sqlite(_) => {
+            assert_eq!(db.count("SELECT COUNT(*) FROM pragma_index_info('idx_ci_runs_repo_head') WHERE (seqno = 0 AND name = 'repo_id') OR (seqno = 1 AND name = 'head_sha') OR (seqno = 2 AND name = 'id')", &[]).await, 3);
+        }
+    }
+    let w = world(db, "ci_indexes").await;
+    let run = db.enqueue(w.repo, w.owner, true, &[]).await;
+    let sql =
+        "INSERT INTO ci_deployments(run_id, repo_id, environment) VALUES ($1, $2, 'production')";
+    let duplicate = match db {
+        Database::Postgres(f) => sqlx::query(sql)
+            .bind(run.id)
+            .bind(w.repo)
+            .execute(&f.raw)
+            .await
+            .map(|_| ()),
+        Database::Sqlite(f) => sqlx::query(sql)
+            .bind(run.id)
+            .bind(w.repo)
+            .execute(&f.raw)
+            .await
+            .map(|_| ()),
+    };
+    assert!(duplicate
+        .unwrap_err()
+        .as_database_error()
+        .unwrap()
+        .is_unique_violation());
+}
+
 on_both_engines!(
+    stale_failures_are_broadcast_after_commit,
+    ci_notification_links_follow_renames_and_transfers,
+    ci_lookup_indexes_and_one_deployment_per_run,
     claim_checks_the_starters_access_again,
     a_long_line_of_denied_runs_is_cancelled_in_batches,
     revocations_stop_queued_and_running_runs,
@@ -2398,6 +2537,41 @@ mod interleaved {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_claim_heartbeat_uses_the_time_after_waiting_for_locks() {
+        let mut db = Database::new(true).await;
+        let w = world(&db, "claim_clock").await;
+        db.enqueue(w.repo, w.owner, false, &[]).await;
+        let raw = &fixture(&db).raw;
+        let mut gate = raw.begin().await.unwrap();
+        let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *gate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
+            .bind(w.repo)
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+        let pool = db.pool().clone();
+        let claiming =
+            tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[]).await });
+        wait_until_blocked_by(raw, holder, 1).await;
+        let released_at: chrono::DateTime<chrono::Utc> =
+            sqlx::query_scalar("SELECT clock_timestamp()")
+                .fetch_one(raw)
+                .await
+                .unwrap();
+        gate.commit().await.unwrap();
+        let claimed = promptly("delayed claim", claiming)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(claimed.heartbeat_at.unwrap() >= released_at);
+        db.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn overlapping_claims_for_one_worker_return_the_same_run() {
         let mut db = Database::new(true).await;
         let w = world(&db, "overlapping_claims").await;
@@ -2455,7 +2629,7 @@ mod interleaved {
         let swept = promptly("the stale sweep", db::ci::fail_stale_ci_runs(db.pool(), 90))
             .await
             .unwrap();
-        assert_eq!(swept, 0);
+        assert_eq!(swept, (0, vec![]));
         sqlx::query("UPDATE ci_runs SET status = 'success', completed_at = NOW() WHERE id = $1")
             .bind(run.id)
             .execute(&mut *worker)
@@ -2472,7 +2646,10 @@ mod interleaved {
             "the sweep announced nothing"
         );
         // Once the worker is done, the sweep still has nothing to fail.
-        assert_eq!(db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(), 0);
+        assert_eq!(
+            db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(),
+            (0, vec![])
+        );
         db.close().await;
     }
 

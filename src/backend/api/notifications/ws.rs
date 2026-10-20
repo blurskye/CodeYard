@@ -33,7 +33,7 @@ pub async fn handle_socket(
     _slot: SocketSlot,
 ) {
     let (mut sender, mut receiver) = socket.split();
-    let mut rx = broadcaster.subscribe();
+    let mut rx = broadcaster.subscribe(user_id);
     let mut heartbeat = tokio::time::interval_at(
         tokio::time::Instant::now() + Duration::from_secs(15),
         Duration::from_secs(15),

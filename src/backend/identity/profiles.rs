@@ -22,6 +22,8 @@ pub enum ProfileError {
     Nul,
     #[error("Website must be a web address starting with http:// or https://")]
     Website,
+    #[error("Profile update requires an unrestricted account and a live session")]
+    Denied,
     #[error("Profile storage is temporarily unavailable")]
     Unavailable,
 }
@@ -102,19 +104,22 @@ pub async fn repository_count_on_profile(
 pub async fn update(
     pool: &DbPool,
     actor: i64,
+    session: &str,
     input: ProfileUpdate<'_>,
 ) -> Result<User, ProfileError> {
     validate(&input)?;
     accounts::update_user_profile(
         pool,
         actor,
+        session,
         input.display_name,
         input.bio,
         input.location,
         input.website,
     )
     .await
-    .map_err(|_| ProfileError::Unavailable)
+    .map_err(|_| ProfileError::Unavailable)?
+    .ok_or(ProfileError::Denied)
 }
 
 pub fn visible_on_profile(private: bool, own: bool) -> bool {

@@ -40,6 +40,8 @@ fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys
                 must_change_password: false,
                 manage_access: false,
                 requests: vec![],
+                requests_count: 0,
+                requests_page: 1,
                 values,
             },
             "token",
@@ -76,6 +78,8 @@ fn settings_primary_actions_share_one_class_and_deletes_are_outlined() {
             must_change_password: false,
             manage_access: false,
             requests: vec![],
+            requests_count: 0,
+            requests_page: 1,
             values: preserved_values(&HashMap::new()),
         };
         let profile = html(settings_page(
@@ -138,6 +142,8 @@ fn ssh_key_and_token_deletion_ask_in_a_centred_dialog() {
             must_change_password: false,
             manage_access: false,
             requests: vec![],
+            requests_count: 0,
+            requests_page: 1,
             values: preserved_values(&HashMap::new()),
         };
         let keys = html(settings_page(settings_for("keys"), "token", None, false));
@@ -190,6 +196,8 @@ fn settings_use_a_current_left_nav_and_keep_native_credential_forms() {
                 must_change_password: false,
                 manage_access: true,
                 requests: vec![],
+                requests_count: 0,
+                requests_page: 1,
                 values: FormValues::default(),
             },
             "settings-csrf",
@@ -224,6 +232,8 @@ fn prerendered_bio_and_public_key_keep_native_escaped_text() {
                 must_change_password: false,
                 manage_access: false,
                 requests: vec![],
+                requests_count: 0,
+                requests_page: 1,
                 values: FormValues {
                     bio: source.into(),
                     public_key: source.into(),
@@ -285,6 +295,8 @@ fn token_expiry_defaults_to_thirty_days_and_takes_a_calendar_day() {
                     must_change_password: false,
                     manage_access: false,
                     requests: vec![],
+                    requests_count: 0,
+                    requests_page: 1,
                     values,
                 },
                 "token",
@@ -345,6 +357,8 @@ fn appearance_tab_sits_after_the_profile_and_marks_the_saved_theme() {
                     must_change_password: false,
                     manage_access: false,
                     requests: vec![],
+                    requests_count: 0,
+                    requests_page: 1,
                     values: preserved_values(&HashMap::new()),
                     theme,
                 },
@@ -410,6 +424,8 @@ fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels()
                     must_change_password: false,
                     manage_access: false,
                     requests: vec![],
+                    requests_count: 0,
+                    requests_page: 1,
                     values: preserved_values(&HashMap::new()),
                     theme: crate::webui::document::Theme::System,
                 },
@@ -443,6 +459,8 @@ fn settings_for(tab: &str, sessions: Vec<AccountSession>) -> Settings {
         must_change_password: false,
         manage_access: false,
         requests: vec![],
+        requests_count: 0,
+        requests_page: 1,
         values: FormValues::default(),
     }
 }

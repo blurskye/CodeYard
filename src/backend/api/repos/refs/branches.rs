@@ -126,9 +126,7 @@ pub async fn delete_branch(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Divergence counts are read for this many branches. Each count walks a branch's history back
-/// to the merge base with the default branch, so a long branch list must not make the page slow.
-const MAX_BRANCH_STATUSES: usize = 200;
+use crate::backend::git::MAX_BRANCH_STATUSES;
 
 /// A branch whose tip is older than this is stale.
 const STALE_AFTER: chrono::Duration = chrono::Duration::days(90);
@@ -148,18 +146,14 @@ async fn fill_branch_statuses(
         return Ok(());
     };
     let counted = branches.len().min(MAX_BRANCH_STATUSES);
-    let heads: Vec<String> = branches[..counted]
-        .iter()
-        .map(|branch| branch.sha.clone())
-        .collect();
+    let heads: Vec<String> = branches.iter().map(|branch| branch.sha.clone()).collect();
     let statuses = repo_store(&loaded.repository, ctx.state.cluster.as_ref())
         .branch_statuses(&base, &heads)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
-    // The statuses cover the first `counted` branches, the zip stops there.
-    for (branch, status) in branches.iter_mut().zip(statuses) {
+    for (index, (branch, status)) in branches.iter_mut().zip(statuses).enumerate() {
         branch.updated = Some(date(status.updated));
-        if !branch.is_default {
+        if !branch.is_default && index < counted {
             branch.ahead_behind = Some((status.ahead, status.behind));
         }
     }
@@ -176,6 +170,7 @@ async fn fill_open_pulls(
     let pulls = db::pull_requests::records::list_open_pull_requests_from_branches(
         &ctx.state.pool,
         loaded.repository.id,
+        None,
     )
     .await
     .map_err(|_| {
@@ -185,10 +180,13 @@ async fn fill_open_pulls(
             "Pull requests are unavailable.",
         )
     })?;
+    let pulls: std::collections::HashMap<_, _> = pulls
+        .into_iter()
+        .map(|pull| (pull.head_branch.clone(), pull))
+        .collect();
     for branch in branches.iter_mut() {
         branch.pull = pulls
-            .iter()
-            .find(|pull| pull.head_branch == branch.name)
+            .get(&branch.name)
             .map(|pull| view::pulls::PullSummary {
                 number: pull.number,
                 title: pull.title.clone(),
@@ -213,7 +211,7 @@ pub(in crate::backend::api::repos) async fn refs_page(
                     name: name.into(),
                     sha: sha.clone(),
                     message: None,
-                    is_default: name == default,
+                    is_default: name == crate::backend::api::repos::chrome::branch_name(&default),
                     ahead_behind: None,
                     updated: None,
                     pull: None,

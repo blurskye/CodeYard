@@ -138,6 +138,14 @@ async fn keys_api_and_forms(pg: bool) {
     let repo = repo_id(&database).await;
     let rid = repo.to_string();
     let path = "/api/repos/alice/proj/keys";
+    let (status, _) = alice
+        .api("POST", path, json!({"title":"ci\0key", "key": ED25519}))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(db::deploy_keys::list_deploy_keys(database.pool(), repo)
+        .await
+        .unwrap()
+        .is_empty());
 
     // Only admins manage keys: a reader is refused on every route.
     let (status, _) = bob

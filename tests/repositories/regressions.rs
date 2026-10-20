@@ -155,6 +155,7 @@ async fn contract(pg: bool) {
                 ("repository_id", &rid),
                 ("pattern", "main"),
                 ("required_approving_reviews", "0"),
+                ("required_status_checks", "ci"),
                 ("force_push_allowances", "alice"),
                 ("force_push_allowances", "Alice"),
             ],
@@ -164,6 +165,8 @@ async fn contract(pg: bool) {
     let rules = db::repositories::protection::list_branch_protection_rules(f.pool(), repository.id)
         .await
         .unwrap();
+    assert!(!rules[0].require_status_checks);
+    assert!(rules[0].required_status_checks.is_empty());
     assert!(rules[0].force_push_allowances.contains(&alice));
     assert!(rules[0].force_push_allowances.contains(&upper));
     let (_, page) = client.model("/alice/proj/settings?tab=general").await;
@@ -265,6 +268,32 @@ async fn contract(pg: bool) {
     let model = serde_json::to_string(&page).unwrap();
     assert!(model.len() < 200_000);
     assert!(model.contains("\"has_next\":true"));
+    let reply = client
+        .form_reply(
+            "/alice/proj/_forms/edit-label",
+            &[
+                ("repository_id", &repository.id.to_string()),
+                ("label_id", &labels[0].id.to_string()),
+                ("name", &labels[0].name),
+                ("color", "#abcdef"),
+                ("description", &"x".repeat(1024)),
+                (
+                    "original_description",
+                    &serde_json::to_string(&"x".repeat(1024)).unwrap(),
+                ),
+            ],
+        )
+        .await;
+    assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
+    let stored = db::labels::list_repo_labels(f.pool(), repository.id)
+        .await
+        .unwrap();
+    let label = stored
+        .iter()
+        .find(|label| label.id == labels[0].id)
+        .unwrap();
+    assert_eq!(label.description.as_deref().unwrap().len(), 20_000);
+    assert_eq!(label.color, "#abcdef");
     let (_, html) = client.page("/alice/proj/labels?page=2").await;
     assert!(html.contains("Previous"), "{html}");
     let found =
@@ -291,6 +320,27 @@ async fn contract(pg: bool) {
     let (status, html) = client.page("/alice/proj/milestones/1?state=open").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert!(html.contains("older-open-pull"), "{html}");
+    let (status, html) = client.page("/alice/proj/milestones/1?state=closed").await;
+    assert_eq!(status, StatusCode::OK, "{html}");
+    assert!(
+        html.contains("href=\"/alice/proj/issues?milestone=1&#38;state=all\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("href=\"/alice/proj/pulls?milestone=1&#38;state=all\""),
+        "{html}"
+    );
+    let (status, page) = client
+        .model("/alice/proj/pulls?milestone=1&state=all&page=2")
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let Page::Collaboration(page) = page else {
+        panic!("collaboration page")
+    };
+    let view::issues::Page::List { items, .. } = *page else {
+        panic!("pull list")
+    };
+    assert_eq!(items.len(), 2);
     let closed = db::pull_requests::records::list_repo_pull_requests(
         f.pool(),
         repository.id,
@@ -418,6 +468,30 @@ async fn contract(pg: bool) {
             .await;
         assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text());
     }
+    for path in ["/alice/proj/_forms/label", "/alice/proj/milestones/new"] {
+        let reply = client
+            .form_reply(
+                path,
+                &[
+                    ("repository_id", &rid),
+                    ("name", "misplaced"),
+                    ("title", "misplaced"),
+                    ("color", "123456"),
+                ],
+            )
+            .await;
+        assert_eq!(reply.status, StatusCode::CONFLICT, "{}", reply.text());
+    }
+    assert!(db::labels::list_repo_labels(f.pool(), replacement.id)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(
+        db::milestones::list_repo_milestones(f.pool(), replacement.id, None)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(git.find_reference("refs/heads/topic").is_ok());
     assert!(git.find_reference("refs/tags/v1").is_ok());
     assert_eq!(

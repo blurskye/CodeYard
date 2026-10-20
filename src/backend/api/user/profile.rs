@@ -36,6 +36,7 @@ pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError
         ProfileError::Invalid | ProfileError::Nul | ProfileError::Website => {
             (StatusCode::BAD_REQUEST, "validation_error")
         }
+        ProfileError::Denied => (StatusCode::FORBIDDEN, "forbidden"),
         ProfileError::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
     };
     (status, Json(ApiError::new(code, &error.to_string())))
@@ -50,6 +51,9 @@ pub async fn update_user_profile(
     let updated = profiles::update(
         &state.pool,
         user.id,
+        session::extract_session_id(&headers)
+            .as_deref()
+            .unwrap_or_default(),
         ProfileUpdate {
             display_name: req.display_name.as_deref(),
             bio: req.bio.as_deref(),
@@ -113,23 +117,30 @@ pub(crate) async fn load_settings(
         ));
     }
     let keys = if tab == "keys" {
-        db::users::ssh_keys::list_user_keys(&ctx.state.pool, user.id)
-            .await
-            .map_err(|_| {
-                ctx.error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Unable to load your SSH keys.",
-                )
-            })?
-            .into_iter()
-            .map(|key| Key {
-                id: key.id,
-                name: key.name,
-                fingerprint: key.fingerprint,
-                kind: key.key_type,
-                created: key.created_at.format("%b %e, %Y").to_string(),
-            })
-            .collect()
+        db::users::ssh_keys::list_user_key_summaries(
+            &ctx.state.pool,
+            user.id,
+            ctx.query
+                .get("keys_after")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0),
+        )
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load your SSH keys.",
+            )
+        })?
+        .into_iter()
+        .map(|key| Key {
+            id: key.id,
+            name: key.name,
+            fingerprint: key.fingerprint,
+            kind: key.key_type,
+            created: key.created_at.format("%b %e, %Y").to_string(),
+        })
+        .collect()
     } else {
         Vec::new()
     };
@@ -173,10 +184,10 @@ pub(crate) async fn load_settings(
     } else {
         Vec::new()
     };
-    let requests = if tab == "access" {
-        load_requests(ctx).await?
+    let (requests, requests_count, requests_page) = if tab == "access" {
+        load_requests(ctx, 30).await?
     } else {
-        Vec::new()
+        (Vec::new(), 0, 1)
     };
     let profile = profile_model(user);
     let values = if let Some(form) = submitted {
@@ -203,6 +214,8 @@ pub(crate) async fn load_settings(
         must_change_password: user.must_change_password,
         manage_access,
         requests,
+        requests_count,
+        requests_page,
         values,
         two_factor: TwoFactor {
             enabled: identity::two_factor::is_enabled(&ctx.state.pool, user.id)
@@ -322,6 +335,9 @@ pub(crate) async fn profile_post(
     let result = profiles::update(
         &ctx.state.pool,
         actor,
+        session::extract_session_id(&ctx.headers)
+            .as_deref()
+            .unwrap_or_default(),
         ProfileUpdate {
             display_name: Some(field(&form, "display_name")),
             bio: Some(field(&form, "bio")),

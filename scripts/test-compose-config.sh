@@ -57,4 +57,8 @@ fi
 if resolve S3_PUBLIC_ENDPOINT= >/dev/null; then
   echo 'Compose accepted a missing browser object endpoint' >&2; exit 1
 fi
-echo 'Compose config: 13 checks passed'
+printf '%s\n' 'NODE_KEY_FILE=/data/state/production.key' 'CLUSTER_NODES_FILE=/data/state/peers.txt' > "$env_file"
+cluster_files=$(resolve)
+printf '%s\n' "$cluster_files" | grep -Fx '      NODE_KEY_FILE: /data/state/production.key' >/dev/null
+printf '%s\n' "$cluster_files" | grep -Fx '      CLUSTER_NODES_FILE: /data/state/peers.txt' >/dev/null
+echo 'Compose config: 15 checks passed'

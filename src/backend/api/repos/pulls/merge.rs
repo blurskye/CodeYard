@@ -65,6 +65,7 @@ pub(crate) async fn native_merge(
             &ctx.state.ci_runs,
             ctx.require_user()?.id,
             pull.id,
+            Some(crate::backend::db::models::AccessLevel::Owner),
         )
         .await;
     }

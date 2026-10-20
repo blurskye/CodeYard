@@ -21,6 +21,8 @@ pub(crate) fn protection_write_error(
             "Repository policy authority is denied",
         ),
         Some(Refusal::InvalidStatusMetadata) => (StatusCode::BAD_REQUEST, "validation_error", "Status context must be 1–255 bytes, description at most 1024 bytes and URL at most 2048 bytes, without NUL."),
+        Some(Refusal::InvalidChecks) => (StatusCode::BAD_REQUEST, "validation_error", "A rule can require at most 100 checks of 512 bytes each"),
+        Some(Refusal::RuleLimit) => (StatusCode::UNPROCESSABLE_ENTITY, "rule_limit", "A repository can have at most 100 protection rules"),
         Some(Refusal::StatusLimit) => (StatusCode::UNPROCESSABLE_ENTITY, "status_limit", "A commit can have at most 1024 external status contexts"),
         Some(Refusal::InvalidPattern) => (
             StatusCode::BAD_REQUEST,
@@ -172,6 +174,11 @@ pub(crate) fn discussion_write_error(error: anyhow::Error) -> (StatusCode, Json<
             StatusCode::CONFLICT,
             "conflict",
             "The pull request no longer accepts this review",
+        ),
+        Some(DiscussionWriteRefusal::RevisionChanged) => (
+            StatusCode::CONFLICT,
+            "revision_conflict",
+            "The pull request revisions changed. Reload the diff before commenting.",
         ),
         Some(DiscussionWriteRefusal::ReviewFull) => (
             StatusCode::BAD_REQUEST,

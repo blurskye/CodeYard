@@ -38,7 +38,7 @@ fn yes() -> bool {
     true
 }
 
-/// Each entry costs a user lookup and an access check, so one request may list only this many.
+/// Bound each allowance list before resolving their combined usernames.
 const MAX_ALLOWANCE_NAMES: usize = 100;
 
 /// An omitted `require_pull_request`, `dismiss_stale_reviews` or `enforce_admins` means
@@ -240,6 +240,8 @@ pub(in crate::backend::api::repos) async fn save_rule(
         ));
     }
 
+    db::repositories::protection::validate_required_checks(&req.required_status_checks)
+        .map_err(|error| protection_write_error(error.into()))?;
     let mut required_status_checks = Vec::new();
     let mut seen_status_checks = HashSet::new();
     for check in &req.required_status_checks {
@@ -299,13 +301,10 @@ pub(in crate::backend::api::repos) async fn save_rule(
         ));
     }
 
-    let push_allowances =
-        write_user_ids(pool, repository, "push_allowances", &req.push_allowances).await?;
-    let force_push_allowances = write_user_ids(
+    let [push_allowances, force_push_allowances] = write_user_ids(
         pool,
         repository,
-        "force_push_allowances",
-        &req.force_push_allowances,
+        [&req.push_allowances, &req.force_push_allowances],
     )
     .await?;
 
@@ -338,61 +337,60 @@ pub(in crate::backend::api::repos) async fn save_rule(
     Ok(rule)
 }
 
-/// The ids of the users named in an allowance list, each of which needs write access to
-/// `repository`. `field` names the list in the refusals.
+/// Resolve both lists together, then preserve each list's first-occurrence ordering.
 async fn write_user_ids(
     pool: &db::DbPool,
     repository: &db::models::Repository,
-    field: &str,
-    names: &[String],
-) -> Result<Vec<i64>, (StatusCode, Json<ApiError>)> {
-    // The cap counts repeated names too, so a long duplicate list is refused before any lookup.
-    if names.len() > MAX_ALLOWANCE_NAMES {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError::new(
-                "validation_error",
-                &format!("{field} can list at most {MAX_ALLOWANCE_NAMES} entries"),
-            )),
-        ));
-    }
-    // Each name is looked up once, in the order it was first given.
-    let mut usernames = Vec::new();
-    let mut seen_usernames = HashSet::new();
-    for username in names {
-        let username = username.trim();
-        if seen_usernames.insert(username) {
-            usernames.push(username);
-        }
-    }
-    let mut ids = Vec::new();
-    for username in usernames {
-        let allowed = match db::users::accounts::get_user_by_username(pool, username).await {
-            Ok(Some(user)) => {
-                match crate::backend::repositories::access::can_write(pool, &user, repository).await
-                {
-                    Ok(true) => Some(user.id),
-                    Ok(false) => None,
-                    Err(_) => return Err(unavailable()),
-                }
-            }
-            Ok(None) => None,
-            Err(_) => return Err(unavailable()),
-        };
-        let Some(id) = allowed else {
+    lists: [&[String]; 2],
+) -> Result<[Vec<i64>; 2], (StatusCode, Json<ApiError>)> {
+    let fields = ["push_allowances", "force_push_allowances"];
+    for (names, field) in lists.iter().zip(fields) {
+        if names.len() > MAX_ALLOWANCE_NAMES {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiError::new(
                     "validation_error",
-                    &format!("{field} must name users with write access to this repository"),
+                    &format!("{field} can list at most {MAX_ALLOWANCE_NAMES} entries"),
                 )),
             ));
-        };
-        if !ids.contains(&id) {
-            ids.push(id);
         }
     }
-    Ok(ids)
+    let names: HashSet<String> = lists
+        .iter()
+        .flat_map(|names| names.iter())
+        .map(|name| name.trim().to_owned())
+        .collect();
+    let users =
+        db::users::accounts::get_users_by_usernames(pool, &names.into_iter().collect::<Vec<_>>())
+            .await
+            .map_err(|_| unavailable())?;
+    let ids: Vec<_> = users.iter().map(|user| user.id).collect();
+    let allowed = db::repositories::access::write_access_user_ids(pool, repository.id, &ids)
+        .await
+        .map_err(|_| unavailable())?;
+    let users: std::collections::HashMap<_, _> = users
+        .into_iter()
+        .filter(|user| allowed.contains(&user.id))
+        .map(|user| (user.username, user.id))
+        .collect();
+    let mut result = [Vec::new(), Vec::new()];
+    for ((names, ids), field) in lists.into_iter().zip(&mut result).zip(fields) {
+        for name in names {
+            let Some(id) = users.get(name.trim()) else {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiError::new(
+                        "validation_error",
+                        &format!("{field} must name users with write access to this repository"),
+                    )),
+                ));
+            };
+            if !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+    }
+    Ok(result)
 }
 
 fn unavailable() -> (StatusCode, Json<ApiError>) {

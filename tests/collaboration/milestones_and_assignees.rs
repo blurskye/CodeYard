@@ -492,6 +492,44 @@ async fn contract(pg: bool) {
         ),
         MilestoneWriteRefusal::NotFound
     );
+    // Deleting the highest milestone, even the last one, never reuses its number.
+    db::milestones::delete_milestone(pool, owner, repo, v2.number, v2.id)
+        .await
+        .unwrap();
+    let next = db::milestones::create_milestone(pool, owner, repo, "Next release", None, None)
+        .await
+        .unwrap();
+    assert_eq!(next.number, 3);
+    assert!(db::milestones::update_milestone(
+        pool,
+        owner,
+        repo,
+        v2.number,
+        "Stale edit",
+        None,
+        None
+    )
+    .await
+    .is_err());
+    assert!(
+        db::milestones::set_milestone_state(pool, owner, repo, v2.number, "closed")
+            .await
+            .is_err()
+    );
+    assert!(
+        db::milestones::set_issue_milestone(pool, owner, repo, first.id, Some(v2.number))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        db::milestones::get_milestone(pool, repo, next.number)
+            .await
+            .unwrap()
+            .unwrap()
+            .milestone
+            .title,
+        "Next release"
+    );
     f.finish().await;
 }
 

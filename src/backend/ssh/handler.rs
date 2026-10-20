@@ -25,10 +25,15 @@ struct ChannelState {
     channel: Option<ChannelWriteHalf<Msg>>,
     input: Option<tokio::io::DuplexStream>,
     reader: Option<tokio::task::JoinHandle<()>>,
+    queued: Option<tokio_util::sync::CancellationToken>,
+    git_protocol: Option<String>,
 }
 
 impl Drop for ChannelState {
     fn drop(&mut self) {
+        if let Some(queued) = self.queued.take() {
+            queued.cancel();
+        }
         if let Some(reader) = self.reader.take() {
             reader.abort();
         }
@@ -36,6 +41,12 @@ impl Drop for ChannelState {
 }
 
 const MAX_ACTIVE_GIT_CHANNELS: usize = 8;
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum AuthOutcome {
+    Accepted,
+    Unavailable,
+}
 
 pub struct GitSshHandler {
     pool: DbPool,
@@ -46,10 +57,11 @@ pub struct GitSshHandler {
     // Channel IDs are local to this connection, not server-global. Own the map
     // directly: an Arc here would permit cross-connection state sharing.
     channels: HashMap<u32, ChannelState>,
+    git_slots: Arc<tokio::sync::Semaphore>,
     pub(super) rate_limiter: RateLimiter,
     client_ip: Option<IpAddr>,
     // Sent once the client authenticates, which ends the server's login deadline.
-    authenticated: Option<oneshot::Sender<()>>,
+    authenticated: Option<oneshot::Sender<AuthOutcome>>,
     id: usize,
     ci_service: Arc<CiRuns>,
     pub(crate) git_tasks: Arc<GitTasks>,
@@ -63,6 +75,7 @@ impl GitSshHandler {
             key_id: None,
             deploy_key: None,
             channels: HashMap::new(),
+            git_slots: Arc::new(tokio::sync::Semaphore::new(MAX_ACTIVE_GIT_CHANNELS)),
             rate_limiter,
             client_ip: None,
             authenticated: None,
@@ -84,7 +97,7 @@ impl GitSshHandler {
         }
     }
 
-    pub(crate) fn set_authenticated_signal(&mut self, signal: oneshot::Sender<()>) {
+    pub(super) fn set_authenticated_signal(&mut self, signal: oneshot::Sender<AuthOutcome>) {
         self.authenticated = Some(signal);
     }
 
@@ -252,6 +265,11 @@ impl russh::server::Handler for GitSshHandler {
             public_key.algorithm()
         );
 
+        // russh does not expose the authenticated SK flags here. Use host OpenSSH for
+        // security keys until the built-in verifier enforces user presence.
+        if public_key.algorithm().to_string().starts_with("sk-") {
+            return self.reject_key().await;
+        }
         let openssh_str = public_key.to_openssh()?;
         let fingerprint_str =
             match crate::backend::db::users::ssh_keys::calculate_fingerprint(&openssh_str) {
@@ -277,7 +295,7 @@ impl russh::server::Handler for GitSshHandler {
                 self.key_id = Some(user_with_key.key.id);
                 self.user = Some(user_with_key.user);
                 if let Some(signal) = self.authenticated.take() {
-                    let _ = signal.send(());
+                    let _ = signal.send(AuthOutcome::Accepted);
                 }
                 Ok(Auth::Accept)
             }
@@ -292,7 +310,7 @@ impl russh::server::Handler for GitSshHandler {
                         info!("Authenticated deploy key '{}' (id={})", key.title, key.id);
                         self.deploy_key = Some(key.id);
                         if let Some(signal) = self.authenticated.take() {
-                            let _ = signal.send(());
+                            let _ = signal.send(AuthOutcome::Accepted);
                         }
                         Ok(Auth::Accept)
                     }
@@ -302,6 +320,9 @@ impl russh::server::Handler for GitSshHandler {
                     }
                     Err(e) => {
                         error!("Database error during auth: {}", e);
+                        if let Some(signal) = self.authenticated.take() {
+                            let _ = signal.send(AuthOutcome::Unavailable);
+                        }
                         Err(e)
                     }
                 }
@@ -309,6 +330,9 @@ impl russh::server::Handler for GitSshHandler {
             // A database failure is not a rejected key, so it does not count against the client.
             Err(e) => {
                 error!("Database error during auth: {}", e);
+                if let Some(signal) = self.authenticated.take() {
+                    let _ = signal.send(AuthOutcome::Unavailable);
+                }
                 Err(e)
             }
         }
@@ -353,9 +377,75 @@ impl russh::server::Handler for GitSshHandler {
                 channel: Some(outgoing),
                 input: Some(input),
                 reader: Some(reader),
+                queued: None,
+                git_protocol: None,
             },
         );
         reply.accept().await;
+        Ok(())
+    }
+
+    async fn env_request(
+        &mut self,
+        channel: ChannelId,
+        variable_name: &str,
+        variable_value: &str,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let accepted = self
+            .channels
+            .get_mut(&u32::from(channel))
+            .filter(|state| state.channel.is_some())
+            .filter(|_| variable_name == "GIT_PROTOCOL")
+            .and_then(|state| {
+                let protocol = validation::protocol(Some(variable_value)).ok()?;
+                state.git_protocol = protocol.map(str::to_owned);
+                Some(())
+            })
+            .is_some();
+        if accepted {
+            let _ = session.channel_success(channel);
+        } else {
+            let _ = session.channel_failure(channel);
+        }
+        Ok(())
+    }
+
+    async fn shell_request(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.refuse_channel(
+            channel,
+            session,
+            "Shell access is disabled. Only Git commands are supported.",
+        );
+        Ok(())
+    }
+
+    async fn subsystem_request(
+        &mut self,
+        channel: ChannelId,
+        _name: &str,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.refuse_channel(channel, session, "SSH subsystems are disabled.");
+        Ok(())
+    }
+
+    async fn pty_request(
+        &mut self,
+        channel: ChannelId,
+        _term: &str,
+        _col_width: u32,
+        _row_height: u32,
+        _pix_width: u32,
+        _pix_height: u32,
+        _modes: &[(russh::Pty, u32)],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.refuse_channel(channel, session, "PTY access is disabled.");
         Ok(())
     }
 
@@ -439,11 +529,17 @@ impl russh::server::Handler for GitSshHandler {
             "Access granted: {:?} for {}/{}",
             credential, git_cmd.owner, git_cmd.repo
         );
+        let Ok(task_slot) = self.git_slots.clone().try_acquire_owned() else {
+            self.refuse_channel(channel, session, "Git sessions busy");
+            return Ok(());
+        };
         let mut io = std::mem::take(
             self.channels
                 .get_mut(&u32::from(channel))
                 .expect("open channel"),
         );
+        let queued = tokio_util::sync::CancellationToken::new();
+        self.channels.get_mut(&u32::from(channel)).unwrap().queued = Some(queued.clone());
         let ssh = io.channel.as_ref().expect("open channel");
         let mut output = ssh.make_writer();
         let mut errors = ssh.make_writer_ext(Some(1));
@@ -458,16 +554,23 @@ impl russh::server::Handler for GitSshHandler {
             },
             false,
         );
+        options.git_protocol = io.git_protocol.take();
         options.credential = Some(credential);
         options.owner = git_cmd.owner;
         let receive = git_cmd
             .write
             .then(|| (self.pool.clone(), self.ci_service.clone()));
         if !self.git_tasks.spawn(async move {
+            let _task_slot = task_slot;
             // Waiting in russh's serial callback would stop the active channel from
             // receiving the data and window adjustments it needs to release its slot.
             let result = async {
-                let _permit = git_process::session_permit().await?;
+                let store = repo_store(&repo, cluster.as_ref());
+                let _permit = tokio::select! {
+                    biased;
+                    _ = queued.cancelled() => return Err(anyhow::anyhow!("Git channel closed")),
+                    permit = store.session_permit() => permit?,
+                };
                 let repo = crate::backend::db::repositories::records::get_repository_by_id(&pool, repo.id)
                     .await?.ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
                 credential.authorize(&pool, &repo, git_cmd.write).await?;
@@ -509,7 +612,7 @@ impl russh::server::Handler for GitSshHandler {
             let _ = handle.eof(channel).await;
             let _ = handle.close(channel).await;
         }) {
-            self.refuse_channel(channel, session, "Git server shutting down");
+            self.refuse_channel(channel, session, "Git server busy or shutting down");
             return Ok(());
         }
         let _ = session.channel_success(channel);
@@ -568,6 +671,21 @@ mod tests {
     }
 
     #[test]
+    fn closing_a_channel_cancels_queued_work() {
+        let token = tokio_util::sync::CancellationToken::new();
+        let state = ChannelState {
+            queued: Some(token.clone()),
+            git_protocol: None,
+            channel: None,
+            input: None,
+            reader: None,
+        };
+        assert!(!token.is_cancelled());
+        drop(state);
+        assert!(token.is_cancelled());
+    }
+
+    #[test]
     fn git_commands_strip_only_one_transport_suffix() {
         for (path, expected) in [
             ("owner/project", "project"),
@@ -622,6 +740,24 @@ mod tests {
             )),
         ));
         let mut handler = GitSshHandler::new(pool.clone(), RateLimiter::new(), ci);
+        // Enrollment stays valid for host OpenSSH; the built-in verifier cannot require touch.
+        let security_key = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJlAAAAC3NzaDpmaXh0dXJl";
+        crate::backend::db::users::ssh_keys::add_ssh_key(
+            &pool,
+            owner.id,
+            "security key",
+            security_key,
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            handler
+                .auth_publickey("git", &PublicKey::from_openssh(security_key).unwrap())
+                .await
+                .unwrap(),
+            Auth::Reject { .. }
+        ));
+        assert!(handler.user.is_none() && handler.key_id.is_none());
         assert!(matches!(
             handler.auth_publickey("git", &public).await.unwrap(),
             Auth::Accept

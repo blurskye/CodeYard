@@ -1,36 +1,19 @@
 use super::{authorized_run, unavailable, CiReadError};
 use crate::backend::ci::logs::normalize_stage_name;
 use crate::backend::{api::http::error::ApiError, app::AppState, db};
+use crate::webui::pages::repos::actions::{logs::LogLine, Deployment, RunLogUpdate, RunProgress};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
 #[derive(Debug, Deserialize)]
 pub struct LogHistoryQuery {
     pub after: Option<i64>,
     pub limit: Option<i64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CursorLogLine {
-    pub id: i64,
-    pub stage: String,
-    pub line: String,
-    pub level: String,
-    pub timestamp: i64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LogHistoryResponse {
-    pub job_id: String,
-    pub logs: Vec<CursorLogLine>,
-    pub next_cursor: i64,
-    pub has_more: bool,
-    pub workflow_sha: Option<String>,
 }
 
 pub(super) async fn readable_history(
@@ -82,17 +65,34 @@ pub async fn get_ci_job_history(
     headers: HeaderMap,
     Path(job_id): Path<String>,
     Query(query): Query<LogHistoryQuery>,
-) -> Result<Json<LogHistoryResponse>, CiReadError> {
+) -> Result<Json<RunLogUpdate>, CiReadError> {
     let (run, rows, next_cursor, has_more) =
         readable_history(&state, &headers, &job_id, &query).await?;
-    Ok(Json(LogHistoryResponse {
+    let deployment = db::ci::get_ci_deployment_by_run_id(&state.pool, run.id)
+        .await
+        .map_err(unavailable)?
+        .map(|row| Deployment {
+            environment: row.environment,
+            status: row.status,
+            approved_at: row.approved_at.map(|time| time.timestamp()),
+            started_at: row.started_at.map(|time| time.timestamp()),
+            completed_at: row.completed_at.map(|time| time.timestamp()),
+        });
+    Ok(Json(RunLogUpdate {
+        progress: RunProgress {
+            status: run.status,
+            started_at: run.started_at.map(|time| time.timestamp()),
+            completed_at: run.completed_at.map(|time| time.timestamp()),
+            error_message: crate::backend::ci::visible_run_error(run.error_message.as_deref()),
+        },
+        deployment,
         job_id,
         next_cursor,
         has_more,
         workflow_sha: run.workflow_sha,
         logs: rows
             .into_iter()
-            .map(|row| CursorLogLine {
+            .map(|row| LogLine {
                 id: row.id,
                 stage: normalize_stage_name(&row.stage),
                 line: row.line,

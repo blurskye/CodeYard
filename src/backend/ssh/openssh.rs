@@ -24,8 +24,10 @@ pub enum Commands {
         base64_key: String,
     },
     Serve {
+        #[arg(long, value_parser = positive_id, required_unless_present = "deploy_key_id", conflicts_with = "deploy_key_id")]
+        key_id: Option<i64>,
         #[arg(long, value_parser = positive_id)]
-        key_id: i64,
+        deploy_key_id: Option<i64>,
         #[arg(long)]
         socket: PathBuf,
     },

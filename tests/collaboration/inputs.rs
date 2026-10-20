@@ -194,7 +194,29 @@ async fn contract(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
-    let dismiss = format!("{reviews}/{}/dismiss", review["id"]);
+    assert_eq!(review["state"], "commented");
+    let repo = db::repositories::records::get_repository(f.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        bob_id,
+        repo.id,
+        db::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    let reviewer = Client::login(&router, f.pool(), bob_id).await;
+    let vote = reviewer
+        .expect(
+            "POST",
+            &reviews,
+            json!({"state":"approved", "body":"Approval"}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let dismiss = format!("{reviews}/{}/dismiss", vote["id"]);
     let (status, value) = alice
         .api("POST", &dismiss, json!({"reason": long.as_str()}))
         .await;
@@ -320,6 +342,15 @@ async fn contract(pg: bool) {
             .form(
                 "/alice/proj/_forms/label",
                 &[
+                    (
+                        "repository_id",
+                        &db::repositories::records::get_repository(f.pool(), "alice", "proj")
+                            .await
+                            .unwrap()
+                            .unwrap()
+                            .id
+                            .to_string(),
+                    ),
                     ("name", name),
                     ("color", "d73a4a"),
                     ("description", description),
@@ -885,6 +916,7 @@ async fn assert_comment_paths_are_bounded(
                 pr_id,
                 author_id: reader_id,
                 body: "At limit",
+                expected_revisions: None,
                 path: Some(&accepted),
                 line: Some(1),
                 side: Some("RIGHT"),
@@ -926,6 +958,7 @@ async fn assert_comment_paths_are_bounded(
                 pr_id,
                 author_id: reader_id,
                 body: "Oversized path",
+                expected_revisions: None,
                 path: Some(&oversized_path),
                 line: Some(1),
                 side: Some("RIGHT"),
@@ -1162,7 +1195,11 @@ async fn assert_form_comments_land_on_their_page(alice: &Client, main: &str) {
         let preview = alice
             .form_reply(
                 &format!("{form_path}/{comment_id}/edit"),
-                &[("body", "Preview only on page two"), ("intent", "preview")],
+                &[
+                    ("body", "Preview only on page two"),
+                    ("intent", "preview"),
+                    ("expected_body", "\"Thirty-first from the form\""),
+                ],
             )
             .await;
         assert_eq!(preview.status, StatusCode::OK, "{}", preview.text());
@@ -1178,6 +1215,63 @@ async fn assert_form_comments_land_on_their_page(alice: &Client, main: &str) {
             .unwrap();
         let composer = composer.split("</form>").next().unwrap();
         assert!(!composer.contains("Preview only on page two"));
+        assert_draft_acknowledgment(
+            alice,
+            &format!("{form_path}/{comment_id}/edit"),
+            "Thirty-first from the form",
+        )
+        .await;
+    }
+}
+
+async fn assert_draft_acknowledgment(client: &Client, path: &str, original: &str) {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    for intent in ["preview", "save"] {
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("csrf_token", &client.csrf)
+            .append_pair("body", "Newer native submission B")
+            .append_pair("expected_body", &serde_json::to_string(original).unwrap())
+            .append_pair("draft_submission", "123-456.789")
+            .append_pair("intent", intent)
+            .finish();
+        let response = client
+            .router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .header("cookie", format!("session_id={}", client.session))
+                    .header("accept", codeyard::webui::bootstrap::MODEL_CONTENT_TYPE)
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let accepted = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .any(|cookie| {
+                cookie
+                    .to_str()
+                    .unwrap()
+                    .starts_with("codeyard-draft-accepted=123-456.789;")
+            });
+        assert_eq!(accepted, intent == "save");
+        if intent == "preview" {
+            assert_eq!(response.status(), StatusCode::OK);
+            let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+                .await
+                .unwrap();
+            let model: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(model["chrome"]["submitted_form"], path);
+            assert!(String::from_utf8_lossy(&bytes).contains("Newer native submission B"));
+        } else {
+            assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        }
     }
 }
 
@@ -1375,20 +1469,75 @@ async fn assert_issue_notification_links(f: &Database, alice: &Client, bob: &Cli
             .as_array()
             .unwrap()
             .iter()
-            .find(|item| item["link"] == *location)
-            .expect("notification uses comment redirect");
+            .find(|item| {
+                location.ends_with(&format!("#comment-{}", item["metadata"]["comment_id"]))
+            })
+            .expect("notification names the saved comment");
+        let stable = notification["link"].as_str().unwrap();
+        let id = notification["metadata"]["comment_id"].as_i64().unwrap();
+        assert_eq!(
+            stable,
+            format!("/alice/proj/issues/{number}?comment={id}#comment-{id}")
+        );
+        let followed = alice
+            .exchange(
+                "GET",
+                stable.split('#').next().unwrap(),
+                "text/html",
+                Vec::new(),
+            )
+            .await;
+        assert_eq!(followed.status, StatusCode::OK);
+        assert!(followed.text().contains(&format!("id=\"comment-{id}\"")));
         let (target, fragment) = location.split_once('#').unwrap();
         assert_eq!(target.contains("?page=2"), index > 0);
         assert_eq!(
             fragment,
             format!("comment-{}", notification["metadata"]["comment_id"])
         );
-        assert!(native_inbox.contains(location));
+        assert!(native_inbox.contains(stable));
         let (status, page) = alice.page(target).await;
         assert_eq!(status, StatusCode::OK);
         assert!(page.contains(notification["body"].as_str().unwrap()));
         assert!(page.contains(&format!("id=\"{fragment}\"")));
     }
+    // Deleting preceding comments moves the target, but the saved notification still reaches it.
+    let first_id: i64 = locations[0]
+        .rsplit("comment-")
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let second_id = db::issues::list_issue_comments(f.pool(), issue["id"].as_i64().unwrap(), 2, 0)
+        .await
+        .unwrap()[1]
+        .comment
+        .id;
+    for id in [first_id, second_id] {
+        let removed = alice
+            .form_reply(
+                &format!("/alice/proj/issues/{number}/comments/{id}/delete"),
+                &[],
+            )
+            .await;
+        assert_eq!(removed.status, StatusCode::SEE_OTHER);
+    }
+    let id = last["id"].as_i64().unwrap();
+    let stable = format!("/alice/proj/issues/{number}?comment={id}");
+    let moved = alice
+        .exchange("GET", &stable, "text/html", Vec::new())
+        .await;
+    assert_eq!(moved.status, StatusCode::OK);
+    assert!(moved.text().contains(&format!("id=\"comment-{id}\"")));
+    let (status, model) = alice.model(&stable).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_string(&model)
+        .unwrap()
+        .contains("Notified through JSON"));
+    let (status, _) = alice
+        .page(&format!("/alice/proj/issues/999999?comment={id}"))
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
     // Positions follow (created_at, id): equal timestamps fall back to id, and an earlier
     // timestamp moves a comment to the front.
     f.execute(

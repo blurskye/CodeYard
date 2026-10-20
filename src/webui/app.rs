@@ -21,7 +21,7 @@ pub enum Page {
     /// `/issues` and `/pulls`: the signed-in user's own lists.
     Dashboard(pages::dashboard::WorkList),
     /// `/issues/new`: the repositories the viewer can open an issue in.
-    IssueRepositories(Vec<pages::dashboard::RepositoryChoice>),
+    IssueRepositories(pages::dashboard::RepositoryChoices),
     Repositories(pages::repos::page::Page),
     Collaboration(Box<pages::repos::issues::Page>),
     Actions(pages::ci::Page),
@@ -72,6 +72,8 @@ pub(crate) struct CurrentPage(pub Signal<PageEnvelope>);
 pub(crate) struct RefreshEpoch(pub Signal<u64>);
 #[derive(Clone, Copy)]
 pub(crate) struct AppearanceEpoch(pub Signal<u64>);
+#[derive(Clone, Copy)]
+pub(crate) struct ThemeSaving(pub Signal<bool>);
 
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn theme_for_read(
@@ -93,9 +95,11 @@ pub fn App(initial: PageEnvelope) -> Element {
     let current = use_signal(move || initial);
     let refresh = use_signal(|| 0_u64);
     let appearance = use_signal(|| 0_u64);
+    let theme_saving = use_signal(|| false);
     use_context_provider(|| CurrentPage(current));
     use_context_provider(|| RefreshEpoch(refresh));
     use_context_provider(|| AppearanceEpoch(appearance));
+    use_context_provider(|| ThemeSaving(theme_saving));
     #[cfg(target_arch = "wasm32")]
     use_effect(move || {
         // Framework effects run after mounting the hydrated tree, not on a timer

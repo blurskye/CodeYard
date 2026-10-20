@@ -59,10 +59,47 @@ native_operation!(crate::backend::db::postgres::milestones::list_repo_milestones
     crate::backend::db::sqlite::milestones::list_repo_milestones,
     fn list_repo_milestones(pool: &DbPool, repo_id: i64, state: Option<&str>) -> Result<Vec<MilestoneSummary>>);
 
+/// Picker catalogues are bounded and never load descriptions or progress counts.
+pub const MAX_MILESTONE_CHOICES: i64 = 1000;
+pub const MILESTONES_PER_PAGE: i64 = 30;
+
+pub(crate) fn milestone_order(sort: &str) -> &'static str {
+    match sort {
+        "furthest-due" => "due_date IS NULL, due_date DESC, number",
+        "most-complete" => {
+            "COALESCE(100 * closed_items / NULLIF(open_items + closed_items, 0), 0) DESC, number"
+        }
+        "least-complete" => {
+            "COALESCE(100 * closed_items / NULLIF(open_items + closed_items, 0), 0), number"
+        }
+        "most-issues" => "open_items + closed_items DESC, number",
+        "least-issues" => "open_items + closed_items, number",
+        "alphabetical" => "lower(title), number",
+        "reverse-alphabetical" => "lower(title) DESC, number",
+        _ => "due_date IS NULL, due_date, number",
+    }
+}
+
+native_operation!(crate::backend::db::postgres::milestones::list_milestones_page,
+    crate::backend::db::sqlite::milestones::list_milestones_page,
+    fn list_milestones_page(pool: &DbPool, repo_id: i64, state: &str, sort: &str, offset: i64) -> Result<Vec<MilestoneSummary>>);
+
+native_operation!(crate::backend::db::postgres::milestones::count_milestones,
+    crate::backend::db::sqlite::milestones::count_milestones,
+    fn count_milestones(pool: &DbPool, repo_id: i64) -> Result<(i64, i64)>);
+
+native_operation!(crate::backend::db::postgres::milestones::list_milestone_filters,
+    crate::backend::db::sqlite::milestones::list_milestone_filters,
+    fn list_milestone_filters(pool: &DbPool, repo_id: i64) -> Result<Vec<MilestoneSummary>>);
+
 // Milestones for pickers, without counting linked issues or pull requests.
 native_operation!(crate::backend::db::postgres::milestones::list_milestone_choices,
     crate::backend::db::sqlite::milestones::list_milestone_choices,
     fn list_milestone_choices(pool: &DbPool, repo_id: i64) -> Result<Vec<Milestone>>);
+
+native_operation!(crate::backend::db::postgres::milestones::milestone_choices_by_ids,
+    crate::backend::db::sqlite::milestones::milestone_choices_by_ids,
+    fn milestone_choices_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Milestone>>);
 
 // Sets or clears (`None`) the milestone of an issue. The milestone is found by its number in
 // the same repository.

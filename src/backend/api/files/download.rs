@@ -8,7 +8,7 @@ use crate::backend::{
 };
 use axum::{
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     response::{IntoResponse, Redirect, Response},
     Json,
 };
@@ -76,7 +76,37 @@ pub async fn get_download_url(
     Ok(download_response(download))
 }
 
-pub(crate) fn asset_response(download: AssetDownload) -> Result<Response, Failure> {
+pub(crate) fn asset_response(download: AssetDownload, method: Method) -> Result<Response, Failure> {
+    if method == Method::HEAD {
+        let inline = download.inline_type.as_deref();
+        let response = Response::builder()
+            .header(
+                header::CONTENT_TYPE,
+                inline.unwrap_or("application/octet-stream"),
+            )
+            .header(
+                header::CONTENT_DISPOSITION,
+                if inline.is_some() {
+                    "inline".into()
+                } else {
+                    attachment_disposition(&download.filename)
+                },
+            )
+            .header(header::CONTENT_LENGTH, download.file_size.to_string())
+            .header(
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'none'; sandbox",
+            )
+            .body(axum::body::Body::empty())
+            .map_err(|_| {
+                failure(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "response_unavailable",
+                    "Object response unavailable",
+                )
+            })?;
+        return Ok(private_response(response));
+    }
     match download.transport {
         DownloadTransport::RemoteUrl(url) => Ok(private_response(Redirect::temporary(&url))),
         DownloadTransport::ApplicationStream {
@@ -238,6 +268,31 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn head_download_returns_metadata_not_a_get_signed_redirect() {
+        let response = asset_response(
+            AssetDownload {
+                transport: DownloadTransport::RemoteUrl("https://objects.test/get-signed".into()),
+                inline_type: None,
+                filename: "demo.txt".into(),
+                file_size: 42,
+            },
+            Method::HEAD,
+        )
+        .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(!response.headers().contains_key(header::LOCATION));
+        assert_eq!(response.headers()[header::CONTENT_LENGTH], "42");
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "no-store, private"
+        );
+        assert!(axum::body::to_bytes(response.into_body(), 10)
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

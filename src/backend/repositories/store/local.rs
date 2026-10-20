@@ -171,12 +171,19 @@ async fn record_branch_update(
     pool: &db::DbPool,
     repo_id: i64,
     actor: i64,
-    path: &Path,
+    storage: (&Path, Option<Option<i64>>),
     branch: &str,
     old: Option<&str>,
     new: &str,
 ) {
-    languages::refresh_default_branch(pool.clone(), repo_id, path.to_owned(), branch.to_owned());
+    let (path, node_id) = storage;
+    languages::refresh_default_branch(
+        pool.clone(),
+        repo_id,
+        path.to_owned(),
+        branch.to_owned(),
+        node_id,
+    );
     let reference = format!("refs/heads/{branch}");
     let count = match git::count_pushed_commits(path, old, new, &reference).await {
         Ok(count) => i32::try_from(count).unwrap_or(i32::MAX),
@@ -202,6 +209,44 @@ async fn record_branch_update(
 /// change to that repository is counted, because the copy would claim a version whose change
 /// it may not hold yet.
 static REF_CHANGES: LazyLock<Mutex<HashMap<PathBuf, usize>>> = LazyLock::new(Default::default);
+
+static SIZE_REFRESHES: LazyLock<Mutex<HashMap<PathBuf, bool>>> = LazyLock::new(Default::default);
+
+/// Coalesce writes while a scan runs. Accounting never holds a publication lock or RefChange.
+fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
+    let path = store.path().to_owned();
+    {
+        let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(dirty) = pending.get_mut(&path) {
+            *dirty = true;
+            return;
+        }
+        pending.insert(path.clone(), false);
+    }
+    tokio::spawn(async move {
+        loop {
+            // Wait for the publication that queued us to release its lock and ref-change guard.
+            drop(git::locks::lock(&path).await);
+            let result = async {
+                let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
+                db::repositories::records::update_repo_size(&pool, repo_id, size)
+                    .await
+                    .map_err(RepoError::from)
+            }
+            .await;
+            if let Err(error) = result {
+                tracing::warn!(repo_id, %error, "could not refresh repository storage size");
+            }
+            let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
+            if pending.get(&path) == Some(&true) {
+                pending.insert(path.clone(), false);
+            } else {
+                pending.remove(&path);
+                break;
+            }
+        }
+    });
+}
 
 fn ref_change_counts() -> MutexGuard<'static, HashMap<PathBuf, usize>> {
     REF_CHANGES
@@ -435,11 +480,18 @@ impl LocalStore {
         tokio::fs::rename(temporary.path(), self.path())
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+        if !db::cluster::bump_write_version(pool, repo_id, self.node_id)
+            .await
+            .map_err(RepoError::from)?
+        {
+            return Err(RepoError::write_denied());
+        }
         languages::refresh_default_branch(
             pool.clone(),
             repo_id,
             self.path().to_owned(),
             default_branch.to_owned(),
+            self.node_id,
         );
         Ok(())
     }
@@ -503,7 +555,7 @@ impl LocalStore {
         metadata_only: bool,
     ) -> Result<Vec<TreeEntry>, RepoError> {
         if metadata_only {
-            git::list_tree_with_history(self.path(), git_ref, path, false).await
+            git::list_tree_with_history(self.path(), git_ref, path, false, true).await
         } else {
             git::list_tree(self.path(), git_ref, path).await
         }
@@ -536,6 +588,16 @@ impl LocalStore {
     ) -> Result<Vec<CiWorkflowSource>, RepoError> {
         let revision = revision.to_owned();
         self.blocking(move |repo| git::list_ci_workflow_files(repo, &revision))
+            .await
+    }
+
+    pub(super) async fn template_texts(
+        &self,
+        revision: &str,
+        paths: &[String],
+    ) -> Result<Vec<Option<(String, String)>>, RepoError> {
+        let (revision, paths) = (revision.to_owned(), paths.to_vec());
+        self.blocking(move |repo| git::repository::template_texts(repo, &revision, &paths))
             .await
     }
 
@@ -646,10 +708,9 @@ impl LocalStore {
         head_ref: &str,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        let base_ref = base_ref.to_owned();
-        let head_ref = head_ref.to_owned();
-        self.blocking(move |repo| git::list_range_commits(repo, &base_ref, &head_ref, limit))
+        git::list_range_commits(self.path(), base_ref, head_ref, limit)
             .await
+            .map_err(RepoError::from)
     }
 
     pub(super) async fn path_commits(
@@ -670,9 +731,14 @@ impl LocalStore {
         base: &str,
         heads: &[String],
     ) -> Result<Vec<BranchStatus>, RepoError> {
-        let (base, heads) = (base.to_owned(), heads.to_vec());
-        self.blocking(move |repo| git::branch_statuses(repo, &base, &heads))
-            .await
+        git::branch_statuses(
+            self.path(),
+            base,
+            heads,
+            std::time::Instant::now() + std::time::Duration::from_secs(5),
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn commit(&self, revision: &str) -> Result<CommitInfo, RepoError> {
@@ -947,6 +1013,7 @@ impl LocalStore {
         // after waiting for the destination lock and immediately before
         // receive-pack can migrate objects and publish the exact CAS ref.
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::repository::publish_pull_head(self.path(), number, head, expected_head, &prepared)
             .await
@@ -1229,7 +1296,7 @@ impl LocalStore {
             pool,
             repo_id,
             actor,
-            self.path(),
+            (self.path(), self.node_id),
             &prepared.branch,
             prepared.expected.as_deref(),
             &prepared.commit.sha,
@@ -1247,6 +1314,8 @@ impl LocalStore {
         actor: i64,
         moves: &[crate::backend::webhooks::ref_changes::RefMove],
     ) -> Result<(), RepoError> {
+        let metadata = self.synchronize_default_branch(pool, repo_id).await;
+        refresh_storage_size(pool.clone(), repo_id, self.clone());
         let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
             .await
             .map_err(|_| RepoError::applied_followup_failed())?
@@ -1278,7 +1347,6 @@ impl LocalStore {
             self.path(),
             moves,
         );
-        let metadata = self.synchronize_default_branch(pool, repo_id).await;
         git::maintenance::after_push(repo_id, self.path().to_owned());
         accepted.and(metadata)
     }
@@ -1291,20 +1359,24 @@ impl LocalStore {
     ) -> Result<(), RepoError> {
         let result: anyhow::Result<()> = async {
             if let Some(branch) = git::repository::default_branch(self.path()).await? {
-                self.set_head_target(&format!("refs/heads/{branch}"))
+                // An existing HEAD already points at this branch; avoid a redundant HEAD.lock.
+                let target = format!("refs/heads/{branch}");
+                let path = self.path().to_owned();
+                let current = self
+                    .blocking(move |_| {
+                        let repo = git2::Repository::open_bare(&path)?;
+                        let target = repo
+                            .find_reference("HEAD")?
+                            .symbolic_target()
+                            .map(str::to_owned);
+                        Ok(target)
+                    })
                     .await?;
-                let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
-                    .await?
-                    .ok_or_else(|| anyhow::anyhow!("Repository disappeared after publication"))?;
-                let size = self.size_bytes().await?.min(i64::MAX as u64) as i64;
-                db::repositories::records::update_repo_default_branch_and_size(
-                    pool, repo_id, &branch, size,
-                )
-                .await?;
-                if repository.size_bytes != size {
-                    db::repositories::records::insert_repo_storage_snapshot(pool, repo_id, size)
-                        .await?;
+                if current.as_deref() != Some(&target) {
+                    self.set_head_target(&target).await?;
                 }
+                db::repositories::records::update_repo_default_branch(pool, repo_id, &branch)
+                    .await?;
             }
             Ok(())
         }
@@ -1436,7 +1508,7 @@ impl LocalStore {
             pool,
             repo_id,
             actor,
-            self.path(),
+            (self.path(), self.node_id),
             base_branch,
             Some(base),
             result,
@@ -1538,7 +1610,7 @@ impl LocalStore {
                 pool,
                 repo_id,
                 actor,
-                self.path(),
+                (self.path(), self.node_id),
                 &restack.branch,
                 Some(restack.old.as_str()),
                 &restack.new,
@@ -1729,6 +1801,24 @@ impl LocalStore {
         actor: i64,
         name: &str,
     ) -> Result<(), RepoError> {
+        // The database/HEAD update and compensation must finish even if the caller disconnects.
+        let (store, pool, name) = (self.clone(), pool.clone(), name.to_owned());
+        tokio::spawn(async move {
+            store
+                .set_default_branch_owned(&pool, repo_id, actor, &name)
+                .await
+        })
+        .await
+        .map_err(|_| unavailable("Default branch update failed"))?
+    }
+
+    async fn set_default_branch_owned(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        name: &str,
+    ) -> Result<(), RepoError> {
         let _lock = git::locks::lock(self.path()).await;
         let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
         let (status, _) = self
@@ -1792,6 +1882,7 @@ impl LocalStore {
             repo_id,
             self.path().to_owned(),
             name.to_owned(),
+            self.node_id,
         );
         Ok(())
     }

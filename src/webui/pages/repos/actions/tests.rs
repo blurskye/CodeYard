@@ -4,7 +4,7 @@ use super::{logs::LogLine, run::workflow_file_url, runs::repository_base};
 use crate::webui::pages::ci::{render, Page};
 use crate::webui::pages::notifications::NotificationsPage;
 use crate::webui::pages::repos::chrome::RepoChrome;
-use dioxus::prelude::*;
+use dioxus::{core::AttributeValue, prelude::*};
 use std::collections::BTreeMap;
 fn run() -> Run {
     Run {
@@ -58,7 +58,7 @@ fn repo_chrome() -> RepoChrome {
         current_path: "/alice/repo/actions".into(),
     }
 }
-fn model() -> ActionsPage {
+pub(super) fn model() -> ActionsPage {
     ActionsPage {
         repository: Some(("alice".into(), "repo".into())),
         repo_chrome: Some(repo_chrome()),
@@ -77,8 +77,10 @@ fn model() -> ActionsPage {
         dispatch_branch: "main".into(),
         can_dispatch: true,
         can_manage_runs: true,
+        can_cancel: true,
         workflow_warning: None,
         run_limit: 100,
+        next_before: None,
         log_limit: 2000,
     }
 }
@@ -816,6 +818,86 @@ fn byte_limited_logs_explain_truncation_and_link_to_history() {
 }
 
 #[test]
+fn dispatch_checkbox_keeps_its_mounted_state_on_parent_refresh() {
+    use std::{cell::RefCell, rc::Rc};
+    #[derive(Clone)]
+    struct Harness(Rc<RefCell<Option<Signal<bool>>>>);
+    fn root(props: Harness) -> Element {
+        let checked = use_signal(|| false);
+        *props.0.borrow_mut() = Some(checked);
+        input_field(
+            "ci.yml",
+            &WorkflowInput {
+                name: "debug".into(),
+                description: String::new(),
+                kind: InputKind::Boolean,
+                required: false,
+                default: Some(checked().to_string()),
+                options: vec![],
+            },
+            &BTreeMap::new(),
+            false,
+        )
+    }
+    let control = Rc::new(RefCell::new(None));
+    let mut dom = VirtualDom::new_with_props(root, Harness(control.clone()));
+    dom.rebuild_in_place();
+    let mut initial = control.borrow().unwrap();
+    dom.in_runtime(|| initial.set(true));
+    dom.render_immediate_to_vec();
+    let html = dioxus_ssr::render(&dom);
+    let checkbox = html
+        .split("<input")
+        .find(|input| {
+            input.starts_with(" type=\"checkbox\"")
+                || input
+                    .split('>')
+                    .next()
+                    .unwrap()
+                    .contains("type=\"checkbox\"")
+        })
+        .unwrap();
+    assert!(!checkbox.split('>').next().unwrap().contains("checked"));
+    assert!(checkbox.contains("value=\"true\""));
+}
+
+#[test]
+fn manual_dispatch_accepts_every_supported_owner_name_length() {
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(super::dispatch::manual_dispatch_form(
+            "/ci",
+            "csrf",
+            &DispatchDraft {
+                owner: "o".repeat(255),
+                ..Default::default()
+            },
+        ))
+    });
+    let owner = html
+        .split("<input")
+        .find(|tag| {
+            tag.split('>')
+                .next()
+                .unwrap()
+                .contains("name=\"repo_owner\"")
+        })
+        .unwrap();
+    assert!(!owner.split('>').next().unwrap().contains("maxlength"));
+    assert!(owner.contains(&"o".repeat(255)));
+}
+
+#[test]
+fn older_matching_runs_keep_filters_in_their_cursor_link() {
+    let mut page = model();
+    page.run_limit = 1;
+    page.next_before = Some(42);
+    page.query.insert("status".into(), "running".into());
+    let rendered = html(page);
+    assert!(rendered.contains("before=42&#38;status=running"));
+    assert!(rendered.contains("Older matching runs"));
+}
+
+#[test]
 fn workflow_source_links_use_the_run_commit_and_first_path() {
     let mut page = model();
     let mut run = run();
@@ -900,6 +982,79 @@ fn log_filter_key_resets_local_controls_without_changing_the_run() {
 }
 
 #[test]
+fn typed_log_search_survives_new_log_lines() {
+    use std::{cell::RefCell, rc::Rc};
+    struct SearchInput;
+    impl dioxus::html::HasFileData for SearchInput {
+        fn files(&self) -> Vec<dioxus::html::FileData> {
+            vec![]
+        }
+    }
+    impl dioxus::html::HasFormData for SearchInput {
+        fn value(&self) -> String {
+            "typed search".into()
+        }
+        fn valid(&self) -> bool {
+            true
+        }
+        fn values(&self) -> Vec<(String, dioxus::html::FormValue)> {
+            vec![]
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+    }
+    #[derive(Clone)]
+    struct Harness(Rc<RefCell<Option<Signal<ActionsPage>>>>);
+    fn root(props: Harness) -> Element {
+        let page = use_signal(|| {
+            let mut page = model();
+            page.selected = Some(SelectedRun {
+                run: run(),
+                logs: vec![],
+                deployment: None,
+                fetched_lines: 0,
+                logs_truncated: false,
+            });
+            page
+        });
+        *props.0.borrow_mut() = Some(page);
+        actions_page(page())
+    }
+    let control = Rc::new(RefCell::new(None));
+    let mut dom = VirtualDom::new_with_props(root, Harness(control.clone()));
+    dom.rebuild_in_place();
+    let input = (0..100).filter_map(|id| dom.get_scope(ScopeId(id))).find_map(|scope| {
+        let attrs = &scope.root_node().dynamic_attrs;
+        let is_search = attrs.iter().flat_map(|attributes| attributes.iter()).any(|attribute| attribute.name == "name" && matches!(&attribute.value, AttributeValue::Text(value) if value == "log_q"));
+        is_search.then(|| attrs.iter().flat_map(|attributes| attributes.iter()).find_map(|attribute| {
+            if attribute.name == "oninput" {
+                if let AttributeValue::Listener(listener) = &attribute.value { return Some(listener.clone()); }
+            }
+            None
+        })).flatten()
+    }).expect("log search input");
+    dom.in_runtime(|| {
+        input.call(crate::webui::tests::event(|| {
+            dioxus::html::FormData::new(SearchInput)
+        }))
+    });
+    dom.render_immediate_to_vec();
+    let mut page = control.borrow().unwrap();
+    dom.in_runtime(|| {
+        page.write().selected.as_mut().unwrap().logs.push(LogLine {
+            id: 1,
+            stage: "ci".into(),
+            line: "new line".into(),
+            level: "info".into(),
+            timestamp: 1,
+        })
+    });
+    dom.render_immediate_to_vec();
+    assert!(dioxus_ssr::render(&dom).contains("value=\"typed search\""));
+}
+
+#[test]
 fn a_repository_without_workflows_gets_started_instead_of_the_run_list() {
     let mut page = model();
     page.workflows.clear();
@@ -965,9 +1120,10 @@ fn the_runs_footer_shows_only_when_the_page_is_full() {
     assert!(!partial.contains("Show more runs"));
     let mut full = model();
     full.run_limit = 1;
+    full.next_before = Some(123);
     let rendered = html(full);
-    assert!(rendered.contains("Showing the latest 1 runs."));
-    assert!(rendered.contains("Show more runs"));
+    assert!(rendered.contains("Older runs"));
+    assert!(rendered.contains("before=123"));
 }
 
 #[test]
@@ -1000,11 +1156,13 @@ fn run_page_offers_cancel_and_rerun_forms_only_to_writers() {
 
     // Readers get neither form.
     page.can_manage_runs = false;
+    page.can_cancel = false;
     let reader = html(page.clone());
     assert!(!reader.contains("/cancel\""), "{reader}");
     assert!(!reader.contains("/rerun\""), "{reader}");
     page.can_dispatch = true;
     page.can_manage_runs = true;
+    page.can_cancel = true;
 
     // A finished run is run again, whatever its event.
     running.status = "succeeded".into();

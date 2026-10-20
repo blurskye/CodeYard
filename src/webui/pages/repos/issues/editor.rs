@@ -67,6 +67,32 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
     }
 }
 
+#[component]
+pub(super) fn CommentEditForm(
+    action: String,
+    csrf_token: String,
+    id: i64,
+    body: String,
+    original_body: String,
+    preview: bool,
+    references: References,
+) -> Element {
+    // Keep the original text while navigation refreshes the displayed comment.
+    let original = use_signal(|| original_body);
+    let original = original.read().clone();
+    let token = serde_json::to_string(&original).unwrap_or_default();
+    rsx! {
+        form { method: "post", action, class: "collaboration-comment-edit-form",
+            {csrf(&csrf_token)}
+            input { r#type: "hidden", name: "expected_body", value: token }
+            MarkdownEditor { id: format!("edit-comment-{id}"), initial: body, rows: 8usize, required: true, initial_preview: preview, references, revision: Some(original) }
+            div { class: "collaboration-form-actions",
+                button { class: "btn btn-primary", r#type: "submit", "Save changes" }
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 struct EditSnapshot {
     title: String,
@@ -97,15 +123,16 @@ pub(super) fn DetailEditForm(
     let snapshot = snapshot.read().clone();
     // The revision the save checks, so a draft typed before the item changed is not saved silently.
     let revision = snapshot.expected_updated.clone();
+    let mut expected_updated = use_signal(|| revision.clone());
     rsx! {
         form { method: "post", action: format!("{url}/edit"), class: "collaboration-form-fields",
             {csrf(&csrf_token)}
             input { r#type: "hidden", name: "expected_state", value: snapshot.expected_state }
-            input { r#type: "hidden", name: "expected_updated", value: snapshot.expected_updated }
+            input { r#type: "hidden", name: "expected_updated", value: expected_updated() }
             label { r#for: "edit-title", "Title" }
             DraftInput { id: "edit-title", name: "title", initial_value: snapshot.title, required: true, maxlength: Some(255), class: "collaboration-input" }
             label { r#for: "edit-body", "Description (Markdown)" }
-            MarkdownEditor { id: "edit-body", initial: snapshot.body, rows: 10, required: false, initial_preview: snapshot.preview, references, revision: Some(revision) }
+            MarkdownEditor { id: "edit-body", initial: snapshot.body, rows: 10, required: false, initial_preview: snapshot.preview, references, revision: Some(revision), on_revision: move |revision: Option<String>| expected_updated.set(revision.unwrap_or_default()) }
             div { class: "collaboration-actions", button { r#type: "submit", name: "intent", value: "save", class: "btn btn-primary", "Save changes" } }
         }
     }

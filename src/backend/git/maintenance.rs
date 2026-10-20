@@ -75,6 +75,9 @@ pub(crate) async fn after_copy(repo_id: i64, mirror: &Path) {
 /// Runs `git gc --auto` when loose objects or packs exceed their limits. A push that
 /// finds a run already queued or running for `path` leaves packing to a later push.
 async fn pack_if_needed(path: &Path, threshold: usize) -> Result<()> {
+    let Some(_lock) = RunLock::take(path) else {
+        return Ok(());
+    };
     let objects = path.join("objects");
     let check = move || -> Result<bool> {
         Ok(has_more_loose_objects_than(&objects, threshold)?
@@ -83,9 +86,6 @@ async fn pack_if_needed(path: &Path, threshold: usize) -> Result<()> {
     if !tokio::task::spawn_blocking(check).await?? {
         return Ok(());
     }
-    let Some(_lock) = RunLock::take(path) else {
-        return Ok(());
-    };
     let _slot = SLOTS
         .clone()
         .acquire_owned()
@@ -212,6 +212,16 @@ mod tests {
         std::fs::write(packs.join("pack-extra.pack"), b"").unwrap();
         assert!(has_more_packs_than(&packs, PACK_LIMIT).unwrap());
         assert!(!has_more_packs_than(&root.path().join("missing"), PACK_LIMIT).unwrap());
+    }
+
+    #[tokio::test]
+    async fn queued_repositories_are_not_scanned_again() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("repo.git");
+        // Scanning this path would fail: it is not a directory.
+        std::fs::write(&path, b"not a directory").unwrap();
+        let _lock = RunLock::take(&path).unwrap();
+        pack_if_needed(&path, 0).await.unwrap();
     }
 
     #[test]

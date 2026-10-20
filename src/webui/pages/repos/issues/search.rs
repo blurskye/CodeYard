@@ -11,7 +11,7 @@ pub struct Search {
     /// `open`, `closed` or `all`.
     pub state: Option<String>,
     pub author: Option<String>,
-    /// A username, or `none` for no assignee.
+    /// A username (`@none` for the account named none), or `none` for no assignee.
     pub assignee: Option<String>,
     pub milestone: Option<MilestoneFilter>,
     pub sort: Option<String>,
@@ -66,6 +66,7 @@ pub(super) enum Qualifier {
     State(String),
     Author(String),
     Assignee(String),
+    NoAssignee,
     Milestone(String),
     NoMilestone,
     Label(String),
@@ -83,7 +84,8 @@ pub fn parse_search(text: &str) -> Search {
             Some(Qualifier::Kind) => {}
             Some(Qualifier::State(value)) => search.state = Some(value),
             Some(Qualifier::Author(value)) => search.author = Some(value),
-            Some(Qualifier::Assignee(value)) => search.assignee = Some(value),
+            Some(Qualifier::Assignee(value)) => search.assignee = Some(assignee_value(&value)),
+            Some(Qualifier::NoAssignee) => search.assignee = Some("none".into()),
             Some(Qualifier::Milestone(value)) => {
                 search.milestone = Some(MilestoneFilter::Title(value));
             }
@@ -136,9 +138,18 @@ pub(super) fn qualifier(word: &str) -> Option<Qualifier> {
         {
             Some(Qualifier::Sort(value))
         }
-        "no" if value == "assignee" => Some(Qualifier::Assignee("none".to_owned())),
+        "no" if value == "assignee" => Some(Qualifier::NoAssignee),
         "no" if value == "milestone" => Some(Qualifier::NoMilestone),
         _ => None,
+    }
+}
+
+/// The query encoding distinguishes the account named none from the unset filter.
+pub(super) fn assignee_value(name: &str) -> String {
+    if name == "none" {
+        "@none".into()
+    } else {
+        name.to_owned()
     }
 }
 
@@ -213,7 +224,10 @@ pub fn search_text(kind: Kind, state: &str, filters: &ListFilters, text: &str) -
     match filters.assignee.as_str() {
         "" => {}
         "none" => parts.push("no:assignee".to_owned()),
-        name => parts.push(qualifier_text("assignee", name)),
+        name => parts.push(qualifier_text(
+            "assignee",
+            name.strip_prefix('@').unwrap_or(name),
+        )),
     }
     parts.extend(
         filters
@@ -594,6 +608,29 @@ mod tests {
         assert_eq!(search.labels, ["a\"b", "c\\d e"]);
         assert_eq!(search.state.as_deref(), Some("closed"));
         assert_eq!(search.text, "crash");
+    }
+
+    #[test]
+    fn the_account_named_none_is_not_the_unassigned_filter() {
+        let named = parse_search("assignee:none");
+        let unset = parse_search("no:assignee");
+        assert_eq!(named.assignee.as_deref(), Some("@none"));
+        assert_eq!(unset.assignee.as_deref(), Some("none"));
+        let mut query = HashMap::new();
+        named.apply_to(&mut query);
+        assert_eq!(query["assignee"], "@none");
+        let text = search_text(
+            Kind::Issue,
+            "open",
+            &ListFilters {
+                assignee: "@none".into(),
+                ..Default::default()
+            },
+            "",
+        );
+        assert!(text.contains("assignee:none"));
+        assert!(!text.contains("no:assignee"));
+        assert_eq!(parse_search(&text).assignee, named.assignee);
     }
 
     #[test]

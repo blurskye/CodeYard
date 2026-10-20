@@ -94,7 +94,11 @@ pub(crate) async fn native_compare_page(
                 .unwrap_or(&default)
                 .clone()
         };
-        return Ok(ctx.redirect(&compare_url(&repo.view.url(), &pick("base"), &pick("head"))));
+        let mut target = compare_url(&repo.view.url(), &pick("base"), &pick("head"));
+        if ctx.query.get("view").is_some_and(|view| view == "split") {
+            target.push_str("?view=split");
+        }
+        return Ok(ctx.redirect(&target));
     } else {
         (default.clone(), default.clone())
     };
@@ -120,9 +124,11 @@ pub(crate) async fn native_compare_page(
     let open_pull = if base == head {
         None
     } else {
-        db::pull_requests::records::list_open_pull_requests_from_branches(
+        db::pull_requests::records::find_open_pull_request_from_branches(
             &ctx.state.pool,
             repo.record.id,
+            &base,
+            &head,
         )
         .await
         .map_err(|_| {
@@ -132,8 +138,6 @@ pub(crate) async fn native_compare_page(
                 "Pull requests are unavailable.",
             )
         })?
-        .into_iter()
-        .find(|pull| pull.base_branch == base && pull.head_branch == head)
         .map(|pull| pulls::PullSummary {
             number: pull.number,
             title: pull.title,

@@ -1,6 +1,6 @@
 use crate::backend::ci::CiRuns;
 use crate::backend::db::DbPool;
-use crate::backend::ssh::handler::GitSshHandler;
+use crate::backend::ssh::handler::{AuthOutcome, GitSshHandler};
 use crate::backend::ssh::rate_limit::RateLimiter;
 use anyhow::{Context, Result};
 use rand_core::{OsRng, RngCore};
@@ -223,24 +223,41 @@ struct PreAuthCounts {
 }
 
 impl PreAuthAdmission {
-    fn admit(&self, ip: IpAddr) -> Option<PreAuthSlot> {
+    fn reserve(&self) -> Option<PreAuthSlot> {
         let mut counts = self.0.lock().unwrap_or_else(PoisonError::into_inner);
-        let from_ip = counts.per_ip.get(&ip).copied().unwrap_or(0);
-        if counts.total >= MAX_PREAUTH_CONNECTIONS || from_ip >= MAX_PREAUTH_CONNECTIONS_PER_IP {
+        if counts.total >= MAX_PREAUTH_CONNECTIONS {
             return None;
         }
         counts.total += 1;
-        *counts.per_ip.entry(ip).or_default() += 1;
         Some(PreAuthSlot {
             admission: self.clone(),
-            ip,
+            ip: None,
         })
     }
 }
 
 struct PreAuthSlot {
     admission: PreAuthAdmission,
-    ip: IpAddr,
+    ip: Option<IpAddr>,
+}
+
+impl PreAuthSlot {
+    fn for_ip(mut self, ip: IpAddr) -> Option<Self> {
+        {
+            let mut counts = self
+                .admission
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let count = counts.per_ip.entry(ip).or_default();
+            if *count >= MAX_PREAUTH_CONNECTIONS_PER_IP {
+                return None;
+            }
+            *count += 1;
+            self.ip = Some(ip);
+        }
+        Some(self)
+    }
 }
 
 impl Drop for PreAuthSlot {
@@ -251,10 +268,12 @@ impl Drop for PreAuthSlot {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         counts.total -= 1;
-        if let Some(from_ip) = counts.per_ip.get_mut(&self.ip) {
-            *from_ip -= 1;
-            if *from_ip == 0 {
-                counts.per_ip.remove(&self.ip);
+        if let Some(ip) = self.ip {
+            if let Some(from_ip) = counts.per_ip.get_mut(&ip) {
+                *from_ip -= 1;
+                if *from_ip == 0 {
+                    counts.per_ip.remove(&ip);
+                }
             }
         }
     }
@@ -277,7 +296,7 @@ async fn serve_connection(
     peer: SocketAddr,
     trusted_proxy_ips: Arc<HashSet<IpAddr>>,
     mut handler: GitSshHandler,
-    admission: PreAuthAdmission,
+    slot: PreAuthSlot,
     deadline: tokio::time::Instant,
 ) {
     let source = match connection_source(&mut stream, peer, &trusted_proxy_ips).await {
@@ -292,7 +311,7 @@ async fn serve_connection(
         warn!("Refused SSH connection from banned address {}", source.ip());
         return;
     }
-    let Some(slot) = admission.admit(source.ip()) else {
+    let Some(slot) = slot.for_ip(source.ip()) else {
         warn!(
             "Refused SSH connection from {}: too many unauthenticated connections",
             source.ip()
@@ -335,18 +354,18 @@ async fn serve_connection(
     // The slot and the socket control are released when the client authenticates
     // or when the session ends first (the handler drops its signal then).
     let login = async move {
-        let authenticated = matches!(
-            tokio::time::timeout_at(deadline, authenticated).await,
-            Ok(Ok(()))
-        );
-        if !authenticated {
+        let outcome = tokio::time::timeout_at(deadline, authenticated).await;
+        if !matches!(outcome, Ok(Ok(AuthOutcome::Accepted))) {
             let _ = control.shutdown(std::net::Shutdown::Both);
         }
         drop(slot);
-        authenticated
+        !matches!(
+            outcome,
+            Ok(Ok(AuthOutcome::Accepted | AuthOutcome::Unavailable))
+        )
     };
-    let (authenticated, result) = tokio::join!(login, session);
-    if !authenticated && rate_limiter.record_failure(source.ip()).await {
+    let (rejected, result) = tokio::join!(login, session);
+    if rejected && rate_limiter.record_failure(source.ip()).await {
         warn!(
             "IP {} banned after too many failed connections",
             source.ip()
@@ -460,13 +479,15 @@ impl SshServer {
                 Some(_) = connections.join_next(), if !connections.is_empty() => {}
                 accepted = socket.accept() => match accepted {
                     Ok((stream, peer)) => {
+                        // Delayed PROXY headers must consume the global cap too.
+                        let Some(slot) = self.admission.reserve() else { continue; };
                         connections.spawn(serve_connection(
                             self.config.clone(),
                             stream,
                             peer,
                             self.trusted_proxy_ips.clone(),
                             self.handler.new_client(Some(peer)),
-                            self.admission.clone(),
+                            slot,
                             tokio::time::Instant::now() + LOGIN_GRACE_TIME,
                         ));
                     }
@@ -488,6 +509,10 @@ impl SshServer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "request_tests.rs"]
+mod request_tests;
 
 #[cfg(test)]
 mod tests {
@@ -615,18 +640,59 @@ mod tests {
     #[test]
     fn preauth_slots_cap_each_address_and_the_total_until_released() {
         let admission = PreAuthAdmission::default();
+        let admit = |ip| admission.reserve()?.for_ip(ip);
         let mut slots = Vec::new();
         for host in 1..=(MAX_PREAUTH_CONNECTIONS / MAX_PREAUTH_CONNECTIONS_PER_IP) {
             let ip = IpAddr::from([192, 0, 2, host as u8]);
             for _ in 0..MAX_PREAUTH_CONNECTIONS_PER_IP {
-                slots.push(admission.admit(ip).unwrap());
+                slots.push(admit(ip).unwrap());
             }
-            assert!(admission.admit(ip).is_none());
+            assert!(admit(ip).is_none());
         }
         let other = IpAddr::from([192, 0, 2, 200]);
-        assert!(admission.admit(other).is_none());
+        assert!(admit(other).is_none());
         slots.pop();
-        assert!(admission.admit(other).is_some());
+        assert!(admit(other).is_some());
+    }
+
+    #[tokio::test]
+    async fn incomplete_proxy_headers_consume_the_global_preauth_cap() {
+        let mut server = test_server().await;
+        server.trusted_proxy_ips = Arc::new(HashSet::from(["127.0.0.1".parse().unwrap()]));
+        let admission = server.admission.clone();
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = probe.local_addr().unwrap();
+        drop(probe);
+        let (stop, stopped) = watch::channel(false);
+        let running = tokio::spawn(async move { server.run(address, stopped).await });
+        let slots: Vec<_> = (0..MAX_PREAUTH_CONNECTIONS - 1)
+            .map(|_| admission.reserve().unwrap())
+            .collect();
+        let mut client = connect_when_listening(address).await;
+        client.write_all(b"PROXY ").await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_millis(800), async {
+            while admission.0.lock().unwrap().total != MAX_PREAUTH_CONNECTIONS {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut refused = TcpStream::connect(address).await.unwrap();
+        let mut byte = [0];
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(800),
+                refused.read(&mut byte)
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+            0
+        );
+        drop(client);
+        drop(slots);
+        stop.send_replace(true);
+        running.await.unwrap().unwrap();
     }
 
     #[tokio::test]
@@ -643,7 +709,7 @@ mod tests {
             peer,
             server.trusted_proxy_ips.clone(),
             server.handler.new_client(Some(peer)),
-            PreAuthAdmission::default(),
+            PreAuthAdmission::default().reserve().unwrap(),
             tokio::time::Instant::now() + std::time::Duration::from_millis(300),
         ));
         // Identify as an SSH client, then never authenticate.
@@ -682,7 +748,7 @@ mod tests {
             peer,
             server.trusted_proxy_ips.clone(),
             handler.new_client(Some(peer)),
-            PreAuthAdmission::default(),
+            PreAuthAdmission::default().reserve().unwrap(),
             tokio::time::Instant::now() + std::time::Duration::from_secs(30),
         ));
         let mut byte = [0; 1];

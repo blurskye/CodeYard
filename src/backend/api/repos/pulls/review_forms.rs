@@ -9,7 +9,7 @@ use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::pull_requests::reviews::{PullRequestCommentEntry, PullRequestReviewEntry};
-use crate::backend::issues::{comment_link, discussion_link, discussion_page};
+use crate::backend::issues::{discussion_link, discussion_page};
 use crate::backend::repositories::code_owners::load_rules;
 use crate::backend::repositories::pull_requests::comments as comment_rules;
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
@@ -61,6 +61,7 @@ pub(crate) fn comment_view(
     view::Comment {
         id: comment.id,
         author,
+        revision: crate::backend::api::repos::issues::tasks::comment_revision(&comment.body),
         body: comment.body,
         created: comment.created_at.to_rfc3339(),
         location,
@@ -331,6 +332,7 @@ async fn refuse_comment(
     } else {
         let draft = DetailDraft {
             comment: line.body.clone(),
+            repository_id: line.repository_id.map(|id| id.to_string()),
             preview: line.preview,
             ..DetailDraft::default()
         };
@@ -560,6 +562,7 @@ pub(crate) async fn native_pull_comment(
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let line = LineComment {
+        repository_id: field(&form, "repository_id").parse().ok(),
         path: field(&form, "path"),
         side: field(&form, "side"),
         line: field(&form, "line"),
@@ -567,8 +570,24 @@ pub(crate) async fn native_pull_comment(
         body: field(&form, "body"),
         preview: field(&form, "intent") == "preview",
         commit: field(&form, "commit_sha"),
+        base: field(&form, "base_sha"),
     };
     let from_diff = field(&form, "from") == "diff";
+    let repository_id = line.repository_id;
+    if repository_id != Some(repo.record.id) {
+        return refuse_comment(
+            &ctx,
+            &repo,
+            &value,
+            from_diff,
+            &line,
+            Some(
+                "The repository changed after this comment was started. Reload before commenting.",
+            ),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
     if line.preview {
         return refuse_comment(&ctx, &repo, &value, from_diff, &line, None, StatusCode::OK).await;
     }
@@ -590,7 +609,7 @@ pub(crate) async fn native_pull_comment(
         )
         .await;
     }
-    if inline && field(&form, "commit_sha") != head {
+    if inline && (line.commit != head || line.base != compare.base_sha) {
         return refuse_comment(
             &ctx,
             &repo,
@@ -622,10 +641,12 @@ pub(crate) async fn native_pull_comment(
     };
     let request = CreatePullRequestCommentRequest {
         body: line.body.clone(),
+        repository_id,
         path: inline.then(|| line.path.clone()),
         line: number_line,
         side: (!line.side.is_empty()).then(|| line.side.clone()),
         commit_sha: inline.then(|| head.to_owned()),
+        base_sha: inline.then(|| line.base.clone()),
         in_reply_to_comment_id: line.in_reply_to,
         // "Start a review" and "Add to review" file the comment in the pending review.
         pending: field(&form, "intent") == "review",
@@ -656,13 +677,14 @@ pub(crate) async fn native_pull_comment(
                 };
                 Ok(ctx.redirect(&format!("{base}/diff{view}#thread-{root}")))
             } else {
-                let position = db::pull_requests::reviews::count_discussion_items_through(
-                    &ctx.state.pool,
-                    comment.pull_request_id,
-                    db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
-                )
-                .await;
-                Ok(ctx.redirect(&comment_link(&base, comment.id, position)))
+                let link =
+                    crate::backend::repositories::pull_requests::comments::saved_comment_link(
+                        &ctx.state.pool,
+                        &base,
+                        &comment,
+                    )
+                    .await;
+                Ok(ctx.redirect(&link))
             }
         }
         Err(failure) => {
@@ -745,25 +767,19 @@ pub(crate) async fn native_set_viewed(
     }
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     let path = field(&form, "path");
-    let store = repo_store(&repo.record, ctx.state.cluster.as_ref());
-    let blob_sha = match store
-        .blob_range(
-            &pull.head_sha,
-            &path,
-            crate::backend::repositories::store::BlobRange::Window {
-                offset: 0,
-                length: 0,
-            },
-        )
+    if path.len() > db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES || path.contains('\0') {
+        return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid diff path."));
+    }
+    let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
+        .diff_file(&pull.base_sha, &pull.head_sha, &path)
         .await
-    {
-        Ok(blob) => blob.id,
-        // Deleted files have a zero new-blob id in the diff.
-        Err(error) if error.kind == crate::backend::repositories::store::ErrorKind::MissingPath => {
-            "0".repeat(40)
-        }
-        Err(_) => return Err(unavailable(&ctx)),
-    };
+        .map_err(|error| crate::backend::api::repos::chrome::store_error(&ctx, None, error))?;
+    let blob_sha = diff
+        .files
+        .into_iter()
+        .find(|file| file.filename == path)
+        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Choose a file in this diff."))?
+        .blob_sha;
     let blob = (field(&form, "viewed") == "yes").then_some(blob_sha.as_str());
     db::pull_requests::viewed::set_pull_request_file_viewed(
         &ctx.state.pool,
@@ -889,6 +905,18 @@ pub(crate) async fn native_edit_conversation_comment(
     let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let mut draft = submitted_detail(&form, "comment");
     draft.editing = Some(comment_id);
+    let Ok(expected_body) = serde_json::from_str::<String>(&draft.expected_body) else {
+        return render_detail(
+            &ctx,
+            &repo,
+            Kind::Pull,
+            &value,
+            &draft,
+            Some("The original comment is required. Reload before saving."),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    };
     if draft.preview {
         return render_detail(
             &ctx,
@@ -912,20 +940,20 @@ pub(crate) async fn native_edit_conversation_comment(
             comment_id,
         },
         draft.comment.clone(),
-        None,
+        Some(&expected_body),
     )
     .await
     .map_err(operation_error);
     match result {
         Ok(comment) => {
             let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-            let position = db::pull_requests::reviews::count_discussion_items_through(
+            let link = crate::backend::repositories::pull_requests::comments::saved_comment_link(
                 &ctx.state.pool,
-                comment.pull_request_id,
-                db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
+                &base,
+                &comment,
             )
             .await;
-            Ok(ctx.redirect(&comment_link(&base, comment.id, position)))
+            Ok(ctx.redirect(&link))
         }
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);

@@ -71,7 +71,9 @@ impl Drop for Database {
         let url = self.url.clone();
         let schema = self.schema.clone();
         let result = std::thread::spawn(move || {
-            tokio::runtime::Runtime::new()
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
                 .unwrap()
                 .block_on(async move {
                     tokio::time::timeout(std::time::Duration::from_secs(10), fixture_pool.close())
@@ -928,7 +930,21 @@ async fn s3_failed_direct_upload_persists_cleanup_without_retaining_metadata() {
         .fetch_one(&db.raw)
         .await
         .unwrap();
-    assert_eq!(cleanup, 0);
+    assert_eq!(cleanup, 1, "S3 tombstones survive a successful deletion");
+    // A PUT started before capability expiry may finish after that first DELETE.
+    s3.put(&object_key, PNG);
+    sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
+        .execute(&db.raw)
+        .await
+        .unwrap();
+    file_operations::remove_expired_uploads(&db.pool, &s3.store)
+        .await
+        .unwrap();
+    assert!(s3.object(&object_key).is_none());
+    assert!(files::due_object_deletions(&db.pool, 100)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

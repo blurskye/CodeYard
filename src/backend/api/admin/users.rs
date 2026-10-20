@@ -144,7 +144,17 @@ async fn load_users(
         created: user.created_at.format("%b %e, %Y").to_string(),
     })
     .collect();
+    let managed_accounts = db::node_config::get_node_configuration(&ctx.state.pool)
+        .await
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load account settings.",
+            )
+        })?
+        .is_some_and(|config| config.node_mode.eq_ignore_ascii_case("private"));
     Ok(AdminUsers {
+        managed_accounts,
         current_user_id: admin.id,
         accounts,
         search: search.trim().to_owned(),

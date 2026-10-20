@@ -1,4 +1,5 @@
 mod cli;
+mod fixes;
 mod notification_cluster;
 mod pairing;
 mod replicas;

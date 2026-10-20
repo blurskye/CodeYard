@@ -56,6 +56,11 @@ pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiEr
             "invalid_labels",
             "Invalid label scope or batch",
         ),
+        Some(db::labels::LabelWriteRefusal::DuplicateName) => (
+            StatusCode::CONFLICT,
+            "duplicate_label",
+            "A label with this name already exists. Choose another name.",
+        ),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "database_unavailable",

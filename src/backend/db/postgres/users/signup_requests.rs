@@ -1,5 +1,8 @@
 use crate::backend::db::models::{SignupRequest, User};
-use crate::backend::db::users::{signup_requests::ReviewError, transitions::AdministratorActor};
+use crate::backend::db::users::{
+    signup_requests::{ReviewError, SignupSummary},
+    transitions::AdministratorActor,
+};
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -11,25 +14,45 @@ pub async fn create_signup_request(
 ) -> Result<SignupRequest> {
     let request = sqlx::query_as::<_, SignupRequest>(
         r#"
-        INSERT INTO signup_requests (username, email, password_hash, status)
-        VALUES ($1, $2, $3, 'pending')
+        INSERT INTO signup_requests (username, email, password_hash, username_key, email_key, status)
+        VALUES ($1, $2, $3, $4, $5, 'pending')
         RETURNING *
         "#,
     )
     .bind(username)
     .bind(email)
     .bind(password_hash)
+    .bind(username.to_lowercase())
+    .bind(email.map(str::to_lowercase))
     .fetch_one(pool)
     .await?;
 
     Ok(request)
 }
 
-pub async fn list_signup_requests(pool: &PgPool, status: &str) -> Result<Vec<SignupRequest>> {
-    let requests = sqlx::query_as::<_, SignupRequest>(
-        "SELECT * FROM signup_requests WHERE status = $1 ORDER BY created_at DESC",
+pub async fn count_signup_requests(pool: &PgPool, status: &str) -> Result<i64> {
+    Ok(
+        sqlx::query_scalar("SELECT COUNT(*) FROM signup_requests WHERE status=$1")
+            .bind(status)
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
+pub async fn list_signup_requests(
+    pool: &PgPool,
+    status: &str,
+    limit: i64,
+    offset: i64,
+    after: i64,
+) -> Result<Vec<SignupSummary>> {
+    let requests = sqlx::query_as::<_, SignupSummary>(
+        "SELECT id,username,email,status,created_at FROM signup_requests WHERE status = $1 AND id>$4 ORDER BY id LIMIT $2 OFFSET $3",
     )
     .bind(status)
+    .bind(limit.clamp(1,100))
+    .bind(offset.max(0))
+    .bind(after.max(0))
     .fetch_all(pool)
     .await?;
 
@@ -47,14 +70,14 @@ pub async fn get_pending_signup_request_by_identity(
         FROM signup_requests
         WHERE status = 'pending'
           AND (
-              LOWER(username) = LOWER($1)
-              OR ($2 IS NOT NULL AND email IS NOT NULL AND LOWER(email) = LOWER($2))
+              username_key = $1
+              OR ($2::text IS NOT NULL AND email_key = $2)
           )
         LIMIT 1
         "#,
     )
-    .bind(username)
-    .bind(email)
+    .bind(username.to_lowercase())
+    .bind(email.map(str::to_lowercase))
     .fetch_optional(pool)
     .await?;
 
@@ -85,8 +108,7 @@ pub async fn approve_signup_request(
         return Err(ReviewError::Processed.into());
     }
 
-    // The shared review contract has no Conflict variant: deny this approval,
-    // leaving the request pending and actor/status/account changes atomic.
+    // Leave a conflicting request pending for an explicit rejection.
     if super::transitions::organization_name_exists(&mut tx, &signup_request.username).await? {
         return Err(ReviewError::Denied.into());
     }
@@ -102,7 +124,11 @@ pub async fn approve_signup_request(
     .bind(signup_request.email.as_deref())
     .bind(&signup_request.password_hash)
     .fetch_one(&mut *tx)
-    .await?;
+    .await
+    .map_err(|error| match &error {
+        sqlx::Error::Database(db) if db.is_unique_violation() => ReviewError::Conflict.into(),
+        _ => anyhow::Error::from(error),
+    })?;
 
     sqlx::query(
         "UPDATE signup_requests SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(), updated_at = NOW() WHERE id = $2",

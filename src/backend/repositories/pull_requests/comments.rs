@@ -1,8 +1,8 @@
 use super::OperationError;
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
-use crate::backend::issues::comment_link;
 use crate::backend::issues::comments::CommentTarget;
+use crate::backend::issues::{discussion_link, discussion_page, COMMENTS_PER_PAGE};
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{mentions_anyone, notify_mentions, MentionSource};
@@ -15,15 +15,21 @@ use std::collections::HashSet;
 #[derive(Deserialize)]
 pub struct CreatePullRequestCommentRequest {
     pub body: String,
+    /// Immutable identity carried by native forms; JSON clients may also pin it.
+    pub repository_id: Option<i64>,
     pub path: Option<String>,
     pub line: Option<i32>,
     pub side: Option<String>,
     pub commit_sha: Option<String>,
+    pub base_sha: Option<String>,
     pub in_reply_to_comment_id: Option<i64>,
     /// A new thread on a file goes into the author's pending review instead of being published.
     #[serde(default)]
     pub pending: bool,
 }
+
+#[cfg(test)]
+mod tests;
 
 fn is_valid_sha1_hex(sha: &str) -> bool {
     sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
@@ -64,7 +70,7 @@ async fn thread_root(
 
 /// The discussion page and anchor of a saved pull request comment. The position is read only when
 /// a notification names this link.
-async fn pull_request_comment_link(
+pub(crate) async fn pull_request_comment_link(
     pool: &db::DbPool,
     owner: &str,
     repo: &str,
@@ -72,17 +78,67 @@ async fn pull_request_comment_link(
     comment: &db::models::PullRequestComment,
 ) -> String {
     let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
-    let position = db::pull_requests::reviews::count_discussion_items_through(
-        pool,
-        pull_request.id,
-        db::pull_requests::reviews::DiscussionRef::of_comment(comment),
-    )
-    .await;
-    comment_link(&base, comment.id, position)
+    saved_comment_link(pool, &base, comment).await
 }
 
-/// Whether a comment is filed in a review that is still pending. Nothing is sent for it until the
-/// review is submitted, and a discard removes it without a trace.
+pub(crate) async fn saved_comment_link(
+    pool: &db::DbPool,
+    base: &str,
+    comment: &db::models::PullRequestComment,
+) -> String {
+    use db::pull_requests::reviews::{self, DiscussionItem, DiscussionRef};
+    let page = discussion_page(
+        reviews::count_discussion_items_through(
+            pool,
+            comment.pull_request_id,
+            DiscussionRef::of_comment(comment),
+        )
+        .await,
+    );
+    let anchor = format!("comment-{}", comment.id);
+    let link = discussion_link(base, page, &anchor);
+    if comment.review_id.is_none() {
+        return link;
+    }
+    let offset = async {
+        let items = reviews::list_discussion_items(
+            pool,
+            comment.pull_request_id,
+            COMMENTS_PER_PAGE as i64,
+            ((page - 1) * COMMENTS_PER_PAGE) as i64,
+        )
+        .await?;
+        let ids: Vec<i64> = items
+            .iter()
+            .filter_map(|item| match item {
+                DiscussionItem::Review(entry) => Some(entry.review.id),
+                _ => None,
+            })
+            .collect();
+        let (before, bytes) = reviews::review_comment_position(pool, &ids, comment.id).await?;
+        Ok::<_, anyhow::Error>(
+            if before >= reviews::MAX_REVIEW_COMMENTS_PAGE as i64
+                || bytes > reviews::MAX_REVIEW_COMMENT_PAGE_BYTES as i64
+            {
+                before
+            } else {
+                0
+            },
+        )
+    }
+    .await;
+    match offset {
+        Ok(offset) if offset > 0 => format!("{base}?page={page}&review_comments={offset}#{anchor}"),
+        Ok(_) => link,
+        Err(error) => {
+            tracing::warn!(comment_id = comment.id, %error, "saved review comment position unavailable");
+            link
+        }
+    }
+}
+
+/// A review comment is publishable only while its submitted review still exists.
+/// A concurrent discard deletes the review and must never publish the private text.
 async fn in_pending_review(
     pool: &db::DbPool,
     comment: &db::models::PullRequestComment,
@@ -96,7 +152,7 @@ async fn in_pending_review(
             code: "database_error",
             message: "Collaboration storage is temporarily unavailable".to_owned(),
         })?;
-    Ok(review.is_some_and(|review| review.state == "pending"))
+    Ok(review.is_none_or(|review| review.state == "pending"))
 }
 
 /// Sends the webhook for a saved comment. A comment on a file is a review comment. A conversation
@@ -245,6 +301,14 @@ pub async fn create_pull_request_comment(
             message: "Repository not found".to_owned(),
         })?;
 
+    if req.repository_id.is_some_and(|id| id != repository.id) {
+        return Err(OperationError::Conflict {
+            code: "revision_conflict",
+            message:
+                "The repository changed after this comment was started. Reload before commenting."
+                    .into(),
+        });
+    }
     super::require_read(pool, &super::actor(pool, actor_id).await?, &repository).await?;
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -387,6 +451,16 @@ pub async fn create_pull_request_comment(
     // checked lines would describe different revisions.
     if req.in_reply_to_comment_id.is_none() {
         if let Some(path) = path.as_deref() {
+            if req
+                .base_sha
+                .as_deref()
+                .is_some_and(|base| !base.eq_ignore_ascii_case(&pull_request.base_sha))
+            {
+                return Err(OperationError::Conflict {
+                    code: "revision_conflict",
+                    message: "The pull request base changed after this comment was started. Reload the diff before commenting.".to_owned(),
+                });
+            }
             if let Some(submitted) = req.commit_sha.as_deref() {
                 if !submitted.eq_ignore_ascii_case(&pull_request.head_sha) {
                     return Err(OperationError::Conflict {
@@ -425,6 +499,10 @@ pub async fn create_pull_request_comment(
         side: side.as_deref(),
         commit_sha: commit_sha.as_deref(),
         in_reply_to_comment_id: reply_root,
+        expected_revisions: (path.is_some() && req.in_reply_to_comment_id.is_none()).then_some((
+            pull_request.head_sha.as_str(),
+            pull_request.base_sha.as_str(),
+        )),
     };
     let stored = if pending {
         db::pull_requests::reviews::add_pending_pull_request_comment(pool, input).await
@@ -433,7 +511,7 @@ pub async fn create_pull_request_comment(
     };
     let comment = stored.map_err(super::write_error)?;
     // A new thread on a file, and a reply that joins one, wait in the pending review.
-    if in_pending_review(pool, &comment).await? {
+    if pending || in_pending_review(pool, &comment).await? {
         return Ok(comment);
     }
 
@@ -698,7 +776,7 @@ pub async fn edit_pull_request_comment(
     if expected_body.is_some_and(|body| body != previous.body) {
         return Err(OperationError::Conflict {
             code: "stale_comment",
-            message: "The comment changed. Reload before ticking a task.".into(),
+            message: "The comment changed. Reload before saving.".into(),
         });
     }
     if let Err(message) = crate::backend::issues::validate_body(&body, true) {
@@ -721,7 +799,7 @@ pub async fn edit_pull_request_comment(
     .ok_or_else(|| match expected_body {
         Some(_) => OperationError::Conflict {
             code: "conflict",
-            message: "This comment changed; reload before ticking a task.".to_owned(),
+            message: "This comment changed; reload before saving.".to_owned(),
         },
         None => OperationError::Denied {
             code: "comment_forbidden",

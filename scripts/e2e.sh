@@ -51,6 +51,7 @@ E2E_BUILD_ONLY=${E2E_BUILD_ONLY:-0}
 E2E_KEEP=${E2E_KEEP:-0}
 E2E_VERBOSE=${E2E_VERBOSE:-0}
 ACT=${E2E_ACT_BINARY:-$(command -v act || true)}
+[[ -z $ACT ]] || ACT=$(realpath -m -- "$ACT")
 TARGET_DIR=$(realpath -m -- "${CARGO_TARGET_DIR:-$ROOT/target}")
 export WEBUI_DIST=${WEBUI_DIST:-$ROOT/dist/webui}
 
@@ -86,21 +87,26 @@ STARTED=$SECONDS
 drop_pg() {
     [[ -n $PG_DB ]] || return 0
     local dropdb
-    dropdb=$(pg_tool dropdb) && pg_command "$GITSERV_TEST_DATABASE_URL" \
-        "$dropdb" --maintenance-db --if-exists --force "$PG_DB" >/dev/null 2>&1
+    if ! dropdb=$(pg_tool dropdb) || ! pg_command "$GITSERV_TEST_DATABASE_URL" \
+        "$dropdb" --maintenance-db --if-exists --force "$PG_DB"; then
+        echo "Failed to drop disposable PostgreSQL database $PG_DB" >&2
+        return 1
+    fi
     PG_DB=''
     return 0
 }
 
 cleanup() {
+    local rc=$?
     trap - EXIT
     terminate_servers
-    drop_pg
+    drop_pg || rc=1
     if [[ $E2E_KEEP == 1 ]]; then
         echo "kept $WORK"
     else
         rm -rf "$WORK"
     fi
+    exit "$rc"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -158,11 +164,12 @@ get() {
     cat "$STATE/$1"
 }
 
-must_fail() { # must_fail DESCRIPTION COMMAND...: the command has to be refused
-    local what=$1
-    shift
-    if "$@" >"$RUN/must-fail.out" 2>&1; then
-        echo "UNEXPECTED SUCCESS: $what" >&2
+must_fail() { # must_fail DESCRIPTION EXPECTED-DIAGNOSTIC COMMAND...
+    local what=$1 expected=$2 rc=0
+    shift 2
+    "$@" >"$RUN/must-fail.out" 2>&1 || rc=$?
+    if ((rc == 0 || (rc >= 124 && rc != 128))) || ! grep -Ei -- "$expected" "$RUN/must-fail.out" >/dev/null; then
+        echo "Expected refusal: $what (exit $rc; expected $expected)" >&2
         cat "$RUN/must-fail.out" >&2
         return 1
     fi
@@ -262,6 +269,7 @@ check_build_artifacts() {
 # ------------------------------------------------------- server lifecycle ---
 
 prepare_database() {
+    drop_pg || return 1
     DATABASE_URL=''
     case $ROUND in
         sqlite) echo "SQLite database in the state directory (DATABASE_URL unset)" ;;
@@ -310,8 +318,9 @@ configure_node() {
     if [[ -n $DATABASE_URL && $node != ci1 ]]; then NODE_ENV+=("DATABASE_URL=$DATABASE_URL"); fi
     if [[ $node != server ]]; then
         NODE_ENV+=("NODE_NAME=$node" "IROH_BIND=127.0.0.1:${IROH_PORTS[$node]}" "IROH_ADVERTISE=127.0.0.1:${IROH_PORTS[$node]}")
+        if [[ $node != ci1 ]]; then NODE_ENV+=("SECRETS_MASTER_KEY=$(get master_key)"); fi
         case $node in
-            web1) NODE_ENV+=("CLUSTER_NODES=$(get store2_public):storage:store2" "SECRETS_MASTER_KEY=$(get master_key)") ;;
+            web1) NODE_ENV+=("CLUSTER_NODES=$(get store2_public):storage:store2") ;;
             store2) NODE_ENV+=("NODE_KEY=$(get store2_key)") ;;
             ci1) NODE_ENV+=("CLUSTER_JOIN_TOKEN=$(get worker_token)") ;;
         esac
@@ -363,8 +372,8 @@ start_server() { # inline: starts a node and waits for its actual services
                 if curl -fsS --max-time 2 -o "$dir/health.json" "$BASE/health" 2>/dev/null; then
                     grep -q '"status":"ok"' "$dir/health.json" && ready=1
                 fi ;;
-            store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep -q 'starting codeyard' && ready=1 ;;
-            ci1) tail -n +"$first_line" "$dir/server.log" | grep -q 'database-free actions-worker ready' && ready=1 ;;
+            store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep 'starting codeyard' >/dev/null && ready=1 ;;
+            ci1) tail -n +"$first_line" "$dir/server.log" | grep 'database-free actions-worker ready' >/dev/null && ready=1 ;;
         esac
         ((ready)) && break
         waited=$((waited + 1))
@@ -707,7 +716,7 @@ t_clone() {
     git_as alice clone -q "$SSH_URL/alice/vault.git" "$RUN/clone-vault"
     grep -q 'top secret' "$RUN/clone-vault/secret.txt"
     # Anonymous Git clients receive a Basic challenge; page/raw access stays hidden.
-    must_fail 'anonymous HTTP clone of the private repository' \
+    must_fail 'anonymous HTTP clone of the private repository' 'could not read Username|Authentication failed|401' \
         git_as alice clone -q "$BASE/alice/vault.git" "$RUN/clone-vault-http"
     [[ ! -e $RUN/clone-vault-http/secret.txt ]]
     as anon req GET '/alice/vault.git/info/refs?service=git-upload-pack' --status 401
@@ -721,7 +730,7 @@ t_clone() {
     head -c 3145728 /dev/urandom >http-blob.bin
     git_as alice add -A
     git_as alice commit -q -m 'Push over HTTP'
-    must_fail 'push with a read-only token' git_with_token read push -q origin main
+    must_fail 'push with a read-only token' '403' git_with_token read push -q origin main
     git_with_token write push -q origin main
     [[ $(git_with_token read ls-remote origin refs/heads/main | cut -f1) == "$(git_as alice rev-parse HEAD)" ]]
     local log
@@ -735,15 +744,15 @@ t_clone() {
     # Another user reads the public repository over SSH but not the private one,
     # and cannot push.
     git_as bob clone -q "$SSH_URL/alice/proj.git" "$RUN/clone-bob"
-    must_fail "bob's SSH clone of the private repository" \
+    must_fail "bob's SSH clone of the private repository" 'Repository not found' \
         git_as bob clone -q "$SSH_URL/alice/vault.git" "$RUN/clone-bob-vault"
     cd "$RUN/clone-bob"
     printf 'bob was here\n' >bob.txt
     git_as bob add -A
     git_as bob commit -q -m 'Bob writes'
-    must_fail "bob's push to alice/proj" git_as bob push -q origin main
+    must_fail "bob's push to alice/proj" 'Permission denied: write access required' git_as bob push -q origin main
     # A key nobody registered is refused during authentication.
-    must_fail 'unregistered SSH key' git_as rogue ls-remote "$SSH_URL/alice/proj.git"
+    must_fail 'unregistered SSH key' 'Permission denied \(publickey\)' git_as rogue ls-remote "$SSH_URL/alice/proj.git"
 }
 
 t_ci_push() {
@@ -924,9 +933,9 @@ t_protection() {
     printf 'direct\n' >direct.txt
     git_as alice add -A
     git_as alice commit -q -m 'Direct change'
-    must_fail 'direct push to the protected branch' git_as alice push -q origin protected
+    must_fail 'direct push to the protected branch' 'pre-receive hook declined' git_as alice push -q origin protected
     if [[ $ROUND == cluster ]]; then
-        must_fail 'HTTP push to the protected branch' git_with_token write push -q "$BASE/alice/proj.git" protected
+        must_fail 'HTTP push to the protected branch' 'pre-receive hook declined' git_with_token write push -q "$BASE/alice/proj.git" protected
         grep -q 'pre-receive hook declined' "$RUN/must-fail.out"
     fi
     [[ $(git_as alice ls-remote origin refs/heads/protected | cut -f1) == "$base" ]]
@@ -962,7 +971,7 @@ t_protection() {
     rewritten=$(git_as alice rev-parse HEAD)
     as alice req PUT /api/repos/alice/proj/branch-protection --accept json \
         --json '{"pattern":"main","require_pull_request":false}' --json-eq pattern=main
-    must_fail 'force push past a rule that blocks it' git_as alice push -q --force origin "$rewritten:main"
+    must_fail 'force push past a rule that blocks it' 'pre-receive hook declined' git_as alice push -q --force origin "$rewritten:main"
     [[ $(tip_of main) == "$base" ]]
     as alice req PUT /api/repos/alice/proj/branch-protection --accept json \
         --json '{"pattern":"main","require_pull_request":false,"force_push_allowances":["alice"]}' \
@@ -1858,7 +1867,7 @@ t_replica_outage_push() { # store1 is down: a push is a write, so it is refused 
     printf 'written while store1 is down\n' >outage.txt
     git_as alice add outage.txt
     git_as alice commit -q -m 'Push while store1 is down'
-    must_fail 'HTTP push while store1 is stopped' git_with_token write push -q origin main
+    must_fail 'HTTP push while store1 is stopped' '503' git_with_token write push -q origin main
     grep -q 503 "$RUN/must-fail.out"
     [[ $(git --git-dir "$RUN/nodes/store2/repos/mirrors/$(replica_dir)" rev-parse refs/heads/main) == "$before" ]]
 }
@@ -1873,9 +1882,9 @@ t_cluster_outage_no_copy() { # store1 is down and store2 is revoked: alice/repli
         as alice req GET /alice/replica --status 503 --contains 'unavailable'
         as alice req GET /api/repos/alice/replica/commits --accept json --status 503 --contains-raw 'storage node unavailable'
         as anon req GET '/alice/replica.git/info/refs?service=git-upload-pack' --status 503 --contains-raw 'storage node unavailable'
-        must_fail 'HTTP clone with no usable copy' git_with_token read clone -q "$BASE/alice/replica.git" "$RUN/clone-revoked-http"
+        must_fail 'HTTP clone with no usable copy' '503' git_with_token read clone -q "$BASE/alice/replica.git" "$RUN/clone-revoked-http"
         grep -q 503 "$RUN/must-fail.out"
-        must_fail 'SSH clone with no usable copy' git_as alice clone -q "$SSH_URL/alice/replica.git" "$RUN/clone-revoked-ssh"
+        must_fail 'SSH clone with no usable copy' 'storage node unavailable' git_as alice clone -q "$SSH_URL/alice/replica.git" "$RUN/clone-revoked-ssh"
     )
 }
 
@@ -1904,7 +1913,7 @@ t_cluster_revoke_worker() {
         put "revoked_run_$n" "$id"
     done
     sleep 10
-    until tail -n +"$first_line" "$RUN/nodes/ci1/server.log" | grep -q 'CI worker could not claim a run'; do
+    until tail -n +"$first_line" "$RUN/nodes/ci1/server.log" | grep 'CI worker could not claim a run' >/dev/null; do
         ((SECONDS < deadline)) || { echo 'ci1 did not attempt a refused claim' >&2; return 1; }
         sleep 1
     done
@@ -2001,7 +2010,8 @@ run_round() {
     step 'log: the server log has no panic' t_log_clean
     step -i 'shutdown: SIGTERM exits with status 0' stop_server
     terminate_servers
-    drop_pg
+    ROUND_BLOCKED=0
+    step -i 'disposable database removed' drop_pg
     if grep -q '^FAIL|'"$db"'|' < <(printf '%s\n' "${RESULTS[@]}"); then
         echo "---- last lines of the $db server log"
         tail -n 60 "$RUN/server.log" 2>/dev/null | sed 's/^/        | /'
@@ -2065,7 +2075,7 @@ run_cluster_round() {
     ROUND_BLOCKED=0
     step -i 'shutdown: every node exits with status 0 and no log has a panic' t_cluster_shutdown
     terminate_servers
-    drop_pg
+    step -i 'disposable database removed' drop_pg
     if grep -q '^FAIL|cluster|' < <(printf '%s\n' "${RESULTS[@]}"); then
         local node
         for node in "${CLUSTER_NODES[@]}"; do

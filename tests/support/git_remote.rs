@@ -71,6 +71,7 @@ impl Server {
                     .map(|limit| limit.to_string())
                     .unwrap_or_default(),
             )
+            .env("SECRETS_MASTER_KEY", "2a".repeat(32))
             .env("NODE_NAME", name)
             .env("NODE_KEY", key.secret_hex())
             .env("IROH_BIND", "127.0.0.1:0")

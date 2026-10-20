@@ -23,6 +23,8 @@ pub struct NewDraft {
     #[serde(default)]
     pub repository_id: String,
     #[serde(default)]
+    pub destination_changed: bool,
+    #[serde(default)]
     pub template_revision: String,
     pub head_repo: String,
     pub title: String,
@@ -163,7 +165,13 @@ pub fn new(
                     div { class: "collaboration-new-main",
                         form { id: NEW_FORM, method: "post", action: url, class: "collaboration-panel collaboration-editor",
                             {csrf(&repo.csrf)}
-                            if kind == Kind::Issue { input { r#type: "hidden", name: "repository_id", value: draft.repository_id.clone() } }
+                            if kind == Kind::Issue {
+                                input { r#type: "hidden", name: "repository_id", value: draft.repository_id.clone() }
+                                input { r#type: "hidden", name: "template", value: draft.template.clone() }
+                                if !draft.template_revision.is_empty() {
+                                    input { r#type: "hidden", name: "template_revision", value: draft.template_revision.clone() }
+                                }
+                            }
                             if kind == Kind::Pull {
                                 div { class: "collaboration-comparison-controls",
                                     div { class: "collaboration-compare-row",
@@ -186,15 +194,13 @@ pub fn new(
                                 label { r#for: "new-title", "Title " span { class: "collaboration-required", "Required" } }
                                 DraftInput { id: "new-title", name: "title", required: true, maxlength: Some(255), placeholder: title_hint, initial_value: draft.title.clone(), class: "collaboration-input" }
                                 if draft.form.is_empty() {
-                                    div { key: "{repo.url()}:new:{draft.body}:{preview}", class: "collaboration-form-field",
+                                    div { key: "{draft.repository_id}:{draft.template}:{draft.template_revision}:new:{draft.body}:{preview}", class: "collaboration-form-field",
                                         label { r#for: "new-body", "Description (Markdown)" }
-                                        MarkdownEditor { id: "new-body", initial: draft.body.clone(), rows: 12, required: false, initial_preview: preview, placeholder: body_hint, references: references.clone() }
+                                        MarkdownEditor { id: "new-body", initial: draft.body.clone(), rows: 12, required: false, initial_preview: preview, revision: Some(draft.template_revision.clone()), placeholder: body_hint, references: references.clone() }
                                     }
                                 } else {
-                                    input { r#type: "hidden", name: "template", value: draft.template.clone() }
-                                    input { r#type: "hidden", name: "template_revision", value: draft.template_revision.clone() }
                                     for (index, field) in draft.form.iter().enumerate() {
-                                        {form_field(index, field)}
+                                        {form_field(index, field, &draft.template_revision)}
                                     }
                                 }
                                 if kind == Kind::Pull {
@@ -202,7 +208,7 @@ pub fn new(
                                 }
                                 if let Some(diff) = diff { {diff_summary(diff)} }
                                 div { class: "collaboration-actions",
-                                    button { r#type: "submit", name: "intent", value: "create", class: "btn btn-primary", "Create {kind.singular()}" }
+                                    button { r#type: "submit", name: "intent", value: "create", class: "btn btn-primary", if draft.destination_changed { "Confirm destination and create issue" } else { "Create {kind.singular()}" } }
                                     NavLink { class: "btn btn-secondary", href: repo.family_url(kind), "Cancel" }
                                 }
                             }
@@ -221,7 +227,7 @@ pub fn new(
 }
 /// One field of an issue form. Its answers are posted as `form_<index>`, in the order of the
 /// file, so the server can write them into the issue body.
-fn form_field(index: usize, field: &FormField) -> Element {
+fn form_field(index: usize, field: &FormField, revision: &str) -> Element {
     let name = format!("form_{index}");
     let id = format!("form-field-{index}");
     let first = field.values.first().cloned().unwrap_or_default();
@@ -239,7 +245,7 @@ fn form_field(index: usize, field: &FormField) -> Element {
                     DraftInput { id: id.clone(), name, required: field.required, maxlength: Some(255), placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
                 FieldKind::Textarea => rsx! {
-                    DraftTextarea { id: id.clone(), name, required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
+                    DraftTextarea { id: id.clone(), name, revision: Some(revision.to_owned()), required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
                 FieldKind::Dropdown if !field.multiple => rsx! {
                     DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone())).collect::<Vec<_>>() }
@@ -327,6 +333,7 @@ fn assignee_checks(draft: &NewDraft, choices: &IssueChoices) -> Element {
 fn label_checks(repo: &Repository, draft: &NewDraft, choices: &IssueChoices) -> Element {
     rsx! {
         PickerPopover { title: "Apply labels to this issue",
+            p { class: "collaboration-muted", "Choose at most 100 labels." }
             if choices.labels.is_empty() { p { class: "collaboration-muted", "No labels yet." } }
             ul { class: "collaboration-picker-list",
                 for entry in &choices.labels {

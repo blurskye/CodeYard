@@ -3,7 +3,7 @@ use super::{
     ActionsPage,
 };
 use crate::webui::{
-    components::{DraftSelect, DraftTextarea, SelectOption},
+    components::{DraftCheckbox, DraftSelect, DraftTextarea, SelectOption},
     navigation::NavLink,
     pages::repos::chrome::RepoChrome,
 };
@@ -94,7 +94,7 @@ pub(super) fn input_field(
             rsx! {
                 label { class: "actions-input-check",
                     input { r#type: "hidden", name: name.clone(), value: "false" }
-                    input { r#type: "checkbox", name: name.clone(), value: "true", checked: checked }
+                    DraftCheckbox { name: name.clone(), submission_value: "true", initial_checked: checked }
                     span { "{label_text}" }
                     if show_required_label { small { " (required)" } }
                     if !description.is_empty() { small { " {description}" } }
@@ -241,7 +241,7 @@ pub(super) fn manual_dispatch_form(
             form { method: "post", action: format!("{base_path}/dispatch"), class: "actions-dispatch-menu",
                 p { class: "actions-dispatch-note", "Choose a repository and workflow to run." }
                 input { r#type: "hidden", name: "csrf_token", value: csrf_token }
-                label { "Repository owner" input { name: "repo_owner", "value": draft.owner.clone(), required: true, maxlength: "100" } }
+                label { "Repository owner" input { name: "repo_owner", "value": draft.owner.clone(), required: true } }
                 label { "Repository name" input { name: "repo_name", "value": draft.repository.clone(), required: true, maxlength: "100" } }
                 label { "Branch" input { name: "branch", "value": draft.branch.clone(), required: true, maxlength: "255" } }
                 label { "Event" DraftSelect { name: "event", initial_value: draft.event.clone(),

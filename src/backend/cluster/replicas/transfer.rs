@@ -17,6 +17,10 @@ use std::{collections::HashMap, path::Path};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
+#[derive(Debug, thiserror::Error)]
+#[error("the primary could not make an incremental pack")]
+struct IncrementalPackRejected;
+
 /// What the primary sends before its pack.
 #[derive(Deserialize)]
 struct Listing {
@@ -43,7 +47,7 @@ pub(super) async fn copy(
     match fetch(context, primary, repository, mirror, &have).await {
         // A tip the primary no longer has makes the incremental pack fail. Then the
         // primary sends everything the copy needs. A busy primary is asked later instead.
-        Err(error) if !have.is_empty() && !super::busy(&error) => {
+        Err(error) if error.is::<IncrementalPackRejected>() => {
             tracing::debug!(%error, "incremental replica copy failed; copying everything");
             fetch(context, primary, repository, mirror, &[]).await
         }
@@ -97,6 +101,9 @@ async fn fetch(
             },
         )
         .await?;
+    if !status.success() && !have.is_empty() {
+        return Err(IncrementalPackRejected.into());
+    }
     ensure!(status.success(), "the primary could not make a pack");
     output.flush().await?;
     drop(output);
@@ -166,5 +173,115 @@ async fn remove_aside_copies(mirror: &Path) {
                 tracing::warn!(path = %entry.path().display(), %error, "could not remove a quarantined replica copy");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::cluster::{rpc, CorePeer, IrohDialer, NodeAddress, NodeKey, Relay};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    async fn failed_copy(primary_rejects: bool) -> usize {
+        let root = tempfile::tempdir().unwrap();
+        let mirror = root.path().join("mirror.git");
+        {
+            let repo = git2::Repository::init_bare(&mirror).unwrap();
+            let tree = repo
+                .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+                .unwrap();
+            let signature = git2::Signature::now("Test", "test@example.invalid").unwrap();
+            repo.commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "tip",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        }
+        let key = NodeKey::generate();
+        let server_key = NodeKey::generate();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let context = NodeContext {
+            pool: None,
+            iroh: IrohDialer::new(Relay::Off, key.clone()),
+            key,
+            node_id: 1,
+            repos_path: root.path().to_owned(),
+            peers: Default::default(),
+            unreachable: Default::default(),
+            ci_replicas: Default::default(),
+        };
+        context.remember_peer(
+            2,
+            CorePeer {
+                public_key: server_key.public_hex(),
+                address: NodeAddress {
+                    tcp: vec![listener.local_addr().unwrap()],
+                    ..Default::default()
+                },
+            },
+        );
+        let acceptor = tokio_rustls::TlsAcceptor::from(
+            crate::backend::cluster::tls::server_config(&server_key).unwrap(),
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let count = calls.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut stream = acceptor.accept(socket).await.unwrap();
+                let header = rpc::read_frame(&mut stream, rpc::MAX_JSON).await.unwrap();
+                let request: Request = serde_json::from_slice(&header).unwrap();
+                let call = count.fetch_add(1, Ordering::SeqCst);
+                let Operation::ReplicaPack { have } = request.operation else {
+                    panic!("not a pack");
+                };
+                assert_eq!(have.is_empty(), call > 0);
+                let reply = rpc::Reply {
+                    result: Ok(serde_json::json!({"head":null,"refs":{}})),
+                };
+                rpc::write_frame(
+                    &mut stream,
+                    &serde_json::to_vec(&reply).unwrap(),
+                    rpc::MAX_JSON,
+                )
+                .await
+                .unwrap();
+                // An invalid pack models a local indexing failure after a successful download.
+                rpc::write_frame(&mut stream, b"invalid pack", 32768)
+                    .await
+                    .unwrap();
+                rpc::write_frame(&mut stream, b"", 32768).await.unwrap();
+                let code = i32::from(primary_rejects && call == 0);
+                let exit =
+                    serde_json::to_vec(&serde_json::json!({"result":{"Ok":code},"stderr":""}))
+                        .unwrap();
+                rpc::write_frame(&mut stream, &exit, rpc::MAX_JSON)
+                    .await
+                    .unwrap();
+                stream.shutdown().await.unwrap();
+            }
+        });
+        assert!(copy(&context, 2, Uuid::new_v4(), &mirror).await.is_err());
+        let calls = calls.load(Ordering::SeqCst);
+        server.abort();
+        let _ = server.await;
+        calls
+    }
+
+    #[tokio::test]
+    async fn indexing_failure_does_not_download_the_whole_repository_again() {
+        assert_eq!(failed_copy(false).await, 1);
+    }
+
+    #[tokio::test]
+    async fn rejected_incremental_pack_is_retried_without_have_tips() {
+        assert_eq!(failed_copy(true).await, 2);
     }
 }

@@ -369,14 +369,15 @@ pub async fn list_public_team_repositories(
 
 /// Users on a team who are current members of its organization. Code owner names such as
 /// `@org/team` resolve through this.
-pub async fn team_member_user_ids(
+pub async fn team_members_by_names(
     pool: &PgPool,
-    org_name: &str,
-    team_slug: &str,
-) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar("SELECT tm.user_id FROM team_memberships tm JOIN teams t ON t.id=tm.team_id JOIN organizations o ON o.id=t.org_id JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=o.id JOIN users u ON u.id=tm.user_id WHERE o.name=$1 AND t.slug=$2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.user_id")
-        .bind(org_name)
-        .bind(team_slug)
+    org_id: i64,
+    teams: &[String],
+) -> Result<Vec<(String, i64)>> {
+    anyhow::ensure!(teams.len() <= 500, "Too many teams");
+    Ok(sqlx::query_as("SELECT o.name || '/' || t.slug, tm.user_id FROM team_memberships tm JOIN teams t ON t.id=tm.team_id JOIN organizations o ON o.id=t.org_id JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=o.id JOIN users u ON u.id=tm.user_id WHERE o.name || '/' || t.slug = ANY($1) AND o.id=$2 AND t.privacy='visible' AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.user_id LIMIT 5001")
+        .bind(teams)
+        .bind(org_id)
         .fetch_all(pool)
         .await?)
 }

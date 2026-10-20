@@ -9,6 +9,19 @@ pub enum LabelWriteRefusal {
     Denied,
     #[error("Invalid label scope or batch")]
     InvalidLabels,
+    #[error("A label with this name already exists")]
+    DuplicateName,
+}
+
+pub(crate) fn label_database_error(error: sqlx::Error) -> anyhow::Error {
+    if error
+        .as_database_error()
+        .is_some_and(|error| error.is_unique_violation())
+    {
+        LabelWriteRefusal::DuplicateName.into()
+    } else {
+        error.into()
+    }
 }
 
 pub const MAX_ISSUE_LABELS: usize = 100;

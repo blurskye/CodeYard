@@ -111,9 +111,15 @@ impl CiWorkers {
             })
             .unwrap_or_else(|| "node".into());
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        if let RunQueue::Database { pool, .. } = &self.queue {
+        if let RunQueue::Database {
+            pool,
+            notifications,
+            ..
+        } = &self.queue
+        {
             tasks.spawn(worker::fail_stale_runs(
                 pool.clone(),
+                notifications.clone(),
                 workers.stop.subscribe(),
             ));
         }

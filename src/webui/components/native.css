@@ -559,6 +559,7 @@ body {
 .site-header .repo-tabs-more > .native-menu-panel { position: absolute; top: calc(100% + 8px); right: 0; left: auto; }
 .repo-tabs-more-current, .repo-tabs-more-current:hover { border-bottom-color: #fd8c73; font-weight: 600; }
 @media (max-width: 767px) {
+  .site-header .repo-tabs-more > .native-menu-panel { position: fixed; top: 60px; right: 12px; left: 12px; max-height: calc(100dvh - 72px); overflow-y: auto; }
   .site-header .repo-tab-bar { margin-bottom: -1px; }
   .site-header .repo-tab-strip > .repo-tabs { margin-bottom: 0; }
   .site-header .repo-tabs { padding-right: 8px; }
@@ -1086,11 +1087,11 @@ body {
 .patch-number { padding: 0 4px; color: var(--muted-foreground); text-align: right; user-select: none; -webkit-user-select: none; text-decoration: none; }
 a.patch-number:hover { color: var(--foreground); }
 /* The "+" opens the composer on its line. A pointer shows it while the row is hovered or the "+" has
-   keyboard focus; a touch screen always shows it. The link's tap area reaches 12px past its 20px box,
-   so a tap is easy without making the diff rows taller. */
+   keyboard focus; a touch screen always shows it. The tap area expands horizontally only,
+   so adjacent lines never overlap. */
 .patch-add { position: relative; display: inline-flex; flex: none; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; color: var(--muted-foreground); opacity: 0; }
 a.patch-add { text-decoration: none; scroll-margin-top: calc(var(--site-header-height) + var(--repo-tabs-height) + 48px); }
-a.patch-add::after { content: ""; position: absolute; inset: -12px; }
+a.patch-add::after { content: ""; position: absolute; inset: 0 -12px; }
 a.patch-add:hover { background: var(--accent); color: var(--foreground); }
 a.patch-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 .patch-row:hover > .patch-add, .collaboration-split-cell:hover > .patch-add, .patch-add:focus-visible { opacity: 1; }

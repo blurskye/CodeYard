@@ -7,7 +7,7 @@ use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::repositories::store::{repo_store, RepoError};
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
 use serde_json::json;
@@ -46,17 +46,10 @@ fn check_branch_name(branch: &str) -> Result<(), OperationError> {
     Ok(())
 }
 
-/// The pull request row is written before its fork head is published. A refused head is a
-/// request error. Any other failure leaves the opened pull request without its head.
+/// The row already committed, even when publication is definitively refused.
 fn head_publish_error(number: i32, error: RepoError) -> OperationError {
-    if error.kind == ErrorKind::Invalid {
-        OperationError::Invalid {
-            code: "validation_error",
-            message: error.message,
-        }
-    } else {
-        OperationError::Opened { number }
-    }
+    tracing::warn!(number, %error, "pull request head was not published");
+    OperationError::Opened { number }
 }
 
 pub async fn create_pull_request(
@@ -199,7 +192,11 @@ pub async fn create_pull_request(
                         pool,
                         repository.id,
                         head_repository.id,
-                        existing.author_id,
+                        if head_repository.id == repository.id {
+                            user.id
+                        } else {
+                            existing.author_id
+                        },
                         &repo_store(&head_repository, ci.cluster.as_ref()),
                         existing.number,
                         &existing.head_sha,
@@ -208,6 +205,38 @@ pub async fn create_pull_request(
                     .await
                     .map_err(|error| head_publish_error(existing.number, error))?;
             }
+            super::branches::refresh_open_pull_request(
+                pool,
+                &repository,
+                ci,
+                user.id,
+                existing.id,
+                Some(crate::backend::db::models::AccessLevel::Owner),
+            )
+            .await
+            .map_err(|_| OperationError::Opened { number })?;
+            let current = db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
+                .await
+                .map_err(|_| OperationError::Opened { number })?
+                .ok_or(OperationError::Opened { number })?;
+            let _ = queue_pull_request_ci(
+                pool,
+                ci,
+                &repository,
+                &current,
+                user.id,
+                false,
+                crate::backend::db::models::AccessLevel::Owner,
+            )
+            .await;
+            super::code_owners::request_code_owner_reviews(
+                pool,
+                ci,
+                &repository,
+                &current,
+                user.id,
+            )
+            .await;
             return Err(OperationError::Conflict {
                 code: "pull_request_exists",
                 message: format!(
@@ -233,11 +262,18 @@ pub async fn create_pull_request(
             .map_err(|error| head_publish_error(pull_request.number, error))?;
     }
 
-    super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull_request.id)
-        .await
-        .map_err(|_| OperationError::Opened {
-            number: pull_request.number,
-        })?;
+    super::branches::refresh_open_pull_request(
+        pool,
+        &repository,
+        ci,
+        user.id,
+        pull_request.id,
+        Some(crate::backend::db::models::AccessLevel::Owner),
+    )
+    .await
+    .map_err(|_| OperationError::Opened {
+        number: pull_request.number,
+    })?;
     let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
         .await
         .map_err(|_| OperationError::Opened {
@@ -316,7 +352,16 @@ pub async fn create_pull_request(
     .await;
 
     if !pull_request.is_draft {
-        let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id, false).await;
+        let _ = queue_pull_request_ci(
+            pool,
+            ci,
+            &repository,
+            &pull_request,
+            user.id,
+            false,
+            crate::backend::db::models::AccessLevel::Owner,
+        )
+        .await;
     }
     super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
         .await;
@@ -551,9 +596,16 @@ pub async fn update_pull_request(
     // Branches may have moved while the pull request was closed. Catch up now that
     // it is open again, and answer with what it is after that.
     let pull_request = if requested_state == Some("open") || base_changed {
-        super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull_request.id)
-            .await
-            .map_err(|_| OperationError::Updated { number })?;
+        super::branches::refresh_open_pull_request(
+            pool,
+            &repository,
+            ci,
+            user.id,
+            pull_request.id,
+            Some(crate::backend::db::models::AccessLevel::Owner),
+        )
+        .await
+        .map_err(|_| OperationError::Updated { number })?;
         db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
             .await
             .map_err(|_| OperationError::Updated { number })?
@@ -704,28 +756,18 @@ pub async fn unstack_pull_request(
 ) -> Result<db::models::PullRequest, OperationError> {
     let (repository, user, existing) =
         stack_change_target(pool, actor_id, &owner, &repo, number).await?;
-    // The stack is read before it is taken apart, so its open layers can be queued afterwards.
-    let members = match existing.stack_id {
-        Some(stack) => db::pull_requests::records::list_stack_members(pool, repository.id, stack)
-            .await
-            .map_err(|_| OperationError::Unavailable {
-                code: "database_error",
-                message: "Collaboration storage is temporarily unavailable".to_owned(),
-            })?,
-        None => Vec::new(),
-    };
     let unstacked = db::pull_requests::records::unstack_pull_requests(pool, user.id, existing.id)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "database_error",
             message: "Unable to save this change; it was not confirmed".to_owned(),
         })?;
-    if !unstacked {
+    let Some(members) = unstacked else {
         return Err(OperationError::Denied {
             code: "forbidden",
             message: "Only people with write access can unstack pull requests".to_owned(),
         });
-    }
+    };
     // Each open layer goes back to its own base, so workflows for that base may now apply. They are
     // read again, since a join or a reopen may have changed them since the stack was read.
     let mut open = Vec::new();
@@ -737,6 +779,9 @@ pub async fn unstack_pull_request(
         }
     }
     super::workflows::queue_moved_pull_requests_ci(pool, ci, &repository, &open, user.id).await;
+    for pull in &open {
+        super::code_owners::request_code_owner_reviews(pool, ci, &repository, pull, user.id).await;
+    }
     db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
         .await
         .map_err(|_| OperationError::Unavailable {
@@ -780,6 +825,7 @@ pub async fn join_stack(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
+    super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull, user.id).await;
     // The layer now merges into its stack's trunk, so workflows for that trunk may now apply.
     super::workflows::queue_moved_pull_requests_ci(
         pool,
@@ -909,14 +955,30 @@ pub async fn mark_pull_request_ready(
 
     // Branches may have moved while it was a draft. Catch up, then queue its
     // workflows the way a new pull request does.
-    super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull_request.id)
-        .await
-        .map_err(|_| OperationError::Updated { number })?;
+    super::branches::refresh_open_pull_request(
+        pool,
+        &repository,
+        ci,
+        user.id,
+        pull_request.id,
+        Some(crate::backend::db::models::AccessLevel::Owner),
+    )
+    .await
+    .map_err(|_| OperationError::Updated { number })?;
     let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
         .await
         .map_err(|_| OperationError::Updated { number })?
         .ok_or(OperationError::Updated { number })?;
-    let _ = queue_pull_request_ci(pool, ci, &repository, &pull_request, user.id, false).await;
+    let _ = queue_pull_request_ci(
+        pool,
+        ci,
+        &repository,
+        &pull_request,
+        user.id,
+        false,
+        crate::backend::db::models::AccessLevel::Owner,
+    )
+    .await;
     super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
         .await;
 
@@ -950,14 +1012,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_refused_head_is_a_request_error_and_other_failures_are_storage_errors() {
+    fn all_head_publication_failures_report_the_already_opened_pull_request() {
+        use crate::backend::repositories::store::ErrorKind;
         let refused = RepoError::new(
             ErrorKind::Invalid,
             "A repository holds at most 1 pull request heads",
         );
         assert!(matches!(
             head_publish_error(3, refused),
-            OperationError::Invalid { message, .. } if message.contains("pull request heads")
+            OperationError::Opened { number: 3 }
         ));
         let failed = RepoError::new(ErrorKind::Unavailable, "Git did not finish");
         assert!(matches!(

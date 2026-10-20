@@ -49,10 +49,28 @@ fi
 [[ $OUT == /* && $OUT != / ]] || { echo "WEBUI_DIST must be an absolute directory, not /" >&2; exit 1; }
 PUBLIC=$(realpath -m -- "$TARGET_DIR/dx/codeyard/$MODE/web/public")
 OUT=$(realpath -m -- "$OUT")
+for directory in "$OUT" "$PUBLIC"; do
+    [[ $directory != "$ROOT" && $ROOT != "$directory/"* && $directory != / ]] || {
+        echo "Bundle output must not be the checkout or its ancestor" >&2
+        exit 1
+    }
+done
 [[ $OUT != / && ( $OUT == "$PUBLIC" || ( $PUBLIC != "$OUT/"* && $OUT != "$PUBLIC/"* ) ) ]] || {
     echo "WEBUI_DIST must not overlap the Dioxus output directory unless identical" >&2
     exit 1
 }
+# Only replace directories this script has published, never arbitrary existing data.
+require_bundle() {
+    local directory=$1 marker=$1/.codeyard-webui-bundle
+    [[ -e $directory || -L $directory ]] || return 0
+    [[ -d $directory && ! -L $directory && -O $directory &&
+       -f $marker && ! -L $marker && -O $marker ]] || {
+        echo "Refusing to replace an existing directory without an owned bundle marker: $directory" >&2
+        exit 1
+    }
+}
+require_bundle "$PUBLIC"
+require_bundle "$OUT"
 dx_version=$("$DX" --version)
 [[ $dx_version == *0.7.10* ]] || { echo "Dioxus CLI 0.7.10 is required, found: $dx_version" >&2; exit 1; }
 
@@ -79,9 +97,11 @@ if [[ $MODE == release ]]; then
 fi
 "$DX" "${args[@]}"
 [[ -f $PUBLIC/index.html ]] || { echo "dx produced no $PUBLIC/index.html" >&2; exit 1; }
+touch "$PUBLIC/.codeyard-webui-bundle"
 
 echo "== publish to $OUT"
 if [[ $OUT != "$PUBLIC" ]]; then
+    require_bundle "$OUT"
     rm -rf "$OUT"
     mkdir -p "$(dirname "$OUT")"
     cp -R "$PUBLIC" "$OUT"

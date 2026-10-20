@@ -364,7 +364,7 @@ fn attribute_value(
     match name {
         // A URL with a reference this renderer does not know is dropped, not guessed at.
         "href" => link_href(&text).filter(|_| !unknown),
-        "src" => (!unknown && safe_url(&text, true)).then_some(text),
+        "src" => (!unknown && safe_url(&text, true)).then(|| text.replace(' ', "%20")),
         "srcset" => {
             if unknown {
                 None
@@ -411,22 +411,53 @@ const MAX_SRCSET_CANDIDATES: usize = 16;
 /// Every candidate needs a safe address and at most one valid descriptor, so a source with one
 /// bad candidate is dropped and the image fallback shows.
 fn source_url(text: &str) -> Option<String> {
+    Some(
+        srcset_candidates(text)?
+            .into_iter()
+            .map(|(url, descriptor)| {
+                if descriptor.is_empty() {
+                    url.to_owned()
+                } else {
+                    format!("{url} {descriptor}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+/// HTML consumes URLs up to whitespace, not commas within the URL token.
+pub(super) fn srcset_candidates(mut text: &str) -> Option<Vec<(&str, &str)>> {
     let mut candidates = Vec::new();
-    for candidate in text.split(',') {
-        if candidates.len() >= MAX_SRCSET_CANDIDATES {
+    while !text.trim_ascii_start().is_empty() {
+        text = text.trim_ascii_start();
+        if candidates.len() >= MAX_SRCSET_CANDIDATES || text.starts_with(',') {
             return None;
         }
-        let words: Vec<&str> = candidate.split_ascii_whitespace().collect();
-        let (url, descriptors) = words.split_first()?;
-        if !safe_url(url, true)
-            || descriptors.len() > 1
-            || !descriptors.iter().all(|&word| descriptor(word))
-        {
+        let end = text
+            .find(|c: char| c.is_ascii_whitespace())
+            .unwrap_or(text.len());
+        let token = &text[..end];
+        text = &text[end..];
+        let (url, desc) = if let Some(url) = token.strip_suffix(',') {
+            // Keep the existing strict rejection of a trailing empty candidate.
+            if text.trim_ascii_start().is_empty() {
+                return None;
+            }
+            (url, "")
+        } else {
+            text = text.trim_ascii_start();
+            let end = text.find(',').unwrap_or(text.len());
+            let desc = text[..end].trim_ascii();
+            text = text.get(end + 1..).unwrap_or("");
+            (token, desc)
+        };
+        if !safe_url(url, true) || (!desc.is_empty() && !descriptor(desc)) {
             return None;
         }
-        candidates.push(words.join(" "));
+        candidates.push((url, desc));
     }
-    Some(candidates.join(", "))
+    (!candidates.is_empty()).then_some(candidates)
 }
 
 /// A `srcset` descriptor: a width such as `100w`, or a density such as `2x` or `1.5x`.

@@ -57,12 +57,12 @@ pub async fn insert_deploy_key(
     session: &str,
 ) -> Result<DeployKey> {
     let mut tx = pool.begin().await?;
+    require_admin(&mut tx, key.created_by_id, key.repo_id, session).await?;
     // The same advisory lock as account-key enrollment, so one fingerprint is checked once.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 37000003))")
         .bind(&key.fingerprint)
         .execute(&mut *tx)
         .await?;
-    require_admin(&mut tx, key.created_by_id, key.repo_id, session).await?;
     let used: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = $1) OR EXISTS(SELECT 1 FROM deploy_keys WHERE fingerprint = $1)",
     )

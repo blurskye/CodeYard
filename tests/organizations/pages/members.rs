@@ -199,7 +199,12 @@ pub async fn access_management(f: &Fixture) {
         repos.push(repo);
     }
     let page = f.get(&f.owner, &path).await.organization();
-    for members in [&page.members, &page.selected_team.as_ref().unwrap().members] {
+    let members_path = format!("{}?tab=members", f.path());
+    let organization_members = f.get(&f.owner, &members_path).await.organization();
+    for members in [
+        &organization_members.members,
+        &page.selected_team.as_ref().unwrap().members,
+    ] {
         assert!(members
             .iter()
             .any(|member| member.user_id == f.owner.id && member.username == "orgs"));
@@ -231,9 +236,29 @@ pub async fn access_management(f: &Fixture) {
         .await;
     assert_eq!(response.status, StatusCode::OK);
     let source = &response.body;
+    let member_response = f
+        .request(
+            &f.owner,
+            "GET",
+            &members_path,
+            String::new(),
+            "application/x-www-form-urlencoded",
+            (false, false),
+        )
+        .await;
+    assert_eq!(member_response.status, StatusCode::OK);
+    let member_source = &member_response.body;
     for (username, id) in [("orgs", f.owner.id), ("ordinary_member", f.member.id)] {
         for action in ["member-role", "remove-member", "remove-team-member"] {
-            let fields = row_fields(source, &format!("/{username}"), action);
+            let fields = row_fields(
+                if action == "remove-team-member" {
+                    source
+                } else {
+                    member_source
+                },
+                &format!("/{username}"),
+                action,
+            );
             assert!(fields.contains(&("user_id".into(), id.to_string())));
             if action == "remove-team-member" {
                 assert!(fields.contains(&("team_id".into(), team.to_string())));
@@ -264,7 +289,7 @@ pub async fn access_management(f: &Fixture) {
             .into_iter()
             .find(|(name, _)| name == "role")
     };
-    assert_eq!(role_of(draft.as_str()), role_of(source.as_str()));
+    assert_eq!(role_of(draft.as_str()), role_of(member_source.as_str()));
     assert!(row_fields(&draft, "/orgs", "member-role").contains(&("role".into(), "owner".into())));
     let mut grant = row_fields(source, "/native_org/second_grant", "grant");
     let access = grant
@@ -284,10 +309,10 @@ pub async fn access_management(f: &Fixture) {
         .repositories;
     assert_eq!(grants[0].permission, 3);
     assert_eq!(grants[1].permission, 1);
-    let mut role = row_fields(source, "/ordinary_member", "member-role");
+    let mut role = row_fields(member_source, "/ordinary_member", "member-role");
     role.iter_mut().find(|(name, _)| name == "role").unwrap().1 = "admin".into();
     submit_row(f, &path, &role).await;
-    let members = f.get(&f.owner, &path).await.organization().members;
+    let members = f.get(&f.owner, &members_path).await.organization().members;
     assert!(members
         .iter()
         .any(|m| m.user_id == f.member.id && m.role == "admin"));
@@ -323,12 +348,12 @@ pub async fn access_management(f: &Fixture) {
         f,
         &path,
         &confirmed(
-            row_fields(source, "/ordinary_member", "remove-member"),
+            row_fields(member_source, "/ordinary_member", "remove-member"),
             "ordinary_member",
         ),
     )
     .await;
-    let members = f.get(&f.owner, &path).await.organization().members;
+    let members = f.get(&f.owner, &members_path).await.organization().members;
     assert_eq!(members.len(), 1);
     assert_eq!(members[0].user_id, f.owner.id);
 }
@@ -339,7 +364,7 @@ pub async fn invitations(f: &Fixture) {
     let pool = f.database.pool();
     let invitee = Fixture::actor(pool, "invitee_pending").await;
     let invitee_id = invitee.id.to_string();
-    let path = f.path();
+    let path = format!("{}?tab=members", f.path());
     let invite = [
         ("action", "add-member"),
         ("username", "invitee_pending"),
@@ -385,7 +410,7 @@ pub async fn invitations(f: &Fixture) {
         &[],
     )
     .await
-    .redirect(&path);
+    .redirect(&f.path());
     assert!(f
         .get(&f.owner, &path)
         .await
@@ -559,7 +584,7 @@ pub async fn contracts(f: &Fixture) {
         .await
         .redirect(&f.path());
         assert!(f
-            .get(&f.owner, &f.path())
+            .get(&f.owner, &format!("{}?tab=members", f.path()))
             .await
             .organization()
             .members
@@ -581,7 +606,10 @@ pub async fn contracts(f: &Fixture) {
     )
     .await
     .redirect(&f.path());
-    let page = f.get(&f.owner, &f.path()).await.organization();
+    let page = f
+        .get(&f.owner, &format!("{}?tab=members", f.path()))
+        .await
+        .organization();
     assert!(page
         .members
         .iter()
@@ -722,7 +750,9 @@ pub async fn contracts(f: &Fixture) {
         );
     }
     // Banned sessions are anonymous at the shared identity boundary.
-    f.get(&f.owner, &f.path()).await.redirect("/login");
+    f.get(&f.owner, &format!("{}?tab=members", f.path()))
+        .await
+        .redirect("/login");
     f.database
         .execute(
             "UPDATE users SET is_banned=FALSE WHERE id=$1",
@@ -737,7 +767,9 @@ pub async fn contracts(f: &Fixture) {
         .await;
     // A temporary password reaches only the password form under /settings.
     assert_eq!(
-        f.get(&f.owner, &f.path()).await.status,
+        f.get(&f.owner, &format!("{}?tab=members", f.path()))
+            .await
+            .status,
         StatusCode::FORBIDDEN
     );
     f.database
@@ -766,7 +798,9 @@ pub async fn contracts(f: &Fixture) {
     .await
     .redirect(INDEX);
     assert_eq!(
-        f.get(&f.owner, &f.path()).await.status,
+        f.get(&f.owner, &format!("{}?tab=members", f.path()))
+            .await
+            .status,
         StatusCode::NOT_FOUND
     );
     assert_eq!(f.get(&f.owner, INDEX).await.status, StatusCode::OK);
@@ -950,7 +984,10 @@ pub async fn recovery(f: &Fixture) {
     f.database
         .execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[f.owner.id])
         .await;
-    let suspended = f.get(&f.member, &f.path()).await.organization();
+    let suspended = f
+        .get(&f.member, &format!("{}?tab=members", f.path()))
+        .await
+        .organization();
     assert!(suspended.selected.as_ref().unwrap().suspended);
     let source = html(suspended);
     assert!(!source.contains("value=\"team-edit\""));
@@ -1077,7 +1114,10 @@ pub async fn recovery(f: &Fixture) {
             .await,
         0
     );
-    let page = f.get(&f.member, &f.path()).await.organization();
+    let page = f
+        .get(&f.member, &format!("{}?tab=members", f.path()))
+        .await
+        .organization();
     assert!(
         page.selected.unwrap().suspended,
         "audit outage rolls back owner promotion"
@@ -1108,7 +1148,10 @@ pub async fn recovery(f: &Fixture) {
     )
     .await
     .redirect(INDEX);
-    let page = f.get(&f.member, &f.path()).await.organization();
+    let page = f
+        .get(&f.member, &format!("{}?tab=members", f.path()))
+        .await
+        .organization();
     assert!(!page.selected.unwrap().suspended);
     assert!(page
         .members

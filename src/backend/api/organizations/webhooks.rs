@@ -44,15 +44,16 @@ pub(super) async fn post(
     .await;
     match outcome {
         Ok(notice) => ctx.redirect(&format!("{base}&notice={notice}")),
-        Err((error, _draft)) => {
+        Err((error, draft)) => {
             // The organization page shows the refusal in its webhooks section.
             let (status, message) = panel::refusal(&error);
-            super::organization::respond(
+            super::organization::respond_with_hook_draft(
                 &ctx,
                 Some(org),
                 status,
                 Some(message.to_owned()),
                 Default::default(),
+                draft,
             )
             .await
         }

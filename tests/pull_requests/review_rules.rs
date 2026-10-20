@@ -403,6 +403,7 @@ async fn threads_and_inline_listing_contract(pg: bool) {
             pr_id: pull_row_id(&world, number).await,
             author_id: world.alice_id,
             body: "Nested",
+            expected_revisions: None,
             path: Some("threads.txt"),
             line: Some(1),
             side: Some("RIGHT"),
@@ -463,6 +464,7 @@ async fn threads_and_inline_listing_contract(pg: bool) {
                 pr_id,
                 author_id: world.alice_id,
                 body: &format!("Filler {n}"),
+                expected_revisions: None,
                 path: Some("threads.txt"),
                 line: Some(1),
                 side: Some("RIGHT"),
@@ -485,6 +487,7 @@ async fn threads_and_inline_listing_contract(pg: bool) {
             pr_id,
             author_id: world.alice_id,
             body: "One too many",
+            expected_revisions: None,
             path: Some("threads.txt"),
             line: Some(1),
             side: Some("RIGHT"),
@@ -698,6 +701,8 @@ fn web_pull(number: i64) -> String {
 
 /// Bob files a comment on the first line of `topic.txt` in his pending review.
 async fn start_pending_comment(bob: &Client, page: &str, head: &str, body: &str) -> pulls::Reply {
+    let number = page.rsplit('/').next().unwrap().parse().unwrap();
+    let pull = bob.pull(number).await;
     bob.form_reply(
         &format!("{page}/comments"),
         &[
@@ -706,6 +711,7 @@ async fn start_pending_comment(bob: &Client, page: &str, head: &str, body: &str)
             ("side", "RIGHT"),
             ("line", "1"),
             ("commit_sha", head),
+            ("base_sha", pull["base_sha"].as_str().unwrap()),
             ("from", "diff"),
             ("intent", "review"),
         ],
@@ -967,6 +973,7 @@ fn pending_input<'a>(
         pr_id,
         author_id,
         body,
+        expected_revisions: None,
         path: Some("topic.txt"),
         line: Some(1),
         side: Some("RIGHT"),

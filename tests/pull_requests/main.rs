@@ -4,6 +4,7 @@ mod compare;
 mod diff_view;
 mod forks;
 mod merge_decisions;
+mod merge_followup;
 mod merge_methods;
 mod ready;
 mod refresh;

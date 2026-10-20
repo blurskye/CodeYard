@@ -121,6 +121,85 @@ fn commit_workflow_entries(
         .unwrap()
 }
 
+#[tokio::test]
+async fn remote_first_reader_persists_languages() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let web = cluster::start(
+        &database.pool,
+        &root.path().join("web-state"),
+        &root.path().join("web-repos"),
+        &"web".parse().unwrap(),
+        settings("language-web"),
+    )
+    .await
+    .unwrap();
+    web.publish().await.unwrap();
+    let storage = cluster::start(
+        &database.pool,
+        &root.path().join("storage-state"),
+        &root.path().join("storage-repos"),
+        &"storage".parse().unwrap(),
+        settings("language-storage"),
+    )
+    .await
+    .unwrap();
+    storage.publish().await.unwrap();
+    let owner = db::users::accounts::create_user(&database.pool, "remote_language_owner", None)
+        .await
+        .unwrap();
+    let repository = codeyard::backend::repositories::lifecycle::provision(
+        (&database.pool, Some(&web.context)),
+        &web.context.repos_path,
+        db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+        "languages",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let uuid = rpc::repository_uuid(&repository.disk_path).unwrap();
+    let path = storage.context.repos_path.join(format!("{uuid}.git"));
+    {
+        let bare = git2::Repository::open_bare(&path).unwrap();
+        let mut builder = bare.treebuilder(None).unwrap();
+        builder
+            .insert("lib.rs", bare.blob(b"fn main() {}\n").unwrap(), 0o100644)
+            .unwrap();
+        let tree = bare.find_tree(builder.write().unwrap()).unwrap();
+        let signature = git2::Signature::now("Fixture", "fixture@example.invalid").unwrap();
+        bare.commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            "Rust",
+            &tree,
+            &[],
+        )
+        .unwrap();
+    }
+    let remote = repo_store(&repository, Some(&web.context));
+    let languages = codeyard::backend::repositories::languages::compute_and_store(
+        &database.pool,
+        &remote,
+        &repository,
+        "main",
+    )
+    .await
+    .unwrap();
+    assert_eq!(languages.len(), 1);
+    assert_eq!(languages[0].language, "Rust");
+    let rows = db::repository_stats::get_repo_languages(&database.pool, repository.id)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].language, "Rust");
+    storage.shutdown().await;
+    web.shutdown().await;
+    database.pool.close().await;
+}
+
 async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
     equal(remote.exists().await, local.exists().await);
     equal(
@@ -843,6 +922,95 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
 }
 
 #[tokio::test]
+async fn control_heavy_blame_uses_the_raw_response_body() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let web = cluster::start(
+        &database.pool,
+        &root.path().join("web-state"),
+        &root.path().join("web"),
+        &"web".parse().unwrap(),
+        settings("blame-web"),
+    )
+    .await
+    .unwrap();
+    let storage = cluster::start(
+        &database.pool,
+        &root.path().join("storage-state"),
+        &root.path().join("storage"),
+        &"storage".parse().unwrap(),
+        settings("blame-storage"),
+    )
+    .await
+    .unwrap();
+    web.publish().await.unwrap();
+    storage.publish().await.unwrap();
+    let local = RepoStore::create(&storage.context.repos_path, "main", None)
+        .await
+        .unwrap();
+    {
+        let repo = git2::Repository::open_bare(local.location()).unwrap();
+        let signature = git2::Signature::now("Tester", "test@example.invalid").unwrap();
+        let mut parent = None;
+        for version in 0..2 {
+            let mut content = Vec::new();
+            for line in 0..250 {
+                let mut bytes = vec![if line < 3 { b'a' } else { 1 }; 3998];
+                if version == 1 && line % 2 == 0 {
+                    bytes[0] = b'x';
+                }
+                content.extend(bytes);
+                content.push(b'\n');
+            }
+            let mut builder = repo.treebuilder(None).unwrap();
+            builder
+                .insert("control.txt", repo.blob(&content).unwrap(), 0o100644)
+                .unwrap();
+            let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+            let previous = parent.map(|id| repo.find_commit(id).unwrap());
+            parent = Some(
+                repo.commit(
+                    Some("refs/heads/main"),
+                    &signature,
+                    &signature,
+                    &char::from(1 + version).to_string().repeat(4000),
+                    &tree,
+                    &previous.iter().collect::<Vec<_>>(),
+                )
+                .unwrap(),
+            );
+        }
+    }
+    let owner = db::users::accounts::create_user(&database.pool, "blame_owner", None)
+        .await
+        .unwrap();
+    let repo = db::repositories::records::create_repository(
+        &database.pool,
+        owner.id,
+        "controls",
+        None,
+        false,
+        local.location(),
+    )
+    .await
+    .unwrap();
+    db::cluster::place_repository(&database.pool, repo.id, storage.context.node_id)
+        .await
+        .unwrap();
+    let expected = local.blame("main", "control.txt").await.unwrap();
+    assert!(serde_json::to_vec(&expected).unwrap().len() > rpc::MAX_JSON);
+    assert_eq!(
+        repo_store(&repo, Some(&web.context))
+            .blame("main", "control.txt")
+            .await
+            .unwrap(),
+        expected
+    );
+    web.shutdown().await;
+    storage.shutdown().await;
+}
+
+#[tokio::test]
 async fn remote_workflow_discovery_uses_the_bounded_rpc() {
     let database = native::PostgresDatabase::new().await;
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
@@ -934,6 +1102,29 @@ async fn remote_workflow_discovery_uses_the_bounded_rpc() {
         remote.workflow_files("main").await.unwrap(),
         local.workflow_files("main").await.unwrap(),
     );
+    let template_paths = vec![
+        ".github/workflows/a.yaml".into(),
+        ".github/workflows".into(),
+        "missing.md".into(),
+        ".github/workflows/oversized.yml".into(),
+    ];
+    let template_texts = remote
+        .template_texts("main", &template_paths)
+        .await
+        .unwrap();
+    equal(
+        &template_texts,
+        local.template_texts("main", &template_paths).await.unwrap(),
+    );
+    assert_eq!(
+        template_texts[0].as_ref().unwrap().1,
+        "name: Zebra\non: push\n"
+    );
+    assert!(template_texts[1..].iter().all(Option::is_none));
+    assert!(remote
+        .template_texts("main", &vec!["missing.md".into(); 23])
+        .await
+        .is_err());
     let workflows = list_workflows_for_ref(&remote, "main").await.unwrap();
     assert_eq!(
         workflows
@@ -1156,6 +1347,95 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         .await
         .unwrap();
     equal(&initial, local.commit(&initial.sha).await.unwrap());
+    // Simulate an adopted repository with no language snapshot. Its first web-node
+    // reader must populate the shared rows on the storage node, including Explore.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if !db::repository_stats::get_repo_languages(&database.pool, repository.id)
+                .await
+                .unwrap()
+                .is_empty()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    db::repository_stats::upsert_repo_languages(
+        &database.pool,
+        &db::repository_stats::language_source(&database.pool, repository.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        "obsolete-revision",
+        &[],
+    )
+    .await
+    .unwrap();
+    let languages = client
+        .expect(
+            "GET",
+            "/api/repos/rpc_owner/project/languages",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(languages[0]["language"], "Rust");
+    let stored = db::repository_stats::get_repo_languages(&database.pool, repository.id)
+        .await
+        .unwrap();
+    assert_eq!(stored[0].language, "Rust");
+    let (status, explore) = client.page("/explore?language=Rust").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(explore.contains("/rpc_owner/project"));
+    // Adopted repositories may have a Git default different from the stored default.
+    {
+        let bare = git2::Repository::open_bare(&storage_path).unwrap();
+        bare.reference(
+            "refs/heads/trunk",
+            git2::Oid::from_str(&initial.sha).unwrap(),
+            false,
+            "",
+        )
+        .unwrap();
+        bare.set_head("refs/heads/trunk").unwrap();
+    }
+    db::repository_stats::upsert_repo_languages(
+        &database.pool,
+        &db::repository_stats::language_source(&database.pool, repository.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        "obsolete-revision",
+        &[],
+    )
+    .await
+    .unwrap();
+    client
+        .expect(
+            "GET",
+            "/api/repos/rpc_owner/project/languages",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        db::repository_stats::get_repo_languages(&database.pool, repository.id)
+            .await
+            .unwrap()[0]
+            .language,
+        "Rust"
+    );
+    {
+        let bare = git2::Repository::open_bare(&storage_path).unwrap();
+        bare.set_head("refs/heads/main").unwrap();
+        bare.find_reference("refs/heads/trunk")
+            .unwrap()
+            .delete()
+            .unwrap();
+    }
     let binary = client.expect(
         "POST", "/api/repos/rpc_owner/project/contents/image.bin",
         json!({"content":"AP8=", "message":"Add binary", "branch":"main", "expected_revision":initial.sha}),
@@ -1566,19 +1846,50 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         ))
         .await
         .unwrap();
-    equal(
-        &prepared,
-        local
-            .prepare_merge(&merge_request(
-                &feature.sha,
-                &workflow.sha,
-                "Merge",
-                "Tester",
-                "tester@example.invalid",
-            ))
-            .await
-            .unwrap(),
+    // Independently prepared commits need not have the same timestamp.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let local_prepared = local
+        .prepare_merge(&merge_request(
+            &feature.sha,
+            &workflow.sha,
+            "Merge",
+            "Tester",
+            "tester@example.invalid",
+        ))
+        .await
+        .unwrap();
+    let bare = git2::Repository::open_bare(&storage_path).unwrap();
+    let remote_commit = bare
+        .find_commit(git2::Oid::from_str(&prepared).unwrap())
+        .unwrap();
+    let local_commit = bare
+        .find_commit(git2::Oid::from_str(&local_prepared).unwrap())
+        .unwrap();
+    assert_eq!(remote_commit.tree_id(), local_commit.tree_id());
+    assert_eq!(
+        remote_commit.parent_ids().collect::<Vec<_>>(),
+        local_commit.parent_ids().collect::<Vec<_>>()
     );
+    assert_eq!(remote_commit.message_bytes(), local_commit.message_bytes());
+    assert_eq!(
+        remote_commit.author().name_bytes(),
+        local_commit.author().name_bytes()
+    );
+    assert_eq!(
+        remote_commit.author().email_bytes(),
+        local_commit.author().email_bytes()
+    );
+    assert_eq!(
+        remote_commit.committer().name_bytes(),
+        local_commit.committer().name_bytes()
+    );
+    assert_eq!(
+        remote_commit.committer().email_bytes(),
+        local_commit.committer().email_bytes()
+    );
+    drop(remote_commit);
+    drop(local_commit);
+    drop(bare);
     remote
         .publish_merge_as(
             &database.pool,
@@ -2060,6 +2371,32 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
         .await;
     assert_eq!(response.status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(response.text(), "storage node unavailable");
+    let pull = db::pull_requests::records::create_pull_request(
+        &database.pool,
+        db::pull_requests::records::NewPullRequest {
+            repo_id: outage.id,
+            head_repo_id: Some(outage.id),
+            author_id: owner.id,
+            title: "Offline diff",
+            body: "",
+            head_branch: "topic",
+            head_sha: &"1".repeat(40),
+            base_branch: "main",
+            base_sha: &"2".repeat(40),
+            is_draft: false,
+        },
+    )
+    .await
+    .unwrap();
+    let error = client
+        .expect(
+            "GET",
+            &format!("/api/repos/rpc_owner/offline/pulls/{}/diff", pull.number),
+            Value::Null,
+            StatusCode::SERVICE_UNAVAILABLE,
+        )
+        .await;
+    assert_eq!(error["message"], "storage node unavailable");
     // An unreachable primary can still have a fresh heartbeat when creation starts.
     db::cluster::record_node_heartbeat(
         &database.pool,

@@ -53,6 +53,9 @@ pub(super) async fn command(
 ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args(args);
+    if args.first() == Some(&"merge-tree") {
+        process::limit_memory(&mut command);
+    }
     if let Some((author, committer)) = people {
         command
             .env("GIT_AUTHOR_NAME", author.name)
@@ -147,8 +150,8 @@ pub(crate) async fn quarantined_is_fast_forward(
     }
 }
 
-/// Whether `new` brings a merge commit that `old` does not have. Without an `old` branch,
-/// the commits that no ref of the repository holds yet are the new ones. A push still in
+/// Whether `new` brings a merge commit that `old` does not have. A new branch checks
+/// its whole history, even when another ref already holds it. A push still in
 /// `quarantine` is read through it; a prepared merge is already in the repository.
 pub(crate) async fn adds_merge_commit(
     path: &Path,
@@ -157,13 +160,10 @@ pub(crate) async fn adds_merge_commit(
     new: &str,
 ) -> Result<bool> {
     validate_merge_revision("main", new)?;
-    let mut args = vec!["rev-list", "--merges", "-n1", new, "--not"];
-    match old {
-        Some(old) => {
-            validate_merge_revision("main", old)?;
-            args.push(old);
-        }
-        None => args.push("--all"),
+    let mut args = vec!["rev-list", "--merges", "-n1", new];
+    if let Some(old) = old {
+        validate_merge_revision("main", old)?;
+        args.extend(["--not", old]);
     }
     let (status, output) = match quarantine {
         Some(quarantine) => quarantined(path, quarantine, &args).await?,
@@ -223,30 +223,51 @@ pub(crate) async fn prepare_squash(
 /// as fit in the message limit.
 async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Result<String> {
     let range = format!("{base}..{head}");
-    // Git cuts each subject to 100 columns and pads a short one with spaces, which is trimmed
-    // below. At most 100 commits are asked for, so the output stays far below its limit.
-    let (status, output) = command(
-        path,
-        &[
+    let _permit = process::operation_slot(COMMAND_TIMEOUT).await?;
+    let mut command = process::git_command()?;
+    command
+        .arg("--git-dir")
+        .arg(path)
+        .args([
             "log",
             "--reverse",
             "--max-count=100",
-            "--format=%<(100,trunc)%s",
+            "-z",
+            "--format=%s",
             &range,
-        ],
-        b"",
-        None,
-    )
-    .await?;
-    ensure!(status.success(), "Git could not list the commits to squash");
+        ])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = command.spawn()?;
+    let mut group = process::ProcessGroup(child.id());
+    let mut reader = tokio::io::BufReader::new(
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow!("git log stdout"))?,
+    );
     let mut listed = String::new();
-    for subject in String::from_utf8_lossy(&output).lines() {
-        let line = format!("* {}\n", subject.trim_end());
-        if title.len() + 2 + listed.len() + line.len() > MAX_MERGE_MESSAGE_BYTES {
-            break;
+    let read = async {
+        while let Some((subject, _)) = super::read_delimited(&mut reader, 0, 100).await? {
+            let subject = String::from_utf8_lossy(&subject);
+            let mut end = subject.len().min(100);
+            while !subject.is_char_boundary(end) {
+                end -= 1;
+            }
+            let line = format!("* {}\n", subject[..end].trim_end_matches(['\0', '\n', ' ']));
+            if title.len() + 2 + listed.len() + line.len() > MAX_MERGE_MESSAGE_BYTES {
+                return Ok(());
+            }
+            listed.push_str(&line);
         }
-        listed.push_str(&line);
-    }
+        ensure!(
+            child.wait().await?.success(),
+            "Git could not list the commits to squash"
+        );
+        group.0 = None;
+        Ok::<_, anyhow::Error>(())
+    };
+    tokio::time::timeout(COMMAND_TIMEOUT, read).await??;
     if listed.is_empty() {
         return Ok(title.to_owned());
     }
@@ -368,6 +389,7 @@ pub(crate) async fn initialize_repository(
             path,
             &[
                 "fetch",
+                "--quiet",
                 "--no-tags",
                 "--no-write-fetch-head",
                 "--",

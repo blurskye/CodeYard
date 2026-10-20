@@ -163,6 +163,31 @@ async fn buffered_failure_timeout_and_abort_stop_parent_and_descendant() {
 }
 
 #[tokio::test]
+async fn forwarded_sessions_do_not_consume_git_execution_capacity() {
+    const CHILD: &str = "CODEYARD_FORWARD_ADMISSION_TEST";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "backend::git::repository::process::tests::forwarded_sessions_do_not_consume_git_execution_capacity", "--nocapture"])
+            .env(CHILD, "1").env("GIT_SESSION_LIMIT", "1").output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    assert_eq!(session_capacity(), 1);
+    let _forward = forwarding_permit().await.unwrap();
+    assert_eq!(FORWARDED_SESSIONS.available_permits(), 0);
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), session_permit())
+            .await
+            .unwrap()
+            .is_ok()
+    );
+}
+
+#[tokio::test]
 async fn a_busy_node_makes_a_session_wait_and_only_then_fails() {
     let slots = Arc::new(Semaphore::new(1));
     let held = slots.clone().acquire_owned().await.unwrap();

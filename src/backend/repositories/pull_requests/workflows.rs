@@ -23,7 +23,16 @@ pub async fn queue_moved_pull_requests_ci(
     actor_id: i64,
 ) {
     for pull in pulls {
-        let _ = queue_pull_request_ci(pool, ci, repository, pull, actor_id, false).await;
+        let _ = queue_pull_request_ci(
+            pool,
+            ci,
+            repository,
+            pull,
+            actor_id,
+            false,
+            crate::backend::db::models::AccessLevel::Owner,
+        )
+        .await;
     }
 }
 
@@ -39,6 +48,7 @@ pub async fn queue_pull_request_ci(
     pull: &PullRequest,
     actor_id: i64,
     manual: bool,
+    access: db::models::AccessLevel,
 ) -> Result<(), AdmissionError> {
     if pull.state != "open"
         || pull.is_draft
@@ -68,7 +78,7 @@ pub async fn queue_pull_request_ci(
         }
     }
     // A layer runs its workflows for the branch its stack merges into, not for the layer below it.
-    let (trunk, _) = super::stacks::merge_target(pool, pull)
+    let (trunk, base_sha, _) = super::stacks::merge_target(pool, pull)
         .await
         .map_err(|_| AdmissionError::Unavailable)?;
     let store = repo_store(repository, ci.cluster.as_ref());
@@ -117,29 +127,40 @@ pub async fn queue_pull_request_ci(
             .as_ref()
             .is_some_and(|filter| !filter.paths.is_empty() || !filter.paths_ignore.is_empty())
     });
+    let mut first_failure = None;
     let paths = if needs_paths {
-        match store.changed_paths(&pull.base_sha, &pull.head_sha).await {
-            Ok(paths) => paths,
+        match store.changed_paths(&base_sha, &pull.head_sha).await {
+            Ok(paths) => Some(paths),
             Err(error) => {
                 tracing::warn!(
                     repo_id = repository.id,
                     pull_number = pull.number,
                     %error,
-                    "pull request changed paths unavailable; workflows skipped"
+                    "pull request changed paths unavailable; path-filtered workflows skipped"
                 );
-                return Err(AdmissionError::Unavailable);
+                first_failure = Some(AdmissionError::Unavailable);
+                None
             }
         }
     } else {
-        Vec::new()
+        Some(Vec::new())
     };
 
     let mut matched = Vec::new();
     for workflow in applicable {
+        if paths.is_none()
+            && workflow
+                .triggers
+                .pull_request
+                .as_ref()
+                .is_some_and(|filter| !filter.paths.is_empty() || !filter.paths_ignore.is_empty())
+        {
+            continue;
+        }
         match workflow.matches_event_with_context_and_budget(
             "pull_request",
             &trunk,
-            &paths,
+            paths.as_deref().unwrap_or_default(),
             message.as_deref(),
             &mut match_budget,
         ) {
@@ -159,7 +180,7 @@ pub async fn queue_pull_request_ci(
         }
     }
     if matched.is_empty() {
-        return Ok(());
+        return first_failure.map_or(Ok(()), Err);
     }
     let owner = match db::ci::ci_repository_owner(pool, repository.id)
         .await
@@ -175,25 +196,27 @@ pub async fn queue_pull_request_ci(
             return Err(AdmissionError::Unavailable);
         }
     };
-    let mut first_failure = None;
     for workflow in matched {
         let pipeline = infer_pipeline_from_workflow_path(&workflow.path);
         if let Err(error) = ci
-            .trigger_run(CiRunRequest {
-                repo_id: repository.id,
-                repo_owner: owner.clone(),
-                repo_name: repository.name.clone(),
-                branch: trunk.clone(),
-                head_sha: Some(pull.head_sha.clone()),
-                event: "pull_request".into(),
-                pull_request_id: Some(pull.id),
-                pipeline,
-                workflow_paths: vec![workflow.path],
-                environment: None,
-                inputs: None,
-                triggered_by_id: actor_id,
-                manual,
-            })
+            .trigger_run_with_access(
+                CiRunRequest {
+                    repo_id: repository.id,
+                    repo_owner: owner.clone(),
+                    repo_name: repository.name.clone(),
+                    branch: trunk.clone(),
+                    head_sha: Some(pull.head_sha.clone()),
+                    event: "pull_request".into(),
+                    pull_request_id: Some(pull.id),
+                    pipeline,
+                    workflow_paths: vec![workflow.path],
+                    environment: None,
+                    inputs: None,
+                    triggered_by_id: actor_id,
+                    manual,
+                },
+                access,
+            )
             .await
         {
             tracing::warn!(
@@ -268,7 +291,7 @@ pub async fn run_pull_request_workflows(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
-    super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull.id)
+    super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull.id, None)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "git_unavailable",
@@ -301,8 +324,22 @@ pub async fn run_pull_request_workflows(
         .await
         .map_err(|_| OperationError::Updated { number })?
         .ok_or(OperationError::Updated { number })?;
-    queue_pull_request_ci(pool, ci, &repository, &pull, user.id, true)
-        .await
-        .map_err(workflows_not_queued)?;
+    if pull.head_sha != request.expected_head {
+        return Err(OperationError::Conflict {
+            code: "revision_conflict",
+            message: "Pull request head changed; reload before running workflows".into(),
+        });
+    }
+    queue_pull_request_ci(
+        pool,
+        ci,
+        &repository,
+        &pull,
+        user.id,
+        true,
+        crate::backend::db::models::AccessLevel::Owner,
+    )
+    .await
+    .map_err(workflows_not_queued)?;
     Ok(pull)
 }

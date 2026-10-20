@@ -48,7 +48,7 @@ pub fn render(page: Page) -> Element {
                 .as_ref()
                 .map(|selected| selected.run.id.clone())
                 .unwrap_or_else(|| "list".into());
-            rsx! { for key in [key] { ActionsView { key: "{key}", model: model.clone() } } }
+            rsx! { for (key, model) in [(key, model)] { ActionsView { key: "{key}", model } } }
         }
         Page::Notifications(model) => rsx! { notifications::NotificationsView { model } },
         Page::DispatchRecovery {

@@ -73,6 +73,9 @@ pub(super) fn recovery(page: &Page) -> Element {
                 h3 { id: "organization-recovery-title", "Recover an organization without an owner" }
                 p { "Site administrators can appoint an existing member when an organization has no active owner." }
             }
+            if let Some(href) = &page.ownerless_next {
+                a { href: href.clone(), class: "org-pagination", "Next ownerless organizations" }
+            }
             form { method: "post", action: "/admin/organizations/recovery", class: "org-form org-danger-form",
                 {select("Organization", "org_id", field_value(page, "recover-owner", "org_id"), options)}
                 {input(page, "recover-owner", "username", "Username of the new owner")}

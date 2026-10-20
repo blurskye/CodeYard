@@ -22,9 +22,21 @@ struct Announcement {
 pub const MAX_SOCKETS_PER_USER: usize = 8;
 
 type SocketCounts = Arc<std::sync::Mutex<HashMap<i64, usize>>>;
+type Subscriptions = Arc<std::sync::Mutex<HashMap<i64, broadcast::Sender<NotificationEvent>>>>;
+
+fn dispatch(subscriptions: &Subscriptions, event: NotificationEvent) {
+    let mut subscriptions = subscriptions
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    if let Some(sender) = subscriptions.get(&event.user_id()) {
+        if sender.send(event.clone()).is_err() {
+            subscriptions.remove(&event.user_id());
+        }
+    }
+}
 
 pub struct NotificationBroadcaster {
-    tx: broadcast::Sender<NotificationEvent>,
+    subscriptions: Subscriptions,
     pool: db::DbPool,
     origin: String,
     stop: watch::Sender<bool>,
@@ -35,10 +47,9 @@ pub struct NotificationBroadcaster {
 impl NotificationBroadcaster {
     /// Construction does not start a task. Runtime starts delivery before sharing it.
     pub fn new(pool: &db::DbPool) -> Self {
-        let (tx, _) = broadcast::channel(1000);
         let (stop, _) = watch::channel(false);
         Self {
-            tx,
+            subscriptions: Subscriptions::default(),
             pool: pool.clone(),
             origin: uuid::Uuid::new_v4().to_string(),
             stop,
@@ -53,7 +64,7 @@ impl NotificationBroadcaster {
             *task = Some(tokio::spawn(listen(
                 self.pool.clone(),
                 self.origin.clone(),
-                self.tx.clone(),
+                self.subscriptions.clone(),
                 self.stop.subscribe(),
             )));
         }
@@ -66,8 +77,16 @@ impl NotificationBroadcaster {
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<NotificationEvent> {
-        self.tx.subscribe()
+    pub fn subscribe(&self, user_id: i64) -> broadcast::Receiver<NotificationEvent> {
+        let mut subscriptions = self
+            .subscriptions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        subscriptions.retain(|_, sender| sender.receiver_count() > 0);
+        subscriptions
+            .entry(user_id)
+            .or_insert_with(|| broadcast::channel(1000).0)
+            .subscribe()
     }
 
     /// A slot for one more socket of `user_id`, or `None` when the account already
@@ -115,7 +134,7 @@ impl NotificationBroadcaster {
                 tracing::warn!("Notification announcement unavailable");
             }
         }
-        let _ = self.tx.send(event.hint());
+        dispatch(&self.subscriptions, event.hint());
     }
 }
 
@@ -152,7 +171,7 @@ impl Drop for SocketSlot {
 async fn listen(
     pool: db::DbPool,
     origin: String,
-    tx: broadcast::Sender<NotificationEvent>,
+    subscriptions: Subscriptions,
     mut stop: watch::Receiver<bool>,
 ) {
     let mut wait = Duration::from_secs(1);
@@ -184,7 +203,7 @@ async fn listen(
                 Ok(payload) => {
                     if let Ok(announcement) = serde_json::from_str::<Announcement>(&payload) {
                         if announcement.origin != origin {
-                            let _ = tx.send(announcement.event);
+                            dispatch(&subscriptions, announcement.event);
                         }
                     }
                 }
@@ -194,5 +213,47 @@ async fn listen(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn unrelated_recipients_do_not_fill_a_subscription() {
+        let pool = db::DbPool::Sqlite(
+            sqlx::sqlite::SqlitePoolOptions::new()
+                .connect_lazy("sqlite::memory:")
+                .unwrap(),
+        );
+        let broadcaster = NotificationBroadcaster::new(&pool);
+        let mut alice = broadcaster.subscribe(1);
+        let mut bob = broadcaster.subscribe(2);
+        dispatch(
+            &broadcaster.subscriptions,
+            NotificationEvent::UnreadCount {
+                user_id: 1,
+                unread_count: 3,
+            },
+        );
+        for _ in 0..2000 {
+            dispatch(
+                &broadcaster.subscriptions,
+                NotificationEvent::UnreadCount {
+                    user_id: 2,
+                    unread_count: 4,
+                },
+            );
+        }
+        assert_eq!(alice.recv().await.unwrap().user_id(), 1);
+        assert!(matches!(
+            alice.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
+        assert!(matches!(
+            bob.try_recv(),
+            Err(broadcast::error::TryRecvError::Lagged(_))
+        ));
     }
 }

@@ -339,6 +339,19 @@ async fn contract(pg: bool) {
     .await;
     let (page, _) = model(&client, "/readme_owner/preview/tree/main/docs").await;
     assert_eq!(page.readme.as_deref(), Some(directory));
+    let redirect = client
+        .exchange(
+            "GET",
+            "/readme_owner/preview/blob/refs/heads/main/docs",
+            "",
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(redirect.status, StatusCode::SEE_OTHER);
+    assert_eq!(
+        redirect.location.as_deref(),
+        Some("/readme_owner/preview/tree/refs/heads/main/docs")
+    );
     let (status, html) = client.page("/readme_owner/preview/tree/main/docs").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("<em class=\"italic\">directory preview</em>"));
@@ -567,6 +580,9 @@ async fn commit_history_contract(pg: bool) {
         ("field-budget", 2),
         ("metadata-budget", 1000),
     ] {
+        // History budgets retain rows resolved before exhaustion, including the
+        // output-budget branch's latest src change.
+        let branch_tip = store.commit(branch).await.unwrap().sha;
         let response = client
             .exchange(
                 "GET",
@@ -579,7 +595,8 @@ async fn commit_history_contract(pg: bool) {
         let entries: Vec<serde_json::Value> = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(entries.len(), count);
         for entry in &entries {
-            let expected = (branch == "main" && entry["name"] == "src").then_some(tip.as_str());
+            let expected = (matches!(branch, "main" | "output-budget") && entry["name"] == "src")
+                .then_some(branch_tip.as_str());
             assert_eq!(entry["last_commit"]["sha"].as_str(), expected);
             if expected.is_none() {
                 assert!(entry["last_commit"].is_null());
@@ -606,7 +623,8 @@ async fn commit_history_contract(pg: bool) {
                 .map(|commit| commit.sha.as_str()),
         );
         for entry in &page.entries {
-            let expected = (branch == "main" && entry.name == "src").then_some(tip.as_str());
+            let expected = (matches!(branch, "main" | "output-budget") && entry.name == "src")
+                .then_some(branch_tip.as_str());
             assert_eq!(
                 entry.last_commit.as_ref().map(|commit| commit.sha.as_str()),
                 expected

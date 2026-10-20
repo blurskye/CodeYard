@@ -97,7 +97,7 @@ async fn router(f: &Database, root: &Path) -> axum::Router {
 
 /// The address of a code hit in `owner/name`'s `notes.txt` on `main`.
 fn code_hit(owner: &str, name: &str) -> String {
-    format!("/{owner}/{name}/blob/main/notes.txt#L1")
+    format!("/{owner}/{name}/blob/refs/heads/main/notes.txt?view=code&#38;line=1#L1")
 }
 
 async fn visibility_contract(pg: bool) {
@@ -842,7 +842,10 @@ async fn repository_scope_paging_contract(pg: bool) {
         .page("/search?q=page-token%20repo:search_pages/paged&type=code&page=2")
         .await;
     assert_eq!(status, StatusCode::OK, "{second}");
-    let hits = |html: &str| html.matches("/search_pages/paged/blob/main/").count();
+    let hits = |html: &str| {
+        html.matches("/search_pages/paged/blob/refs/heads/main/")
+            .count()
+    };
     assert_eq!(hits(&first), 30, "{first}");
     assert_eq!(hits(&second), 2, "{second}");
     assert!(first.contains(">Older<") && !first.contains(">Newer<"));
@@ -882,7 +885,7 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
     )
     .await;
     // Web/store writes record commits without any contributor-cache population.
-    let totals = db::users::accounts::list_admin_account_summaries(f.pool())
+    let totals = db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -916,7 +919,8 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
             .await;
         assert_eq!(status, StatusCode::OK, "{html}");
         assert_eq!(
-            html.matches("/one_file/many/blob/main/notes.txt#L").count(),
+            html.matches("/one_file/many/blob/refs/heads/main/notes.txt?view=code&#38;line=")
+                .count(),
             count
         );
     }
@@ -965,7 +969,8 @@ async fn truncation_contract(pg: bool) {
     let (status, html) = anonymous.page("/search?q=trunc-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert_eq!(
-        html.matches("/search_trunc/many/blob/main/").count(),
+        html.matches("/search_trunc/many/blob/refs/heads/main/")
+            .count(),
         5,
         "{html}"
     );

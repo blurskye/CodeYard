@@ -44,15 +44,28 @@ pub async fn contracts(f: &Fixture) {
             .unwrap(),
         );
     }
-    let page = f.get(&f.member, &f.path()).await.organization();
+    let page = f
+        .get(&f.member, &format!("{}?tab=members", f.path()))
+        .await
+        .organization();
+    let teams_page = f
+        .get(&f.member, &format!("{}?tab=teams", f.path()))
+        .await
+        .organization();
     assert_eq!(page.members.len(), 100);
+    assert!(page.teams.is_empty());
+    assert!(teams_page.members.is_empty());
     assert_eq!(
-        page.teams.iter().map(|team| team.id).collect::<Vec<_>>(),
+        teams_page
+            .teams
+            .iter()
+            .map(|team| team.id)
+            .collect::<Vec<_>>(),
         vec![first_team, second_team]
     );
-    assert_eq!(page.teams_after, second_team);
+    assert_eq!(teams_page.teams_after, second_team);
     assert_ne!(
-        page.members_after, page.teams_after,
+        page.members_after, teams_page.teams_after,
         "fixture must actually separate the cursor spaces"
     );
     let source = html(page.clone());
@@ -79,19 +92,45 @@ pub async fn contracts(f: &Fixture) {
         .await
         .organization();
     assert_eq!(next_members.members.len(), 3);
+    assert!(next_members.teams.is_empty());
+    let unchanged_teams = f
+        .get(
+            &f.member,
+            &format!(
+                "{}?tab=teams&members_after={}&teams_after=0",
+                f.path(),
+                page.members_after
+            ),
+        )
+        .await
+        .organization();
     assert_eq!(
-        next_members.teams, page.teams,
+        unchanged_teams.teams, teams_page.teams,
         "member paging must not advance teams"
     );
     let next_teams = f
         .get(
             &f.member,
-            &format!("{}?members_after=0&teams_after={first_team}", f.path()),
+            &format!(
+                "{}?tab=teams&members_after=0&teams_after={first_team}",
+                f.path()
+            ),
+        )
+        .await
+        .organization();
+    assert!(next_teams.members.is_empty());
+    let unchanged_members = f
+        .get(
+            &f.member,
+            &format!(
+                "{}?tab=members&members_after=0&teams_after={first_team}",
+                f.path()
+            ),
         )
         .await
         .organization();
     assert_eq!(
-        next_teams.members, page.members,
+        unchanged_members.members, page.members,
         "team paging must not advance members"
     );
     assert_eq!(
@@ -102,13 +141,13 @@ pub async fn contracts(f: &Fixture) {
             .collect::<Vec<_>>(),
         vec![second_team]
     );
-    let source = html(next_teams);
+    let source = html(unchanged_members);
     assert!(
         source.contains(&format!(
-            "members_after={}&amp;teams_after={first_team}",
+            "members_after={}&#38;teams_after={first_team}",
             page.members_after
         )) || source.contains(&format!(
-            "members_after={}&#38;teams_after={first_team}",
+            "members_after={}&amp;teams_after={first_team}",
             page.members_after
         ))
     );
@@ -267,9 +306,25 @@ pub async fn contracts(f: &Fixture) {
             team,
         )
         .await;
-    let next_members = f.get(&observer, &format!("{}?members_after={}&teams_after={first_team}&team={team}&team_members_after={member_cursor}&team_repositories_after=0", f.path(), detail_page.members_after)).await.organization();
+    let organization_members = f
+        .get(&observer, &format!("{}?tab=members", f.path()))
+        .await
+        .organization();
+    let next_members = f.get(&observer, &format!("{}?members_after={}&teams_after={first_team}&team={team}&team_members_after={member_cursor}&team_repositories_after=0", f.path(), organization_members.members_after)).await.organization();
+    assert!(next_members.members.is_empty());
+    let organization_next = f
+        .get(
+            &observer,
+            &format!(
+                "{}?tab=members&members_after={}",
+                f.path(),
+                organization_members.members_after
+            ),
+        )
+        .await
+        .organization();
     assert_eq!(
-        next_members.members.len(),
+        organization_next.members.len(),
         4,
         "only the organization-members cursor advances that list"
     );

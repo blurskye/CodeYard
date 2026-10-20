@@ -201,8 +201,15 @@ pub async fn init_db(database_url: &str) -> Result<DbPool> {
             secure_sqlite_files(path, true)?;
         }
         // Each in-memory connection is its own database, so keep just one.
-        let maximum = if sqlite_memory(database_url) { 1 } else { 8 };
-        let pool_options = SqlitePoolOptions::new().max_connections(maximum);
+        let pool_options = if sqlite_memory(database_url) {
+            SqlitePoolOptions::new()
+                .max_connections(1)
+                .min_connections(1)
+                .idle_timeout(None)
+                .max_lifetime(None)
+        } else {
+            SqlitePoolOptions::new().max_connections(8)
+        };
         #[cfg(unix)]
         let pool_options = if let Some(path) = sqlite_path.clone() {
             pool_options.after_connect(move |_, _| {
@@ -266,6 +273,36 @@ mod safe_logging_tests {
         }
     }
 
+    #[tokio::test]
+    async fn postgres_connections_start_tls_when_the_server_supports_it() {
+        use sqlx::Connection;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for mode in ["require", "prefer", "verify-full"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let peer = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 8];
+                socket.read_exact(&mut request).await.unwrap();
+                assert_eq!(request, [0, 0, 0, 8, 4, 210, 22, 47]);
+                socket.write_all(b"S").await.unwrap();
+                let mut record = [0; 5];
+                socket.read_exact(&mut record).await.unwrap();
+                assert_eq!(record[0], 22, "TLS handshake record");
+                assert_eq!(record[1], 3);
+            });
+            let url = format!("postgres://fixture:fixture@{address}/fixture?sslmode={mode}");
+            assert!(tokio::time::timeout(
+                Duration::from_secs(3),
+                sqlx::PgConnection::connect_with(&postgres_options(&url).unwrap())
+            )
+            .await
+            .unwrap()
+            .is_err());
+            peer.await.unwrap();
+        }
+    }
+
     #[test]
     fn unknown_postgres_options_are_rejected_without_logging_values() {
         let output = Arc::new(Mutex::new(Vec::new()));
@@ -309,6 +346,23 @@ mod safe_logging_tests {
         );
         assert_eq!(a.unwrap(), b.unwrap());
         pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn memory_pools_do_not_recycle_the_database() {
+        for url in [
+            "sqlite::memory:",
+            "sqlite://scratch?mode=memory&cache=private",
+        ] {
+            let pool = init_db(url).await.unwrap();
+            let DbPool::Sqlite(raw) = &pool else {
+                unreachable!()
+            };
+            assert_eq!(raw.options().get_min_connections(), 1);
+            assert_eq!(raw.options().get_idle_timeout(), None);
+            assert_eq!(raw.options().get_max_lifetime(), None);
+            pool.close().await;
+        }
     }
 
     #[test]

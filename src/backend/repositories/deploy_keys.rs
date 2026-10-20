@@ -75,7 +75,7 @@ pub async fn add_key(
 ) -> Result<DeployKey, DeployKeyError> {
     require_admin(pool, actor, repo).await?;
     let title = title.trim();
-    if title.is_empty() || title.chars().count() > 255 {
+    if title.is_empty() || title.chars().count() > 255 || title.contains('\0') {
         return Err(DeployKeyError::InvalidTitle);
     }
     let parsed = ssh_keys::parse_public_key(public_key)?;

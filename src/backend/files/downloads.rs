@@ -36,6 +36,7 @@ pub struct AssetDownload {
     pub transport: DownloadTransport,
     pub inline_type: Option<String>,
     pub filename: String,
+    pub file_size: i64,
 }
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DownloadError {
@@ -160,6 +161,7 @@ pub async fn open_file(store: &ObjectStore, file: File) -> Result<AssetDownload,
         transport,
         inline_type,
         filename: file.original_name,
+        file_size: file.file_size,
     })
 }
 

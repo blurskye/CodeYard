@@ -16,6 +16,8 @@ use pulls::Client;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+mod reads;
+
 const BUG_TEMPLATE: &str = "---\nname: Bug report\nabout: Something is broken\ntitle: \"Bug report:\"\n---\n\n## Steps to reproduce\n";
 
 /// `alice/proj` is public and bob can read it. Alice owns it.
@@ -136,6 +138,28 @@ async fn chooser_and_prefill(pg: bool) {
     assert!(form.contains("value=\"Bug report:\""), "{form}");
     assert!(form.contains("## Steps to reproduce"), "{form}");
     assert!(!form.contains("Choose a template"), "{form}");
+    assert_eq!(
+        hidden_value(&form, "template"),
+        ".github/ISSUE_TEMPLATE/bug.md"
+    );
+    assert!(!hidden_value(&form, "template_revision").is_empty());
+    let (status, preview) = alice
+        .form(
+            path,
+            &[
+                ("template", ".github/ISSUE_TEMPLATE/bug.md"),
+                ("title", "New title"),
+                ("body", "Newer native template answer"),
+                ("intent", "preview"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert!(preview.contains("Newer native template answer"));
+    assert_eq!(
+        hidden_value(&preview, "template"),
+        ".github/ISSUE_TEMPLATE/bug.md"
+    );
 
     // An empty template choice is the blank issue.
     let (_, blank) = alice.page("/alice/proj/issues/new?template=").await;
@@ -280,12 +304,10 @@ async fn pull_request_comment_task_ticks(pg: bool) {
         )
         .await;
     let comment_id = comment["id"].as_i64().unwrap();
-    let revision =
-        db::pull_requests::reviews::get_pull_request_comment_by_id(database.pool(), comment_id)
-            .await
-            .unwrap()
-            .unwrap()
-            .body;
+    let (_, page) = alice.page(&format!("/alice/proj/pulls/{number}")).await;
+    let revision = hidden_value(&page, "comment_revision").replace('\n', "\r\n");
+    assert_eq!(revision.len(), 64);
+    assert!(!revision.contains('\r'));
     let reply = alice
         .form_reply(
             &format!("/alice/proj/pulls/{number}/tasks"),
@@ -434,7 +456,11 @@ async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let revision = stored.body.clone();
+    assert!(stored.body.contains('\n'));
+    let (_, page) = alice.page(&format!("/alice/proj/issues/{number}")).await;
+    let revision = hidden_value(&page, "comment_revision").replace('\n', "\r\n");
+    assert_eq!(revision.len(), 64);
+    assert!(!revision.contains('\r'));
     let stale = alice
         .form_reply(
             &toggle,

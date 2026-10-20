@@ -13,6 +13,25 @@ use std::path::PathBuf;
 use std::{path::Path, sync::Arc};
 use tracing::{info, warn};
 
+fn validate_cluster_encryptor(
+    clustered: bool,
+    encryptor: Option<&SecretEncryptor>,
+    sample: Option<(&[u8], &[u8])>,
+) -> Result<()> {
+    if !clustered {
+        return Ok(());
+    }
+    let encryptor = encryptor.context(
+        "Cluster core nodes require the same SECRETS_MASTER_KEY for signed webhook delivery",
+    )?;
+    if let Some((ciphertext, nonce)) = sample {
+        encryptor
+            .decrypt(ciphertext, nonce)
+            .context("SECRETS_MASTER_KEY cannot open existing webhook secrets")?;
+    }
+    Ok(())
+}
+
 fn prepare_repository_root(path: &Path) -> Result<PathBuf> {
     std::fs::create_dir_all(path)?;
     #[cfg(unix)]
@@ -32,6 +51,18 @@ async fn prepare_application(
     cluster: Option<crate::backend::cluster::NodeContext>,
 ) -> Result<AppState> {
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
+    let sample = if cluster.is_some() {
+        crate::backend::db::webhooks::webhook_secret_sample(&pool).await?
+    } else {
+        None
+    };
+    validate_cluster_encryptor(
+        cluster.is_some(),
+        secret_encryptor.as_deref(),
+        sample
+            .as_ref()
+            .map(|(text, nonce)| (text.as_slice(), nonce.as_slice())),
+    )?;
     if secret_encryptor.is_none() {
         tracing::warn!("SECRETS_MASTER_KEY not set, secrets API disabled");
     }
@@ -172,6 +203,7 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let config = std::sync::Arc::new(crate::backend::ci::CiConfig::from_env()?);
     let workers = crate::backend::ci::CiWorkers::new(
         crate::backend::ci::queue::RunQueue::Remote {
+            preferred: Default::default(),
             context: context.clone(),
             peers,
         },
@@ -189,44 +221,50 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
 }
 
 pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
+    let signal = shutdown_signal();
+    tokio::pin!(signal);
     let repos_path = prepare_repository_root(&config.repos_path)?;
     // Cluster mode is opt-in. Without cluster settings no cluster socket is opened
     // and this node behaves as a single machine.
     let member = match cluster::Settings::from_env()? {
-        Some(settings) => Some(
-            cluster::start(
-                &pool,
-                &config.state_dir,
-                &repos_path,
-                &config.roles,
-                settings,
-            )
-            .await?,
-        ),
+        Some(settings) => Some(tokio::select! {
+            biased;
+            result = &mut signal => { pool.close().await; return result; }
+            result = cluster::start(&pool, &config.state_dir, &repos_path, &config.roles, settings) => result?,
+        }),
         None => None,
     };
     let prepared = async {
-    anyhow::ensure!(
+        anyhow::ensure!(
         config.roles.faces_users() || member.is_some(),
         "A node without web or ssh only serves other nodes: join a cluster first (see `codeyard cluster join`)"
     );
-    let transport = select_transport(&config)?;
-    ssh::mode::publish(transport.clone())?;
-    info!(ssh_mode = transport.mode.as_str(), roles = ?config.roles, "starting codeyard");
-    if transport.setup_required {
-        warn!("SSH setup required: no SSH listener will be opened. Run the OpenSSH installer, or set SSH_MODE=builtin or SSH_MODE=disabled.");
-    }
-    let state = prepare_application(
-        pool.clone(),
-        repos_path.clone(),
-        &config.state_dir,
-        config.roles.contains(NodeRole::Web),
-        member.as_ref().map(|node| node.context.clone()),
-    )
-    .await?;
-    state.notification_broadcaster.start().await;
-    Ok::<_, anyhow::Error>((transport, repos_path, state))
-    }.await;
+        let transport = select_transport(&config)?;
+        ssh::mode::publish(transport.clone())?;
+        info!(ssh_mode = transport.mode.as_str(), roles = ?config.roles, "starting codeyard");
+        if transport.setup_required {
+            warn!("SSH setup required: no SSH listener will be opened. Run the OpenSSH installer, or set SSH_MODE=builtin or SSH_MODE=disabled.");
+        }
+        let state = prepare_application(
+            pool.clone(),
+            repos_path.clone(),
+            &config.state_dir,
+            config.roles.contains(NodeRole::Web),
+            member.as_ref().map(|node| node.context.clone()),
+        )
+        .await?;
+        state.notification_broadcaster.start().await;
+        Ok::<_, anyhow::Error>((transport, repos_path, state))
+    };
+    let prepared = tokio::select! {
+        biased;
+        result = &mut signal => {
+            if let Some(member) = &member { member.shutdown().await; }
+            pool.close().await;
+            return result;
+        }
+        result = prepared => result,
+    };
     let (transport, repos_path, state) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
@@ -258,16 +296,25 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             member.publish().await?;
         }
         workers.startup().await?;
-        Ok::<_, anyhow::Error>(())
-    }
-    .await;
-    if let Err(error) = started {
-        let _ = workers.shutdown().await;
+        Ok::<_, anyhow::Error>(true)
+    };
+    let started = tokio::select! {
+        biased;
+        result = &mut signal => result.map(|()| false),
+        result = started => result,
+    };
+    if !matches!(&started, Ok(true)) {
+        workers.request_stop();
+        if let Some(member) = &member {
+            member.withdraw().await;
+        }
+        let stopped = workers.shutdown().await;
         if let Some(member) = &member {
             member.shutdown().await;
         }
         notifications.shutdown().await;
-        return Err(error);
+        pool.close().await;
+        return started.map(|_| ()).and(stopped);
     }
     let (stop_expiry, expiry_stop) = tokio::sync::watch::channel(false);
     let expiry = config.roles.contains(NodeRole::Web).then(|| {
@@ -329,7 +376,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             result.and_then(|()| Err(anyhow::anyhow!("a listener stopped unexpectedly"))),
             false,
         ),
-        result = shutdown_signal() => (result, true),
+        result = &mut signal => (result, true),
     };
     info!("shutting down");
     // Every local owner is told to stop before anything waits on one of them.
@@ -440,6 +487,22 @@ mod tests {
             .unwrap();
         pool.close().await;
         removed.expect("the scheduled sweep must reclaim expired transfer accounting");
+    }
+
+    #[test]
+    fn every_cluster_core_requires_a_webhook_encryptor() {
+        assert!(validate_cluster_encryptor(false, None, None).is_ok());
+        assert!(validate_cluster_encryptor(true, None, None).is_err());
+        let key = SecretEncryptor::new(&[7; 32]);
+        assert!(validate_cluster_encryptor(true, Some(&key), None).is_ok());
+        let (text, nonce) = key.encrypt(b"hook secret").unwrap();
+        assert!(validate_cluster_encryptor(true, Some(&key), Some((&text, &nonce))).is_ok());
+        assert!(validate_cluster_encryptor(
+            true,
+            Some(&SecretEncryptor::new(&[8; 32])),
+            Some((&text, &nonce))
+        )
+        .is_err());
     }
 
     #[test]

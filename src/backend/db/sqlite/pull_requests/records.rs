@@ -52,19 +52,30 @@ pub async fn list_open_pull_request_revisions_on_branches(
     Ok(query.build_query_as().fetch_all(pool).await?)
 }
 
-/// The open pull requests whose head branch is one of this repository's branches, in number
-/// order. A fork's pull requests are left out: their head branch is in the fork.
+/// The earliest open pull summary for each local head branch, optionally targeting `base`.
 pub async fn list_open_pull_requests_from_branches(
     pool: &SqlitePool,
     repo_id: i64,
-) -> Result<Vec<PullRequest>> {
-    let rows = sqlx::query_as::<_, PullRequest>(
-        "SELECT * FROM pull_requests WHERE repo_id = ?1 AND head_repo_id = ?1 AND state = 'open' ORDER BY number",
+    base: Option<&str>,
+) -> Result<Vec<crate::backend::db::pull_requests::records::BranchPullRequest>> {
+    let rows = sqlx::query_as::<_, crate::backend::db::pull_requests::records::BranchPullRequest>(
+        "SELECT head_branch, number, title FROM (SELECT head_branch, number, title, ROW_NUMBER() OVER (PARTITION BY head_branch ORDER BY number) AS rank FROM pull_requests WHERE repo_id = ?1 AND head_repo_id = ?1 AND state = 'open' AND (?2 IS NULL OR base_branch = ?2)) p WHERE rank = 1 ORDER BY number",
     )
     .bind(repo_id)
+    .bind(base)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+pub async fn find_open_pull_request_from_branches(
+    pool: &SqlitePool,
+    repo_id: i64,
+    base: &str,
+    head: &str,
+) -> Result<Option<crate::backend::db::pull_requests::records::BranchPullRequest>> {
+    Ok(sqlx::query_as("SELECT number,title,head_branch FROM pull_requests WHERE repo_id=?1 AND head_repo_id=?1 AND state='open' AND base_branch=?2 AND head_branch=?3 ORDER BY number LIMIT 1")
+        .bind(repo_id).bind(base).bind(head).fetch_optional(pool).await?)
 }
 
 /// Records a new head commit only while the open pull request still has the
@@ -343,7 +354,7 @@ pub async fn list_repo_pull_requests(
             AND (?10 IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name)) FROM pr_labels pl JOIN labels l ON l.id=pl.label_id
                 WHERE pl.pull_request_id = i.id AND LOWER(l.name) IN (SELECT LOWER(value) FROM json_each(?10)))
                 = (SELECT COUNT(DISTINCT LOWER(value)) FROM json_each(?10)))
-        ORDER BY {order} LIMIT ?4"
+        ORDER BY {order}, i.id DESC LIMIT ?4 OFFSET ?12"
     ))
     .bind(repo_id)
     .bind(filter.state)
@@ -356,6 +367,7 @@ pub async fn list_repo_pull_requests(
     .bind(milestone_id)
     .bind(labels)
     .bind(filter.include_merged)
+    .bind(filter.offset)
     .fetch_all(pool)
     .await?;
 
@@ -442,9 +454,9 @@ pub async fn count_repo_pull_requests(
     search: Option<&str>,
 ) -> Result<StateCounts> {
     let rows = sqlx::query_as::<_, (String, i64)>(
-        r"SELECT i.state, COUNT(*) FROM pull_requests i WHERE i.repo_id = ?1
+        r"SELECT CASE WHEN i.state = 'merged' THEN 'closed' ELSE i.state END AS bucket, COUNT(*) FROM pull_requests i WHERE i.repo_id = ?1
             AND (?2 IS NULL OR i.title LIKE ?2 ESCAPE '\' OR i.body LIKE ?2 ESCAPE '\')
-        GROUP BY i.state",
+        GROUP BY bucket",
     )
     .bind(repo_id)
     .bind(search.map(contains_pattern))
@@ -720,19 +732,19 @@ pub async fn unstack_pull_requests(
     pool: &SqlitePool,
     actor_id: i64,
     pull_request_id: i64,
-) -> Result<bool> {
+) -> Result<Option<Vec<PullRequest>>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id = ?1")
         .bind(pull_request_id)
         .fetch_optional(&mut *tx)
         .await?;
     let Some(repo) = repo else {
-        return Ok(false);
+        return Ok(None);
     };
     if !crate::backend::db::sqlite::discussions::lock_write_authority(&mut tx, actor_id, repo)
         .await?
     {
-        return Ok(false);
+        return Ok(None);
     }
     // Read after the check, in the same transaction, so the stack is the one it is in now.
     let stack: Option<Option<i64>> =
@@ -740,17 +752,18 @@ pub async fn unstack_pull_requests(
             .bind(pull_request_id)
             .fetch_optional(&mut *tx)
             .await?;
+    let mut members = Vec::new();
     if let Some(Some(stack_id)) = stack {
-        sqlx::query(
-            "UPDATE pull_requests SET stack_id = NULL WHERE repo_id = ?1 AND stack_id = ?2 AND state <> 'merged'",
+        members = sqlx::query_as::<_, PullRequest>(
+            "UPDATE pull_requests SET stack_id = NULL WHERE repo_id = ?1 AND stack_id = ?2 AND state <> 'merged' RETURNING *",
         )
         .bind(repo)
         .bind(stack_id)
-        .execute(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
     }
     tx.commit().await?;
-    Ok(true)
+    Ok(Some(members))
 }
 
 pub async fn list_stack_members(

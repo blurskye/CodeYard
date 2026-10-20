@@ -181,6 +181,23 @@ async fn tabs_contract(pg: bool) {
     let (tags, tab, _, _) = refs(&alice, "/alice/proj/tags?tab=stale").await;
     assert_eq!(tab, "all");
     assert!(tags.is_empty());
+
+    // Tip dates are not subject to the divergence cap, including a searched late branch.
+    let old = bare
+        .find_reference("refs/heads/old-cleanup")
+        .unwrap()
+        .target()
+        .unwrap();
+    for index in 0..205 {
+        bare.reference(&format!("refs/heads/z-old-{index:03}"), old, false, "")
+            .unwrap();
+    }
+    let (stale_rows, _, stale, total) =
+        refs(&alice, "/alice/proj/branches?tab=stale&q=z-old-204").await;
+    assert!(stale_rows.contains(&"z-old-204".to_owned()));
+    assert_eq!((stale, total), (207, 210));
+    let (active, _, _, _) = refs(&alice, "/alice/proj/branches?tab=active").await;
+    assert!(!active.iter().any(|name| name.starts_with("z-old-")));
     f.finish().await;
 }
 

@@ -6,8 +6,8 @@ use chrono::{DateTime, Utc};
 
 pub const MAX_COMMENT_PATH_BYTES: usize = 4 * 1024;
 
-/// A review holds at most this many comments. Each comment that joins a review checks the count
-/// in the same transaction. Reads paginate these comments separately from their reviews.
+/// A pending review holds at most this many comments. Published thread replies do not use this
+/// limit. Reads paginate comments separately from their reviews.
 pub const MAX_REVIEW_COMMENTS: i64 = 200;
 
 pub struct NewPullRequestComment<'a> {
@@ -19,6 +19,8 @@ pub struct NewPullRequestComment<'a> {
     pub side: Option<&'a str>,
     pub commit_sha: Option<&'a str>,
     pub in_reply_to_comment_id: Option<i64>,
+    /// The diff validated for a new inline thread, as (head, base).
+    pub expected_revisions: Option<(&'a str, &'a str)>,
 }
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_comment,
@@ -50,6 +52,11 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pul
 pub const MAX_INLINE_COMMENTS: usize = 500;
 pub const MAX_REVIEW_COMMENTS_PAGE: usize = 100;
 pub const MAX_REVIEW_COMMENT_PAGE_BYTES: usize = 1024 * 1024;
+
+// The comments before this one, and the page bytes through it, within these reviews.
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::review_comment_position,
+    crate::backend::db::sqlite::pull_requests::reviews::review_comment_position,
+    fn review_comment_position(pool: &DbPool, review_ids: &[i64], comment_id: i64) -> Result<(i64, i64)>);
 
 pub struct ReviewCommentPage {
     pub comments: Vec<PullRequestCommentEntry>,

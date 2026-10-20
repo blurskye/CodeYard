@@ -105,11 +105,16 @@ pub(super) fn draft(form: &Fields) -> Fields {
     if allowed.is_empty() {
         return Fields::new();
     }
-    // Omit oversized fields, rather than echoing or truncating unknown/secret data.
+    // Known descriptions may exceed the write limit; keep the request-bounded rejected text.
     form.iter()
         .filter(|(key, value)| {
             (key.as_str() == "action" || allowed.contains(&key.as_str()))
-                && value.len() <= bound(key)
+                && value.len()
+                    <= if key.as_str() == "description" {
+                        BODY_LIMIT
+                    } else {
+                        bound(key)
+                    }
         })
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect()
@@ -121,7 +126,15 @@ impl Command {
         current: Option<&OrganizationMetadata>,
     ) -> Result<Self, &'static str> {
         if !bounded(form) {
-            return Err(INVALID_FORM);
+            return Err(
+                if keys(field(form, "action")).contains(&"description")
+                    && field(form, "description").len() > bound("description")
+                {
+                    "Description must be at most 4096 UTF-8 bytes."
+                } else {
+                    INVALID_FORM
+                },
+            );
         }
         let profile = || {
             // A field the request leaves out keeps its stored value; the write reads that
@@ -234,6 +247,17 @@ pub(super) async fn respond(
     message: Option<String>,
     draft: Fields,
 ) -> Response {
+    respond_with_hook_draft(ctx, org, status, message, draft, None).await
+}
+
+pub(super) async fn respond_with_hook_draft(
+    ctx: &PageContext,
+    org: Option<i64>,
+    status: StatusCode,
+    message: Option<String>,
+    draft: Fields,
+    hook_draft: Option<crate::webui::components::webhooks::HookDraft>,
+) -> Response {
     let actor = match ctx.require_user() {
         Ok(user) => user.id,
         Err(response) => return response,
@@ -270,9 +294,22 @@ pub(super) async fn respond(
         }
         None => (false, false),
     };
-    // Owners see how many repositories deleting the organization will also delete.
+    let mut tab = requested_tab(ctx);
+    if !ctx.query.contains_key("tab") {
+        tab = match draft.get("action").map(String::as_str) {
+            Some("add-member" | "member-role" | "remove-member" | "cancel-invitation") => {
+                "members".into()
+            }
+            Some(action) if keys(action).contains(&"team_id") || action == "team" => "teams".into(),
+            _ => tab,
+        };
+    }
+    if tab == "webhooks" && !is_owner {
+        tab = "overview".to_owned();
+    }
+    // Only the overview offers organization deletion.
     let owned_repositories = match org {
-        Some(org) if is_owner => {
+        Some(org) if is_owner && tab == "overview" => {
             match organizations::count_organization_repositories(&ctx.state.pool, actor, org).await
             {
                 Ok(Applied(count)) => count,
@@ -294,21 +331,37 @@ pub(super) async fn respond(
         Some(page) => page,
         None => return invalid(ctx),
     };
+    let (invitations_after, invitations_page) = match cursor(ctx, "invitations_after") {
+        Some(page) => page,
+        None => return invalid(ctx),
+    };
+    let (ownerless_after, ownerless_page) = match cursor(ctx, "ownerless_after") {
+        Some(page) => page,
+        None => return invalid(ctx),
+    };
     // Only a site administrator can recover an organization, so only they see the list.
     // The picker needs names only, so profile text stays out of refusal pages.
+    let mut ownerless_next = None;
     let ownerless_organizations = if org.is_none() && can_recover {
-        match organizations::list_ownerless_organizations(&ctx.state.pool, actor).await {
-            Ok(Applied(values)) => values
-                .into_iter()
-                .map(|ownerless| view::Organization {
-                    id: ownerless.id,
-                    name: ownerless.name,
-                    display_name: None,
-                    description: String::new(),
-                    suspended: ownerless.governance_suspended,
-                    avatar_url: None,
-                })
-                .collect(),
+        match organizations::list_ownerless_organizations(&ctx.state.pool, actor, ownerless_page)
+            .await
+        {
+            Ok(Applied(values)) => {
+                if values.len() as i64 == PAGE_LIMIT {
+                    ownerless_next = values.last().map(|v|format!("{INDEX}?after={after}&invitations_after={invitations_after}&ownerless_after={}",v.id));
+                }
+                values
+                    .into_iter()
+                    .map(|ownerless| view::Organization {
+                        id: ownerless.id,
+                        name: ownerless.name,
+                        display_name: None,
+                        description: String::new(),
+                        suspended: ownerless.governance_suspended,
+                        avatar_url: None,
+                    })
+                    .collect()
+            }
             Ok(_) => vec![],
             Err(_) => return unavailable(ctx),
         }
@@ -323,7 +376,7 @@ pub(super) async fn respond(
         is_owner,
         viewer_id: actor,
         manage_access,
-        tab: requested_tab(ctx),
+        tab,
         members: vec![],
         teams: vec![],
         repositories: vec![],
@@ -348,12 +401,11 @@ pub(super) async fn respond(
         draft,
         invitations: vec![],
         pending_invitations: vec![],
+        invitations_next: None,
+        pending_invitations_next: None,
+        ownerless_next,
     };
     if let Some(org) = org {
-        model.selected_team = match super::teams::detail(ctx, actor, org).await {
-            Ok(value) => value,
-            Err(response) => return response,
-        };
         let (member_after, member_page) = match cursor(ctx, "members_after") {
             Some(page) => page,
             None => return invalid(ctx),
@@ -364,33 +416,44 @@ pub(super) async fn respond(
         };
         model.members_cursor = member_after;
         model.teams_cursor = team_after;
-        model.members = match organizations::list_organization_members(
-            &ctx.state.pool,
-            actor,
-            org,
-            member_page,
-        )
-        .await
-        {
-            Ok(Applied(values)) => {
-                model.members_after = values.last().map(|v| v.id).unwrap_or(member_after);
-                model.more_members = values.len() as i64 == PAGE_LIMIT;
-                match super::membership::project(
-                    ctx,
-                    values.into_iter().map(|v| (v.user_id, v.role)).collect(),
-                )
-                .await
-                {
-                    Ok(members) => members,
-                    Err(response) => return response,
+        if model.tab == "members" {
+            model.members = match organizations::list_organization_members(
+                &ctx.state.pool,
+                actor,
+                org,
+                member_page,
+            )
+            .await
+            {
+                Ok(Applied(values)) => {
+                    model.members_after = values.last().map(|v| v.id).unwrap_or(member_after);
+                    model.more_members = values.len() as i64 == PAGE_LIMIT;
+                    match super::membership::project(
+                        ctx,
+                        values.into_iter().map(|v| (v.user_id, v.role)).collect(),
+                    )
+                    .await
+                    {
+                        Ok(members) => members,
+                        Err(response) => return response,
+                    }
                 }
-            }
-            Ok(_) => return not_found(ctx),
-            Err(_) => return unavailable(ctx),
-        };
-        model.teams =
-            match organizations::list_organization_teams(&ctx.state.pool, actor, org, team_page)
-                .await
+                Ok(_) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            };
+        }
+        if model.tab == "teams" {
+            model.selected_team = match super::teams::detail(ctx, actor, org).await {
+                Ok(value) => value,
+                Err(response) => return response,
+            };
+            model.teams = match organizations::list_organization_teams(
+                &ctx.state.pool,
+                actor,
+                org,
+                team_page,
+            )
+            .await
             {
                 Ok(Applied(values)) => {
                     model.teams_after = values.last().map(|v| v.team.id).unwrap_or(team_after);
@@ -410,15 +473,13 @@ pub(super) async fn respond(
                 Ok(_) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             };
-        let (repositories, more_repositories) =
-            match super::teams::repository_choices(ctx, actor, org).await {
-                Ok(choices) => choices,
-                Err(response) => return response,
-            };
-        model.repositories = repositories;
-        model.more_repositories = more_repositories;
-        if model.tab == "webhooks" && !is_owner {
-            model.tab = "overview".to_owned();
+            let (repositories, more_repositories) =
+                match super::teams::repository_choices(ctx, actor, org).await {
+                    Ok(choices) => choices,
+                    Err(response) => return response,
+                };
+            model.repositories = repositories;
+            model.more_repositories = more_repositories;
         }
         if model.tab == "webhooks" {
             let base = format!("{INDEX}/{org}?tab=webhooks");
@@ -441,6 +502,10 @@ pub(super) async fn respond(
                 Ok(mut panel) => {
                     // A refused webhook action returns here with its message in the section.
                     panel.error = model.message.take();
+                    if let Some(draft) = hook_draft {
+                        panel.detail = None;
+                        panel.editing = Some(draft);
+                    }
                     model.webhooks = Some(Box::new(panel));
                 }
                 Err(
@@ -449,25 +514,38 @@ pub(super) async fn respond(
                 Err(_) => return unavailable(ctx),
             }
         }
-        if can_manage {
-            let Ok(first) = OrganizationPage::new(0, PAGE_LIMIT) else {
+        if can_manage && model.tab == "members" {
+            let Some((_, invitations_page)) = cursor(ctx, "invitations_after") else {
                 return invalid(ctx);
             };
             model.pending_invitations = match organizations::list_organization_invitations(
                 &ctx.state.pool,
                 actor,
                 org,
-                first,
+                invitations_page,
             )
             .await
             {
                 Ok(Applied(values)) => {
+                    if values.len() as i64 == PAGE_LIMIT {
+                        model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={}",v.id));
+                    }
+                    let ids: Vec<_> = values.iter().map(|v| v.id).collect();
                     let pending = values
                         .into_iter()
                         .map(|invite| (invite.user_id, invite.role))
                         .collect();
                     match super::membership::project(ctx, pending).await {
-                        Ok(members) => members,
+                        Ok(members) => members
+                            .into_iter()
+                            .zip(ids)
+                            .map(|(member, id)| view::PendingInvitation {
+                                id,
+                                user_id: member.user_id,
+                                username: member.username,
+                                role: member.role,
+                            })
+                            .collect(),
                         Err(response) => return response,
                     }
                 }
@@ -475,21 +553,30 @@ pub(super) async fn respond(
             };
         }
     } else {
-        model.invitations =
-            match organizations::list_received_organization_invitations(&ctx.state.pool, actor)
-                .await
-            {
-                Ok(values) => values
+        model.invitations = match organizations::list_received_organization_invitations(
+            &ctx.state.pool,
+            actor,
+            invitations_page,
+        )
+        .await
+        {
+            Ok(values) => {
+                if values.len() as i64 == PAGE_LIMIT {
+                    model.invitations_next = values.last().map(|v|format!("{INDEX}?after={after}&ownerless_after={ownerless_after}&invitations_after={}",v.id));
+                }
+                values
                     .into_iter()
                     .map(|invite| view::Invitation {
+                        id: invite.id,
                         org_id: invite.org_id,
                         name: invite.org_name,
                         display_name: invite.org_display_name,
                         role: invite.role,
                     })
-                    .collect(),
-                Err(_) => return unavailable(ctx),
-            };
+                    .collect()
+            }
+            Err(_) => return unavailable(ctx),
+        };
         if ["team", "team_members_after", "team_repositories_after"]
             .iter()
             .any(|key| ctx.query.contains_key(*key))
@@ -530,6 +617,13 @@ pub(super) async fn respond(
 pub(super) fn requested_tab(ctx: &PageContext) -> String {
     match ctx.query.get("tab").map(String::as_str) {
         Some(tab @ ("members" | "teams" | "webhooks")) => tab.to_owned(),
+        None if ctx.query.contains_key("team")
+            || (ctx.query.contains_key("teams_after")
+                && !ctx.query.contains_key("members_after")) =>
+        {
+            "teams".to_owned()
+        }
+        None if ctx.query.contains_key("members_after") => "members".to_owned(),
         _ => "overview".to_owned(),
     }
 }
@@ -540,7 +634,7 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
         return INDEX.to_owned();
     };
     let mut query = url::form_urlencoded::Serializer::new(String::new());
-    for key in ["members_after", "teams_after"] {
+    for key in ["members_after", "teams_after", "invitations_after"] {
         if ctx.query.contains_key(key) {
             if let Some((after, _)) = cursor(ctx, key) {
                 query.append_pair(key, &after.to_string());
@@ -565,7 +659,7 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
         }
     }
     let tab = requested_tab(ctx);
-    if tab != "overview" {
+    if tab != "overview" && ctx.query.contains_key("tab") {
         query.append_pair("tab", &tab);
     }
     let query = query.finish();

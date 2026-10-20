@@ -24,6 +24,8 @@ pub enum DiscussionWriteRefusal {
     InvalidReview,
     #[error("discussion_review_full")]
     ReviewFull,
+    #[error("discussion_revision_changed")]
+    RevisionChanged,
 }
 
 pub struct DiscussionEdit<'a> {

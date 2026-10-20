@@ -28,7 +28,7 @@ FROM docker.io/library/debian:trixie-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl git libssl3 \
+        ca-certificates curl git libssl3 tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=package /runtime/ /
@@ -61,4 +61,5 @@ ENV RUST_LOG=info \
 # an untrusted workflow sandbox.
 VOLUME ["/data"]
 EXPOSE 3000 2222 7444/udp 7445/tcp
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["codeyard", "serve"]

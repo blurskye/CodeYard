@@ -256,9 +256,16 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
         &filters.authors,
     );
     let mut assignees = people(
-        &filters.assignee,
+        if filters.assignee == "none" {
+            ""
+        } else {
+            filters
+                .assignee
+                .strip_prefix('@')
+                .unwrap_or(&filters.assignee)
+        },
         |f, v| ListFilters {
-            assignee: v,
+            assignee: super::search::assignee_value(&v),
             ..selected_filters(f)
         },
         &filters.assignees,
@@ -389,13 +396,12 @@ pub fn list(
                     }
                     {rows(&url, kind, items)}
                 }
-                if kind == Kind::Issue && (filters.page > 1 || filters.has_more) {
-                    nav { class: "collaboration-pagination", aria_label: "Issue pages",
+                if filters.page > 1 || filters.has_more {
+                    nav { class: "collaboration-pagination", aria_label: if kind == Kind::Issue { "Issue pages" } else { "Pull request pages" },
                         if filters.page > 1 { NavLink { class: "btn btn-secondary", href: format!("{}&page={}", list_href(&url, state, query, filters), filters.page - 1), "Previous" } }
                         if filters.has_more { NavLink { class: "btn btn-secondary", href: format!("{}&page={}", list_href(&url, state, query, filters), filters.page + 1), "Next" } }
                     }
                 }
-                if kind == Kind::Pull && items.len() >= 100 { p { class: "collaboration-limit collaboration-muted", "Showing the latest 100 matching {plural}." } }
             }
         },
     )

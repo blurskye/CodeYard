@@ -361,6 +361,95 @@ jobs:
     }
 }
 
+#[tokio::test]
+async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
+    use axum::http::StatusCode;
+    use base64::Engine;
+    use codeyard::backend::{
+        api::create_router, app::AppState, repositories::lifecycle, storage::ObjectStore,
+    };
+    use serde_json::json;
+    use std::sync::Arc;
+    bundle::install();
+    let postgres = native::PostgresDatabase::new().await;
+    let sqlite = native::NativeDatabase::new().await;
+    for pool in [&postgres.pool, &sqlite.pool] {
+        db::users::transitions::complete_setup(pool, "root_admin", None, "fixture", "public", None)
+            .await
+            .unwrap();
+        let owner = db::users::accounts::create_user(pool, "alice", None)
+            .await
+            .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let repo = lifecycle::provision(
+            (pool, None),
+            root.path(),
+            db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            "proj",
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let router = create_router(AppState::new(
+            pool.clone(),
+            root.path().to_owned(),
+            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
+            None,
+            CiConfig {
+                trusted_actor_ids: BTreeSet::from([owner.id]),
+                ..CiConfig::default()
+            },
+            None,
+        ));
+        let client = requests::Client::login(&router, pool, owner.id).await;
+        let content = base64::engine::general_purpose::STANDARD.encode("on:\n  pull_request:\n    branches: ['refs/tags/release', 'refs/heads/integration', 'refs/custom']\njobs: {test: {runs-on: ubuntu-latest, steps: [{run: echo ok}]}}\n");
+        let saved = client.expect("POST", "/api/repos/alice/proj/contents/.github/workflows/ci.yml", json!({"branch":"main", "content":content, "message":"workflow", "expected_revision":"unborn"}), StatusCode::CREATED).await;
+        let sha = saved["sha"].as_str().unwrap();
+        for (index, base) in ["refs/tags/release", "refs/heads/integration", "refs/custom"]
+            .into_iter()
+            .enumerate()
+        {
+            {
+                let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
+                git.reference(
+                    &format!("refs/heads/{base}"),
+                    git2::Oid::from_str(sha).unwrap(),
+                    false,
+                    "fixture base",
+                )
+                .unwrap();
+            }
+            let topic = format!("topic-{index}");
+            client.branch(&topic, sha).await;
+            let head = client
+                .save(&topic, &format!("topic-{index}.txt"), sha)
+                .await;
+            client.open_pull("Review", &topic, base).await;
+            let runs = db::ci::list_ci_runs_for_repo(pool, repo.id, 10)
+                .await
+                .unwrap();
+            let run = runs
+                .iter()
+                .find(|run| run.head_sha.as_deref() == Some(&head))
+                .expect("automatic PR workflow");
+            assert_eq!(run.branch, base);
+            let manual = client.expect("POST", "/api/ci/trigger", json!({"repo_owner":"alice", "repo_name":"proj", "branch":base, "event":"pull_request", "head_sha":head, "workflow_path":".github/workflows/ci.yml"}), StatusCode::OK).await;
+            let job = manual["job_id"].as_str().unwrap();
+            let detail = client
+                .expect(
+                    "GET",
+                    &format!("/api/ci/jobs/{job}"),
+                    serde_json::Value::Null,
+                    StatusCode::OK,
+                )
+                .await;
+            assert_eq!(detail["branch"], base);
+        }
+    }
+}
+
 #[test]
 fn only_branches_lose_their_ref_prefix() {
     use codeyard::backend::ci::branch_name;

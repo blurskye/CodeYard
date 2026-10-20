@@ -33,13 +33,20 @@ fn streams_upload(request: &Request) -> bool {
 }
 
 /// Reads the whole body of every POST, PUT, PATCH and DELETE request before its handler
-/// runs. At most 8 reads run at once per node, each within 4 MiB and 30 seconds. A slot
-/// covers only the read, so a slow handler does not hold one. The upload routes are exempt.
+/// runs. Each of the authenticated and anonymous pools allows 8 buffered bodies, read
+/// within 4 MiB and 30 seconds. Slots stay held through the handler. Upload routes are exempt.
 pub(crate) async fn bounded_form_body(
     Extension(state): Extension<Arc<AppState>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Response {
+    request.headers_mut().remove("x-codeyard-submitted");
+    request.headers_mut().remove("x-codeyard-draft-submission");
+    if request.method() == Method::POST {
+        request
+            .headers_mut()
+            .insert("x-codeyard-submitted", "true".parse().unwrap());
+    }
     if !matches!(
         *request.method(),
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
@@ -47,10 +54,21 @@ pub(crate) async fn bounded_form_body(
     {
         return next.run(request).await;
     }
-    let Ok(permit) = state.form_reads.try_acquire() else {
+    let authenticated = match session::get_optional_user(&state.pool, request.headers()).await {
+        Ok(user) => user.is_some(),
+        // Password-change forms still need to reach their own session check.
+        Err((StatusCode::PRECONDITION_REQUIRED, _)) => true,
+        Err(error) => return error.into_response(),
+    };
+    let reads = if authenticated {
+        &state.form_reads
+    } else {
+        &state.anonymous_form_reads
+    };
+    let Ok(permit) = reads.try_acquire() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
     let bytes = match tokio::time::timeout(
         Duration::from_secs(30),
         axum::body::to_bytes(body, 4 * 1024 * 1024),
@@ -61,9 +79,38 @@ pub(crate) async fn bounded_form_body(
         Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
+    if parts
+        .headers
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|value| {
+            value
+                .as_bytes()
+                .starts_with(b"application/x-www-form-urlencoded")
+        })
+    {
+        if let Some(token) = url::form_urlencoded::parse(&bytes)
+            .find_map(|(name, value)| (name == "draft_submission").then_some(value.into_owned()))
+        {
+            if valid_submission_token(&token) {
+                parts
+                    .headers
+                    .insert("x-codeyard-draft-submission", token.parse().unwrap());
+            }
+        }
+    }
+    let response = next
+        .run(Request::from_parts(parts, axum::body::Body::from(bytes)))
+        .await;
     drop(permit);
-    next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
-        .await
+    response
+}
+
+pub(super) fn valid_submission_token(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 100
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
 }
 
 struct DownloadTask(tokio::task::JoinHandle<io::Result<()>>);

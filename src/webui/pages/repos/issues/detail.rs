@@ -1,5 +1,5 @@
 use super::{
-    editor::{DetailEditForm, MarkdownEditor},
+    editor::DetailEditForm,
     label_style, merge_method_available, preselected_merge_method,
     reactions::{react_action, reaction_bar},
     Comment, CommentPage, Comparison, Event, Item, Kind, Label, Milestone, Repository, StackLayer,
@@ -22,9 +22,15 @@ pub struct DetailDraft {
     pub title: Option<String>,
     pub body: Option<String>,
     pub comment: String,
+    #[serde(default)]
+    pub repository_id: Option<String>,
+    #[serde(default)]
+    pub issue_id: Option<String>,
     /// The comment being edited, with its text in `comment`. None when the comment box is in use.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editing: Option<i64>,
+    #[serde(default)]
+    pub expected_body: String,
     pub label: String,
     pub preview: bool,
     /// The merge method that the submitted merge form chose, kept when the merge is refused.
@@ -713,13 +719,7 @@ fn comment_controls(
             if comment.can_edit {
                 details { class: "collaboration-comment-edit", open,
                     summary { class: "btn btn-secondary btn-sm", title: "Edit this comment", "Edit" }
-                    form { method: "post", action: format!("{action}/edit?page={page}"), class: "collaboration-comment-edit-form",
-                        {csrf(&repo.csrf)}
-                        MarkdownEditor { id: format!("edit-comment-{id}"), initial: body, rows: 8usize, required: true, initial_preview: preview, references: references.clone() }
-                        div { class: "collaboration-form-actions",
-                            button { class: "btn btn-primary", r#type: "submit", "Save changes" }
-                        }
-                    }
+                    super::editor::CommentEditForm { key: "{action}", action: format!("{action}/edit?page={page}"), csrf_token: repo.csrf.clone(), id, body, original_body: comment.edit.as_ref().map_or_else(|| comment.body.clone(), |edit| edit.original_body.clone()), preview, references: references.clone() }
                 }
             }
             if comment.can_delete {
@@ -768,7 +768,7 @@ pub(in crate::webui::pages::repos) fn comment_entry(
                 form { id: form_id.clone(), method: "post", action: format!("{url}/tasks"), hidden: true,
                     {csrf(&repo.csrf)}
                     input { r#type: "hidden", name: "comment", value: comment.id.to_string() }
-                    input { r#type: "hidden", name: "comment_revision", value: comment.body.clone() }
+                    input { r#type: "hidden", name: "comment_revision", value: comment.revision.clone() }
                 }
             }
             {reaction_bar(repo, &react_action(url, page), Some(("comment", comment.id)), &comment.reactions)}
@@ -932,6 +932,7 @@ pub fn detail(
     error: Option<&str>,
     references: &References,
     reviewers: &[Reviewer],
+    reviewer_choices: &[String],
     assignable: &[String],
     milestones: &[Milestone],
 ) -> Element {
@@ -963,7 +964,7 @@ pub fn detail(
     };
     // The author cannot review their own pull request, so the reviewer picker leaves them out. The
     // server refuses such a request too.
-    let requestable: Vec<String> = assignable
+    let requestable: Vec<String> = reviewer_choices
         .iter()
         .filter(|name| *name != &item.author)
         .cloned()
@@ -973,6 +974,12 @@ pub fn detail(
         rsx! {
             section { class: "collaboration-page collaboration-detail",
                 {notice(error)}
+                if draft.editing.is_some_and(|id| !comments.comments.iter().any(|comment| comment.id == id && comment.can_edit)) {
+                    section { class: "collaboration-panel collaboration-form-fields", aria_label: "Comment text that was not saved",
+                        p { "Your edit was not saved. Copy your text before leaving this page." }
+                        crate::webui::components::DraftTextarea { name: "unsaved-comment", initial_value: draft.comment.clone(), readonly: true, class: "collaboration-textarea" }
+                    }
+                }
                 header { class: "collaboration-detail-heading",
                     h2 { "{item.title} ", span { class: "collaboration-number", "#{item.number}" } }
                     if kind == Kind::Issue && repo.signed_in {
@@ -1096,7 +1103,7 @@ pub fn detail(
                                 }
                             }
                             if repo.signed_in {
-                                {review::composer(repo, &url, head, draft, composer_state, references)}
+                                {review::composer(repo, &url, head, item.id, draft, composer_state, references)}
                             } else { p { class: "collaboration-sign-in", NavLink { href: "/login", "Sign in" } " to join the discussion." } }
                             if state_change {
                                 form { id: state_form, method: "post", action: format!("{url}/state"), hidden: true,

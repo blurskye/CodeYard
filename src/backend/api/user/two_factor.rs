@@ -13,7 +13,7 @@ use crate::backend::identity::two_factor::{self, TwoFactorError};
 use crate::webui::app::Page;
 use crate::webui::pages::{
     account,
-    settings::{TwoFactor, TwoFactorSetup},
+    settings::{Settings, TwoFactor, TwoFactorSetup},
 };
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -30,26 +30,22 @@ fn encryptor(ctx: &PageContext) -> Result<&SecretEncryptor, TwoFactorError> {
 /// The two-factor tab with the given state: a secret waiting for its code, or codes to show once.
 async fn tab(
     ctx: &PageContext,
+    mut model: Settings,
     status: StatusCode,
     message: Option<&str>,
     two_factor: TwoFactor,
 ) -> Response {
-    match load_settings(ctx, "two-factor", None).await {
-        Ok(mut model) => {
-            model.two_factor = two_factor;
-            ctx.page_model_status(
-                status,
-                "Settings",
-                Page::Identity(account::Page::Settings {
-                    model: Box::new(model),
-                    csrf_token: ctx.csrf_token.clone(),
-                    message: message.map(str::to_owned),
-                    is_error: !status.is_success(),
-                }),
-            )
-        }
-        Err(response) => response,
-    }
+    model.two_factor = two_factor;
+    ctx.page_model_status(
+        status,
+        "Settings",
+        Page::Identity(account::Page::Settings {
+            model: Box::new(model),
+            csrf_token: ctx.csrf_token.clone(),
+            message: message.map(str::to_owned),
+            is_error: !status.is_success(),
+        }),
+    )
 }
 
 /// A refused change: the tab again, with the stable public message for the error.
@@ -82,6 +78,10 @@ pub(crate) async fn setup_post(
         Ok(user) => user.clone(),
         Err(response) => return response,
     };
+    let model = match load_settings(&ctx, "two-factor", None).await {
+        Ok(model) => model,
+        Err(response) => return response,
+    };
     let setup = match encryptor(&ctx) {
         Ok(key) => {
             two_factor::begin_setup(
@@ -100,6 +100,7 @@ pub(crate) async fn setup_post(
         Ok(setup) => {
             tab(
                 &ctx,
+                model,
                 StatusCode::OK,
                 None,
                 TwoFactor {
@@ -135,6 +136,10 @@ pub(crate) async fn enable_post(
         Ok(user) => user.clone(),
         Err(response) => return response,
     };
+    let model = match load_settings(&ctx, "two-factor", None).await {
+        Ok(model) => model,
+        Err(response) => return response,
+    };
     let token = field(&form, "setup");
     let confirmed = match encryptor(&ctx) {
         Ok(key) => {
@@ -156,6 +161,7 @@ pub(crate) async fn enable_post(
         Ok(codes) => {
             tab(
                 &ctx,
+                model,
                 StatusCode::OK,
                 Some("Two-factor authentication is on. Save your recovery codes."),
                 TwoFactor {
@@ -183,6 +189,7 @@ pub(crate) async fn enable_post(
                 Ok(setup) => {
                     tab(
                         &ctx,
+                        model,
                         StatusCode::BAD_REQUEST,
                         Some("That code does not match. Check your app and try again."),
                         TwoFactor {
@@ -221,6 +228,10 @@ pub(crate) async fn recovery_codes_post(
         Ok(user) => user.clone(),
         Err(response) => return response,
     };
+    let model = match load_settings(&ctx, "two-factor", None).await {
+        Ok(model) => model,
+        Err(response) => return response,
+    };
     match two_factor::regenerate_recovery_codes(
         &ctx.state.pool,
         &user,
@@ -232,6 +243,7 @@ pub(crate) async fn recovery_codes_post(
         Ok(codes) => {
             tab(
                 &ctx,
+                model,
                 StatusCode::OK,
                 Some("New recovery codes. The old ones no longer work."),
                 TwoFactor {

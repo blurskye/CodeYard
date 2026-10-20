@@ -181,6 +181,8 @@ pub struct SearchModel {
     /// The totals of every result type, for the tab badges.
     #[serde(default)]
     pub counts: SearchCounts,
+    #[serde(default)]
+    pub counts_unavailable: Vec<String>,
     /// Set when the budget stopped the walk over repositories before its end.
     #[serde(default)]
     pub scan: Option<SearchScan>,
@@ -751,6 +753,9 @@ fn count_badge(count: usize) -> String {
 /// The number shown beside a result type. Code and commits show the page they list, marked as
 /// more when an older page has results, and only while their tab is open.
 fn search_tab_count(model: &SearchModel, tab: &str) -> Option<String> {
+    if model.counts_unavailable.iter().any(|value| value == tab) {
+        return None;
+    }
     if matches!(model.tab.as_str(), "code" | "commits") && !matches!(tab, "code" | "commits") {
         return None;
     }
@@ -891,7 +896,7 @@ fn search_results(model: &SearchModel) -> Element {
                 for hit in &model.code {
                     article { class: "border-b border-border px-4 py-3",
                         p { class: "text-sm",
-                            NavLink { href: format!("{}/blob/{}/{}#L{}", repository_url(&hit.owner, &hit.repo), crate::webui::encode_component(&hit.branch), crate::webui::pages::repos::ref_path::encode_path(&hit.path), hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}: {hit.path}" }
+                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::file_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.branch, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}: {hit.path}" }
                         }
                         pre { class: "mt-2 overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs", code { "{hit.line_number}  ", {highlighted_text(&hit.line, &model.highlight)} } }
                     }
@@ -1170,10 +1175,6 @@ fn NewRepositoryView(
                         if unavailable_selection {
                             p { class: "mt-1 text-xs text-muted-foreground", "This page cannot confirm the selected organization. Choose a listed owner or reload the page." }
                         }
-                        nav { class: "mt-2 flex gap-3 text-sm", aria_label: "Repository owner choices",
-                            if choices.after > 0 { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(0), class: "text-primary hover:underline", "First organization choices" } }
-                            if let Some(after) = choices.next_after { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(after), class: "text-primary hover:underline", "Next organization choices" } }
-                        }
                     }
                     div {
                         label { r#for: "repo-name", class: "mb-2 block text-sm font-medium", "Repository name (required)" }
@@ -1228,6 +1229,10 @@ fn NewRepositoryView(
                     NavLink { href: "/", class: "btn btn-secondary", "Cancel" }
                     button { r#type: "submit", disabled: submitting(), class: BUTTON, if submitting() { "Creating…" } else { "Create repository" } }
                 }
+                nav { class: "mt-2 flex gap-3 text-sm", aria_label: "Repository owner choices",
+                    if choices.after > 0 { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(0), class: "text-primary hover:underline", "First organization choices" } }
+                    if let Some(after) = choices.next_after { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(after), class: "text-primary hover:underline", "Next organization choices" } }
+                }
             }
         }
     }
@@ -1247,6 +1252,17 @@ pub fn demo(no_nav: bool) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expired_badge_counts_are_omitted_instead_of_showing_zero() {
+        let model = SearchModel {
+            tab: "repos".into(),
+            counts_unavailable: vec!["issues".into()],
+            ..Default::default()
+        };
+        assert_eq!(search_tab_count(&model, "issues"), None);
+        assert_eq!(search_tab_count(&model, "repos"), Some("0".into()));
+    }
 
     /// The markup from `marker` through the first `close` after it.
     fn element_at<'a>(html: &'a str, marker: &str, close: &str) -> &'a str {
@@ -1399,7 +1415,9 @@ mod tests {
             }))
         });
         assert!(
-            html.contains("/alice/demo/blob/main/src/a%23b%3Fc%25d.rs#L3"),
+            html.contains(
+                "/alice/demo/blob/refs/heads/main/src/a%23b%3Fc%25d.rs?view=code&#38;line=3#L3"
+            ),
             "{html}"
         );
     }
@@ -1682,6 +1700,23 @@ mod tests {
         assert!(!html.contains("Selected organization unavailable"));
         assert!(html.contains("formaction=\"/new?org_after=4&#38;org_limit=1\""));
         assert!(html.contains("name=\"intent\" value=\"page-owners\""));
+        let first_submit = html
+            .split("<button")
+            .skip(1)
+            .find(|button| {
+                button
+                    .split('>')
+                    .next()
+                    .unwrap()
+                    .contains("type=\"submit\"")
+            })
+            .unwrap();
+        assert!(!first_submit
+            .split('>')
+            .next()
+            .unwrap()
+            .contains("page-owners"));
+        assert!(first_submit.contains("Create repository"));
         assert!(html.contains("/new?org_limit=1"));
         assert!(html.contains("action=\"/new?org_after=2&#38;org_limit=1\""));
         let option = html

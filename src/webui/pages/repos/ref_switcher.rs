@@ -1,5 +1,9 @@
 //! The branch and tag menu of the repository pages. It lists both kinds of ref, narrows them as the
 //! reader types, and links each name to the page the caller chose.
+#[cfg(test)]
+#[path = "ref_switcher_tests.rs"]
+mod tests;
+
 use super::chrome::icon;
 use super::ref_path::ref_switch_url;
 use crate::webui::navigation::NavLink;
@@ -53,6 +57,8 @@ pub fn RefSwitcher(
 
 /// One option per name. Each option links to `path` on that ref, or to the ref's root when the
 /// path is missing there, so a ref switch keeps the reader where they are when it can.
+const MAX_REF_OPTIONS: usize = 50;
+
 pub fn ref_options(
     base: &str,
     kind: &str,
@@ -62,19 +68,32 @@ pub fn ref_options(
 ) -> Vec<RefOption> {
     names
         .iter()
+        .take(MAX_REF_OPTIONS)
         .map(|name| RefOption {
             name: name.clone(),
-            href: ref_switch_url(base, kind, &format!("{prefix}{name}"), path),
+            href: ref_switch_url(
+                base,
+                kind,
+                &format!(
+                    "{}{name}",
+                    if prefix.is_empty() {
+                        "refs/heads/"
+                    } else {
+                        prefix
+                    }
+                ),
+                path,
+            ),
         })
         .collect()
 }
 
 /// The options whose names contain `query`, which is already trimmed and lower-cased.
-fn matching(options: &[RefOption], query: &str) -> Vec<RefOption> {
+fn matching<'a>(options: &'a [RefOption], query: &str) -> Vec<&'a RefOption> {
     options
         .iter()
         .filter(|option| option.name.to_lowercase().contains(query))
-        .cloned()
+        .take(MAX_REF_OPTIONS)
         .collect()
 }
 
@@ -82,7 +101,7 @@ fn matching(options: &[RefOption], query: &str) -> Vec<RefOption> {
 /// name to mark with the default badge, and it is `None` for tags.
 fn ref_group(
     title: &str,
-    options: &[RefOption],
+    options: &[&RefOption],
     current: &str,
     default_branch: Option<&str>,
 ) -> Element {

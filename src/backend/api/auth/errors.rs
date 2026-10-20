@@ -264,6 +264,11 @@ pub(crate) fn password_change_failure(error: PasswordChangeError) -> Failure {
         PasswordChangeError::Admission(error) => admission_failure(error),
         PasswordChangeError::Password(error) => password_failure(error),
         PasswordChangeError::InvalidCredentials => invalid_credentials(),
+        PasswordChangeError::UnchangedPassword => failure(
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "Choose a password different from the temporary password",
+        ),
         PasswordChangeError::AccountUnavailable => database_failure(),
         PasswordChangeError::CredentialsChanged => failure(
             StatusCode::CONFLICT,
@@ -325,6 +330,9 @@ pub(crate) fn signup_review_failure(error: SignupReviewError) -> Failure {
             StatusCode::CONFLICT,
             "conflict",
             "Signup request already processed",
+        ),
+        SignupReviewError::Conflict => failure(
+            StatusCode::CONFLICT, "conflict", "Account identity is already in use; reject this request and ask the applicant to register again",
         ),
         SignupReviewError::AccountUnavailable => database_failure(),
     }

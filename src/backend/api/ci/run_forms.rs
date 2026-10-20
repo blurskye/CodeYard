@@ -1,6 +1,6 @@
 //! Native forms on a run's page: cancel a queued or running run, or run it again at the same
-//! commit. Both need write access to the repository, and both check the CSRF token. The run must
-//! belong to the repository named in the URL.
+//! commit. Both check CSRF and use the run service's action-specific authority checks. The run
+//! must belong to the readable repository named in the URL.
 use crate::backend::{api::http::context::PageContext, app::AppState, db, repositories::access};
 use axum::{
     extract::{Form, OriginalUri, Path, State},
@@ -10,8 +10,8 @@ use axum::{
 use std::{collections::HashMap, sync::Arc};
 use uuid::Uuid;
 
-/// The repository, and the run in it, when the signed-in viewer may write to the repository.
-async fn writable_run(
+/// Scope the run before applying its action-specific authorization.
+async fn readable_run(
     ctx: &PageContext,
     owner: &str,
     name: &str,
@@ -42,17 +42,6 @@ async fn writable_run(
         .flatten()
         .filter(|run| run.repo_id == repository.id)
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Run not found in this repository."))?;
-    let allowed = access::can_write(&ctx.state.pool, user, &repository)
-        .await
-        .map_err(|_| {
-            ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Actions data is temporarily unavailable. Please try again.",
-            )
-        })?;
-    if !allowed {
-        return Err(ctx.error(StatusCode::FORBIDDEN, "Write access is required."));
-    }
     Ok((repository, run))
 }
 
@@ -78,13 +67,13 @@ pub(crate) async fn cancel_run(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let (_, run) = match writable_run(&ctx, &owner, &name, &run_id).await {
+    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
         Ok(found) => found,
         Err(response) => return response,
     };
     let actor = ctx
         .require_user()
-        .expect("writable_run checked the user")
+        .expect("readable_run checked the user")
         .id;
     match ctx.state.ci_runs.cancel_run(run.run_id, actor).await {
         Ok(_) => ctx.redirect(&run_page(&owner, &name, run.run_id)),
@@ -112,13 +101,13 @@ pub(crate) async fn rerun_run(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let (_, run) = match writable_run(&ctx, &owner, &name, &run_id).await {
+    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
         Ok(found) => found,
         Err(response) => return response,
     };
     let actor = ctx
         .require_user()
-        .expect("writable_run checked the user")
+        .expect("readable_run checked the user")
         .id;
     match ctx.state.ci_runs.rerun_run(run.run_id, actor).await {
         Ok(new_run) => ctx.redirect(&run_page(&owner, &name, new_run.run_id)),

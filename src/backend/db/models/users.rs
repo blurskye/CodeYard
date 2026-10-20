@@ -130,6 +130,7 @@ pub struct OAuthState {
     pub pkce_verifier: String,
     pub provider: String,
     pub redirect_uri: Option<String>,
+    pub return_to: String,
     pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
 }

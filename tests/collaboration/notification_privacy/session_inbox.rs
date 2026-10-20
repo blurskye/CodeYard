@@ -939,7 +939,7 @@ async fn sqlite_request_pool(url: &str) -> sqlx::SqlitePool {
         .unwrap()
 }
 
-// The counters live on the caller's stack while the trace is installed.
+// A disabled progress handler owns the counters until connection teardown, including unwind.
 struct Trace {
     decisions: std::sync::atomic::AtomicUsize,
     candidates: std::sync::atomic::AtomicUsize,
@@ -953,7 +953,7 @@ unsafe extern "C" fn sql_trace(
 ) -> c_int {
     // SQLITE_TRACE_STMT supplies a NUL-terminated SQL string for this callback.
     let sql = unsafe { std::ffi::CStr::from_ptr(sql.cast()) }.to_bytes();
-    // SAFETY: `scope_queries` keeps the trace, and so its counters, alive until removal.
+    // SAFETY: the connection's progress handler retains the heap allocation.
     let trace = unsafe { &*argument.cast::<Trace>() };
     if sql.starts_with(b"SELECT s.scope, EXISTS(") {
         trace
@@ -985,21 +985,26 @@ async fn scope_queries(
         operation.await;
         return None;
     };
-    let trace = Trace {
+    let trace = Arc::new(Trace {
         decisions: AtomicUsize::new(0),
         candidates: AtomicUsize::new(0),
-    };
+    });
     {
         let mut connection = raw.acquire().await.unwrap();
         let mut handle = connection.lock_handle().await.unwrap();
-        // SAFETY: the single connection is locked, and `trace` outlives the tracing below.
+        let retained = trace.clone();
+        handle.set_progress_handler(0, move || {
+            let _ = &retained;
+            true
+        });
+        // SAFETY: the locked connection retains `trace` even if the operation is cancelled.
         assert_eq!(
             unsafe {
                 sqlite3_trace_v2(
                     handle.as_raw_handle().as_ptr().cast(),
                     1,
                     Some(sql_trace),
-                    (&trace as *const Trace).cast_mut().cast(),
+                    Arc::as_ptr(&trace).cast_mut().cast(),
                 )
             },
             0
@@ -1024,6 +1029,36 @@ async fn scope_queries(
         decisions: trace.decisions.load(Ordering::SeqCst),
         candidates: trace.candidates.load(Ordering::SeqCst),
     })
+}
+
+#[tokio::test]
+async fn sqlite_trace_survives_operation_panic_and_cancellation() {
+    for panic in [false, true] {
+        let fixture = crate::support::native_database::NativeDatabase::new().await;
+        let pool = fixture.pool.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            scope_queries(&pool, async {
+                started.send(()).unwrap();
+                if panic {
+                    panic!("fixture operation panic");
+                }
+                std::future::pending::<()>().await;
+            })
+            .await;
+        });
+        ready.await.unwrap();
+        if !panic {
+            task.abort();
+        }
+        assert!(task.await.is_err());
+        // The callback is still installed. It must not refer to the dropped future's stack.
+        let db::DbPool::Sqlite(raw) = &fixture.pool else {
+            unreachable!()
+        };
+        sqlx::query("SELECT 1").execute(raw).await.unwrap();
+        fixture.close().await;
+    }
 }
 
 async fn grouped_scope_work(pg: bool) {
@@ -1084,7 +1119,7 @@ async fn grouped_scope_work(pg: bool) {
         }
     }
     let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(&pool);
-    let mut events = broadcaster.subscribe();
+    let mut events = broadcaster.subscribe(user);
     if let Some(queries) = scope_queries(&pool, async {
         codeyard::backend::notifications::create::create_and_broadcast_notification(
             &pool,
@@ -1296,7 +1331,7 @@ async fn done_marks_are_announced(pg: bool) {
     let original = session(fixture.pool(), user).await;
     let pool = fixture.pool();
     let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(pool);
-    let mut events = broadcaster.subscribe();
+    let mut events = broadcaster.subscribe(user);
     async fn announced(
         pool: &db::DbPool,
         session: &str,

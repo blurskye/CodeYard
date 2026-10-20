@@ -42,6 +42,14 @@ pub struct Deployment {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RunProgress {
+    pub status: String,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SelectedRun {
     pub run: Run,
     pub logs: Vec<LogLine>,
@@ -121,17 +129,18 @@ fn run_form(model: &ActionsPage, run_id: &str, action: &str, label: &str) -> Ele
     }
 }
 
-pub(super) fn selected_run(model: &ActionsPage, selected: &SelectedRun) -> Element {
-    rsx! { SelectedRunView { model: model.clone(), selected: selected.clone() } }
+pub(super) fn selected_run(model: &ActionsPage, selected: std::rc::Rc<SelectedRun>) -> Element {
+    debug_assert!(model.selected.is_none());
+    rsx! { SelectedRunView { model: model.clone(), selected } }
 }
 
 #[component]
-fn SelectedRunView(model: ActionsPage, selected: SelectedRun) -> Element {
-    let projection = use_memo(use_reactive(
-        (&selected.logs, &selected.run.status),
-        |(lines, status)| std::rc::Rc::new(logs::project_logs(&lines, &status)),
-    ));
+fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> Element {
+    let projection = use_memo(use_reactive((&selected,), |(selected,)| {
+        std::rc::Rc::new(logs::project_logs(&selected.logs, &selected.run.status))
+    }));
     let jobs = projection();
+    let chosen = logs::selected_job(&jobs, model.value("workflow_job"));
     let model = &model;
     let selected = &selected;
     let run = &selected.run;
@@ -160,7 +169,7 @@ fn SelectedRunView(model: ActionsPage, selected: SelectedRun) -> Element {
                     span { class: "actions-sr-only", "Run ID {run.id}" }
                 }
                 div { class: "actions-run-heading-actions",
-                    if model.can_manage_runs && cancellable { {run_form(model, &run.id, "cancel", "Cancel run")} }
+                    if model.can_cancel && cancellable { {run_form(model, &run.id, "cancel", "Cancel run")} }
                     if model.can_manage_runs && !cancellable && run.head_sha.is_some() { {run_form(model, &run.id, "rerun", "Re-run")} }
                     RefreshLink { href: model.url(&[]) }
                 }
@@ -180,8 +189,8 @@ fn SelectedRunView(model: ActionsPage, selected: SelectedRun) -> Element {
                     div { class: "actions-sidebar-divider" }
                     h2 { class: "actions-sidebar-label", "Jobs" }
                     for (index, job) in jobs.iter().enumerate() {
-                        NavLink { class: if show_logs && (model.value("workflow_job") == job.name || (model.value("workflow_job").is_empty() && index == 0)) { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("view", "logs"), ("workflow_job", &job.name)]),
-                            {workflow_icon()} span { class: "actions-job-name", "{job.name}" }
+                        NavLink { class: if show_logs && chosen == Some(index) { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("view", "logs"), ("workflow_job", &job.key)]),
+                            {workflow_icon()} span { class: "actions-job-name", "{job.name}" if !job.stage.is_empty() { small { " · {job.stage}" } } }
                         }
                     }
                     if jobs.is_empty() { p { class: "actions-sidebar-note", "Jobs will appear when the runner starts." } }
@@ -209,7 +218,7 @@ fn SelectedRunView(model: ActionsPage, selected: SelectedRun) -> Element {
                     }
                 }
                 if show_logs {
-                    LogOutput { key: "{log_key}", model: model.clone(), selected: selected.clone(), jobs: jobs.clone() }
+                    LogOutput { key: "{log_key}", model: model.clone(), run: run.clone(), logs_empty: selected.logs.is_empty(), fetched_lines: selected.fetched_lines, logs_truncated: selected.logs_truncated, jobs: jobs.clone() }
                 } else {
                     section { class: "actions-summary-card", id: "run-summary", "aria-label": "Run summary",
                         dl { class: "actions-summary-grid",
@@ -231,8 +240,8 @@ fn SelectedRunView(model: ActionsPage, selected: SelectedRun) -> Element {
                         div { class: "actions-workflow-jobs",
                             if jobs.is_empty() { p { class: "actions-workflow-empty", "Jobs will appear when the runner starts." } }
                             for job in jobs.iter() {
-                                NavLink { class: "actions-workflow-job", href: model.url(&[("view", "logs"), ("workflow_job", &job.name)]),
-                                    span { class: "actions-workflow-job-name", {workflow_icon()} "{job.name}" }
+                                NavLink { class: "actions-workflow-job", href: model.url(&[("view", "logs"), ("workflow_job", &job.key)]),
+                                    span { class: "actions-workflow-job-name", {workflow_icon()} "{job.name}" if !job.stage.is_empty() { small { " · {job.stage}" } } }
                                     span { class: "actions-workflow-job-count", "{job.steps.len()} step" if job.steps.len() != 1 { "s" } }
                                 }
                             }

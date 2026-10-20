@@ -30,6 +30,7 @@ pub enum PasswordChangeError {
     Admission(AdmissionError),
     Password(PasswordError),
     InvalidCredentials,
+    UnchangedPassword,
     AccountUnavailable,
     CredentialsChanged,
 }
@@ -52,6 +53,9 @@ pub async fn change_password(
         .valid
     {
         return Err(PasswordChangeError::InvalidCredentials);
+    }
+    if user.must_change_password && input.current_password == input.new_password {
+        return Err(PasswordChangeError::UnchangedPassword);
     }
     let expected = user
         .password_hash
@@ -169,7 +173,7 @@ pub async fn create_managed_account(
     let user = match transitions::register_password(
         pool,
         input.username,
-        input.email,
+        input.email.filter(|email| !email.trim().is_empty()),
         &hash,
         Some((admin.id, administrator_session, make_admin)),
     )
@@ -201,6 +205,7 @@ pub enum SignupReviewError {
     Denied,
     Missing,
     Processed,
+    Conflict,
     AccountUnavailable,
 }
 
@@ -209,6 +214,7 @@ fn review_failure(error: anyhow::Error) -> SignupReviewError {
         Some(ReviewError::Denied) => SignupReviewError::Denied,
         Some(ReviewError::Missing) => SignupReviewError::Missing,
         Some(ReviewError::Processed) => SignupReviewError::Processed,
+        Some(ReviewError::Conflict) => SignupReviewError::Conflict,
         None => SignupReviewError::AccountUnavailable,
     }
 }

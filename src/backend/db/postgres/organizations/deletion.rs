@@ -89,6 +89,8 @@ pub async fn delete_organization_repository(
     repo: i64,
 ) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
     let mut tx = begin(pool).await?;
+    // Deletion locks the organization before fork ancestors; exclude notification reads.
+    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
@@ -98,11 +100,16 @@ pub async fn delete_organization_repository(
         "FOR NO KEY UPDATE",
     )
     .await?;
+    let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=$1 ORDER BY a.file_id")
+        .bind(repo).fetch_all(&mut *tx).await?;
     let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL RETURNING *")
         .bind(repo).bind(org).fetch_optional(&mut *tx).await?;
     let Some(deleted) = deleted else {
         return Ok(Conflict);
     };
+    for file in files {
+        crate::backend::db::postgres::files::delete_unlinked_release_file(&mut tx, file).await?;
+    }
     tx.commit().await?;
     Ok(Applied(deleted))
 }

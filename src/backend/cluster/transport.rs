@@ -10,7 +10,7 @@ use iroh::{
 };
 use serde::{Deserialize, Serialize};
 use std::{fmt, net::SocketAddr, str::FromStr, sync::Arc};
-use tokio::sync::OnceCell;
+use tokio::sync::{OnceCell, Semaphore};
 use tracing::warn;
 
 /// One-time handshake that adds a new node. The only protocol open to keys that are
@@ -132,6 +132,16 @@ pub struct Listen {
 /// takes effect on the next connection attempt.
 struct MembersOnly {
     pool: DbPool,
+    slots: Semaphore,
+}
+
+impl MembersOnly {
+    async fn check(&self, peer: PublicKey) -> Result<bool> {
+        let _slot = self.slots.try_acquire()?;
+        tokio::time::timeout(DIAL_TIMEOUT, active_member(&self.pool, peer))
+            .await
+            .context("membership check timed out")?
+    }
 }
 
 impl fmt::Debug for MembersOnly {
@@ -148,7 +158,7 @@ impl EndpointHooks for MembersOnly {
         if connection.side().is_client() || connection.alpn() == ALPN_PAIR {
             return AfterHandshakeOutcome::Accept;
         }
-        match active_member(&self.pool, connection.remote_id()).await {
+        match self.check(connection.remote_id()).await {
             Ok(true) => AfterHandshakeOutcome::Accept,
             Ok(false) => AfterHandshakeOutcome::Reject {
                 error_code: CLOSE_NOT_A_MEMBER.into(),
@@ -194,7 +204,10 @@ pub async fn bind(listen: &Listen, key: &NodeKey, pool: DbPool) -> Result<Endpoi
         .clear_ip_transports()
         .bind_addr(listen.bind)
         .map_err(|error| anyhow!("IROH_BIND {} is not usable: {error}", listen.bind))?
-        .hooks(MembersOnly { pool });
+        .hooks(MembersOnly {
+            pool,
+            slots: Semaphore::new(16),
+        });
     for address in &listen.advertise {
         builder = builder.external_addr(*address);
     }
@@ -372,6 +385,39 @@ pub async fn resolve_advertised(entries: &[String]) -> Result<Vec<SocketAddr>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn membership_checks_have_admission_limits_and_database_deadlines() {
+        let root = tempfile::tempdir().unwrap();
+        let url = format!(
+            "sqlite://{}?mode=rwc",
+            root.path().join("test.db").display()
+        );
+        let raw = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(std::time::Duration::from_secs(600))
+            .connect(&url)
+            .await
+            .unwrap();
+        let hook = MembersOnly {
+            pool: raw.clone().into(),
+            slots: Semaphore::new(1),
+        };
+        let peer = NodeKey::generate().public_key();
+        let slot = hook.slots.acquire().await.unwrap();
+        assert!(hook.check(peer).await.is_err());
+        drop(slot);
+        let held = raw.acquire().await.unwrap();
+        tokio::time::pause();
+        let start = tokio::time::Instant::now();
+        assert!(hook.check(peer).await.is_err());
+        assert!(
+            (DIAL_TIMEOUT..=DIAL_TIMEOUT + std::time::Duration::from_millis(2))
+                .contains(&start.elapsed())
+        );
+        assert_eq!(hook.slots.available_permits(), 1);
+        drop(held);
+    }
 
     #[test]
     fn relay_defaults_to_off_and_parses_the_documented_forms() {

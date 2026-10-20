@@ -112,7 +112,12 @@ async fn change(
     let Some(actor) = administrator(&ctx) else {
         return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
     };
-    let authority = db::cluster::Authority::Administrator(actor);
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let authority = db::cluster::Authority::Administrator {
+        user_id: actor,
+        session: &session,
+    };
     let pool = &ctx.state.pool;
     let result = match change {
         Change::Approve => cluster::approve(pool, authority, &name).await,

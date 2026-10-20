@@ -159,6 +159,22 @@ async fn find_contract(pg: bool) {
     assert!(html.contains("0 files"), "{html}");
     assert!(html.contains("No files match"), "{html}");
 
+    let (status, model) = anonymous
+        .model(&format!(
+            "/find_owner/public/find/main?q={}",
+            "a%20".repeat(2000)
+        ))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let codeyard::webui::app::Page::Repositories(codeyard::webui::pages::repos::page::Page::Find {
+        page,
+        ..
+    }) = model
+    else {
+        panic!("find page")
+    };
+    assert_eq!(page.query.chars().count(), 256);
+
     // A private repository answers an anonymous viewer like a missing one, and its owner reads it.
     let (status, html) = anonymous.page("/find_owner/secret/find/main").await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{html}");

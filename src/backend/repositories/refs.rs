@@ -117,6 +117,7 @@ pub async fn create_branch(
         Some(&[branch][..]),
         ci,
         actor,
+        crate::backend::db::models::AccessLevel::Owner,
     )
     .await
     .is_ok();
@@ -190,9 +191,16 @@ pub async fn delete_branch(
         .delete_branch_as(pool, repository.id, actor, branch)
         .await
         .map_err(publication_error)?;
-    pull_requests::refresh_open_pull_requests(pool, &repository, Some(&[branch][..]), ci, actor)
-        .await
-        .map_err(|_| RefError::AppliedFollowupFailed)?;
+    pull_requests::refresh_open_pull_requests(
+        pool,
+        &repository,
+        Some(&[branch][..]),
+        ci,
+        actor,
+        crate::backend::db::models::AccessLevel::Owner,
+    )
+    .await
+    .map_err(|_| RefError::AppliedFollowupFailed)?;
     Ok(())
 }
 

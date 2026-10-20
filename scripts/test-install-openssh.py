@@ -504,6 +504,15 @@ class Fixture(unittest.TestCase):
             with self.subTest(argv=argv), self.assertRaises(SystemExit):
                 self.run_helper("ssh-serve", argv, {"SSH_ORIGINAL_COMMAND": "x"})
 
+    def test_serve_helper_carries_deploy_key_kind_without_extra_authority(self):
+        _, args, environment = self.run_helper("ssh-serve", ["deploy:123"],
+            {"SSH_ORIGINAL_COMMAND": "git-upload-pack 'owner/repo.git'", "DATABASE_URL": "secret"})
+        self.assertEqual(args[-2:], ["--deploy-key-id", "123"])
+        self.assertEqual(environment, {"SSH_ORIGINAL_COMMAND": "git-upload-pack 'owner/repo.git'"})
+        for value in ["deploy:0", "deploy:-1", "deploy:1 --key-id 2", "token:1", "deploy:9223372036854775808"]:
+            with self.subTest(value=value), self.assertRaises(SystemExit):
+                self.run_helper("ssh-serve", [value], {"SSH_ORIGINAL_COMMAND": "x"})
+
     def test_keys_helper_uses_frozen_contract_and_empty_environment(self):
         executable, args, environment = self.run_helper("ssh-keys", ["git", "ssh-ed25519", "YWJj="], {"DATABASE_URL": "secret"})
         self.assertEqual(executable, str(self.o.binary))
@@ -515,7 +524,7 @@ class Fixture(unittest.TestCase):
                 self.run_helper("ssh-keys", argv, {})
         text = installer.render(self.o, self.h)[self.h.sudoers_dir / "codeyard"][0].decode()
         self.assertIn(" ^ssh serve --socket ", text)
-        self.assertIn("--key-id [1-9][0-9]*$", text)
+        self.assertIn("--(key|deploy-key)-id [1-9][0-9]*$", text)
         self.assertIn("NOPASSWD: NOSETENV:", text)
         self.assertNotIn("SETENV: ALL", text)
 

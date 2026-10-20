@@ -852,6 +852,7 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
                 ..Default::default()
             },
         }],
+        preferred: Default::default(),
     };
     // With nothing queued, a claim is answered with `None`. Getting that answer proves the
     // request reached the core over the second address.
@@ -887,6 +888,7 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
                 ..Default::default()
             },
         }],
+        preferred: Default::default(),
     };
     let claimed = queue
         .claim("slot-1", CiExecutionMode::Local)

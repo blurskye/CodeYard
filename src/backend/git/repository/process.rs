@@ -23,6 +23,8 @@ static SESSION_WAIT: LazyLock<Duration> = LazyLock::new(|| {
 static SESSION_CAPACITY: LazyLock<usize> = LazyLock::new(session_limit);
 static RPC_SESSIONS: LazyLock<Arc<Semaphore>> =
     LazyLock::new(|| Arc::new(Semaphore::new(session_capacity())));
+static FORWARDED_SESSIONS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(session_capacity())));
 static GIT_OPERATIONS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(16)));
 
 /// Git sessions at once on this node: `GIT_SESSION_LIMIT`, or four per CPU core and at least 16.
@@ -55,6 +57,11 @@ pub(crate) struct SessionsBusy;
 /// instead of failing every push or clone above the limit.
 pub(crate) async fn session_permit() -> Result<OwnedSemaphorePermit> {
     wait_for_slot(RPC_SESSIONS.clone(), *SESSION_WAIT).await
+}
+
+/// Forwarding must not reserve a slot needed to execute an incoming peer's Git process.
+pub(crate) async fn forwarding_permit() -> Result<OwnedSemaphorePermit> {
+    wait_for_slot(FORWARDED_SESSIONS.clone(), *SESSION_WAIT).await
 }
 
 pub(crate) async fn wait_for_slot(
@@ -127,6 +134,38 @@ pub(crate) fn command(executable: &Path) -> Result<Command> {
 
 pub(crate) fn git_command() -> Result<Command> {
     command(&executable()?)
+}
+
+pub(crate) const DEFAULT_COMMAND_MEMORY_MIB: u64 = 4096;
+
+/// Address space for one Git read command (blame, diff, merge-tree), in MiB:
+/// `GIT_COMMAND_MEMORY_MIB`, default 4096, 0 for no limit.
+static COMMAND_MEMORY: LazyLock<u64> = LazyLock::new(|| {
+    std::env::var("GIT_COMMAND_MEMORY_MIB")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_COMMAND_MEMORY_MIB)
+});
+
+/// Historical blobs may be much larger than their compressed objects or command output.
+pub(crate) fn limit_memory(command: &mut Command) {
+    let bytes = COMMAND_MEMORY.saturating_mul(1024 * 1024);
+    if bytes == 0 {
+        return;
+    }
+    // SAFETY: pre_exec only makes the async-signal-safe setrlimit syscall.
+    unsafe {
+        command.pre_exec(move || {
+            let limit = libc::rlimit {
+                rlim_cur: bytes as libc::rlim_t,
+                rlim_max: bytes as libc::rlim_t,
+            };
+            if libc::setrlimit(libc::RLIMIT_AS, &limit) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

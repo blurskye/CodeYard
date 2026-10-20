@@ -144,8 +144,9 @@ async fn target(
     tail: &str,
 ) -> Result<view::editor::UploadForm, Response> {
     let resolved = resolve(ctx, loaded, tail, false)?;
-    let reference = format!("refs/heads/{}", resolved.reference);
-    if !loaded.refs.is_empty() && !loaded.refs.contains_key(&reference) {
+    let branch = chrome::branch_name(&resolved.reference).to_owned();
+    let reference = format!("refs/heads/{branch}");
+    if !loaded.refs.is_empty() && !chrome::is_branch(loaded, &resolved.reference) {
         return Err(ctx.error(
             StatusCode::BAD_REQUEST,
             "Choose a branch, not a tag or detached commit, to upload files.",
@@ -158,7 +159,7 @@ async fn target(
             .get(&reference)
             .cloned()
             .unwrap_or_else(|| "unborn".into()),
-        branch: resolved.reference,
+        branch,
         directory: resolved.path,
         ..Default::default()
     };

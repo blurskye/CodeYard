@@ -156,10 +156,20 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
         )
         .await
         .unwrap();
-    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let row = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+                .await
+                .unwrap()
+                .unwrap();
+            if row.size_bytes > 0 {
+                break row;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background storage accounting did not finish");
     assert!(row.size_bytes > 0);
     assert_eq!(row.size_bytes as u64, f.store.size_bytes().await.unwrap());
     assert!(row.updated_at > chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap());
@@ -268,6 +278,43 @@ async fn failed_head_change_restores_the_previous_database_default() {
         )
         .await
         .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronization() {
+    let f = fixture().await;
+    let a = authority(&f).await;
+    f.repo
+        .reference("refs/heads/topic", f.second, false, "topic")
+        .unwrap();
+    let lock = crate::backend::git::locks::lock(f.store.local_dir().unwrap()).await;
+    let store = f.store.clone();
+    let pool = a.pool.clone();
+    let (repo_id, actor) = (a.repo_id, a.actor);
+    let request = tokio::spawn(async move {
+        store
+            .set_default_branch_as(&pool, repo_id, actor, "topic")
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    drop(lock);
+    let _lock = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::backend::git::locks::lock(f.store.local_dir().unwrap()),
+    )
+    .await
+    .unwrap();
+    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.default_branch, "topic");
+    assert_eq!(
+        f.repo.find_reference("HEAD").unwrap().symbolic_target(),
+        Some("refs/heads/topic")
     );
 }
 
@@ -525,6 +572,61 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
     });
 }
 
+#[tokio::test]
+async fn template_batch_is_bounded_pinned_and_keeps_storage_errors() {
+    let f = fixture().await;
+    let pinned = commit(
+        &f.repo,
+        "main",
+        Some(f.second),
+        "template.md",
+        "original",
+        "template",
+    );
+    commit(
+        &f.repo,
+        "main",
+        Some(pinned),
+        "template.md",
+        "changed",
+        "move branch",
+    );
+    let paths = vec!["template.md".into(), "src".into(), "missing".into()];
+    let texts = f
+        .store
+        .template_texts(&pinned.to_string(), &paths)
+        .await
+        .unwrap();
+    assert_eq!(texts[0].as_ref().unwrap().1, "original");
+    assert!(texts[1].is_none() && texts[2].is_none());
+    let error = f.store.blob_bytes("main", "src").await.unwrap_err();
+    assert_eq!(error.reason, Some(RepoErrorReason::NotFile));
+    assert_eq!(round_trip(&error), error);
+    assert!(f
+        .store
+        .template_texts("main", &vec!["template.md".into(); 23])
+        .await
+        .is_err());
+    let large = commit(
+        &f.repo,
+        "large",
+        None,
+        "huge.md",
+        &"x".repeat(65537),
+        "large",
+    );
+    assert!(f
+        .store
+        .template_texts(&large.to_string(), &["huge.md".into()])
+        .await
+        .unwrap()[0]
+        .is_none());
+    assert!(RepoStore::from_disk_path("/nonexistent-template-store")
+        .template_texts("main", &paths)
+        .await
+        .is_err());
+}
+
 async fn fixture() -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let store = RepoStore::create(root.path(), "main", None).await.unwrap();
@@ -676,6 +778,102 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
     assert_eq!(error.kind, ErrorKind::Invalid);
     assert!(base.repo.find_object(private_head, None).is_err());
     assert!(base.repo.find_reference("refs/pull/1/head").is_err());
+}
+
+#[tokio::test]
+async fn revoked_destination_read_denies_pull_head_publication() {
+    let base = fixture().await;
+    let source = fixture().await;
+    let a = authority(&base).await;
+    let other = db::users::accounts::create_user(&a.pool, "other_owner", None)
+        .await
+        .unwrap();
+    let db::DbPool::Sqlite(native) = &a.pool else {
+        unreachable!()
+    };
+    sqlx::query("UPDATE repositories SET owner_user_id=?, is_private=TRUE WHERE id=?")
+        .bind(other.id)
+        .bind(a.repo_id)
+        .execute(native)
+        .await
+        .unwrap();
+    db::repositories::access::grant_repo_access(
+        &a.pool,
+        a.actor,
+        a.repo_id,
+        db::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    let source_row = db::repositories::records::create_repository(
+        &a.pool,
+        a.actor,
+        "source",
+        None,
+        true,
+        source.store.location(),
+    )
+    .await
+    .unwrap();
+    let head = commit(
+        &source.repo,
+        "topic",
+        Some(source.second),
+        "secret.txt",
+        "private",
+        "private",
+    );
+    let prepared = crate::backend::git::repository::prepare_pull_head(
+        base.store.local_dir().unwrap(),
+        source.store.local_dir().unwrap(),
+        &head.to_string(),
+    )
+    .await
+    .unwrap();
+    db::repositories::access::revoke_repo_access(&a.pool, a.actor, a.repo_id)
+        .await
+        .unwrap();
+    let error = base
+        .store
+        .local()
+        .unwrap()
+        .publish_fetched_pull_head(
+            &a.pool,
+            a.repo_id,
+            source_row.id,
+            a.actor,
+            source.store.local().unwrap(),
+            1,
+            &head.to_string(),
+            None,
+            prepared,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Invalid);
+    assert!(base.repo.find_reference("refs/pull/1/head").is_err());
+    assert!(base.repo.find_object(head, None).is_err());
+}
+
+#[tokio::test]
+async fn branch_comparison_obeys_a_total_deadline() {
+    let f = fixture().await;
+    let error = crate::backend::git::branch_statuses(
+        f.store.local_dir().unwrap(),
+        "main",
+        &[f.first.to_string()],
+        std::time::Instant::now(),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("timed out"));
+    let counts = f
+        .store
+        .branch_statuses("main", &[f.first.to_string(), f.first.to_string()])
+        .await
+        .unwrap();
+    assert_eq!((counts[0].ahead, counts[0].behind), (0, 1));
+    assert_eq!((counts[1].ahead, counts[1].behind), (0, 1));
 }
 
 /// A commit on `branch`, by `name`, made at Unix time `time`, that sets `path` to `content`.

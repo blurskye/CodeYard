@@ -16,6 +16,20 @@ pub enum ProtectionWriteRefusal {
     InvalidStatusMetadata,
     #[error("A commit can have at most 1024 external status contexts")]
     StatusLimit,
+    #[error("A rule can require at most 100 checks of 512 bytes each")]
+    InvalidChecks,
+    #[error("A repository can have at most 100 protection rules")]
+    RuleLimit,
+}
+
+/// Room for the longest server-owned context, `gitserv/workflow/` and a workflow path.
+const MAX_CHECK_BYTES: usize = 512;
+
+pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWriteRefusal> {
+    if checks.len() > 100 || checks.iter().any(|check| check.len() > MAX_CHECK_BYTES) {
+        return Err(ProtectionWriteRefusal::InvalidChecks);
+    }
+    Ok(())
 }
 
 /// One rule as an administrator saves it. `Default` is the strictest rule, which is what

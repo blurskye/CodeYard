@@ -44,10 +44,11 @@ pub fn save_core(state_dir: &Path, ticket: &super::JoinTicket) -> Result<()> {
         public_key: ticket.node.to_string(),
         address: ticket.address.clone(),
     };
-    std::fs::write(
-        state_dir.join("cluster-peer.json"),
-        serde_json::to_vec(&peer)?,
-    )?;
+    use std::io::Write;
+    let mut file = tempfile::NamedTempFile::new_in(state_dir)?;
+    file.write_all(&serde_json::to_vec(&peer)?)?;
+    file.as_file().sync_all()?;
+    file.persist(state_dir.join("cluster-peer.json"))?;
     Ok(())
 }
 
@@ -88,9 +89,13 @@ pub async fn worker_context(
             address,
         });
     }
-    if saved.exists() {
+    let saved_peer = (|| -> Result<CorePeer> {
         let peer: CorePeer = serde_json::from_slice(&std::fs::read(&saved)?)?;
+        ensure!(!peer.address.is_empty(), "saved core has no address");
         peer.endpoint_addr()?;
+        Ok(peer)
+    })();
+    if let Ok(peer) = saved_peer {
         peers.push(peer);
     } else if let Some(ticket) = &settings.join_ticket {
         let membership = super::join(
@@ -125,6 +130,7 @@ pub async fn worker_context(
             repos_path: state_dir.to_owned(),
             peers: Arc::new(RwLock::new(HashMap::new())),
             unreachable: Default::default(),
+            ci_replicas: Default::default(),
         },
         peers,
     ))
@@ -133,6 +139,43 @@ pub async fn worker_context(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn malformed_saved_core_does_not_override_configured_peers() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("cluster-peer.json"), b"{broken").unwrap();
+        let key = super::super::NodeKey::generate().public_hex();
+        let settings = Settings::from_lookup(&|name| {
+            (name == "CLUSTER_PEERS").then(|| format!("{key}@tcp://127.0.0.1:7444"))
+        })
+        .unwrap()
+        .unwrap();
+        let (_, peers) = worker_context(root.path(), settings).await.unwrap();
+        assert_eq!(peers.len(), 1);
+        let ticket =
+            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone());
+        save_core(root.path(), &ticket).unwrap();
+        let peer: CorePeer =
+            serde_json::from_slice(&std::fs::read(root.path().join("cluster-peer.json")).unwrap())
+                .unwrap();
+        assert_eq!(peer.address, ticket.address);
+        // A replacement does not truncate a file that another reader has open.
+        let held = std::fs::File::open(root.path().join("cluster-peer.json")).unwrap();
+        let replacement = super::super::JoinTicket::new(
+            super::super::NodeKey::generate().public_key(),
+            ticket.address.clone(),
+        );
+        save_core(root.path(), &replacement).unwrap();
+        use std::io::Read;
+        let mut previous = Vec::new();
+        (&held).read_to_end(&mut previous).unwrap();
+        let previous: CorePeer = serde_json::from_slice(&previous).unwrap();
+        assert_eq!(previous.public_key, ticket.node.to_string());
+        let current: CorePeer =
+            serde_json::from_slice(&std::fs::read(root.path().join("cluster-peer.json")).unwrap())
+                .unwrap();
+        assert_eq!(current.public_key, replacement.node.to_string());
+    }
 
     #[tokio::test]
     async fn one_failed_resolution_keeps_usable_configured_and_saved_cores() {

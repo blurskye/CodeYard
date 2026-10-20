@@ -44,8 +44,17 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
                 false,
             )
         }
-        Commands::Serve { socket, key_id } => {
-            ensure!(key_id > 0, "invalid key ID");
+        Commands::Serve {
+            socket,
+            key_id,
+            deploy_key_id,
+        } => {
+            use crate::backend::repositories::git_sessions::ReceiveCredential;
+            let credential = match (key_id, deploy_key_id) {
+                (Some(id), None) => ReceiveCredential::SshKey(id),
+                (None, Some(id)) => ReceiveCredential::DeployKey(id),
+                _ => anyhow::bail!("one SSH or deploy key is required"),
+            };
             let command = std::env::var("SSH_ORIGINAL_COMMAND").map_err(|_| {
                 anyhow::anyhow!("SSH_ORIGINAL_COMMAND is required; interactive shells are disabled")
             })?;
@@ -58,7 +67,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
             (
                 socket,
                 Request::Serve {
-                    key_id,
+                    credential,
                     command,
                     git_protocol: protocol,
                 },

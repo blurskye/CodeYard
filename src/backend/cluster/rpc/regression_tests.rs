@@ -33,6 +33,7 @@ async fn context(path: &Path) -> NodeContext {
         repos_path: path.to_owned(),
         peers: Default::default(),
         unreachable: Default::default(),
+        ci_replicas: Default::default(),
     }
 }
 
@@ -177,11 +178,56 @@ async fn editor_and_streamed_admission_release_their_slots_at_the_deadline() {
     );
     let start = tokio::time::Instant::now();
     handler
-        .serve_session(request, link, tokio::time::Instant::now() + TIMEOUT)
+        .serve_session(
+            request,
+            link,
+            tokio::time::Instant::now() + TIMEOUT,
+            (
+                handler.session_headers.clone().try_acquire_owned().unwrap(),
+                handler.header_slot(context.key.public_key()).unwrap(),
+            ),
+        )
         .await
         .unwrap();
     assert!((TIMEOUT..=TIMEOUT + Duration::from_millis(2)).contains(&start.elapsed()));
     drop(held);
+}
+
+#[tokio::test]
+async fn streamed_admission_retains_bounded_permits_until_it_finishes() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(directory.path()).await;
+    let handler = RpcHandler::new(context.clone());
+    let peer = context.key.public_key();
+    let global = handler.session_headers.clone().try_acquire_owned().unwrap();
+    let local = handler.header_slot(peer).unwrap();
+    let request = Request {
+        repository: uuid::Uuid::new_v4(),
+        operation: Operation::GitSession(GitSession::new(GitService::UploadPack, true)),
+        actor: None,
+        ci_run: None,
+    };
+    let link = Link::tcp(
+        peer,
+        transport::ALPN_RPC,
+        tokio::io::empty(),
+        tokio::io::sink(),
+    );
+    let future = handler.serve_session(
+        request,
+        link,
+        tokio::time::Instant::now() + TIMEOUT,
+        (global, local),
+    );
+    assert_eq!(handler.session_headers.available_permits(), 15);
+    let other: Vec<_> = (0..3).map(|_| handler.header_slot(peer).unwrap()).collect();
+    assert!(handler.header_slot(peer).is_err());
+    // Queued headers do not hold buffered-RPC slots, and cancellation frees them.
+    assert_eq!(handler.slots.available_permits(), 16);
+    drop(future);
+    drop(other);
+    assert_eq!(handler.session_headers.available_permits(), 16);
+    assert!(handler.header_slot(peer).is_ok());
 }
 
 #[tokio::test]
@@ -336,6 +382,189 @@ async fn storage_git_admission_rechecks_live_tokens_keys_and_grants() {
             .await
             .is_err());
     }
+}
+
+#[tokio::test]
+async fn buffered_requests_are_drained_and_new_requests_are_refused() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(directory.path()).await;
+    let handler = RpcHandler::new(context.clone());
+    let (ready, reading) = tokio::sync::oneshot::channel();
+    let (mut client, reader) = tokio::io::duplex(4096);
+    let link = Link::tcp(
+        context.key.public_key(),
+        transport::ALPN_RPC,
+        HeaderReader {
+            reader,
+            ready: Some(ready),
+        },
+        tokio::io::sink(),
+    );
+    let serving = handler.clone();
+    let task = tokio::spawn(async move { serving.serve_link(link).await });
+    reading.await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), handler.sessions.drain())
+            .await
+            .is_err()
+    );
+    // An admitted buffered request remains tracked until its response is complete.
+    let header = serde_json::to_vec(&Request {
+        repository: uuid::Uuid::new_v4(),
+        operation: Operation::Refs,
+        actor: None,
+        ci_run: None,
+    })
+    .unwrap();
+    write_frame(&mut client, &header, MAX_JSON).await.unwrap();
+    write_frame(&mut client, b"", MAX_BYTES).await.unwrap();
+    task.await.unwrap().unwrap();
+    handler.sessions.drain().await;
+    let (ready, mut reading) = tokio::sync::oneshot::channel();
+    let (_, reader) = tokio::io::duplex(4096);
+    handler
+        .serve_link(Link::tcp(
+            context.key.public_key(),
+            transport::ALPN_RPC,
+            HeaderReader {
+                reader,
+                ready: Some(ready),
+            },
+            tokio::io::sink(),
+        ))
+        .await
+        .unwrap();
+    assert!(reading.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_failover() {
+    let directory = tempfile::tempdir().unwrap();
+    let context = context(directory.path()).await;
+    let pool = context.database().unwrap();
+    let key = NodeKey::generate();
+    let primary = db::cluster::register_own_node(
+        pool,
+        &key.public_hex(),
+        "primary",
+        &["storage".into()],
+        "test",
+    )
+    .await
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = crate::backend::cluster::NodeAddress {
+        tcp: vec![listener.local_addr().unwrap()],
+        ..Default::default()
+    };
+    db::cluster::record_node_heartbeat(
+        pool,
+        &key.public_hex(),
+        "test",
+        &serde_json::to_string(&address).unwrap(),
+        Some(100),
+    )
+    .await
+    .unwrap();
+    db::cluster::record_node_heartbeat(pool, &context.key.public_hex(), "test", "{}", Some(100))
+        .await
+        .unwrap();
+    let owner = db::users::accounts::create_user(pool, "owner", None)
+        .await
+        .unwrap();
+    let uuid = uuid::Uuid::new_v4();
+    let path = crate::backend::cluster::replicas::copy_path(directory.path(), uuid);
+    let repo = db::repositories::records::create_repository(
+        pool,
+        owner.id,
+        "repo",
+        None,
+        false,
+        &format!("/repos/{uuid}.git"),
+    )
+    .await
+    .unwrap();
+    db::cluster::place_repository(pool, repo.id, primary.id)
+        .await
+        .unwrap();
+    let DbPool::Sqlite(raw) = pool else {
+        unreachable!()
+    };
+    sqlx::query(
+        "INSERT INTO repository_replicas(repository_id,node_id,applied_version) VALUES(?,?,0)",
+    )
+    .bind(repo.id)
+    .bind(context.node_id)
+    .execute(raw)
+    .await
+    .unwrap();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    git2::Repository::init_bare(&path).unwrap();
+    let acceptor =
+        tokio_rustls::TlsAcceptor::from(crate::backend::cluster::tls::server_config(&key).unwrap());
+    let (ready, mut waiting) = tokio::sync::mpsc::channel(2);
+    let server = tokio::spawn(async move {
+        let mut links = tokio::task::JoinSet::new();
+        loop {
+            let (socket, _) = listener.accept().await.unwrap();
+            let acceptor = acceptor.clone();
+            let ready = ready.clone();
+            links.spawn(async move {
+                let mut stream = acceptor.accept(socket).await.unwrap();
+                read_frame(&mut stream, MAX_JSON).await.unwrap();
+                ready.send(()).await.unwrap();
+                std::future::pending::<()>().await;
+            });
+        }
+    });
+    for streamed in [false, true] {
+        let request = Request {
+            repository: uuid,
+            operation: if streamed {
+                Operation::GitSession(GitSession::new(GitService::UploadPack, true))
+            } else {
+                Operation::Refs
+            },
+            actor: None,
+            ci_run: None,
+        };
+        let caller = context.clone();
+        let task = tokio::spawn(async move {
+            if streamed {
+                caller
+                    .git_session(
+                        primary.id,
+                        request,
+                        crate::backend::repositories::store::GitStreams {
+                            input: &mut std::io::Cursor::new(b"0000"),
+                            output: &mut tokio::io::sink(),
+                            errors: &mut tokio::io::sink(),
+                        },
+                    )
+                    .await
+                    .map(|(_, status)| status.success())
+                    .unwrap()
+            } else {
+                caller
+                    .call(primary.id, request, b"")
+                    .await
+                    .unwrap()
+                    .0
+                    .result
+                    .is_ok()
+            }
+        });
+        waiting.recv().await.unwrap();
+        tokio::time::pause();
+        tokio::time::advance(TIMEOUT / 2 + Duration::from_millis(1)).await;
+        tokio::time::resume();
+        assert!(tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .unwrap()
+            .unwrap());
+    }
+    server.abort();
+    let _ = server.await;
 }
 
 #[tokio::test]

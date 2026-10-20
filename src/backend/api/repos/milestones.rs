@@ -48,6 +48,7 @@ pub(crate) fn milestone_choice_view(milestone: db::models::Milestone) -> view::M
 
 fn draft_of(milestone: &view::Milestone) -> MilestoneDraft {
     MilestoneDraft {
+        repository_id: None,
         title: milestone.title.clone(),
         description: milestone.description.clone().unwrap_or_default(),
         due_date: milestone.due_date.clone().unwrap_or_default(),
@@ -83,6 +84,7 @@ pub(crate) fn milestone_write_error(error: anyhow::Error) -> ApiFailure {
 /// A milestone form as typed.
 fn submitted_milestone(form: &HashMap<String, String>) -> MilestoneDraft {
     MilestoneDraft {
+        repository_id: form.get("repository_id").cloned(),
         title: field(form, "title"),
         description: field(form, "description"),
         due_date: field(form, "due_date"),
@@ -142,21 +144,29 @@ pub(crate) async fn native_index(
     let ctx = PageContext::load(state, headers, &uri).await?;
     let repo = repository(&ctx, &owner, &name).await?;
     let tab = state_tab(&ctx, &["open", "closed"])?;
-    let all = db::milestones::list_repo_milestones(&ctx.state.pool, repo.record.id, None)
+    let (open, closed) = db::milestones::count_milestones(&ctx.state.pool, repo.record.id)
         .await
         .map_err(|_| unavailable(&ctx))?;
     let counts = ListCounts {
-        open: all.iter().filter(|m| m.milestone.state == "open").count() as i64,
-        closed: all.iter().filter(|m| m.milestone.state == "closed").count() as i64,
-        all: all.len() as i64,
+        open,
+        closed,
+        all: open + closed,
     };
     let sort = ctx.query.get("sort").cloned().unwrap_or_default();
-    let mut items: Vec<view::Milestone> = all
-        .into_iter()
-        .filter(|m| m.milestone.state == tab)
-        .map(milestone_view)
-        .collect();
-    sort_milestones(&mut items, &sort);
+    let page_number = crate::backend::api::repos::chrome::number(
+        &ctx,
+        "page",
+        1,
+        crate::backend::api::repos::chrome::MAX_PAGE,
+    )?;
+    let offset = (page_number - 1) as i64 * db::milestones::MILESTONES_PER_PAGE;
+    let items =
+        db::milestones::list_milestones_page(&ctx.state.pool, repo.record.id, tab, &sort, offset)
+            .await
+            .map_err(|_| unavailable(&ctx))?
+            .into_iter()
+            .map(milestone_view)
+            .collect();
     Ok(ctx.page_model(
         "Milestones",
         page(view::Page::Milestones {
@@ -165,34 +175,11 @@ pub(crate) async fn native_index(
             counts,
             items,
             sort,
+            page_number,
+            has_next: offset + db::milestones::MILESTONES_PER_PAGE
+                < if tab == "open" { open } else { closed },
         }),
     ))
-}
-
-/// Puts the milestones in the order `sort` names. An unknown or empty name gives the closest
-/// due date first; milestones without a due date come last in both due date orders.
-fn sort_milestones(items: &mut [view::Milestone], sort: &str) {
-    let total = |m: &view::Milestone| m.open_items + m.closed_items;
-    match sort {
-        "furthest-due" => items.sort_by(|a, b| match (&a.due_date, &b.due_date) {
-            (Some(a), Some(b)) => b.cmp(a),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }),
-        "most-complete" => items.sort_by_key(|m| std::cmp::Reverse(m.progress())),
-        "least-complete" => items.sort_by_key(|m| m.progress()),
-        "most-issues" => items.sort_by_key(|m| std::cmp::Reverse(total(m))),
-        "least-issues" => items.sort_by_key(total),
-        "alphabetical" => items.sort_by_key(|m| m.title.to_lowercase()),
-        "reverse-alphabetical" => items.sort_by_key(|m| std::cmp::Reverse(m.title.to_lowercase())),
-        _ => items.sort_by(|a, b| match (&a.due_date, &b.due_date) {
-            (Some(a), Some(b)) => a.cmp(b),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        }),
-    }
 }
 
 /// Refuses the page to anyone who cannot manage milestones.
@@ -264,6 +251,24 @@ pub(crate) async fn native_create(
     let repo = repository(&ctx, &owner, &name).await?;
     require_writer(&ctx, &repo)?;
     let draft = submitted_milestone(&form);
+    if form
+        .get("repository_id")
+        .and_then(|id| id.parse::<i64>().ok())
+        != Some(repo.record.id)
+    {
+        return Ok(new_form_refused(
+            &ctx,
+            &repo,
+            &draft,
+            &(
+                StatusCode::CONFLICT,
+                Json(ApiError::new(
+                    "stale_target",
+                    "The repository changed. Your draft is preserved; reload before submitting.",
+                )),
+            ),
+        ));
+    }
     let input = match milestone_input(&draft) {
         Ok(input) => input,
         Err(failure) => return Ok(new_form_refused(&ctx, &repo, &draft, &failure)),
@@ -308,22 +313,33 @@ async fn milestone_page(
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Milestone not found."))?;
     let milestone_id = summary.milestone.id;
     let milestone = milestone_view(summary);
+    let page_number = crate::backend::api::repos::chrome::number(
+        ctx,
+        "page",
+        1,
+        crate::backend::api::repos::chrome::MAX_PAGE,
+    )?;
+    let (offset, limit) = crate::backend::api::repos::chrome::page_window(page_number, 30)
+        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid page."))?;
     let issue_state = match tab {
         "all" => None,
         open_or_closed => Some(open_or_closed),
     };
-    let entries = db::issues::list_repo_issues(
+    let mut entries = db::issues::list_repo_issues(
         &ctx.state.pool,
         repo.record.id,
         &ListFilter {
             state: issue_state,
             milestone: Pick::Is(milestone_id),
+            offset: offset as i64,
             ..Default::default()
         },
-        100,
+        (limit + 1) as i64,
     )
     .await
     .map_err(|_| unavailable(ctx))?;
+    let more_issues = entries.len() > limit;
+    entries.truncate(limit);
     let ids = entries
         .iter()
         .map(|entry| entry.issue.id)
@@ -345,19 +361,23 @@ async fn milestone_page(
         items.push(row);
     }
     // Filter before the limit; merged pull requests belong to the closed tab.
-    let pulls = db::pull_requests::records::list_repo_pull_requests(
+    let mut pulls = db::pull_requests::records::list_repo_pull_requests(
         &ctx.state.pool,
         repo.record.id,
         &ListFilter {
             state: issue_state,
             include_merged: true,
             milestone: Pick::Is(milestone_id),
+            offset: offset as i64,
             ..Default::default()
         },
-        100,
+        (limit + 1) as i64,
     )
     .await
     .map_err(|_| unavailable(ctx))?;
+    let has_next = (more_issues || pulls.len() > limit)
+        && page_number < crate::backend::api::repos::chrome::MAX_PAGE;
+    pulls.truncate(limit);
     let pull_ids = pulls
         .iter()
         .map(|value| value.pull_request.id)
@@ -405,6 +425,7 @@ async fn milestone_page(
                 state: tab.to_owned(),
                 items,
                 pull_requests: pull_items,
+                pagination: (page_number, has_next),
                 draft,
                 error,
             }),

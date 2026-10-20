@@ -21,7 +21,7 @@ pub enum KeyError {
 }
 
 pub fn validate_name(name: &str) -> Result<(), KeyError> {
-    if name.is_empty() || name.len() > 100 {
+    if name.is_empty() || name.len() > 100 || name.contains('\0') {
         Err(KeyError::InvalidName)
     } else {
         Ok(())
@@ -67,5 +67,14 @@ pub async fn delete(pool: &DbPool, actor: i64, key: i64) -> Result<(), KeyError>
         Ok(())
     } else {
         Err(KeyError::Missing)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn names_reject_nul() {
+        assert!(super::validate_name("ci\0key").is_err());
+        assert!(super::validate_name("ci key").is_ok());
     }
 }

@@ -74,6 +74,17 @@ pub async fn set_organization_avatar(
     if !administers(role) {
         return Ok(Denied);
     }
+    let previous: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT avatar_file_id FROM organizations WHERE id=$1")
+            .bind(org)
+            .fetch_one(&mut *tx)
+            .await?;
+    // Swaps must acquire both file locks in the same order.
+    let files: Vec<uuid::Uuid> = previous.into_iter().chain(file).collect();
+    sqlx::query("SELECT id FROM files WHERE id=ANY($1) ORDER BY id FOR UPDATE")
+        .bind(&files)
+        .fetch_all(&mut *tx)
+        .await?;
     if let Some(file) = file {
         // Activate verified form uploads in the same transaction as assignment.
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
@@ -87,11 +98,6 @@ pub async fn set_organization_avatar(
             return Ok(Conflict);
         }
     }
-    let previous: Option<uuid::Uuid> =
-        sqlx::query_scalar("SELECT avatar_file_id FROM organizations WHERE id=$1")
-            .bind(org)
-            .fetch_one(&mut *tx)
-            .await?;
     sqlx::query("UPDATE organizations SET avatar_file_id=$2,updated_at=NOW() WHERE id=$1")
         .bind(org)
         .bind(file)

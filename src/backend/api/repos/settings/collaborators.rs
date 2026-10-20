@@ -141,7 +141,16 @@ pub async fn add_collaborator(
     let access_level = match req.access_level.as_deref() {
         Some("admin") => db::models::AccessLevel::Admin,
         Some("write") => db::models::AccessLevel::Write,
-        _ => db::models::AccessLevel::Read,
+        None | Some("read") => db::models::AccessLevel::Read,
+        Some(_) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ApiError::new(
+                    "validation_error",
+                    "Choose read, write or admin collaborator access.",
+                )),
+            ))
+        }
     };
     let target_user = crate::backend::repositories::access::change_collaborator(
         &state.pool,

@@ -22,11 +22,21 @@ pub struct FindPage {
 
 /// Whether `path` matches `query`: every whitespace-separated term must appear in the path,
 /// ignoring case. An empty query matches every path.
+pub fn query_terms(query: &str) -> Vec<String> {
+    let query: String = query.chars().take(256).collect();
+    let mut terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
+    terms.sort_unstable();
+    terms.dedup();
+    terms
+}
+
 pub fn path_matches(path: &str, query: &str) -> bool {
+    matches_terms(path, &query_terms(query))
+}
+
+fn matches_terms(path: &str, terms: &[String]) -> bool {
     let path = path.to_lowercase();
-    query
-        .split_whitespace()
-        .all(|term| path.contains(&term.to_lowercase()))
+    terms.iter().all(|term| path.contains(term))
 }
 
 pub fn find(repo: &RepoChrome, page: &FindPage) -> Element {
@@ -47,16 +57,55 @@ pub fn find(repo: &RepoChrome, page: &FindPage) -> Element {
     )
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn query_normalization_is_bounded_case_folded_and_deduplicated() {
+        assert_eq!(query_terms("A a B b"), ["a", "b"]);
+        assert_eq!(query_terms(&"a ".repeat(2000)), ["a"]);
+        assert_eq!(query_terms(&"é".repeat(300))[0].chars().count(), 256);
+        assert!(matches_terms("docs/AB", &query_terms("A b a")));
+    }
+
+    #[test]
+    fn find_imports_the_native_field_when_it_mounts() {
+        let mut dom = VirtualDom::new_with_props(
+            |page: FindPage| rsx! { FindFiles { base: "/u/r".to_owned(), page } },
+            FindPage {
+                reference: "main".into(),
+                query: "foo".into(),
+                paths: vec!["foo.txt".into(), "bar.txt".into()],
+                truncated: false,
+            },
+        );
+        let edits = dom.rebuild_to_vec();
+        assert!(edits.edits.iter().any(|edit| matches!(
+            edit,
+            dioxus::core::Mutation::NewEventListener {
+                name,
+                ..
+            } if name == "mounted"
+        )));
+        let html = dioxus_ssr::render(&dom);
+        assert!(html.contains("value=\"foo\""));
+        assert!(html.contains("foo.txt"));
+        assert!(!html.contains("bar.txt"));
+    }
+}
+
 #[component]
 fn FindFiles(base: String, page: FindPage) -> Element {
     let initial = page.query.clone();
     let mut filter = use_signal(move || initial);
     let current = filter();
-    let filtering = !current.trim().is_empty();
+    let terms = query_terms(&current);
+    let filtering = !terms.is_empty();
     let matches: Vec<&String> = page
         .paths
         .iter()
-        .filter(|path| path_matches(path, &current))
+        .filter(|path| matches_terms(path, &terms))
         .collect();
     // Enter opens the first match once the page runs in the browser.
     let highlighted = matches
@@ -70,6 +119,16 @@ fn FindFiles(base: String, page: FindPage) -> Element {
             label { class: "repo-sr-only", "for": "repo-find-query", "Find a file by name" }
             input { id: "repo-find-query", class: "repo-find-input", r#type: "search", name: "q", value: current.clone(), maxlength: "256", placeholder: "Go to file", autocomplete: "off",
                 oninput: move |event| filter.set(event.value()),
+                onmounted: move |event| {
+                    #[cfg(target_arch = "wasm32")]
+                    { use wasm_bindgen::JsCast;
+                      if let Some(element) = event.data().downcast::<web_sys::Element>() {
+                          if let Some(input) = element.dyn_ref::<web_sys::HtmlInputElement>() { filter.set(input.value()); }
+                      }
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let _ = event;
+                },
                 onkeydown: move |event| {
                     #[cfg(target_arch = "wasm32")]
                     {

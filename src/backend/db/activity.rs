@@ -21,6 +21,31 @@ pub struct ActivityRow {
     pub repo_name: String,
 }
 
+pub struct ActivityBatch {
+    pub rows: Vec<ActivityRow>,
+    pub scanned: usize,
+}
+
+#[derive(sqlx::FromRow)]
+pub(crate) struct ScannedActivity {
+    #[sqlx(flatten)]
+    pub activity: ActivityRow,
+    pub readable: bool,
+}
+
+impl ActivityBatch {
+    pub(crate) fn from_scan(rows: Vec<ScannedActivity>) -> Self {
+        Self {
+            scanned: rows.len(),
+            rows: rows
+                .into_iter()
+                .filter(|row| row.readable)
+                .map(|row| row.activity)
+                .collect(),
+        }
+    }
+}
+
 native_operation!(crate::backend::db::postgres::activity::record_repository_push,
     crate::backend::db::sqlite::activity::record_repository_push,
     fn record_repository_push(
@@ -33,4 +58,4 @@ native_operation!(crate::backend::db::postgres::activity::record_repository_push
 
 native_operation!(crate::backend::db::postgres::activity::list_user_activity,
     crate::backend::db::sqlite::activity::list_user_activity,
-    fn list_user_activity(pool: &DbPool, user_id: i64, viewer: Option<i64>, limit: i64, offset: i64) -> Result<Vec<ActivityRow>>);
+    fn list_user_activity(pool: &DbPool, user_id: i64, viewer: Option<i64>, limit: i64, offset: i64) -> Result<ActivityBatch>);

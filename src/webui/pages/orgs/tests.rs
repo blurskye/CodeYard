@@ -53,6 +53,9 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         owned_repositories: 0,
         invitations: vec![],
         pending_invitations: vec![],
+        invitations_next: None,
+        pending_invitations_next: None,
+        ownerless_next: None,
         notice: None,
         can_manage: true,
         is_owner: true,
@@ -66,7 +69,7 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         teams_after: 0,
         members_cursor: 0,
         teams_cursor: 0,
-        tab: "overview".into(),
+        tab: "teams".into(),
         webhooks: None,
         message: None,
         draft,
@@ -509,6 +512,7 @@ fn member_roles_are_selects_that_keep_a_rejected_choice() {
         let mut page = sample_page(draft, vec![]);
         // The team panel has its own role select; this test reads the member rows only.
         page.selected_team = None;
+        page.tab = "members".into();
         page.members = members.clone();
         html(page)
     };
@@ -585,9 +589,13 @@ fn member_and_team_lists_link_onward_only_when_another_page_exists() {
     let mut more = sample_page(HashMap::new(), vec![]);
     more.more_members = true;
     more.more_teams = true;
-    let output = html(more);
-    assert!(output.contains(">Next members<"));
-    assert!(output.contains(">Next teams<"));
+    let teams = html(more.clone());
+    assert!(teams.contains(">Next teams<"));
+    assert!(!teams.contains(">Next members<"));
+    more.tab = "members".into();
+    let members = html(more);
+    assert!(members.contains(">Next members<"));
+    assert!(!members.contains(">Next teams<"));
 }
 
 #[test]
@@ -708,8 +716,11 @@ fn organization_sections_follow_the_url_without_scripts() {
                 name == tab,
                 "{link}"
             );
-            let section = opening_tag(&output, &format!("id=\"{section}\""));
-            assert_eq!(section.contains("hidden"), name != tab, "{section}");
+            let marker = format!("id=\"{section}\"");
+            assert_eq!(output.contains(&marker), name == tab, "{tab}: {section}");
+            if name == tab {
+                assert!(!opening_tag(&output, &marker).contains("hidden"));
+            }
         }
     }
 }
@@ -792,6 +803,7 @@ fn public_team_page_empty_states_and_hidden_manage_link() {
 /// A plain member's view of the selected organization, with a team open.
 fn member_page() -> Page {
     let mut page = sample_page(HashMap::new(), vec![]);
+    page.tab = "members".into();
     page.can_manage = false;
     page.is_owner = false;
     page.members = vec![
@@ -811,7 +823,13 @@ fn member_page() -> Page {
 
 #[test]
 fn members_get_a_read_only_organization() {
-    let output = html(member_page());
+    let mut page = member_page();
+    page.tab = "overview".into();
+    let mut output = html(page.clone());
+    page.tab = "members".into();
+    output.push_str(&html(page.clone()));
+    page.tab = "teams".into();
+    output.push_str(&html(page));
     assert!(output.contains("Organization profile"));
     assert!(output.contains("No description yet."));
     assert!(output.contains("href=\"/alice\""));
@@ -848,7 +866,11 @@ fn owners_get_inline_member_controls_and_a_danger_card_for_delete() {
     let mut page = member_page();
     page.can_manage = true;
     page.is_owner = true;
-    let output = html(page);
+    let mut output = html(page.clone());
+    page.tab = "overview".into();
+    output.push_str(&html(page.clone()));
+    page.tab = "teams".into();
+    output.push_str(&html(page));
     for shown in [
         "Save profile",
         "Organization picture",
@@ -884,8 +906,13 @@ fn owners_confirm_each_removal_by_username_and_see_each_role_once() {
     let removals = output.matches("value=\"remove-member\"").count()
         + output.matches("value=\"remove-team-member\"").count();
     assert!(removals >= 2);
-    // The organization delete card adds one more confirmation field for the owner.
-    assert_eq!(output.matches("name=\"confirm\"").count(), removals + 1);
+    // The organization delete confirmation belongs to Overview, not Members.
+    assert_eq!(output.matches("name=\"confirm\"").count(), removals);
+    let mut overview = member_page();
+    overview.can_manage = true;
+    overview.is_owner = true;
+    overview.tab = "overview".into();
+    assert_eq!(html(overview).matches("name=\"confirm\"").count(), 1);
     assert!(output.contains("Type alice to confirm"));
     assert!(output.contains("Type bob to confirm"));
     // A manageable row shows its role in the select, not in a second badge.
@@ -902,10 +929,13 @@ fn recovery_card_asks_for_the_organization_name_as_confirmation() {
 
 #[test]
 fn only_owners_see_the_delete_card() {
-    let owner = html(sample_page(HashMap::new(), vec![]));
+    let mut owner_page = sample_page(HashMap::new(), vec![]);
+    owner_page.tab = "overview".into();
+    let owner = html(owner_page);
     assert!(owner.contains("Delete this organization"));
     assert!(owner.contains("value=\"delete-organization\""));
     let mut page = sample_page(HashMap::new(), vec![]);
+    page.tab = "overview".into();
     page.is_owner = false;
     let admin = html(page);
     assert!(!admin.contains("Delete this organization"));
@@ -915,6 +945,7 @@ fn only_owners_see_the_delete_card() {
 #[test]
 fn organization_delete_is_a_centred_dialog_that_names_its_repositories() {
     let mut page = sample_page(HashMap::new(), vec![]);
+    page.tab = "overview".into();
     page.owned_repositories = 2;
     let output = html(page);
     // The button opens the dialog by its fragment. Cancel reloads the page, which closes it.
@@ -936,6 +967,7 @@ fn a_refused_organization_delete_shows_its_message_by_the_button() {
         ("confirm".to_owned(), "wrong".to_owned()),
     ]);
     let mut page = sample_page(draft, vec![]);
+    page.tab = "overview".into();
     page.message = Some("Type the organization name to confirm deletion.".into());
     let output = html(page);
     assert!(output.contains("Type the organization name to confirm deletion."));
@@ -1073,7 +1105,8 @@ fn pending_invitations_show_cancel_to_owners_and_accept_or_decline_to_invitees()
     let mut page = sample_page(HashMap::new(), vec![]);
     page.can_manage = true;
     page.tab = "members".into();
-    page.pending_invitations = vec![Member {
+    page.pending_invitations = vec![super::page::PendingInvitation {
+        id: 1,
         user_id: 44,
         username: "dana".into(),
         role: "admin".into(),
@@ -1095,6 +1128,7 @@ fn pending_invitations_show_cancel_to_owners_and_accept_or_decline_to_invitees()
     let mut list = sample_page(HashMap::new(), vec![]);
     list.selected = None;
     list.invitations = vec![Invitation {
+        id: 1,
         org_id: 7,
         name: "acme".into(),
         display_name: Some("Acme".into()),

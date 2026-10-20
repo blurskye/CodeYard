@@ -26,7 +26,7 @@ pub async fn upsert_branch_protection_rule(
 ) -> Result<BranchProtectionRule> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        crate::backend::db::postgres::discussions::lock_admin_authority(
+        crate::backend::db::postgres::discussions::lock_repository_mutation_authority(
             &mut tx,
             input.actor_id,
             input.repo_id,
@@ -35,6 +35,12 @@ pub async fn upsert_branch_protection_rule(
         ProtectionWriteRefusal::Denied
     );
     crate::backend::db::repositories::protection::validate_branch_pattern(input.pattern)?;
+    crate::backend::db::repositories::protection::validate_required_checks(
+        &input.required_status_checks,
+    )?;
+    let full: bool = sqlx::query_scalar("SELECT (SELECT COUNT(*) FROM branch_protection_rules WHERE repo_id=$1) >= 100 AND NOT EXISTS(SELECT 1 FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2)")
+        .bind(input.repo_id).bind(input.pattern).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(!full, ProtectionWriteRefusal::RuleLimit);
     let rule = sqlx::query_as::<_, BranchProtectionRule>(
         r#"
         INSERT INTO branch_protection_rules (

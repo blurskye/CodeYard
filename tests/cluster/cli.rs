@@ -21,6 +21,79 @@ fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
+#[tokio::test]
+async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
+    use crate::support::native_database::PostgresDatabase;
+    use codeyard::backend::db;
+    let database = PostgresDatabase::new().await;
+    let user = db::users::accounts::create_user(&database.pool, "owner", None)
+        .await
+        .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join(".env"), "").unwrap();
+    let key = NodeKey::generate();
+    let node = db::cluster::register_own_node(
+        &database.pool,
+        &key.public_hex(),
+        "operator",
+        &["storage".into()],
+        "test",
+    )
+    .await
+    .unwrap();
+    let url = database.connection_url();
+    let secret = key.secret_hex();
+    let environment = [
+        ("DATABASE_URL", url.as_str()),
+        ("NODE_KEY", secret.as_str()),
+        ("NODE_NAME", "operator"),
+    ];
+    for role in ["storage", "web", "ssh"] {
+        let db::DbPool::Postgres(pool) = &database.pool else {
+            unreachable!()
+        };
+        sqlx::query("UPDATE nodes SET roles = $1 WHERE id = $2")
+            .bind(vec![role.to_owned()])
+            .bind(node.id)
+            .execute(pool)
+            .await
+            .unwrap();
+        let output = run(
+            directory.path(),
+            &["repo", "create", "owner", "refused"],
+            &environment,
+        );
+        assert!(
+            !output.status.success(),
+            "no storage node is online: {role}"
+        );
+        let error = text(&output.stderr);
+        if role == "storage" {
+            assert!(
+                error.contains("require an active web or ssh node identity"),
+                "{error}"
+            );
+        } else {
+            assert!(
+                !error.contains("require an active web or ssh node identity"),
+                "{error}"
+            );
+            assert!(error.contains("storage node unavailable"), "{error}");
+        }
+        assert!(
+            db::repositories::records::list_user_repositories(&database.pool, user.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let stored = db::cluster::get_node_by_public_key(&database.pool, &key.public_hex())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.id, node.id);
+}
+
 #[test]
 fn keygen_prints_a_matching_key_pair_and_writes_nothing() {
     let directory = tempfile::tempdir().unwrap();

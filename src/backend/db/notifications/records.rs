@@ -25,41 +25,33 @@ native_operation!(crate::backend::db::postgres::notifications::records::create_n
     input: NewNotification<'_>,
 ) -> Result<Notification>);
 
-/// Refresh repository item URLs from the stable repository ID after a rename or transfer.
-pub async fn refresh_links(pool: &DbPool, notifications: &mut [Notification]) -> Result<()> {
-    use crate::backend::db::repositories::records;
-    let ids: Vec<_> = notifications
-        .iter()
-        .filter_map(|n| n.repo_id)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let repositories = records::get_repositories_by_ids(pool, &ids).await?;
-    let owners = records::repository_owner_names(pool, &ids).await?;
-    for notification in notifications {
-        let Some(repo) = repositories
-            .iter()
-            .find(|repo| Some(repo.id) == notification.repo_id)
-        else {
-            continue;
-        };
-        let Some(owner) = owners.get(&repo.id) else {
-            continue;
-        };
-        if let Some(link) = notification.link.as_mut() {
-            if let Some(suffix) = link.strip_prefix('/').and_then(|s| s.splitn(3, '/').nth(2)) {
-                if suffix.starts_with("issues/") || suffix.starts_with("pulls/") {
-                    *link = format!(
-                        "/{}/{}/{}",
-                        crate::webui::encode_component(owner),
-                        crate::webui::encode_component(&repo.name),
-                        suffix
-                    );
-                }
-            }
+/// Uses names read inside the native authorization transaction.
+pub(crate) fn refresh_link(notification: &mut Notification, owner: &str, name: &str) {
+    if notification.kind == "ci_completed" {
+        if let Some(run_id) = notification
+            .metadata
+            .get("run_id")
+            .and_then(Value::as_str)
+            .and_then(|id| uuid::Uuid::parse_str(id).ok())
+        {
+            notification.link = Some(format!(
+                "/{}/{}/actions?job={run_id}",
+                crate::webui::encode_component(owner),
+                crate::webui::encode_component(name),
+            ));
+        }
+        return;
+    }
+    if let Some(link) = notification.link.as_mut() {
+        if let Some(suffix) = link.strip_prefix('/').and_then(|s| s.splitn(3, '/').nth(2)) {
+            *link = format!(
+                "/{}/{}/{}",
+                crate::webui::encode_component(owner),
+                crate::webui::encode_component(name),
+                suffix
+            );
         }
     }
-    Ok(())
 }
 
 /// Current original-session delivery projection. Broadcasts are only hints;

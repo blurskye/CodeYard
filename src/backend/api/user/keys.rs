@@ -7,7 +7,7 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::identity::keys;
 use crate::backend::identity::keys::KeyError;
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
@@ -25,6 +25,18 @@ pub struct SshKeyResponse {
 
 impl From<db::models::SshKey> for SshKeyResponse {
     fn from(key: db::models::SshKey) -> Self {
+        Self {
+            id: key.id,
+            name: key.name,
+            fingerprint: key.fingerprint,
+            key_type: key.key_type,
+            created_at: key.created_at.to_rfc3339(),
+        }
+    }
+}
+
+impl From<db::users::ssh_keys::SshKeySummary> for SshKeyResponse {
+    fn from(key: db::users::ssh_keys::SshKeySummary) -> Self {
         Self {
             id: key.id,
             name: key.name,
@@ -74,12 +86,17 @@ fn key_mutation_actor(ctx: &PageContext, form: &Fields) -> Result<i64, Response>
 
 pub async fn list_ssh_keys(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<SshKeyResponse>>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let rows = db::users::ssh_keys::list_user_keys(&state.pool, user.id)
-        .await
-        .map_err(|_| key_failure(KeyError::Unavailable))?;
+    let rows = db::users::ssh_keys::list_user_key_summaries(
+        &state.pool,
+        user.id,
+        query.get("after").and_then(|v| v.parse().ok()).unwrap_or(0),
+    )
+    .await
+    .map_err(|_| key_failure(KeyError::Unavailable))?;
     Ok(Json(rows.into_iter().map(SshKeyResponse::from).collect()))
 }
 

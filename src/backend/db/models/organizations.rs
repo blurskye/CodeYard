@@ -61,6 +61,7 @@ pub struct OrgInvitation {
 /// A pending invitation as its invitee sees it, with the organization's name.
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct ReceivedInvitation {
+    pub id: i64,
     pub org_id: i64,
     pub org_name: String,
     pub org_display_name: Option<String>,

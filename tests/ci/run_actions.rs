@@ -133,6 +133,22 @@ async fn contract(pg: bool) {
     assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let (_, page) = dave.page(&format!("/alice/proj/actions?job={job}")).await;
     assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
+    let (_, page) = bob.page(&format!("/alice/proj/actions?job={job}")).await;
+    assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
+    let logs = db::ci::list_ci_logs(f.pool(), run.id, 10).await.unwrap();
+    let incremental = alice
+        .expect(
+            "GET",
+            &format!(
+                "/api/ci/jobs/{job}/history?after={}",
+                logs.last().unwrap().id
+            ),
+            serde_json::Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(incremental["logs"], json!([]));
+    assert_eq!(incremental["progress"]["status"], "running");
 
     // Global selections authorize before redirecting to the canonical run controls.
     let global = alice
@@ -250,7 +266,14 @@ async fn contract(pg: bool) {
     assert_eq!(again.workflow_path, run.workflow_path);
     assert_eq!(again.status, "queued");
 
-    // The person who started the first run cancels it.
+    // Archiving disables execution, not the starter/admin's cancellation authority.
+    f.execute(
+        "UPDATE repositories SET is_archived=TRUE WHERE id=$1",
+        &[repo.id],
+    )
+    .await;
+    let (_, page) = alice.page(&format!("/alice/proj/actions?job={job}")).await;
+    assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let reply = alice.form_reply(&cancel, &[]).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     assert!(
@@ -269,6 +292,79 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(cancelled.status, "cancelled");
+
+    // Filtering precedes the history limit, and keyset links reach older matches.
+    f.execute(
+        "UPDATE repositories SET is_archived=FALSE WHERE id=$1",
+        &[repo.id],
+    )
+    .await;
+    for _ in 0..205 {
+        db::ci::enqueue_ci_run(
+            f.pool(),
+            db::ci::NewCiRun {
+                repo_id: repo.id,
+                triggered_by_id: alice_id,
+                pipeline: "ci",
+                event: "workflow_dispatch",
+                pull_request_id: None,
+                branch: "main",
+                head_sha: run.head_sha.as_deref().unwrap(),
+                workflow_path: ".github/workflows/new.yml",
+                workflow_blobs: &json!({}),
+                workflow_inputs: None,
+                environment: None,
+                manual: true,
+            },
+            &[alice_id, bob_id],
+        )
+        .await
+        .unwrap();
+    }
+    let url = "/alice/proj/actions?workflow=.github%2Fworkflows%2Fci.yml&branch=main&event=workflow_dispatch&limit=1";
+    let (_, page) = alice.model(url).await;
+    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(page)) = page
+    else {
+        panic!("Actions model")
+    };
+    assert_eq!(page.runs.len(), 1);
+    assert_eq!(page.runs[0].id, again.run_id.to_string());
+    let before = page.next_before.unwrap();
+    let (_, page) = alice
+        .model(&format!(
+            "{url}&before={before}&actor=alice&status=cancelled&q={}",
+            &run.head_sha.as_deref().unwrap()[..7]
+        ))
+        .await;
+    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(page)) = page
+    else {
+        panic!("Actions model")
+    };
+    assert_eq!(page.runs.len(), 1);
+    assert_eq!(page.runs[0].id, job);
+    assert!(page.next_before.is_none());
+    let (_, page) = alice.model(&format!("/alice/proj/actions?q={job}")).await;
+    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(page)) = page
+    else {
+        panic!("Actions model")
+    };
+    assert_eq!(page.runs.len(), 1);
+    assert_eq!(page.runs[0].id, job);
+    match &f {
+        Database::Postgres(f) => {
+            let definition: String = sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname=current_schema() AND indexname='idx_ci_deployments_run'").fetch_one(&f.raw).await.unwrap();
+            assert!(definition.contains("(run_id)"));
+        }
+        Database::Sqlite(f) => {
+            let definition: String = sqlx::query_scalar(
+                "SELECT sql FROM sqlite_master WHERE name='idx_ci_deployments_run'",
+            )
+            .fetch_one(&f.raw)
+            .await
+            .unwrap();
+            assert!(definition.contains("(run_id)"));
+        }
+    }
     f.finish().await;
 }
 
@@ -384,6 +480,11 @@ async fn pull_request_run_is_run_again(pg: bool) {
     // The run page offers Re-run for the finished pull request run.
     let (_, page) = alice.page(&format!("/alice/proj/actions?job={job}")).await;
     assert!(page.contains(&format!("action=\"{rerun}\"")), "{page}");
+
+    let (_, page) = carol.page(&format!("/alice/proj/actions?job={job}")).await;
+    assert!(!page.contains(&format!("action=\"{rerun}\"")), "{page}");
+    let (_, page) = carol.page("/alice/proj/actions").await;
+    assert!(!page.contains("Run workflow"), "{page}");
 
     // A reader cannot re-run it, and a writer who may not start runs is refused.
     let (status, page) = dave.form(&rerun, &[]).await;

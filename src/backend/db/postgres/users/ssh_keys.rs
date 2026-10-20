@@ -44,6 +44,7 @@ async fn insert_ssh_key(
         .to_string();
 
     let mut tx = pool.begin().await?;
+    super::transitions::lock_membership_shared(&mut tx).await?;
     let active: Option<bool> = sqlx::query_scalar(
         "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id = $1 FOR SHARE",
     )
@@ -71,10 +72,12 @@ async fn insert_ssh_key(
         .bind(user_id)
         .fetch_optional(&mut *tx)
         .await?;
-        anyhow::ensure!(
-            expiry.is_some_and(|expiry| expiry > Utc::now()),
-            SshKeyWriteRefusal::InvalidSession
-        );
+        let live: bool =
+            sqlx::query_scalar("SELECT COALESCE($1::timestamptz>clock_timestamp(),FALSE)")
+                .bind(expiry)
+                .fetch_one(&mut *tx)
+                .await?;
+        anyhow::ensure!(live, SshKeyWriteRefusal::InvalidSession);
     }
     let result = sqlx::query_as::<_, SshKey>(
         r#"
@@ -209,6 +212,15 @@ pub async fn get_user_by_ssh_key_id(pool: &PgPool, key_id: i64) -> Result<Option
     Ok(get_user_by_key_fingerprint(pool, &fingerprint)
         .await?
         .filter(|identity| identity.key.id == key_id))
+}
+
+pub async fn list_user_key_summaries(
+    pool: &PgPool,
+    user_id: i64,
+    after: i64,
+) -> Result<Vec<crate::backend::db::users::ssh_keys::SshKeySummary>> {
+    Ok(sqlx::query_as("SELECT id,name,fingerprint,key_type,created_at FROM ssh_keys WHERE user_id=$1 AND id>$2 ORDER BY id LIMIT 100")
+        .bind(user_id).bind(after.max(0)).fetch_all(pool).await?)
 }
 
 pub async fn list_user_keys(pool: &PgPool, user_id: i64) -> Result<Vec<SshKey>> {

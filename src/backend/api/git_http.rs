@@ -285,7 +285,10 @@ async fn rpc(
         Ok(repo) => repo,
         Err(response) => return response,
     };
-    let permit = match git_process::session_permit().await {
+    let permit = match repo_store(&repo, state.cluster.as_ref())
+        .session_permit()
+        .await
+    {
         Ok(permit) => permit,
         Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "Git sessions busy").into_response(),
     };

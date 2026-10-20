@@ -98,11 +98,12 @@ native_operation!(crate::backend::db::postgres::users::accounts::update_user_pro
     fn update_user_profile(
     pool: &DbPool,
     user_id: i64,
+    session: &str,
     display_name: Option<&str>,
     bio: Option<&str>,
     location: Option<&str>,
     website: Option<&str>,
-) -> Result<User>);
+) -> Result<Option<User>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::count_matching_users,
     crate::backend::db::sqlite::users::accounts::count_matching_users,
@@ -111,9 +112,17 @@ native_operation!(crate::backend::db::postgres::users::accounts::list_admin_user
     crate::backend::db::sqlite::users::accounts::list_admin_users,
     fn list_admin_users(pool: &DbPool, text: &str, limit: i64, offset: i64) -> Result<Vec<AdminUser>>);
 
+native_operation!(crate::backend::db::postgres::users::accounts::admin_totals,
+    crate::backend::db::sqlite::users::accounts::admin_totals,
+    fn admin_totals(pool: &DbPool) -> Result<(i64, i64, i64)>);
+
+native_operation!(crate::backend::db::postgres::users::accounts::recent_admin_accounts,
+    crate::backend::db::sqlite::users::accounts::recent_admin_accounts,
+    fn recent_admin_accounts(pool: &DbPool) -> Result<Vec<AdminAccountSummary>>);
+
 native_operation!(crate::backend::db::postgres::users::accounts::list_admin_account_summaries,
     crate::backend::db::sqlite::users::accounts::list_admin_account_summaries,
-    fn list_admin_account_summaries(pool: &DbPool) -> Result<Vec<AdminAccountSummary>>);
+    fn list_admin_account_summaries(pool: &DbPool, limit: i64, offset: i64) -> Result<Vec<AdminAccountSummary>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::list_admin_activity_points,
     crate::backend::db::sqlite::users::accounts::list_admin_activity_points,

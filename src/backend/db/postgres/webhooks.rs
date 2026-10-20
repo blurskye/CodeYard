@@ -9,7 +9,41 @@ use sqlx::{PgPool, Postgres, Transaction};
 const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at";
 const DELIVERY_COLUMNS: &str = "id, webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body, delivered_at";
 
-pub async fn list_webhooks(pool: &PgPool, owner: HookOwner) -> Result<Vec<Webhook>> {
+pub async fn read_settings(
+    pool: &PgPool,
+    owner: HookOwner,
+    actor_id: i64,
+    hook: Option<i64>,
+    delivery: Option<i64>,
+    after: i64,
+) -> Result<Option<crate::backend::db::webhooks::HookSettings>> {
+    let mut tx = pool.begin().await?;
+    if !may_manage_hooks(&mut tx, owner, actor_id).await? {
+        return Ok(None);
+    }
+    let mut settings = crate::backend::db::webhooks::HookSettings {
+        hooks: list_webhook_summaries(&mut *tx, owner, after).await?,
+        hook: None,
+        deliveries: Vec::new(),
+        delivery: None,
+    };
+    if let Some(id) = hook {
+        settings.hook = get_webhook(&mut *tx, owner, id).await?;
+        if let Some(row) = &settings.hook {
+            settings.deliveries = list_delivery_summaries(&mut *tx, row.id).await?;
+            if let Some(id) = delivery {
+                settings.delivery = get_delivery(&mut *tx, row.id, id).await?;
+            }
+        }
+    }
+    tx.commit().await?;
+    Ok(Some(settings))
+}
+
+pub async fn list_webhooks<'e>(
+    pool: impl sqlx::Executor<'e, Database = Postgres>,
+    owner: HookOwner,
+) -> Result<Vec<Webhook>> {
     let sql = format!(
         "SELECT {COLUMNS} FROM webhooks WHERE {} = $1 ORDER BY id",
         owner.column()
@@ -20,7 +54,34 @@ pub async fn list_webhooks(pool: &PgPool, owner: HookOwner) -> Result<Vec<Webhoo
         .await?)
 }
 
-pub async fn get_webhook(pool: &PgPool, owner: HookOwner, id: i64) -> Result<Option<Webhook>> {
+pub async fn list_webhook_summaries<'e>(
+    pool: impl sqlx::Executor<'e, Database = Postgres>,
+    owner: HookOwner,
+    after: i64,
+) -> Result<Vec<crate::backend::db::webhooks::WebhookSummary>> {
+    let sql = format!(
+        "SELECT h.id, h.payload_url, h.events, h.active, d.id AS delivery_id, d.status_code
+         FROM webhooks h LEFT JOIN webhook_deliveries d ON d.id =
+         (SELECT id FROM webhook_deliveries WHERE webhook_id=h.id ORDER BY id DESC LIMIT 1)
+         WHERE h.{} = $1 AND h.id > $2 ORDER BY h.id LIMIT 31",
+        owner.column()
+    );
+    Ok(sqlx::query_as(&sql)
+        .bind(owner.id())
+        .bind(after)
+        .fetch_all(pool)
+        .await?)
+}
+
+pub async fn webhook_secret_sample(pool: &PgPool) -> Result<Option<(Vec<u8>, Vec<u8>)>> {
+    Ok(sqlx::query_as("SELECT encrypted_secret, secret_nonce FROM webhooks WHERE encrypted_secret IS NOT NULL LIMIT 1").fetch_optional(pool).await?)
+}
+
+pub async fn get_webhook<'e>(
+    pool: impl sqlx::Executor<'e, Database = Postgres>,
+    owner: HookOwner,
+    id: i64,
+) -> Result<Option<Webhook>> {
     let sql = format!(
         "SELECT {COLUMNS} FROM webhooks WHERE id = $1 AND {} = $2",
         owner.column()
@@ -182,7 +243,10 @@ pub async fn list_deliveries(pool: &PgPool, webhook_id: i64) -> Result<Vec<Webho
         .await?)
 }
 
-pub async fn latest_delivery_status(pool: &PgPool, webhook_id: i64) -> Result<Option<Option<i32>>> {
+pub async fn latest_delivery_status<'e>(
+    pool: impl sqlx::Executor<'e, Database = Postgres>,
+    webhook_id: i64,
+) -> Result<Option<Option<i32>>> {
     Ok(sqlx::query_scalar(
         "SELECT status_code FROM webhook_deliveries WHERE webhook_id=$1 ORDER BY id DESC LIMIT 1",
     )
@@ -191,8 +255,8 @@ pub async fn latest_delivery_status(pool: &PgPool, webhook_id: i64) -> Result<Op
     .await?)
 }
 
-pub async fn list_delivery_summaries(
-    pool: &PgPool,
+pub async fn list_delivery_summaries<'e>(
+    pool: impl sqlx::Executor<'e, Database = Postgres>,
     webhook_id: i64,
 ) -> Result<Vec<WebhookDelivery>> {
     Ok(sqlx::query_as(
@@ -202,8 +266,8 @@ pub async fn list_delivery_summaries(
     ).bind(webhook_id).fetch_all(pool).await?)
 }
 
-pub async fn get_delivery(
-    pool: &PgPool,
+pub async fn get_delivery<'e>(
+    pool: impl sqlx::Executor<'e, Database = Postgres>,
     webhook_id: i64,
     delivery_id: i64,
 ) -> Result<Option<WebhookDelivery>> {

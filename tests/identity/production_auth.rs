@@ -1056,6 +1056,7 @@ async fn oauth_state_requires_browser_provider_origin_and_one_atomic_consumer() 
         "google",
         redirect,
         &browser,
+        "/alice/project/issues/7?tab=comments",
     )
     .await
     .unwrap();
@@ -1109,7 +1110,13 @@ async fn oauth_state_requires_browser_provider_origin_and_one_atomic_consumer() 
     });
     fixture.wait_for_blocked(2).await;
     blocker.commit().await.unwrap();
-    assert_ne!(one.await.unwrap().is_some(), two.await.unwrap().is_some());
+    let one = one.await.unwrap();
+    let two = two.await.unwrap();
+    assert_ne!(one.is_some(), two.is_some());
+    assert_eq!(
+        one.or(two).unwrap().return_to,
+        "/alice/project/issues/7?tab=comments"
+    );
     assert!(
         stored::consume_bound_oauth_state(&fixture.pool, &state, "google", &browser, redirect)
             .await
@@ -1117,9 +1124,17 @@ async fn oauth_state_requires_browser_provider_origin_and_one_atomic_consumer() 
             .is_none()
     );
     let expired = random_id();
-    stored::save_bound_oauth_state(&fixture.pool, &expired, "", "google", redirect, &browser)
-        .await
-        .unwrap();
+    stored::save_bound_oauth_state(
+        &fixture.pool,
+        &expired,
+        "",
+        "google",
+        redirect,
+        &browser,
+        "/",
+    )
+    .await
+    .unwrap();
     sqlx::query("UPDATE oauth_states SET expires_at=NOW()-INTERVAL '1 second' WHERE state=$1")
         .bind(&expired)
         .execute(&fixture.raw)
@@ -1933,10 +1948,11 @@ async fn identity_private_registration_managed_password_change_and_review_share_
     .await
     .unwrap()
     .is_none());
-    let request = db::users::signup_requests::list_signup_requests(&fixture.pool, "pending")
-        .await
-        .unwrap()
-        .remove(0);
+    let request =
+        db::users::signup_requests::list_signup_requests(&fixture.pool, "pending", 100, 0, 0)
+            .await
+            .unwrap()
+            .remove(0);
     assert!(matches!(identity::accounts::review_signup(
         &fixture.pool, Some(&admin_session), request.id, Some(SignupDecision::Approve),
     ).await.unwrap(), SignupReviewOutcome::Approved(user) if user.username == "requested"));

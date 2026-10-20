@@ -27,7 +27,11 @@ pub async fn create_token(
             .bind(user_id)
             .fetch_optional(&mut *tx)
             .await?;
-    if !expiry.is_some_and(|expiry| expiry > Utc::now()) {
+    let live: bool = sqlx::query_scalar("SELECT COALESCE($1::timestamptz>clock_timestamp(),FALSE)")
+        .bind(expiry)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !live {
         return Ok(None);
     }
     let token = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")

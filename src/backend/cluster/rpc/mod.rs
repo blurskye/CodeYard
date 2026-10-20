@@ -45,9 +45,8 @@ async fn refuse(
     .await?
 }
 
-/// The repository Git sessions this node is serving. Shutdown closes the gate, so no session
-/// starts after it, and then waits for the sessions already running. The caller bounds that
-/// wait; a session still running when the bound passes ends with its connection.
+/// Repository requests this node is serving, buffered or streamed. Shutdown closes admission
+/// and waits for requests already running under the caller's shared drain deadline.
 #[derive(Clone, Debug)]
 pub struct SessionGate {
     open: Arc<Mutex<bool>>,
@@ -88,6 +87,7 @@ impl SessionGate {
 pub struct RpcHandler {
     context: NodeContext,
     slots: Arc<Semaphore>,
+    session_headers: Arc<Semaphore>,
     headers: Arc<Mutex<HashMap<iroh::PublicKey, Arc<Semaphore>>>>,
     sessions: SessionGate,
 }
@@ -97,12 +97,13 @@ impl RpcHandler {
         Self {
             context,
             slots: Arc::new(Semaphore::new(16)),
+            session_headers: Arc::new(Semaphore::new(16)),
             headers: Default::default(),
             sessions: SessionGate::default(),
         }
     }
 
-    /// The gate this handler admits its Git sessions through.
+    /// The gate this handler admits all repository requests through.
     pub fn sessions(&self) -> SessionGate {
         self.sessions.clone()
     }
@@ -123,7 +124,14 @@ impl RpcHandler {
     }
 
     /// Serves one request stream. An error ends the connection the stream came on.
-    pub(crate) async fn serve_link(&self, mut link: Link) -> Result<()> {
+    pub(crate) async fn serve_link(&self, link: Link) -> Result<()> {
+        let Some(request) = self.sessions.admit(self.answer_link(link)) else {
+            return Ok(());
+        };
+        request.await
+    }
+
+    async fn answer_link(&self, mut link: Link) -> Result<()> {
         let deadline = tokio::time::Instant::now() + TIMEOUT;
         let slot = self.slots.try_acquire()?;
         let peer = link.peer;
@@ -144,7 +152,6 @@ impl RpcHandler {
             )
         })
         .await??;
-        drop(header_slot);
         let request = match request {
             Ok(request) => request,
             Err(error) => {
@@ -156,17 +163,21 @@ impl RpcHandler {
             request.operation,
             Operation::GitSession(_) | Operation::ReplicaPack { .. }
         ) {
+            let session_header = self.session_headers.clone().try_acquire_owned()?;
             drop(slot);
             // A session that arrives after shutdown began is refused. Its connection closes
             // unanswered, which the peer reports as unavailable.
-            let Some(session) = self
-                .sessions
-                .admit(self.serve_session(request, link, deadline))
-            else {
+            let Some(session) = self.sessions.admit(self.serve_session(
+                request,
+                link,
+                deadline,
+                (session_header, header_slot),
+            )) else {
                 return Ok(());
             };
             return session.await;
         }
+        drop(header_slot);
         let body_limit = wire::operation_body_limit(&request.operation);
         tokio::time::timeout_at(deadline, async {
             if body_limit > 0 {

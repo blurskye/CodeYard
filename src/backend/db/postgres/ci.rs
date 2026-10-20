@@ -19,15 +19,10 @@ async fn ci_actor_has_permission(
     repo_id: i64,
     cd: bool,
     trusted_ids: &[i64],
+    row_lock: super::repositories::access::RepositoryRowLock,
 ) -> Result<bool> {
-    use super::repositories::access::RepositoryRowLock;
-
     let Some(authority) = super::repositories::access::lock_user_repo_access_in_transaction(
-        tx,
-        actor,
-        repo_id,
-        RepositoryRowLock::Shared,
-        false,
+        tx, actor, repo_id, row_lock, false,
     )
     .await?
     else {
@@ -90,6 +85,15 @@ fn branch_or_trunk_sql(branch: &str) -> String {
     )
 }
 
+pub async fn retained_ci_commits(pool: &PgPool, repo_id: i64) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT DISTINCT head_sha FROM ci_runs WHERE repo_id=$1 AND head_sha IS NOT NULL",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// Checks permissions and inserts a queued run with its pending commit status
 /// (and deployment, for CD pipelines) in one transaction.
 pub async fn enqueue_ci_run(
@@ -105,7 +109,8 @@ pub async fn enqueue_ci_run(
             input.triggered_by_id,
             input.repo_id,
             cd,
-            trusted_ids
+            trusted_ids,
+            super::repositories::access::RepositoryRowLock::Exclusive,
         )
         .await?,
         CiAdmissionRefusal::Denied("CI repository execution permission denied")
@@ -196,6 +201,9 @@ pub async fn enqueue_ci_run(
             .execute(&mut *tx)
             .await?;
     }
+    // Adding retained input changes what a current replica must contain.
+    sqlx::query("UPDATE repositories SET write_version=write_version+1 WHERE id=$1 AND storage_node_id IS NOT NULL")
+        .bind(run.repo_id).execute(&mut *tx).await?;
     ci_commit_status(&mut tx, &run, "pending", "CI run queued").await?;
     tx.commit().await?;
     Ok(run)
@@ -313,6 +321,7 @@ async fn claim_queued_run(
                     next.repo_id,
                     is_deployment(&next),
                     trusted_ids,
+                    super::repositories::access::RepositoryRowLock::Shared,
                 )
                 .await?
             }
@@ -359,7 +368,7 @@ async fn claim_queued_run(
             continue;
         }
         let run = sqlx::query_as::<_, CiRun>(
-            "UPDATE ci_runs SET status = 'running', worker = $2, mode = $3, started_at = NOW(), heartbeat_at = NOW(), updated_at = NOW()
+            "UPDATE ci_runs SET status = 'running', worker = $2, mode = $3, started_at = clock_timestamp(), heartbeat_at = clock_timestamp(), updated_at = clock_timestamp()
              WHERE id = $1 RETURNING *",
         )
         .bind(run.id)
@@ -404,7 +413,7 @@ pub async fn ci_run_allows_repository_read(
 /// or `None` if this worker no longer owns the run.
 pub async fn heartbeat_ci_run(pool: &PgPool, id: i64, worker: &str) -> Result<Option<bool>> {
     Ok(sqlx::query_scalar(
-        "UPDATE ci_runs SET heartbeat_at = NOW() WHERE id = $1 AND worker = $2 AND status = 'running' RETURNING cancel_requested",
+        "UPDATE ci_runs SET heartbeat_at = clock_timestamp() WHERE id = $1 AND worker = $2 AND status = 'running' RETURNING cancel_requested",
     )
     .bind(id)
     .bind(worker)
@@ -528,7 +537,10 @@ pub async fn finish_ci_run(
 /// `lock_run_repository`). The staleness test is applied again under the run's
 /// lock, so a run whose worker just sent a heartbeat or is finishing it is left
 /// alone. Runs another transaction holds are skipped.
-pub async fn fail_stale_ci_runs(pool: &PgPool, stale_seconds: i64) -> Result<usize> {
+pub async fn fail_stale_ci_runs(
+    pool: &PgPool,
+    stale_seconds: i64,
+) -> Result<(usize, Vec<(i64, i64)>)> {
     let candidates: Vec<(i64, i64)> = sqlx::query_as(
         "SELECT id, repo_id FROM ci_runs WHERE status = 'running' AND (heartbeat_at IS NULL OR heartbeat_at < NOW() - make_interval(secs => $1::double precision))
          ORDER BY id LIMIT 128",
@@ -537,6 +549,7 @@ pub async fn fail_stale_ci_runs(pool: &PgPool, stale_seconds: i64) -> Result<usi
     .fetch_all(pool)
     .await?;
     let mut failed = 0;
+    let mut notifications = Vec::new();
     for (id, repo_id) in candidates {
         let mut tx = pool.begin().await?;
         lock_run_repository(&mut tx, repo_id).await?;
@@ -550,16 +563,14 @@ pub async fn fail_stale_ci_runs(pool: &PgPool, stale_seconds: i64) -> Result<usi
         .await?;
         if let Some(run) = run {
             let message = Some("The CI worker stopped before the run finished");
-            if finish_in_tx(&mut tx, &run, "failed", message)
-                .await?
-                .is_some()
-            {
+            if let Some((_, created)) = finish_in_tx(&mut tx, &run, "failed", message).await? {
                 failed += 1;
+                notifications.extend(created);
             }
         }
         tx.commit().await?;
     }
-    Ok(failed)
+    Ok((failed, notifications))
 }
 
 /// Stops the CI runs in `run_ids` after the people who started them lost access,
@@ -692,7 +703,12 @@ pub async fn request_ci_cancellation(
         .ok_or(CiAdmissionRefusal::Missing("CI run unavailable"))?;
     let personal_admin = authority.is_admin && !authority.organization;
     ensure!(
-        run.triggered_by_id == Some(actor_id) || personal_admin || authority.access.can_admin(),
+        crate::backend::db::ci::may_cancel_run(
+            actor_id,
+            run.triggered_by_id,
+            personal_admin,
+            authority.access
+        ),
         CiAdmissionRefusal::Denied("CI cancellation permission denied")
     );
     let mut notifications = Vec::new();
@@ -732,6 +748,34 @@ pub async fn get_ci_run_by_run_id(pool: &PgPool, run_id: uuid::Uuid) -> Result<O
     Ok(run)
 }
 
+pub async fn list_filtered_ci_runs(
+    pool: &PgPool,
+    actor: i64,
+    repo: Option<i64>,
+    filter: &crate::backend::db::ci::CiRunFilter,
+    limit: i64,
+) -> Result<Vec<CiRun>> {
+    ensure!(limit >= 0, "Result limit must be nonnegative");
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    Ok(sqlx::query_as::<_, CiRun>(&format!(
+        "WITH history AS (
+            SELECT c.*, r.name AS repository_name,
+                CASE WHEN c.event = 'pull_request' THEN coalesce(c.pull_request_event->>'head_ref', c.branch) ELSE c.branch END AS display_ref
+            FROM ci_runs c JOIN repositories r ON r.id = c.repo_id
+            WHERE (($2::bigint IS NULL AND c.triggered_by_id = $1) OR c.repo_id = $2)
+                AND c.repo_id IN (SELECT r.id FROM repositories r JOIN users u ON u.id = $1
+                    WHERE NOT u.is_banned AND NOT u.must_change_password
+                        AND ((r.owner_kind = 'user' AND u.is_admin) OR ({access}) > 0))
+        ), named AS (SELECT *, CASE WHEN display_ref LIKE 'refs/heads/%' AND substr(display_ref, 12, 5) != 'refs/' THEN substr(display_ref, 12) ELSE display_ref END AS display_branch FROM history)
+        SELECT * FROM named c WHERE ($3 = '' OR EXISTS (SELECT 1 FROM unnest(string_to_array(c.workflow_path, ',')) p WHERE trim(p) = $3))
+            AND ($4 = '' OR c.event = $4) AND ($5 = '' OR c.display_branch = $5)
+            AND ($6 = '' OR CASE lower(c.status) WHEN 'completed' THEN 'success' WHEN 'error' THEN 'failed' WHEN 'in_progress' THEN 'running' WHEN 'pending' THEN 'queued' WHEN 'canceled' THEN 'cancelled' ELSE lower(c.status) END = $6)
+            AND ($7 = '' OR strpos(lower(c.run_id::text || ' ' || c.repository_name || ' ' || c.workflow_path || ' ' || c.display_branch || ' ' || coalesce(c.head_sha, '')), lower($7)) > 0)
+            AND ($8::bigint IS NULL OR c.id < $8)
+            AND ($10 = '' OR EXISTS (SELECT 1 FROM users actor WHERE actor.id=c.triggered_by_id AND actor.username=$10)) ORDER BY c.id DESC LIMIT $9"
+    )).bind(actor).bind(repo).bind(&filter.workflow).bind(&filter.event).bind(&filter.branch).bind(&filter.status).bind(&filter.text).bind(filter.before).bind(limit).bind(&filter.actor).fetch_all(pool).await?)
+}
+
 pub async fn list_ci_runs_for_repo(pool: &PgPool, repo_id: i64, limit: i64) -> Result<Vec<CiRun>> {
     let rows = sqlx::query_as::<_, CiRun>(
         "SELECT * FROM ci_runs WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2",
@@ -749,18 +793,20 @@ pub async fn latest_ci_runs_for_commit(
     repo_id: i64,
     sha: &str,
     pull_request_id: i64,
+    target_branch: &str,
 ) -> Result<Vec<CiRun>> {
     Ok(sqlx::query_as::<_, CiRun>(
         "SELECT DISTINCT ON (strpos(workflow_path, ',') > 0,
             CASE WHEN strpos(workflow_path, ',') > 0 THEN pipeline ELSE workflow_path END) *
          FROM ci_runs WHERE repo_id = $1 AND head_sha = $2
-            AND (pull_request_id IS NULL OR pull_request_id = $3)
+            AND (pull_request_id IS NULL OR (pull_request_id = $3 AND branch = $4))
          ORDER BY strpos(workflow_path, ',') > 0,
             CASE WHEN strpos(workflow_path, ',') > 0 THEN pipeline ELSE workflow_path END, id DESC",
     )
     .bind(repo_id)
     .bind(sha)
     .bind(pull_request_id)
+    .bind(target_branch)
     .fetch_all(pool)
     .await?)
 }
@@ -782,7 +828,11 @@ pub async fn list_pull_request_check_statuses(
             pulls.id AS pull_request_id, runs.status
          FROM pull_requests AS pulls
          JOIN ci_runs AS runs ON runs.repo_id = pulls.repo_id AND runs.head_sha = pulls.head_sha
-            AND (runs.pull_request_id IS NULL OR runs.pull_request_id = pulls.id)
+            AND (runs.pull_request_id IS NULL OR (runs.pull_request_id = pulls.id AND runs.branch = COALESCE(
+                (SELECT trunk.base_branch FROM pull_requests trunk
+                 WHERE trunk.repo_id = pulls.repo_id AND trunk.stack_id = pulls.stack_id AND trunk.state = 'open'
+                   AND NOT EXISTS (SELECT 1 FROM pull_requests below WHERE below.repo_id = trunk.repo_id AND below.stack_id = trunk.stack_id AND below.state = 'open' AND below.head_branch = trunk.base_branch)
+                 ORDER BY trunk.id LIMIT 1), pulls.base_branch)))
          WHERE pulls.id IN (",
     );
     let mut ids = query.separated(",");
@@ -828,7 +878,7 @@ pub async fn append_ci_logs(
     run_id: i64,
     worker: &str,
     lines: &[crate::backend::ci::queue::LogLine],
-) -> Result<()> {
+) -> Result<bool> {
     let lines = crate::backend::ci::queue::prepare_logs(lines)?;
     let mut tx = pool.begin().await?;
     // Serialize log allocation and commit, and check ownership and totals under the same lock.
@@ -856,14 +906,16 @@ pub async fn append_ci_logs(
         });
         insert.build().execute(&mut *tx).await?;
     }
-    sqlx::query("UPDATE ci_runs SET log_lines = $2, log_bytes = $3 WHERE id = $1")
-        .bind(run_id)
-        .bind(lines_total)
-        .bind(bytes_total)
-        .execute(&mut *tx)
-        .await?;
+    if lines_total != stored_lines || bytes_total != stored_bytes {
+        sqlx::query("UPDATE ci_runs SET log_lines = $2, log_bytes = $3 WHERE id = $1")
+            .bind(run_id)
+            .bind(lines_total)
+            .bind(bytes_total)
+            .execute(&mut *tx)
+            .await?;
+    }
     tx.commit().await?;
-    Ok(())
+    Ok(lines_total < crate::backend::ci::logs::MAX_RUN_LOG_LINES)
 }
 
 pub async fn list_ci_logs(pool: &PgPool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {

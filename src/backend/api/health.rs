@@ -13,12 +13,12 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 async fn ready(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {
-    match state.pool.ping().await {
-        Ok(()) => (
+    match tokio::time::timeout(std::time::Duration::from_secs(2), state.pool.ping()).await {
+        Ok(Ok(())) => (
             StatusCode::OK,
             Json(serde_json::json!({ "status": "ready" })),
         ),
-        Err(_) => (
+        _ => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "status": "database unavailable" })),
         ),

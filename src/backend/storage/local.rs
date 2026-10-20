@@ -21,11 +21,10 @@ pub struct LocalStore {
 
 impl LocalStore {
     pub async fn open(root: &Path) -> Result<Self> {
-        tokio::fs::create_dir_all(root)
+        create_directories(root)
             .await
             .with_context(|| format!("create object directory {}", root.display()))?;
         let root = tokio::fs::canonicalize(root).await?;
-        sync_parents(&root).await?;
         Ok(Self { root })
     }
 
@@ -48,10 +47,10 @@ impl LocalStore {
         }
         let path = self.path(upload.key)?;
         let parent = path.parent().ok_or(StorageError::Invalid)?;
-        tokio::fs::create_dir_all(parent).await?;
+        create_directories(parent).await?;
         // Partial files share one directory, so the cleanup finds the ones a crash leaves.
         let staging = self.root.join(STAGING_DIR);
-        tokio::fs::create_dir_all(&staging).await?;
+        create_directories(&staging).await?;
         let temporary = tempfile::Builder::new()
             .prefix(TEMP_PREFIX)
             .tempfile_in(staging)?;
@@ -90,7 +89,7 @@ impl LocalStore {
         temporary
             .persist(&path)
             .map_err(|_| StorageError::Unavailable)?;
-        sync_parents(parent).await?;
+        sync_directory(parent).await?;
         Ok(())
     }
 
@@ -118,10 +117,20 @@ impl LocalStore {
     }
 
     pub async fn delete(&self, key: &str) -> Result<(), StorageError> {
-        match tokio::fs::remove_file(self.path(key)?).await {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.into()),
-            _ => Ok(()),
+        let path = self.path(key)?;
+        match tokio::fs::remove_file(&path).await {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
         }
+        // An idempotent retry must also persist a previous unlink before its job is removed.
+        let parent = path.parent().ok_or(StorageError::Invalid)?;
+        match sync_directory(parent).await {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                sync_directory(&self.root).await?;
+            }
+            result => result?,
+        }
+        Ok(())
     }
 
     /// Removes staged uploads that a crash left behind.
@@ -131,10 +140,39 @@ impl LocalStore {
     }
 }
 
-/// Persist the rename and any parent directories that were just created.
-async fn sync_parents(path: &Path) -> std::io::Result<()> {
-    for directory in path.ancestors() {
-        tokio::fs::File::open(directory).await?.sync_all().await?;
+async fn sync_directory(path: &Path) -> std::io::Result<()> {
+    tokio::fs::File::open(path).await?.sync_all().await
+}
+
+/// Flush only entries we create, not unrelated ancestors of an existing store.
+async fn create_directories(path: &Path) -> std::io::Result<()> {
+    let mut missing = Vec::new();
+    let mut directory = path;
+    loop {
+        match tokio::fs::metadata(directory).await {
+            Ok(metadata) if metadata.is_dir() => break,
+            Ok(_) => return Err(std::io::Error::from(std::io::ErrorKind::NotADirectory)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(directory);
+                directory = directory
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    for directory in missing.into_iter().rev() {
+        match tokio::fs::create_dir(directory).await {
+            Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
+            _ => {}
+        }
+        sync_directory(directory).await?;
+        let parent = directory
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        sync_directory(parent).await?;
     }
     Ok(())
 }
@@ -280,6 +318,42 @@ mod tests {
         let mut read = Vec::new();
         file.read_to_end(&mut read).await.unwrap();
         assert_eq!(read, png);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn existing_stores_do_not_open_unreadable_ancestors() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let ancestor = root.path().join("traverse-only");
+        let objects = ancestor.join("state/objects");
+        std::fs::create_dir_all(&objects).unwrap();
+        std::fs::set_permissions(&ancestor, std::fs::Permissions::from_mode(0o111)).unwrap();
+        let result = LocalStore::open(&objects).await;
+        std::fs::set_permissions(&ancestor, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let store = result.unwrap();
+        store.delete("uploads/absent").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn opening_an_existing_file_as_a_store_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("not-a-directory");
+        std::fs::write(&file, b"file").unwrap();
+        assert!(LocalStore::open(&file).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn deletion_retries_flush_the_parent_even_when_the_object_is_absent() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(root.path()).await.unwrap();
+        std::fs::create_dir(root.path().join("uploads")).unwrap();
+        // A missing store root prevents the retry from confirming that the unlink was flushed.
+        std::fs::remove_dir(root.path().join("uploads")).unwrap();
+        std::fs::remove_dir(root.path()).unwrap();
+        assert!(store.delete("uploads/absent").await.is_err());
+        std::fs::create_dir(root.path()).unwrap();
+        store.delete("uploads/absent").await.unwrap();
     }
 
     #[tokio::test]

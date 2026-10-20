@@ -155,6 +155,23 @@ pub(crate) async fn native_comment(
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
     let draft = submitted_detail(&form, "comment");
+    if form
+        .get("repository_id")
+        .and_then(|id| id.parse::<i64>().ok())
+        != Some(repo.record.id)
+        || form.get("issue_id").and_then(|id| id.parse::<i64>().ok()) != Some(value.id)
+    {
+        return render_detail(
+            &ctx,
+            &repo,
+            kind,
+            &value,
+            &draft,
+            Some("The comment target changed. Your draft is preserved; reload before submitting."),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
     if let Err(message) = crate::backend::issues::validate_body(&draft.comment, true) {
         return render_detail(
             &ctx,
@@ -179,6 +196,8 @@ pub(crate) async fn native_comment(
         number,
         crate::backend::issues::comments::CreateCommentRequest {
             body: draft.comment.clone(),
+            repository_id: Some(repo.record.id),
+            issue_id: Some(value.id),
         },
     )
     .await
@@ -213,6 +232,19 @@ pub(crate) async fn native_edit_comment(
     let value = item(&ctx, &repo, kind, number).await?;
     let mut draft = submitted_detail(&form, "comment");
     draft.editing = Some(comment_id);
+    let expected_body = serde_json::from_str::<String>(&draft.expected_body).ok();
+    if expected_body.is_none() {
+        return render_detail(
+            &ctx,
+            &repo,
+            kind,
+            &value,
+            &draft,
+            Some("The original comment is required. Reload before saving."),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    }
     if draft.preview {
         return render_detail(&ctx, &repo, kind, &value, &draft, None, StatusCode::OK).await;
     }
@@ -228,8 +260,9 @@ pub(crate) async fn native_edit_comment(
         },
         crate::backend::issues::comments::CreateCommentRequest {
             body: draft.comment.clone(),
+            ..Default::default()
         },
-        None,
+        expected_body.as_deref(),
     )
     .await
     .map_err(crate::backend::api::repos::issues::operation_error)

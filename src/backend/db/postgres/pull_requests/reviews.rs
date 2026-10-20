@@ -34,6 +34,17 @@ async fn insert_comment(
 ) -> Result<PullRequestComment> {
     let mut tx = pool.begin().await?;
     discussions::lock_pull_request_contribution(&mut tx, input.author_id, input.pr_id).await?;
+    if let Some((head, base)) = input.expected_revisions {
+        let current: (String, String) =
+            sqlx::query_as("SELECT head_sha, base_sha FROM pull_requests WHERE id=$1")
+                .bind(input.pr_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        anyhow::ensure!(
+            current.0 == head && current.1 == base,
+            crate::backend::db::discussions::DiscussionWriteRefusal::RevisionChanged
+        );
+    }
     let review_id = match input.in_reply_to_comment_id {
         Some(parent) => {
             // Another author's pending comment is not a parent, because its review is private.
@@ -66,7 +77,7 @@ async fn insert_comment(
         None => None,
     };
     if let Some(review_id) = review_id {
-        let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pr_comments WHERE review_id=$1")
+        let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pr_comments c JOIN pr_reviews v ON v.id=c.review_id WHERE c.review_id=$1 AND v.state='pending'")
             .bind(review_id)
             .fetch_one(&mut *tx)
             .await?;
@@ -218,6 +229,15 @@ pub async fn list_review_comments(
 ) -> Result<Vec<PullRequestCommentEntry>> {
     debug_assert!(review_ids.len() <= 1000);
     comments_in(pool, "i.review_id", review_ids).await
+}
+
+pub async fn review_comment_position(
+    pool: &PgPool,
+    review_ids: &[i64],
+    comment_id: i64,
+) -> Result<(i64, i64)> {
+    Ok(sqlx::query_as("SELECT GREATEST(COUNT(*) - 1, 0), COALESCE(SUM(6::bigint * (octet_length(c.body) + COALESCE(LEAST(octet_length(c.path), 4096), 0)) + 4096), 0)::bigint FROM pr_comments c WHERE c.review_id=ANY($1) AND (c.created_at,c.id) <= (SELECT created_at,id FROM pr_comments WHERE id=$2)")
+        .bind(review_ids).bind(comment_id).fetch_one(pool).await?)
 }
 
 /// Select sizes before bodies, so nested reviews cannot bypass the discussion page limit.
@@ -689,7 +709,7 @@ pub async fn dismiss_pull_request_review(
         r#"
         UPDATE pr_reviews
         SET state = 'dismissed', dismissed_by_id = $1, dismissed_reason = $2, dismissed_at = NOW()
-        WHERE id = $3 AND pull_request_id = $4
+        WHERE id = $3 AND pull_request_id = $4 AND state IN ('approved', 'changes_requested')
         RETURNING *
         "#,
     )
@@ -748,14 +768,27 @@ pub async fn request_code_owner_reviews(
 ) -> Result<Vec<User>> {
     let mut tx = pool.begin().await?;
     discussions::require_contribution_authority(&mut tx, actor_id, pull.repo_id).await?;
-    // Authority parents precede the pull request row, as in manual requests.
+    anyhow::ensure!(
+        owners.len() <= crate::backend::repositories::code_owners::MAX_REVIEWERS,
+        "Too many code owners"
+    );
+    // The actor locks the common organization, governance and repository scope once.
+    // Lock candidate accounts and grants in batches before checking their current access.
     let mut eligible = Vec::new();
-    for &id in owners {
-        if id != pull.author_id
-            && discussions::lock_write_authority(&mut tx, id, pull.repo_id).await?
-        {
-            eligible.push(id);
-        }
+    let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
+    for ids in owners.chunks(500) {
+        sqlx::query("SELECT id FROM users WHERE id=ANY($1) ORDER BY id FOR SHARE")
+            .bind(ids)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SELECT user_id FROM repo_access WHERE repo_id=$1 AND user_id=ANY($2) ORDER BY user_id FOR SHARE")
+            .bind(pull.repo_id).bind(ids).execute(&mut *tx).await?;
+        let writers: Vec<i64> = sqlx::query_scalar(&format!(
+            "SELECT u.id FROM repositories r CROSS JOIN users u WHERE r.id=$1 AND u.id=ANY($2) AND u.id<>$3
+             AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password
+             AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=3)"
+        )).bind(pull.repo_id).bind(ids).bind(pull.author_id).fetch_all(&mut *tx).await?;
+        eligible.extend(writers);
     }
     let current: Option<PullRequest> =
         sqlx::query_as("SELECT * FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE")

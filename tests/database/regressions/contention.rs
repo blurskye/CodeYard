@@ -13,6 +13,210 @@ async fn wait_blocked(raw: &sqlx::PgPool, holder: i32, count: i64) {
 }
 
 #[tokio::test]
+async fn postgres_direct_grant_changes_conflict_with_repository_authority_reads() {
+    let mut f = Database::new(true).await;
+    let owner = f.actor("grant_owner").await;
+    let target = f.actor("grant_target").await;
+    let r = repo(&f, owner, "grant_lock").await;
+    let db::DbPool::Postgres(raw) = f.pool() else {
+        unreachable!()
+    };
+    // Both the trusted DB operations and browser collaborator mutations must wait even
+    // when the authority read found no direct grant to lock.
+    for operation in 0..4 {
+        let mut reader = raw.begin().await.unwrap();
+        let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *reader)
+            .await
+            .unwrap();
+        sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
+            .bind(r.id)
+            .execute(&mut *reader)
+            .await
+            .unwrap();
+        let pool = f.pool().clone();
+        let request = tokio::spawn(async move {
+            match operation {
+                0 => {
+                    db::repositories::access::grant_repo_access(
+                        &pool,
+                        target,
+                        r.id,
+                        AccessLevel::Read,
+                    )
+                    .await
+                    .unwrap();
+                }
+                1 => {
+                    db::repositories::access::revoke_repo_access(&pool, target, r.id)
+                        .await
+                        .unwrap();
+                }
+                2 | 3 => {
+                    codeyard::backend::repositories::access::change_collaborator(
+                        &pool,
+                        owner,
+                        r.id,
+                        "grant_target",
+                        (operation == 2).then_some(AccessLevel::Read),
+                    )
+                    .await
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+        });
+        wait_blocked(raw, holder, 1).await;
+        assert!(!request.is_finished());
+        reader.commit().await.unwrap();
+        request.await.unwrap();
+    }
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn postgres_transfer_locks_target_organization_before_a_forks_source() {
+    let mut f = Database::new(true).await;
+    let owner = f.actor("transfer_order_owner").await;
+    organization(&f, 1001, owner).await;
+    let source = repo(&f, owner, "transfer_source").await;
+    let fork = db::repositories::discovery::create_forked_repository(
+        f.pool(),
+        db::repositories::discovery::NewForkedRepository {
+            owner_id: owner,
+            name: "transfer_fork",
+            description: None,
+            is_private: true,
+            disk_path: "/fixture/fork.git",
+            forked_from: source.id,
+            default_branch: "main",
+        },
+    )
+    .await
+    .unwrap();
+    records::transfer_repository(
+        f.pool(),
+        owner,
+        fork.id,
+        RepositoryTarget::Organization(1001),
+    )
+    .await
+    .unwrap();
+    let db::DbPool::Postgres(raw) = f.pool() else {
+        unreachable!()
+    };
+    let mut settings = raw.begin().await.unwrap();
+    let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *settings)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM organizations WHERE id=1001 FOR SHARE")
+        .execute(&mut *settings)
+        .await
+        .unwrap();
+    let pool = f.pool().clone();
+    let transfer = tokio::spawn(async move {
+        records::transfer_repository(
+            &pool,
+            owner,
+            source.id,
+            RepositoryTarget::Organization(1001),
+        )
+        .await
+    });
+    wait_blocked(raw, holder, 1).await;
+    sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
+        .bind(source.id)
+        .execute(&mut *settings)
+        .await
+        .expect("a fork's settings can still acquire its source; transfer waits before locking it");
+    settings.commit().await.unwrap();
+    assert_eq!(transfer.await.unwrap().unwrap().owner_org_id, Some(1001));
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
+    let mut f = Database::new(true).await;
+    let admin = f.actor("retained_admin").await;
+    f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
+        .await;
+    db::node_config::upsert_node_configuration(f.pool(), "public", true)
+        .await
+        .unwrap();
+    let key = codeyard::backend::cluster::NodeKey::generate().public_hex();
+    let node = db::cluster::register_own_node(
+        f.pool(),
+        &key,
+        "retained-node",
+        &["storage".to_owned()],
+        "test",
+    )
+    .await
+    .unwrap();
+    for crawler in [false, true] {
+        let original = session(f.pool(), admin).await;
+        let db::DbPool::Postgres(raw) = f.pool() else {
+            unreachable!()
+        };
+        let mut holder = raw.begin().await.unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *holder)
+            .await
+            .unwrap();
+        let (table, id) = if crawler {
+            ("node_configuration", 1)
+        } else {
+            ("nodes", node.id)
+        };
+        sqlx::query(&format!("SELECT id FROM {table} WHERE id=$1 FOR UPDATE"))
+            .bind(id)
+            .execute(&mut *holder)
+            .await
+            .unwrap();
+        let pool = f.pool().clone();
+        let session = original.clone();
+        let mutation = tokio::spawn(async move {
+            if crawler {
+                assert!(
+                    db::node_config::set_ai_crawlers(&pool, admin, &session, "allow")
+                        .await
+                        .unwrap()
+                );
+            } else {
+                assert!(matches!(
+                    db::cluster::set_node_status(
+                        &pool,
+                        db::cluster::Authority::Administrator {
+                            user_id: admin,
+                            session: &session
+                        },
+                        "retained-node",
+                        "active"
+                    )
+                    .await
+                    .unwrap(),
+                    db::models::NodeStatusChange::Changed { .. }
+                ));
+            }
+        });
+        wait_blocked(raw, pid, 1).await;
+        let pool = f.pool().clone();
+        let revocation = tokio::spawn(async move {
+            db::users::sessions::delete_session(&pool, &original)
+                .await
+                .unwrap();
+        });
+        wait_blocked(raw, pid, 2).await;
+        assert!(!revocation.is_finished());
+        holder.commit().await.unwrap();
+        mutation.await.unwrap();
+        revocation.await.unwrap();
+    }
+    f.finish().await;
+}
+
+#[tokio::test]
 async fn postgres_unstar_locks_parent_before_the_star() {
     let mut f = Database::new(true).await;
     let owner = f.actor("star_owner").await;
@@ -197,7 +401,26 @@ async fn postgres_inbox_and_transfer_retry_scope_deadlocks() {
         )
         .await
     });
-    wait_blocked(raw, holder, 2).await;
+    // The inbox may now finish before the transfer: the transfer no longer holds the
+    // personal repository while waiting for its target organization. Otherwise observe
+    // both real waiters before releasing the holder.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !inbox.is_finished() {
+            let waiting: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))",
+            )
+            .bind(holder)
+            .fetch_one(raw)
+            .await
+            .unwrap();
+            if waiting >= 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     reader.commit().await.unwrap();
     tokio::time::timeout(Duration::from_secs(20), transfer)
         .await

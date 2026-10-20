@@ -89,9 +89,10 @@ async fn cleanup_schema(
     {
         return Err(CleanupFailure::fixed("schema-identity", "not-owned"));
     }
-    tokio::time::timeout(CLEANUP_PHASE_TIMEOUT, pool.close())
-        .await
-        .map_err(|_| CleanupFailure::fixed("pool-close", "deadline-10s"))?;
+    // A test that never calls `finish` is cleaned up from `Drop` while its own runtime thread is
+    // blocked, so a connection it just released can still be waiting to return to the pool. Idle
+    // connections hold no locks, so dropping the schema below is the real check.
+    let _ = tokio::time::timeout(CLEANUP_PHASE_TIMEOUT, pool.close()).await;
     let options: sqlx::postgres::PgConnectOptions = url
         .parse()
         .map_err(|error| CleanupFailure::database("admin-connect", error))?;

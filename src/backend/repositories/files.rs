@@ -92,7 +92,7 @@ fn write_error(error: RepoError) -> WriteError {
 
 /// Original text suitable for the native editor, without replacing invalid bytes.
 pub fn editor_text(bytes: &[u8], is_binary: bool) -> Result<&str, WriteError> {
-    if is_binary || bytes.len() > MAX_EDITOR_BYTES {
+    if is_binary || bytes.contains(&0) || bytes.len() > MAX_EDITOR_BYTES {
         return Err(WriteError {
             kind: WriteFailure::TooLarge,
             message: "Only text files up to 1 MiB can be edited in this native editor.".into(),
@@ -475,7 +475,6 @@ async fn save_file(
                 write_error(error)
             }
         })?;
-    let changed_paths = vec![input.path];
     publish_commit(
         pool,
         &store,
@@ -484,7 +483,6 @@ async fn save_file(
         &repository,
         user,
         &prepared,
-        changed_paths,
         new_branch,
     )
     .await
@@ -505,7 +503,6 @@ async fn publish_commit(
     repository: &db::models::Repository,
     user: db::models::User,
     prepared: &PreparedFile,
-    changed_paths: Vec<String>,
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
     let (branch, commit, old) = match new_branch {
@@ -539,6 +536,7 @@ async fn publish_commit(
         Some(&[branch][..]),
         ci,
         user.id,
+        crate::backend::db::models::AccessLevel::Owner,
     )
     .await
     .is_ok();
@@ -550,7 +548,7 @@ async fn publish_commit(
             reference: format!("refs/heads/{branch}"),
             old,
             new: commit.sha.clone(),
-            changed_paths: Some(changed_paths),
+            changed_paths: None,
         },
     )
     .await;
@@ -614,7 +612,6 @@ pub async fn upload_files(
                 write_error(error)
             }
         })?;
-    let changed_paths = write.files.into_iter().map(|file| file.path).collect();
     publish_commit(
         pool,
         &store,
@@ -623,7 +620,6 @@ pub async fn upload_files(
         &repository,
         user,
         &prepared,
-        changed_paths,
         new_branch,
     )
     .await
@@ -648,6 +644,16 @@ mod tests {
             editor_text(&vec![b'x'; MAX_EDITOR_BYTES + 1], false)
                 .unwrap_err()
                 .kind,
+            WriteFailure::TooLarge
+        );
+    }
+
+    #[test]
+    fn native_editor_rejects_nul_after_the_binary_probe() {
+        let mut bytes = vec![b'a'; 9000];
+        bytes.push(0);
+        assert_eq!(
+            editor_text(&bytes, false).unwrap_err().kind,
             WriteFailure::TooLarge
         );
     }

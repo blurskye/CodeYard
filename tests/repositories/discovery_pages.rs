@@ -378,6 +378,30 @@ async fn commits_and_code_contract(pg: bool) {
         .map(|hit| format!("{}/{}: {}", hit.owner, hit.repo, hit.summary))
         .collect();
     assert_eq!(summaries, ["alice/rustacean: Add zq-marker notes"]);
+    let empty = repo(&site, site.alice, "genuinely-empty", "empty", false).await;
+    let empty_hits = search(
+        &anonymous,
+        "/search?q=repo:alice/genuinely-empty+zq-marker&type=code",
+    )
+    .await;
+    assert_eq!(empty_hits.unsearched, 0);
+    assert!(empty_hits.code.is_empty());
+    // A ref can survive an incomplete restore even when its commit did not.
+    std::fs::write(
+        std::path::Path::new(&empty.disk_path).join("refs/heads/main"),
+        format!("{}\n", "a".repeat(40)),
+    )
+    .unwrap();
+    for kind in ["code", "commits"] {
+        let broken = search(
+            &anonymous,
+            &format!("/search?q=repo:alice/genuinely-empty+zq-marker&type={kind}"),
+        )
+        .await;
+        assert_eq!(broken.unsearched, 1);
+        let walked = search(&anonymous, &format!("/search?q=zq-marker&type={kind}")).await;
+        assert_eq!(walked.unsearched, 1);
+    }
     site.database.finish().await;
 }
 
@@ -827,6 +851,9 @@ async fn profile_stars_tab_counts_listable_repositories(pg: bool) {
             other => panic!("not a profile page: {other:?}"),
         }
     }
+    let oversized = profile_stars(&bob, "/alice?tab=stars&page=4294967296").await;
+    assert_eq!(oversized.page, 10_000);
+    assert!(u32::try_from(oversized.page).is_ok());
     site.database.finish().await;
 }
 

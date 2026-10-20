@@ -44,6 +44,9 @@ pub async fn put_local_upload(
         .ok_or(LocalUploadError::NotPending)?;
     let key = first.object_key.clone();
     tokio::time::timeout(time_left, async {
+        let _io = store
+            .try_acquire_io()
+            .map_err(|_| LocalUploadError::StorageUnavailable)?;
         let _file_lock = store
             .lock_file(&key)
             .await
@@ -63,9 +66,6 @@ pub async fn put_local_upload(
         if file.content_type != content_type {
             return Err(LocalUploadError::Invalid);
         }
-        let _io = store
-            .try_acquire_io()
-            .map_err(|_| LocalUploadError::StorageUnavailable)?;
         store
             .put_local(&upload(&file), reader)
             .await

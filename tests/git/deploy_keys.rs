@@ -11,6 +11,7 @@ use reqwest::{Client, StatusCode};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
 /// A new Ed25519 key pair. Returns the private key path and the public key line.
@@ -250,9 +251,8 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     // Multi-key clients do not accumulate bans, and pre-exec requests cannot deadlock exec.
     let (unknown_key, _) = keypair(root.path(), "unknown").await;
     for _ in 0..6 {
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            Command::new(tool("ssh"))
+        let output = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let mut child = Command::new(tool("ssh"))
                 .args([
                     "-F",
                     "/dev/null",
@@ -271,13 +271,24 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
                 .arg(&read_key)
                 .arg("git@127.0.0.1")
                 .arg("git-upload-pack 'deploy_owner/project.git'")
-                .stdin(Stdio::null())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .kill_on_drop(true)
-                .output(),
-        )
+                .spawn()?;
+            let mut input = child.stdin.take().unwrap();
+            // Protocol v2 advertises capabilities first; request refs explicitly.
+            input
+                .write_all(b"0014command=ls-refs\n00010009peel\n000csymrefs\n0000")
+                .await?;
+            drop(input);
+            child.wait_with_output().await
+        })
         .await
         .expect("environment requests deadlocked exec")
         .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(output.stdout.starts_with(b"000eversion 2\n"), "{output:?}");
         assert!(
             String::from_utf8_lossy(&output.stdout).contains("refs/heads/main"),
             "{output:?}"
@@ -369,10 +380,21 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     .await;
     assert!(!guarded.status.success());
 
+    api(
+        &client,
+        &web,
+        (&cookie, &csrf),
+        reqwest::Method::POST,
+        "/api/repos/deploy_owner/project/pulls",
+        json!({"title": "Deploy key PR", "head_branch": "from-writer", "base_branch": "main"}),
+        StatusCode::CREATED,
+    )
+    .await;
+
     // An owner-created write key cannot acquire deployment rights through YAML promotion.
     std::fs::create_dir_all(reader.join(".github/workflows")).unwrap();
     std::fs::write(reader.join(".github/workflows/ci.yml"),
-        "on: push\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: production\n    steps: []\n").unwrap();
+        "on: [push, pull_request]\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: production\n    steps: []\n").unwrap();
     success(git(&reader, &["add", ".github"], None, &write_key).await);
     success(
         git(
@@ -404,6 +426,39 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         listed.starts_with(&deployment_sha),
         "the Git write itself was accepted"
     );
+    assert!(
+        db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
+            .await
+            .unwrap()
+            .iter()
+            .all(|run| run.head_sha.as_deref() != Some(deployment_sha.as_str()))
+    );
+
+    // Refreshing an open PR must retain the deploy credential's Write cap too.
+    // Push workflow admission also refuses the deployment and can report a partial failure.
+    // Check the accepted Git ref and PR refresh independently of that follow-up status.
+    let _ = git(
+        &reader,
+        &["push", "origin", "HEAD:refs/heads/from-writer"],
+        None,
+        &write_key,
+    )
+    .await;
+    let listed = success(
+        git(
+            &reader,
+            &["ls-remote", "origin", "refs/heads/from-writer"],
+            None,
+            &read_key,
+        )
+        .await,
+    );
+    assert!(listed.starts_with(&deployment_sha));
+    let pull = db::pull_requests::records::get_pull_request(&database.pool, project.id, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(pull.head_sha, deployment_sha);
     assert!(
         db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
             .await

@@ -117,10 +117,9 @@ pub async fn change(
             },
         );
     }
-    // A repeated star request still notifies; a watch notifies only when the watch changed.
     if let Some(recipient) = repository
         .personal_owner_id()
-        .filter(|id| enabled && *id != actor && (matches!(kind, Engagement::Star) || changed))
+        .filter(|id| enabled && *id != actor && changed)
     {
         if let Some(owner) = db::repositories::records::repository_owner_name(pool, repo_id)
             .await

@@ -72,9 +72,12 @@ fn refusal<T: std::fmt::Debug>(result: anyhow::Result<T>, expected: Refusal) {
     assert_eq!(error.to_string(), expected.to_string());
 }
 async fn denied(f: &Fixture, actor: i64, repo: i64) {
+    denied_mutations(f, actor, repo, &MUTATIONS).await;
+}
+async fn denied_mutations(f: &Fixture, actor: i64, repo: i64, mutations: &[Mutation]) {
     let before = f.snapshot(repo).await;
     let files = f.files();
-    for mutation in MUTATIONS {
+    for &mutation in mutations {
         refusal(
             mutate(f.database.pool(), actor, repo, mutation).await,
             Refusal::Denied,
@@ -365,7 +368,7 @@ async fn authority_matrix(pg: bool) {
         }
     }
     for repo in [personal, organization] {
-        // An archived repository refuses every settings change.
+        // Archival refuses settings edits, but administrators may still delete the repository.
         f.database
             .execute(
                 "UPDATE repositories SET is_archived=TRUE WHERE id=$1",
@@ -373,7 +376,57 @@ async fn authority_matrix(pg: bool) {
             )
             .await;
         for actor in [owner, admin, collaborator, site] {
-            denied(&f, actor, repo).await;
+            denied_mutations(
+                &f,
+                actor,
+                repo,
+                &[Mutation::Update, Mutation::Rename, Mutation::MergeMethods],
+            )
+            .await;
+            let may_delete = if repo == personal {
+                actor != admin
+            } else {
+                actor != site
+            };
+            if !may_delete {
+                refusal(
+                    mutate(f.database.pool(), actor, repo, Mutation::Delete).await,
+                    Refusal::Denied,
+                );
+            } else {
+                let target = f
+                    .repo(
+                        owner,
+                        (repo == organization).then_some(org),
+                        &format!("archived-delete-{repo}-{actor}"),
+                    )
+                    .await;
+                if actor == collaborator {
+                    db::repositories::access::grant_repo_access(
+                        f.database.pool(),
+                        actor,
+                        target,
+                        db::models::AccessLevel::Admin,
+                    )
+                    .await
+                    .unwrap();
+                }
+                f.database
+                    .execute(
+                        "UPDATE repositories SET is_archived=TRUE WHERE id=$1",
+                        &[target],
+                    )
+                    .await;
+                mutate(f.database.pool(), actor, target, Mutation::Delete)
+                    .await
+                    .unwrap();
+                assert!(
+                    db::repositories::records::get_repository_by_id(f.database.pool(), target)
+                        .await
+                        .unwrap()
+                        .is_none()
+                );
+            }
         }
         f.database
             .execute(

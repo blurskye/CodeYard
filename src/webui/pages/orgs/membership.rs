@@ -111,6 +111,9 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                     }
                 }
             }
+            if let Some(href) = &page.pending_invitations_next {
+                NavLink { href: href.clone(), class: "org-pagination", "Next pending invitations" }
+            }
             if page.more_members { NavLink { href: teams::navigation(page, page.members_after, page.teams_cursor, page.selected_team.as_ref().map(|detail| (detail.team.id, detail.members_cursor, detail.repositories_cursor))), class: "org-pagination", "Next members" } }
         }
     }

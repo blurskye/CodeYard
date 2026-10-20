@@ -411,13 +411,6 @@ pub(crate) async fn notification_list(
         ..
     } = inbox;
     let counts = counts.unwrap_or_default();
-    let mut notifications = notifications;
-    if db::notifications::records::refresh_links(&ctx.state.pool, &mut notifications)
-        .await
-        .is_err()
-    {
-        return unavailable(&ctx);
-    }
     let names: BTreeMap<i64, String> = counts.repositories.iter().cloned().collect();
     let actor_ids: Vec<_> = notifications
         .iter()

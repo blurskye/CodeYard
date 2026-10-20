@@ -21,6 +21,9 @@ pub struct Admin {
     pub days: i32,
     pub manage_access: bool,
     pub requests: Vec<Signup>,
+    pub pending_requests: i64,
+    pub requests_count: usize,
+    pub requests_page: usize,
     pub values: FormValues,
     /// `block` or `allow`.
     pub ai_crawlers: String,
@@ -177,7 +180,7 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
         })
         .collect();
     let (users, banned, storage_used) = model.totals;
-    let requests = model.requests.len();
+    let requests = model.requests_count;
     let newest = &model.accounts;
     rsx! {
         style { dangerous_inner_html: include_str!("../account.css") }
@@ -221,7 +224,7 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
                     header { class: "identity-admin-panel-header",
                         div { h2 { id: "admin-requests-title", "Pending requests" } p { "Sign-up requests waiting for a decision." } }
                         if model.manage_access && requests > 0 {
-                            a { href: "#signup-requests-title", class: "identity-button", "Review requests" }
+                            a { href: "/settings?tab=access", class: "identity-button", "Review requests" }
                         }
                     }
                     ul { class: "identity-admin-list",
@@ -288,7 +291,8 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
             }
             AiCrawlersPanel { token: token.to_owned(), value: ai_crawlers }
             if model.manage_access {
-                section { class: "identity-admin-panel identity-access-section", {access_forms(&model.requests, token, &model.values, "/admin/access")} }
+                section { class: "identity-admin-panel identity-access-section", {access_forms(&model.requests, token, &model.values, "/admin/access")}
+                    {super::signup_pagination(model.requests_page, model.requests_count, &format!("/admin?days={}", model.days))} }
             }
         }
     }

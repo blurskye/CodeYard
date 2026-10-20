@@ -112,9 +112,15 @@ pub async fn update_release(
     repo_id: i64,
     release_id: i64,
     fields: &ReleaseChanges,
-) -> Result<Release> {
+) -> Result<(Release, bool)> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     let current = release_in_repo(&mut tx, repo_id, release_id).await?;
+    if let Some(expected) = &fields.expected_revision {
+        anyhow::ensure!(
+            *expected == crate::backend::db::releases::release_revision(&current),
+            ReleaseRefusal::Conflict
+        );
+    }
     let fields = fields.apply_to(&current);
     // A release first published keeps its date. A draft gets one when it is published.
     sqlx::query(
@@ -133,8 +139,9 @@ pub async fn update_release(
     .await?;
     set_latest_flag(&mut tx, repo_id, release_id, &fields).await?;
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
+    let published = current.is_draft && !release.is_draft;
     tx.commit().await?;
-    Ok(release)
+    Ok((release, published))
 }
 
 pub async fn delete_release(
@@ -145,11 +152,12 @@ pub async fn delete_release(
 ) -> Result<Vec<File>> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     release_in_repo(&mut tx, repo_id, release_id).await?;
-    let files: Vec<Uuid> =
-        sqlx::query_scalar("SELECT file_id FROM release_assets WHERE release_id = $1")
-            .bind(release_id)
-            .fetch_all(&mut *tx)
-            .await?;
+    let files: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT DISTINCT file_id FROM release_assets WHERE release_id = $1 ORDER BY file_id",
+    )
+    .bind(release_id)
+    .fetch_all(&mut *tx)
+    .await?;
     sqlx::query("DELETE FROM releases WHERE id = $1")
         .bind(release_id)
         .execute(&mut *tx)
@@ -327,6 +335,20 @@ pub async fn list_release_assets(pool: &PgPool, release_id: i64) -> Result<Vec<R
     ))
     .bind(release_id)
     .fetch_all(pool)
+    .await?)
+}
+
+pub async fn get_release_asset_by_name(
+    pool: &PgPool,
+    release_id: i64,
+    name: &str,
+) -> Result<Option<ReleaseAsset>> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id=$1 AND name=$2"
+    ))
+    .bind(release_id)
+    .bind(name)
+    .fetch_optional(pool)
     .await?)
 }
 

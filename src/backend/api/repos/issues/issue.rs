@@ -168,7 +168,7 @@ pub(crate) async fn native_detail(
     headers: HeaderMap,
     uri: Uri,
 ) -> ResultPage<Response> {
-    let ctx = PageContext::load(state, headers, &uri).await?;
+    let mut ctx = PageContext::load(state, headers, &uri).await?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = match item(&ctx, &repo, kind, number).await {
@@ -190,13 +190,42 @@ pub(crate) async fn native_detail(
         }
         Err(response) => return Err(response),
     };
+    if kind == Kind::Issue {
+        if let Some(id) = ctx.query.get("comment") {
+            let id = id
+                .parse::<i64>()
+                .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment."))?;
+            let issue = db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+                .await
+                .map_err(|_| unavailable(&ctx))?
+                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+            let comment = db::issues::get_issue_comment(&ctx.state.pool, id)
+                .await
+                .map_err(|_| unavailable(&ctx))?
+                .filter(|comment| comment.issue_id == issue.id)
+                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?;
+            let position = db::issues::issue_comment_position(&ctx.state.pool, comment.id)
+                .await
+                .map_err(|_| unavailable(&ctx))?;
+            ctx.query.insert(
+                "page".into(),
+                crate::backend::issues::discussion_page(Ok(position)).to_string(),
+            );
+        }
+    }
     render_detail(
         &ctx,
         &repo,
         kind,
         &value,
         &DetailDraft::default(),
-        None,
+        ctx.query
+            .get("creation_warning")
+            .map(|warning| warning.as_str())
+            .filter(|warning| {
+                warning.len() <= 6000
+                    && warning.starts_with("Issue created, but some details could not be applied.")
+            }),
         StatusCode::OK,
     )
     .await
@@ -425,6 +454,7 @@ mod tests {
     use crate::webui::pages::repos::issues as view;
     fn value() -> view::Item {
         view::Item {
+            id: 1,
             number: 1,
             stacked: false,
             stack: None,

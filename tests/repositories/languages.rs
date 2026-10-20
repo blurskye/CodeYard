@@ -186,11 +186,14 @@ async fn languages_contract(pool: &db::DbPool) {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body, expected, "stored languages are served without Git");
 
-    // Without stored rows the reader has to compute them, and Git is unavailable.
+    // A cache entry for another revision cannot hide unavailable Git.
     db::repository_stats::upsert_repo_languages(
         pool,
-        repository.id,
-        &repository.default_branch,
+        &db::repository_stats::language_source(pool, repository.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        "obsolete-revision",
         &[],
     )
     .await
@@ -467,8 +470,11 @@ async fn push_contract(pool: &db::DbPool, database_url: &str) {
     // A push to another branch stores nothing, even with no stored languages to replace.
     db::repository_stats::upsert_repo_languages(
         pool,
-        repository.id,
-        &repository.default_branch,
+        &db::repository_stats::language_source(pool, repository.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        "obsolete-revision",
         &[],
     )
     .await

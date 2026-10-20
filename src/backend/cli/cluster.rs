@@ -422,7 +422,7 @@ async fn promote_command(
             let mut repositories: Vec<i64> = db::cluster::list_primary_repositories(pool, primary)
                 .await?
                 .into_iter()
-                .map(|(id, _, _, _)| id)
+                .map(|(id, _, _, _, _)| id)
                 .collect();
             repositories.dedup();
             if repositories.is_empty() {

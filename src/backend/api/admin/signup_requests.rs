@@ -12,7 +12,7 @@ use crate::backend::app::AppState;
 use crate::backend::identity::accounts::SignupReviewOutcome;
 use crate::backend::{db, identity};
 use crate::webui::pages::admin::Signup;
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
@@ -34,19 +34,31 @@ pub struct ResolveSignupRequest {
     pub action: String,
 }
 
+#[derive(Default, Deserialize)]
+pub struct SignupQuery {
+    page: Option<usize>,
+    after: Option<i64>,
+}
+
 pub async fn admin_list_signup_requests(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<SignupQuery>,
 ) -> Result<Json<Vec<SignupRequestResponse>>, (StatusCode, Json<ApiError>)> {
     let _admin = require_admin_user(&state, &headers).await?;
     let setup = node_setup_status(&state.pool).await?;
     if !setup.setup_completed || setup.node_mode != "private" {
         return Ok(Json(vec![]));
     }
-    let requests =
-        crate::backend::db::users::signup_requests::list_signup_requests(&state.pool, "pending")
-            .await
-            .map_err(|_| database_failure())?;
+    let requests = crate::backend::db::users::signup_requests::list_signup_requests(
+        &state.pool,
+        "pending",
+        30,
+        request_offset(query.page.unwrap_or(1)),
+        query.after.unwrap_or(0),
+    )
+    .await
+    .map_err(|_| database_failure())?;
     Ok(Json(
         requests
             .into_iter()
@@ -96,26 +108,65 @@ pub(crate) fn signup_decision(action: &str) -> Option<identity::accounts::Signup
     }
 }
 
-pub(crate) async fn load_requests(ctx: &PageContext) -> Result<Vec<Signup>, Response> {
+fn request_offset(page: usize) -> i64 {
+    i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX)
+}
+
+pub(crate) async fn load_requests(
+    ctx: &PageContext,
+    limit: i64,
+) -> Result<(Vec<Signup>, usize, usize), Response> {
     // Callers must pass the admin + private-node guard before reading identities.
     require_account(ctx, true)?;
-    let requests = db::users::signup_requests::list_signup_requests(&ctx.state.pool, "pending")
+    let total = db::users::signup_requests::count_signup_requests(&ctx.state.pool, "pending")
         .await
         .map_err(|_| {
             ctx.error(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load signup requests.",
+                "Unable to count signup requests.",
             )
-        })?;
-    Ok(requests
-        .into_iter()
-        .map(|request| Signup {
-            id: request.id,
-            username: request.username,
-            email: request.email.unwrap_or_default(),
-            created: request.created_at.format("%b %e, %Y %H:%M UTC").to_string(),
-        })
-        .collect())
+        })? as usize;
+    let page = ctx
+        .query
+        .get("request_page")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, total.div_ceil(30).max(1));
+    let after = match ctx.query.get("requests_after") {
+        Some(value) => value
+            .parse::<i64>()
+            .ok()
+            .filter(|value| *value >= 0)
+            .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid signup request page."))?,
+        None => 0,
+    };
+    let requests = db::users::signup_requests::list_signup_requests(
+        &ctx.state.pool,
+        "pending",
+        limit,
+        request_offset(page),
+        after,
+    )
+    .await
+    .map_err(|_| {
+        ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unable to load signup requests.",
+        )
+    })?;
+    Ok((
+        requests
+            .into_iter()
+            .map(|request| Signup {
+                id: request.id,
+                username: request.username,
+                email: request.email.unwrap_or_default(),
+                created: request.created_at.format("%b %e, %Y %H:%M UTC").to_string(),
+            })
+            .collect(),
+        total,
+        page,
+    ))
 }
 
 pub(crate) async fn signup_post(

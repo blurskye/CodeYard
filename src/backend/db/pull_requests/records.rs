@@ -54,12 +54,24 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::list_ope
     branches: &[&str],
 ) -> Result<Vec<PullRequestRevisions>>);
 
+#[derive(Debug, sqlx::FromRow)]
+pub struct BranchPullRequest {
+    pub head_branch: String,
+    pub number: i32,
+    pub title: String,
+}
+
+native_operation!(crate::backend::db::postgres::pull_requests::records::find_open_pull_request_from_branches,
+    crate::backend::db::sqlite::pull_requests::records::find_open_pull_request_from_branches,
+    fn find_open_pull_request_from_branches(pool: &DbPool, repo_id: i64, base: &str, head: &str) -> Result<Option<BranchPullRequest>>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_open_pull_requests_from_branches,
     crate::backend::db::sqlite::pull_requests::records::list_open_pull_requests_from_branches,
     fn list_open_pull_requests_from_branches(
     pool: &DbPool,
     repo_id: i64,
-) -> Result<Vec<PullRequest>>);
+    base: Option<&str>,
+) -> Result<Vec<BranchPullRequest>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::move_open_pull_request_head,
     crate::backend::db::sqlite::pull_requests::records::move_open_pull_request_head,
@@ -204,7 +216,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::unstack_
     pool: &DbPool,
     actor_id: i64,
     pull_request_id: i64,
-) -> Result<bool>);
+) -> Result<Option<Vec<PullRequest>>>);
 
 // Every pull request of a stack, merged ones included, in number order.
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_stack_members,

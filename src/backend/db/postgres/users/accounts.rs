@@ -254,11 +254,19 @@ pub async fn set_user_avatar(
 pub async fn update_user_profile(
     pool: &PgPool,
     user_id: i64,
+    session: &str,
     display_name: Option<&str>,
     bio: Option<&str>,
     location: Option<&str>,
     website: Option<&str>,
-) -> Result<User> {
+) -> Result<Option<User>> {
+    let mut tx = pool.begin().await?;
+    super::transitions::lock_membership_shared(&mut tx).await?;
+    let active: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR UPDATE")
+        .bind(user_id).fetch_optional(&mut *tx).await?;
+    if active.is_none() || !super::transitions::live_session(&mut tx, user_id, session).await? {
+        return Ok(None);
+    }
     let result = sqlx::query_as::<_, User>(
         r#"
         UPDATE users SET
@@ -267,7 +275,7 @@ pub async fn update_user_profile(
             location = COALESCE($4, location),
             website = COALESCE($5, website),
             updated_at = NOW()
-        WHERE id = $1
+        WHERE id = $1 AND NOT is_banned AND NOT must_change_password
         RETURNING *
         "#,
     )
@@ -276,9 +284,9 @@ pub async fn update_user_profile(
     .bind(bio)
     .bind(location)
     .bind(website)
-    .fetch_one(pool)
+    .fetch_optional(&mut *tx)
     .await?;
-
+    tx.commit().await?;
     Ok(result)
 }
 
@@ -297,7 +305,21 @@ pub async fn list_admin_users(
         .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
 }
 
-pub async fn list_admin_account_summaries(pool: &PgPool) -> Result<Vec<AdminAccountSummary>> {
+pub async fn admin_totals(pool: &PgPool) -> Result<(i64, i64, i64)> {
+    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM users WHERE is_banned), ((SELECT COALESCE(SUM(size_bytes),0) FROM repositories) + (SELECT COALESCE(SUM(file_size),0) FROM files WHERE is_active))::BIGINT")
+        .fetch_one(pool).await?)
+}
+
+pub async fn recent_admin_accounts(pool: &PgPool) -> Result<Vec<AdminAccountSummary>> {
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at,0::BIGINT AS total_files,0::BIGINT AS total_bytes,0::BIGINT AS commits_total,0::BIGINT AS pushes_total,0::BIGINT AS contributions_total FROM users ORDER BY created_at DESC,id DESC LIMIT 5")
+        .fetch_all(pool).await?)
+}
+
+pub async fn list_admin_account_summaries(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AdminAccountSummary>> {
     let accounts = sqlx::query_as::<_, AdminAccountSummary>(
         r#"
         SELECT
@@ -383,8 +405,10 @@ pub async fn list_admin_account_summaries(pool: &PgPool) -> Result<Vec<AdminAcco
             WHERE r.owner_kind = 'user' AND r.owner_user_id = u.id
         ) repos ON TRUE
         ORDER BY contributions_total DESC, u.created_at ASC, u.id ASC
+        LIMIT $1 OFFSET $2
         "#,
     )
+    .bind(limit.clamp(1,100)).bind(offset.max(0))
     .fetch_all(pool)
     .await?;
 

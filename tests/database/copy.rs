@@ -165,6 +165,43 @@ async fn populate(source: &NativeDatabase) -> Seed {
 }
 
 #[tokio::test]
+async fn copies_repository_with_a_deleted_creator_to_postgres() {
+    let _turn = TURNS.lock().await;
+    let source = NativeDatabase::new().await;
+    let creator = db::users::accounts::create_user(&source.pool, "former-creator", None)
+        .await
+        .unwrap();
+    let org: i64 =
+        sqlx::query_scalar("INSERT INTO organizations(name) VALUES ('organization') RETURNING id")
+            .fetch_one(&source.raw)
+            .await
+            .unwrap();
+    sqlx::query("INSERT INTO repositories(owner_kind, owner_org_id, name, disk_path, created_by_id) VALUES ('org', ?1, 'kept', 'kept.git', ?2)")
+        .bind(org).bind(creator.id).execute(&source.raw).await.unwrap();
+    sqlx::query("DELETE FROM users WHERE id = ?1")
+        .bind(creator.id)
+        .execute(&source.raw)
+        .await
+        .unwrap();
+    let retained: i64 =
+        sqlx::query_scalar("SELECT created_by_id FROM repositories WHERE name = 'kept'")
+            .fetch_one(&source.raw)
+            .await
+            .unwrap();
+    assert_eq!(retained, creator.id);
+    let target = PostgresDatabase::new().await;
+    db::copy::copy_database(&source.url, &target.connection_url())
+        .await
+        .unwrap();
+    let copied: i64 =
+        sqlx::query_scalar("SELECT created_by_id FROM repositories WHERE name = 'kept'")
+            .fetch_one(postgres(&target))
+            .await
+            .unwrap();
+    assert_eq!(copied, creator.id);
+}
+
+#[tokio::test]
 async fn copies_every_table_and_value_to_postgres() {
     let _turn = TURNS.lock().await;
     let source = NativeDatabase::new().await;

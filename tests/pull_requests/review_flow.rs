@@ -183,6 +183,8 @@ fn input_tag<'a>(html: &'a str, needle: &str) -> &'a str {
 
 /// Bob opens a conversation on the first line of the new file, from the diff composer.
 async fn open_thread(bob: &Client, number: i64, head: &str) -> i64 {
+    let pull = bob.pull(number).await;
+    let base = pull["base_sha"].as_str().unwrap();
     let reply = bob
         .form_reply(
             &format!("{}/comments", web(number)),
@@ -191,6 +193,7 @@ async fn open_thread(bob: &Client, number: i64, head: &str) -> i64 {
                 ("side", "RIGHT"),
                 ("line", "1"),
                 ("commit_sha", head),
+                ("base_sha", base),
                 ("from", "diff"),
                 ("body", "Rename this"),
                 ("intent", "comment"),
@@ -483,6 +486,7 @@ async fn native_votes_gate_the_merge(pg: bool) {
                 ("state", "changes_requested"),
                 ("body", "Needs a test"),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -509,6 +513,7 @@ async fn native_votes_gate_the_merge(pg: bool) {
                 ("state", "approved"),
                 ("body", ""),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -541,6 +546,7 @@ async fn readers_and_authors_get_no_vote(pg: bool) {
                 ("state", "commented"),
                 ("body", "Reading along"),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -554,6 +560,7 @@ async fn readers_and_authors_get_no_vote(pg: bool) {
                 ("state", "approved"),
                 ("body", ""),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -570,6 +577,7 @@ async fn readers_and_authors_get_no_vote(pg: bool) {
                 ("state", "approved"),
                 ("body", ""),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -593,6 +601,7 @@ async fn stale_marks_and_refused_stale_reviews(pg: bool) {
                 ("state", "approved"),
                 ("body", ""),
                 ("commit_sha", first.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -622,6 +631,7 @@ async fn stale_marks_and_refused_stale_reviews(pg: bool) {
                 ("state", "changes_requested"),
                 ("body", "Keep this draft"),
                 ("commit_sha", first.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -653,6 +663,7 @@ async fn inline_comments_replies_and_outdating(pg: bool) {
                 ("line", "1"),
                 ("in_reply_to", root_text.as_str()),
                 ("commit_sha", first.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("from", "diff"),
                 ("body", "Done"),
                 ("intent", "comment"),
@@ -688,6 +699,7 @@ async fn inline_comments_replies_and_outdating(pg: bool) {
                 ("side", "RIGHT"),
                 ("line", "1"),
                 ("commit_sha", world.base.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("from", "diff"),
                 ("body", "Too late"),
                 ("intent", "comment"),
@@ -783,6 +795,7 @@ async fn dismissal_is_for_administrators(pg: bool) {
                 ("state", "changes_requested"),
                 ("body", "Needs work"),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -961,6 +974,7 @@ async fn page_lists_what_blocks_the_merge(pg: bool) {
                 ("state", "approved"),
                 ("body", ""),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -1379,6 +1393,7 @@ async fn reviewer_requests_are_asked_again_and_removed(pg: bool) {
                 ("state", "changes_requested"),
                 ("body", "Needs a test"),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -1474,6 +1489,7 @@ async fn preview_keeps_the_commit_a_draft_was_written_against(pg: bool) {
                 ("state", "approved"),
                 ("body", "Keep this"),
                 ("commit_sha", first.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "preview"),
             ],
         )
@@ -1489,6 +1505,7 @@ async fn preview_keeps_the_commit_a_draft_was_written_against(pg: bool) {
                 ("state", "approved"),
                 ("body", "Keep this"),
                 ("commit_sha", first.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -1556,6 +1573,7 @@ async fn new_conversations_must_sit_on_the_diff(pg: bool) {
                 ("side", "LEFT"),
                 ("line", "1"),
                 ("commit_sha", first.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("from", "diff"),
                 ("body", "Left side words"),
                 ("intent", "comment"),
@@ -1587,6 +1605,7 @@ async fn new_conversations_must_sit_on_the_diff(pg: bool) {
                 ("line", "1"),
                 ("in_reply_to", root_text.as_str()),
                 ("commit_sha", second.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("from", "diff"),
                 ("body", "Still here"),
                 ("intent", "comment"),
@@ -1625,6 +1644,7 @@ async fn closed_pull_request_keeps_the_refused_text_read_only(pg: bool) {
                 ("state", "approved"),
                 ("body", "Keep this closed text"),
                 ("commit_sha", head.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("intent", "submit"),
             ],
         )
@@ -1919,6 +1939,7 @@ async fn stale_head_refuses_new_conversations(pg: bool) {
                 ("side", "RIGHT"),
                 ("line", "1"),
                 ("commit_sha", first.as_str()),
+                ("base_sha", world.base.as_str()),
                 ("from", "diff"),
                 ("body", "Stale draft"),
                 ("intent", "comment"),

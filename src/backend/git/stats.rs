@@ -367,7 +367,7 @@ pub(crate) fn directory_size(path: &Path) -> Result<u64> {
     let mut pending = vec![path.to_owned()];
     let mut entries = 0usize;
     while let Some(path) = pending.pop() {
-        let Some(listing) = unless_removed(std::fs::read_dir(path))? else {
+        let Some(listing) = unless_removed(std::fs::read_dir(&path))? else {
             continue;
         };
         for entry in listing {
@@ -379,6 +379,13 @@ pub(crate) fn directory_size(path: &Path) -> Result<u64> {
             let Some(entry) = unless_removed(entry)? else {
                 continue;
             };
+            // Receive quarantine and pack temporaries are not durable repository storage.
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("incoming-") || name.starts_with("tmp_") || name.ends_with(".lock")
+            {
+                continue;
+            }
             let Some(metadata) = unless_removed(std::fs::symlink_metadata(entry.path()))? else {
                 continue;
             };
@@ -446,6 +453,27 @@ mod tests {
         std::fs::write(directory.path().join("pack"), [0u8; 10]).unwrap();
         assert_eq!(directory_size(directory.path()).unwrap(), 10);
         assert!(directory_size(&directory.path().join("gone")).is_err());
+    }
+
+    #[test]
+    fn size_excludes_receive_quarantine_and_pack_temporaries() {
+        let root = tempfile::tempdir().unwrap();
+        for directory in ["objects/incoming-B", "objects/pack"] {
+            std::fs::create_dir_all(root.path().join(directory)).unwrap();
+        }
+        for name in [
+            "objects/incoming-B/pack",
+            "objects/pack/tmp_pack_B",
+            "HEAD.lock",
+        ] {
+            std::fs::write(root.path().join(name), [0u8; 100]).unwrap();
+        }
+        std::fs::write(
+            root.path().join("objects/pack/pack-accepted.pack"),
+            [0u8; 7],
+        )
+        .unwrap();
+        assert_eq!(directory_size(root.path()).unwrap(), 7);
     }
 
     #[test]

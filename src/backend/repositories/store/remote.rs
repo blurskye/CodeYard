@@ -11,6 +11,19 @@ use crate::backend::cluster::{
 use serde::de::DeserializeOwned;
 use std::path::Path;
 
+fn decode_json<T: DeserializeOwned>(
+    value: serde_json::Value,
+    body: &[u8],
+    raw_json: bool,
+) -> Result<T, RepoError> {
+    if raw_json && !body.is_empty() {
+        serde_json::from_slice(body).map_err(|_| rpc::unavailable())
+    } else {
+        // Peers predating raw JSON responses still return the value in the header.
+        serde_json::from_value(value).map_err(|_| rpc::unavailable())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct RemoteStore {
     pub(super) disk_path: String,
@@ -84,18 +97,16 @@ impl RemoteStore {
     ) -> Result<T, RepoError> {
         let raw_json = matches!(
             &operation,
-            Operation::FilePaths { .. } | Operation::CommitsBetween { .. }
+            Operation::FilePaths { .. }
+                | Operation::CommitsBetween { .. }
+                | Operation::Blame { .. }
         );
         let (reply, body) = self.exchange(operation, body).await?;
         let value = reply.result.map_err(|failure| match failure {
             Failure::Repository(error) => error,
             Failure::Merge(_) => rpc::wire::invalid("unexpected merge failure"),
         })?;
-        if raw_json {
-            serde_json::from_slice(&body).map_err(|_| rpc::unavailable())
-        } else {
-            serde_json::from_value(value).map_err(|_| rpc::unavailable())
-        }
+        decode_json(value, &body, raw_json)
     }
 
     pub(super) async fn call_as<T: DeserializeOwned>(
@@ -301,9 +312,8 @@ impl RemoteStore {
     pub(super) async fn checkout(&self, destination: &Path, sha: &str) -> Result<(), RepoError> {
         let oid =
             git2::Oid::from_str(sha).map_err(|_| rpc::wire::invalid("invalid checkout commit"))?;
-        // A checkout is a session like any other, also when this node serves it from its own
-        // copy, which takes no permit of its own.
-        let permit = crate::backend::git::repository::process::session_permit()
+        // Network admission is separate from execution on this node or its peer.
+        let permit = crate::backend::git::repository::process::forwarding_permit()
             .await
             .map_err(RepoError::from)?;
         let want = format!("want {oid}\n");
@@ -336,5 +346,21 @@ impl RemoteStore {
         drop(output);
         let lock = crate::backend::git::locks::lock(destination).await;
         LocalStore::checkout_pack(destination, sha, pack, permit, lock).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_replies_decode_from_legacy_headers_or_negotiated_raw_frames() {
+        let expected = vec!["path/one".to_owned()];
+        let legacy: Vec<String> = decode_json(serde_json::json!(expected), b"", true).unwrap();
+        let raw: Vec<String> =
+            decode_json(serde_json::Value::Null, br#"["path/one"]"#, true).unwrap();
+        assert_eq!(legacy, expected);
+        assert_eq!(raw, expected);
+        assert!(decode_json::<Vec<String>>(serde_json::Value::Null, b"broken", true).is_err());
     }
 }

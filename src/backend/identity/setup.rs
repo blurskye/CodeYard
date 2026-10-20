@@ -136,7 +136,7 @@ pub async fn complete_setup(
     let user = match transitions::complete_setup(
         pool,
         input.account.username,
-        input.account.email,
+        input.account.email.filter(|email| !email.trim().is_empty()),
         &hash,
         mode,
         recovery,

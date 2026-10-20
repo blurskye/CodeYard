@@ -17,7 +17,7 @@ native_operation!(crate::backend::db::postgres::node_config::upsert_node_configu
 
 native_operation!(crate::backend::db::postgres::node_config::set_ai_crawlers,
     crate::backend::db::sqlite::node_config::set_ai_crawlers,
-    fn set_ai_crawlers(pool: &DbPool, actor: i64, value: &str) -> Result<bool>);
+    fn set_ai_crawlers(pool: &DbPool, actor: i64, session: &str, value: &str) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::node_config::get_cluster_ssh_host_key,
     crate::backend::db::sqlite::node_config::get_cluster_ssh_host_key,

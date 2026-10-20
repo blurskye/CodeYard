@@ -30,10 +30,11 @@ pub fn compare(
         encode_component(head)
     );
     let new_pull = format!(
-        "{}/new?base={}&head={}&intent=compare",
+        "{}/new?base={}&head={}&head_repo={}&intent=compare",
         repo.family_url(Kind::Pull),
         encode_component(base),
-        encode_component(head)
+        encode_component(head),
+        repo.chrome.id
     );
     repos::chrome::chrome(
         &repo.chrome,
@@ -67,4 +68,49 @@ pub fn compare(
             }
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_pull_keeps_the_compared_repository_as_head() {
+        let repo = Repository {
+            owner: "u".into(),
+            name: "r".into(),
+            signed_in: true,
+            can_write: true,
+            can_admin: false,
+            csrf: String::new(),
+            viewer: "u".into(),
+            chrome: repos::chrome::RepoChrome {
+                id: 42,
+                ..Default::default()
+            },
+        };
+        let diff = Diff {
+            files: vec![repos::pulls::DiffFile {
+                filename: "a.txt".into(),
+                status: "added".into(),
+                additions: 1,
+                deletions: 0,
+                patch: String::new(),
+                owners: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let html = crate::webui::tests::in_scope(|| {
+            dioxus_ssr::render_element(compare(
+                &repo,
+                "main",
+                "topic",
+                &[],
+                Some(&diff),
+                None,
+                false,
+            ))
+        });
+        assert!(html.contains("head_repo=42&#38;intent=compare"), "{html}");
+    }
 }

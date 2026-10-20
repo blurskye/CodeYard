@@ -150,6 +150,8 @@ fn label_is_light(hex: &str) -> bool {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Item {
+    #[serde(default)]
+    pub id: i64,
     pub number: i32,
     pub title: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -245,6 +247,8 @@ impl Milestone {
 /// The milestone form as typed, kept when a submission is refused.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MilestoneDraft {
+    #[serde(default)]
+    pub repository_id: Option<String>,
     pub title: String,
     pub description: String,
     pub due_date: String,
@@ -259,6 +263,7 @@ pub struct ListFilters {
     /// The labels the list must all carry, in the order they were chosen.
     pub selected_labels: Vec<String>,
     pub assignees: Vec<String>,
+    /// A username, `none` for unassigned, or `@none` for the account named none.
     pub assignee: String,
     pub milestones: Vec<Milestone>,
     pub milestone: String,
@@ -337,6 +342,8 @@ pub struct Comparison {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Comment {
     pub id: i64,
+    #[serde(default)]
+    pub revision: String,
     pub author: String,
     pub body: String,
     pub created: String,
@@ -363,6 +370,8 @@ pub struct Comment {
 /// An edit form that is shown again with the text the author typed.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommentEdit {
+    #[serde(default)]
+    pub original_body: String,
     pub body: String,
     pub preview: bool,
 }
@@ -400,6 +409,10 @@ pub struct Event {
 /// Owned presentation data only. Permission flags select controls; they are never
 /// trusted authority for a backend mutation. The CSRF value is the same public form
 /// token already present in HTML, not a session credential or persistence record.
+fn first_page() -> usize {
+    1
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Page {
     List {
@@ -446,6 +459,8 @@ pub enum Page {
         references: Box<References>,
         #[serde(default)]
         reviewers: Vec<Reviewer>,
+        #[serde(default)]
+        reviewer_choices: Vec<String>,
         /// Users who may still be assigned, offered to a writer.
         #[serde(default)]
         assignable: Vec<String>,
@@ -461,6 +476,10 @@ pub enum Page {
         /// How the list is ordered; empty for the closest due date first.
         #[serde(default)]
         sort: String,
+        #[serde(default = "first_page")]
+        page_number: usize,
+        #[serde(default)]
+        has_next: bool,
     },
     /// The repository's labels. Administrators change them on this page. `query` and `sort` are
     /// what the search and sort controls were set to. `usage` counts, by label id, the issues and
@@ -486,6 +505,7 @@ pub enum Page {
         state: String,
         items: Vec<Item>,
         pull_requests: Vec<Item>,
+        pagination: (usize, bool),
         draft: MilestoneDraft,
         error: Option<String>,
     },
@@ -610,6 +630,7 @@ pub fn render(page: Page) -> Element {
             error,
             references,
             reviewers,
+            reviewer_choices,
             assignable,
             milestones,
         } => detail(
@@ -622,6 +643,7 @@ pub fn render(page: Page) -> Element {
             error.as_deref(),
             &references,
             &reviewers,
+            &reviewer_choices,
             &assignable,
             &milestones,
         ),
@@ -631,7 +653,17 @@ pub fn render(page: Page) -> Element {
             counts,
             items,
             sort,
-        } => milestones::list(&repository, &state, counts, &items, &sort),
+            page_number,
+            has_next,
+        } => milestones::list(
+            &repository,
+            &state,
+            counts,
+            &items,
+            &sort,
+            page_number,
+            has_next,
+        ),
         Page::Labels {
             repository,
             items,
@@ -660,6 +692,7 @@ pub fn render(page: Page) -> Element {
             state,
             items,
             pull_requests,
+            pagination,
             draft,
             error,
         } => milestones::detail(
@@ -668,6 +701,7 @@ pub fn render(page: Page) -> Element {
             &state,
             &items,
             &pull_requests,
+            pagination,
             &draft,
             error.as_deref(),
         ),

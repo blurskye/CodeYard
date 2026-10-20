@@ -44,7 +44,13 @@ async fn blame_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Re
         folders,
         latest_commit,
         permalink,
-        reference: resolved.reference,
+        reference: if !is_branch(loaded, &resolved.reference)
+            && !resolved.reference.starts_with("refs/")
+        {
+            head.sha
+        } else {
+            resolved.reference
+        },
         path: resolved.path,
         content: blame.content,
         size: blame.size,

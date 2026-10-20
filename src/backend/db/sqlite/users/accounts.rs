@@ -198,18 +198,29 @@ pub async fn set_user_avatar(
 pub async fn update_user_profile(
     pool: &SqlitePool,
     user_id: i64,
+    session: &str,
     display_name: Option<&str>,
     bio: Option<&str>,
     location: Option<&str>,
     website: Option<&str>,
-) -> Result<User> {
-    Ok(sqlx::query_as("UPDATE users SET display_name=COALESCE(?2,display_name),bio=COALESCE(?3,bio),location=COALESCE(?4,location),website=COALESCE(?5,website),updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *")
-        .bind(user_id).bind(display_name).bind(bio).bind(location).bind(website).fetch_one(pool).await?)
+) -> Result<Option<User>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::transitions::live_session(&mut tx, user_id, session).await? {
+        return Ok(None);
+    }
+    let user = sqlx::query_as("UPDATE users SET display_name=COALESCE(?2,display_name),bio=COALESCE(?3,bio),location=COALESCE(?4,location),website=COALESCE(?5,website),updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND NOT is_banned AND NOT must_change_password RETURNING *")
+        .bind(user_id).bind(display_name).bind(bio).bind(location).bind(website).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(user)
 }
 
 pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE instr(lower(username),?1)>0 OR instr(lower(COALESCE(email,'')),?1)>0")
-        .bind(text.trim().to_lowercase()).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(
+        "SELECT COUNT(*) FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1",
+    )
+    .bind(super::super::search::contains(text.trim()))
+    .fetch_one(pool)
+    .await?)
 }
 
 pub async fn list_admin_users(
@@ -218,11 +229,25 @@ pub async fn list_admin_users(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<AdminUser>> {
-    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE instr(lower(username),?1)>0 OR instr(lower(COALESCE(email,'')),?1)>0 ORDER BY username,id LIMIT ?2 OFFSET ?3")
-        .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1 ORDER BY username,id LIMIT ?2 OFFSET ?3")
+        .bind(super::super::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
 }
 
-pub async fn list_admin_account_summaries(pool: &SqlitePool) -> Result<Vec<AdminAccountSummary>> {
+pub async fn admin_totals(pool: &SqlitePool) -> Result<(i64, i64, i64)> {
+    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM users WHERE is_banned), (SELECT COALESCE(SUM(size_bytes),0) FROM repositories) + (SELECT COALESCE(SUM(file_size),0) FROM files WHERE is_active)")
+        .fetch_one(pool).await?)
+}
+
+pub async fn recent_admin_accounts(pool: &SqlitePool) -> Result<Vec<AdminAccountSummary>> {
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at,0 AS total_files,0 AS total_bytes,0 AS commits_total,0 AS pushes_total,0 AS contributions_total FROM users ORDER BY created_at DESC,id DESC LIMIT 5")
+        .fetch_all(pool).await?)
+}
+
+pub async fn list_admin_account_summaries(
+    pool: &SqlitePool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AdminAccountSummary>> {
     // Independent correlated aggregates avoid multiplying storage/counts by the
     // cardinality of other joins. No PostgreSQL LATERAL or float quota arithmetic.
     Ok(sqlx::query_as(r#"WITH totals AS (
@@ -244,8 +269,8 @@ pub async fn list_admin_account_summaries(pool: &SqlitePool) -> Result<Vec<Admin
         FROM users u)
         SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at,total_files,total_bytes,
             commits_total,pushes_total,commits_total+pushes_total+other_contributions AS contributions_total
-        FROM totals ORDER BY contributions_total DESC,created_at ASC,id ASC"#)
-        .fetch_all(pool).await?)
+        FROM totals ORDER BY contributions_total DESC,created_at ASC,id ASC LIMIT ?1 OFFSET ?2"#)
+        .bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
 }
 
 pub async fn list_admin_activity_points(

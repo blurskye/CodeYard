@@ -10,19 +10,39 @@ pub fn resolve_repo_ref_path(
     refs: &[String],
     require_path: bool,
 ) -> Option<ResolvedRefPath> {
-    if parts.is_empty() || (require_path && parts.len() < 2) {
+    if parts.is_empty()
+        || parts
+            .iter()
+            .map(|part| part.len().saturating_add(1))
+            .sum::<usize>()
+            > 4096
+        || (require_path && parts.len() < 2)
+    {
         return None;
     }
-    for index in (1..=parts.len()).rev() {
-        let reference = parts[..index].join("/");
-        let path = parts[index..].join("/");
-        if refs.contains(&reference) && (!require_path || !path.is_empty()) {
-            return Some(ResolvedRefPath { reference, path });
-        }
-    }
+    // A full object ID is an immutable address, never a prefix of a named ref.
+    let tail = parts.join("/");
+    let commit = parts[0].len() == 40 && parts[0].bytes().all(|byte| byte.is_ascii_hexdigit());
+    let reference = if commit {
+        parts[0].as_str()
+    } else {
+        refs.iter()
+            .filter(|reference| {
+                tail == **reference && !require_path
+                    || tail
+                        .strip_prefix(reference.as_str())
+                        .is_some_and(|rest| rest.starts_with('/') && rest.len() > 1)
+            })
+            .max_by_key(|reference| reference.len())
+            .map_or(parts[0].as_str(), String::as_str)
+    };
     Some(ResolvedRefPath {
-        reference: parts[0].clone(),
-        path: parts[1..].join("/"),
+        reference: reference.to_owned(),
+        path: tail
+            .get(reference.len()..)
+            .unwrap_or_default()
+            .trim_start_matches('/')
+            .to_owned(),
     })
 }
 
@@ -74,8 +94,7 @@ pub fn file_url(base: &str, kind: &str, reference: &str, path: &str) -> String {
 
 fn qualified_ref(reference: &str) -> String {
     if reference.starts_with("refs/")
-        || ((7..=40).contains(&reference.len())
-            && reference.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        || (reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()))
     {
         reference.to_owned()
     } else {
@@ -134,6 +153,41 @@ pub fn link_base(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn full_commit_ids_precede_named_ref_prefixes() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let refs = vec![format!("{sha}/docs")];
+        let resolved =
+            resolve_repo_ref_path(&split_path(&format!("{sha}/docs/a.rs")), &refs, true).unwrap();
+        assert_eq!(resolved.reference, sha);
+        assert_eq!(resolved.path, "docs/a.rs");
+    }
+
+    #[test]
+    fn oversized_tails_are_refused_before_prefix_matching() {
+        assert!(resolve_repo_ref_path(
+            &split_path(&format!("main/{}", "a/".repeat(50_000))),
+            &["main".into()],
+            false
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn named_hex_refs_stay_qualified_in_file_and_markdown_links() {
+        assert_eq!(
+            file_url("/u/r", "blob", "abcdef1", "docs/a.md"),
+            "/u/r/blob/refs/heads/abcdef1/docs/a.md"
+        );
+        let base = link_base("/u/r", "refs/heads/abcdef1", "");
+        assert_eq!(base.blob, "/u/r/blob/refs/heads/abcdef1");
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        assert_eq!(
+            file_url("/u/r", "blob", sha, "a.md"),
+            format!("/u/r/blob/{sha}/a.md")
+        );
+    }
+
     #[test]
     fn longest_branch_and_tag_are_preserved() {
         let refs = vec!["feature".into(), "feature/x".into(), "v1/release".into()];

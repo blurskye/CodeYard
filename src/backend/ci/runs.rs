@@ -114,7 +114,12 @@ impl CiRuns {
                 "repo_owner and repo_name must use safe repository characters",
             ));
         }
-        if !is_safe_ref(&request.branch) {
+        let reference = if request.event == "pull_request" {
+            format!("refs/heads/{}", request.branch)
+        } else {
+            request.branch.clone()
+        };
+        if !is_safe_ref(&reference) {
             return Err(AdmissionError::InvalidRequest(
                 "branch contains unsupported characters",
             ));
@@ -332,7 +337,11 @@ impl CiRuns {
                 pipeline: request.pipeline.as_str(),
                 event: &request.event,
                 pull_request_id: request.pull_request_id,
-                branch: branch_name(&request.branch),
+                branch: if request.event == "pull_request" {
+                    &request.branch
+                } else {
+                    branch_name(&request.branch)
+                },
                 head_sha,
                 workflow_path: &request.workflow_paths.join(","),
                 workflow_blobs: &revision.blobs,

@@ -10,6 +10,17 @@ fn html(element: Element) -> String {
 }
 
 #[test]
+fn signup_review_pages_link_both_directions_and_show_the_total() {
+    let output = html(super::signup_pagination(2, 61, "/settings?tab=access"));
+    assert!(output.contains("61 pending requests"));
+    assert!(output.contains("Page 2 of 3"));
+    assert!(output.contains("request_page=1"));
+    assert!(output.contains("request_page=3"));
+    assert!(output.contains("Previous requests"));
+    assert!(output.contains("Next requests"));
+}
+
+#[test]
 fn timeframe_choices_are_plain_links_with_the_current_one_marked() {
     let output = html(timeframe_control(30));
     for days in [7, 30, 90, 180] {
@@ -52,11 +63,14 @@ fn overview_links_to_the_users_page_instead_of_listing_every_action() {
         current_user_id: 1,
         ai_crawlers: "block".into(),
         accounts: vec![account(42, "bob", false, false)],
+        pending_requests: 0,
         totals: (1, 0, 0),
         activity: vec![],
         days: 30,
         manage_access: false,
         requests: vec![],
+        requests_count: 0,
+        requests_page: 1,
         values: FormValues::default(),
     };
     let output = html(admin_page(model, "csrf-marker", None, false));
@@ -67,6 +81,7 @@ fn overview_links_to_the_users_page_instead_of_listing_every_action() {
 
 fn users_model(accounts: Vec<Account>, search: &str, page: usize, pages: usize) -> AdminUsers {
     AdminUsers {
+        managed_accounts: true,
         current_user_id: 1,
         accounts: accounts
             .into_iter()
@@ -129,6 +144,15 @@ fn users_page_keeps_search_and_page_on_row_actions_and_offers_the_create_form() 
     assert!(output.contains("action=\"/admin/access/users\""));
     assert!(output.contains("name=\"is_admin\""));
     assert!(output.contains("Page 2 of 3"));
+}
+
+#[test]
+fn public_users_page_does_not_offer_managed_account_creation() {
+    let mut model = users_model(vec![], "", 1, 1);
+    model.managed_accounts = false;
+    let output = html(admin_users_page(model, "csrf", None, false));
+    assert!(!output.contains("/admin/access/users"));
+    assert!(!output.contains("Create user"));
 }
 
 #[test]
@@ -204,8 +228,11 @@ fn admin_overview_draws_labelled_columns_with_a_visible_data_table() {
         totals: (0, 0, 0),
         activity,
         days: 7,
+        pending_requests: 0,
         manage_access: false,
         requests: vec![],
+        requests_count: 0,
+        requests_page: 1,
         values: FormValues::default(),
     };
     let output = html(admin_page(model, "csrf-marker", None, false));
@@ -249,8 +276,11 @@ fn the_daily_table_lists_only_the_newest_thirty_days() {
         totals: (0, 0, 0),
         activity,
         days: 180,
+        pending_requests: 0,
         manage_access: false,
         requests: vec![],
+        requests_count: 0,
+        requests_page: 1,
         values: FormValues::default(),
     };
     let output = html(admin_page(model, "csrf-marker", None, false));
@@ -268,8 +298,11 @@ fn admin_overview_offers_the_ai_crawler_setting() {
         accounts: vec![],
         activity: vec![],
         days: 180,
+        pending_requests: 0,
         manage_access: false,
         requests: vec![],
+        requests_count: 0,
+        requests_page: 1,
         values: FormValues::default(),
         ai_crawlers: "block".into(),
     };
@@ -288,8 +321,11 @@ fn accounts_and_requests_come_before_the_activity_chart() {
         totals: (0, 0, 0),
         activity: vec![],
         days: 7,
+        pending_requests: 0,
         manage_access: false,
         requests: vec![],
+        requests_count: 0,
+        requests_page: 1,
         values: FormValues::default(),
     };
     let output = html(admin_page(model, "csrf-marker", None, false));

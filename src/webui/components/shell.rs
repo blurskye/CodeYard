@@ -1079,6 +1079,14 @@ mod shell_tests {
     }
 
     #[test]
+    fn styles_keep_diff_targets_in_their_rows_and_phone_menus_in_view() {
+        let html = include_str!("native.css");
+        assert!(html
+            .contains("a.patch-add::after { content: \"\"; position: absolute; inset: 0 -12px; }"));
+        assert!(html.contains(".site-header .repo-tabs-more > .native-menu-panel { position: fixed; top: 60px; right: 12px; left: 12px; max-height: calc(100dvh - 72px); overflow-y: auto; }"));
+    }
+
+    #[test]
     fn phone_search_sheet_is_a_form_with_a_close_summary_and_no_rows_before_typing() {
         let html = dioxus_ssr::render_element(shell(
             Chrome {

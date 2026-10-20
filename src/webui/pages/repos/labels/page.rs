@@ -60,7 +60,9 @@ fn edit_label(repo: &Repository, label: &Label) -> Element {
             summary { class: "btn btn-secondary btn-sm", "Edit" span { class: "repo-sr-only", " {label.name}" } }
             form { method: "post", action: repo.chrome.action("edit-label"), class: "collaboration-form-fields",
                 {csrf(&repo.csrf)}
+                {repos::chrome::repository_id(repo.chrome.id)}
                 input { r#type: "hidden", name: "label_id", value: label.id.to_string() }
+                input { r#type: "hidden", name: "original_description", value: serde_json::to_string(&label.description.replace(['\r', '\n'], "")).unwrap_or_default() }
                 {label_fields(label.name.clone(), label.color.clone(), label.description.clone())}
                 div { class: "collaboration-actions", button { r#type: "submit", class: "btn btn-primary", "Save label" } }
             }
@@ -76,6 +78,7 @@ fn delete_label(repo: &Repository, label: &Label) -> Element {
             summary { class: "btn btn-danger btn-sm", "Delete" span { class: "repo-sr-only", " {label.name}" } }
             {confirm_dialog(None, &format!("Delete label {}", label.name), &list_url, &repo.chrome.action("delete-label"), rsx! {
                 {csrf(&repo.csrf)}
+                {repos::chrome::repository_id(repo.chrome.id)}
                 input { r#type: "hidden", name: "label_id", value: label.id.to_string() }
                 strong { "Delete label {label.name}?" }
                 label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Remove this label from every issue and pull request" }
@@ -162,6 +165,7 @@ pub fn list(
                             div { class: "native-menu-panel collaboration-label-new-panel",
                                 form { method: "post", action: repo.chrome.action("label"), class: "collaboration-label-new-form",
                                     {csrf(&repo.csrf)}
+                                    {repos::chrome::repository_id(repo.chrome.id)}
                                     div { class: "collaboration-form-fields",
                                         {label_fields(String::new(), "#ededed".to_owned(), String::new())}
                                         div { class: "collaboration-actions",

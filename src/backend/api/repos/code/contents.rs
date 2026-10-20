@@ -225,10 +225,9 @@ fn write_target(
         return Err(ctx.error(StatusCode::FORBIDDEN, "Write access is required."));
     }
     let resolved = resolve(ctx, loaded, tail, require_path)?;
+    let branch = crate::backend::api::repos::chrome::branch_name(&resolved.reference);
     if !loaded.refs.is_empty()
-        && !loaded
-            .refs
-            .contains_key(&format!("refs/heads/{}", resolved.reference))
+        && !crate::backend::api::repos::chrome::is_branch(loaded, &resolved.reference)
     {
         return Err(ctx.error(
             StatusCode::BAD_REQUEST,
@@ -237,10 +236,10 @@ fn write_target(
     }
     let expected = loaded
         .refs
-        .get(&format!("refs/heads/{}", resolved.reference))
+        .get(&format!("refs/heads/{branch}"))
         .cloned()
         .unwrap_or_else(|| "unborn".into());
-    Ok((resolved.reference, resolved.path, expected))
+    Ok((branch.to_owned(), resolved.path, expected))
 }
 
 /// The name a commit on a new branch gets, offered whether or not the branch takes direct commits.
@@ -259,6 +258,12 @@ async fn editor_page(
 ) -> Result<Response, Response> {
     ctx.require_user()?;
     let (branch, path, expected) = write_target(ctx, loaded, tail, !creating)?;
+    if path.contains(['\r', '\n']) {
+        return Err(ctx.error(
+            StatusCode::BAD_REQUEST,
+            "Filenames containing line breaks cannot be edited in the web editor.",
+        ));
+    }
     let mut editor = view::editor::Editor {
         path: if creating && !path.is_empty() {
             format!("{path}/")
@@ -458,7 +463,10 @@ pub(in crate::backend::api::repos) async fn write_form(
     .await
     {
         Ok(_) => ctx.redirect(&match &new_branch {
-            Some(name) => compare_url(&loaded.chrome.base(), &editor.branch, name),
+            Some(name) if editor.expected_revision != "unborn" => {
+                compare_url(&loaded.chrome.base(), &editor.branch, name)
+            }
+            Some(name) => file_url(&loaded.chrome.base(), "blob", name, &editor.path),
             None => file_url(&loaded.chrome.base(), "blob", &editor.branch, &editor.path),
         }),
         Err(error) => {
@@ -536,6 +544,7 @@ async fn delete_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<R
         path,
         expected_revision: expected,
         error: None,
+        saved: false,
         protected,
         commit_to_new_branch: protected,
     };
@@ -569,6 +578,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
         branch: branch.clone(),
         path: path.clone(),
         error: None,
+        saved: false,
         protected: false,
     };
     // The choice of a protected branch: the commit lands on a new branch, which starts there.
@@ -603,7 +613,8 @@ pub(in crate::backend::api::repos) async fn delete_form(
         }),
         Err(error) => {
             let status = write_status(&error);
-            let title = if error.kind == files::WriteFailure::SavedFollowupFailed {
+            file.saved = error.kind == files::WriteFailure::SavedFollowupFailed;
+            let title = if file.saved {
                 view::editor::SAVED_FOLLOWUP_FAILED
             } else {
                 view::editor::DELETE_REFUSED

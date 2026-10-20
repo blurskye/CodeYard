@@ -5,12 +5,20 @@ async fn authorized(
     target: i64,
     authority: FactorAuthority<'_>,
 ) -> Result<bool> {
-    super::transitions::lock_membership_shared(tx).await?;
+    if matches!(authority, FactorAuthority::Password { .. }) {
+        super::transitions::lock_membership_shared(tx).await?;
+    }
     match authority {
         FactorAuthority::Password { session, expected } => {
             super::transitions::current_password(tx, target, expected, session, false).await
         }
         FactorAuthority::Administrator { user_id, session } => {
+            // Resets serialize before locking either account, then follow account-before-factor order.
+            super::transitions::lock_membership(tx).await?;
+            sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+                .bind(target)
+                .fetch_optional(&mut **tx)
+                .await?;
             Ok(super::transitions::active_admin(tx, user_id).await?
                 && super::transitions::live_session(tx, user_id, session).await?)
         }

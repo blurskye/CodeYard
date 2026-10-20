@@ -45,6 +45,7 @@ fn fixtures() -> Vec<Page> {
         binary: false,
         size: 29,
         offset: 0,
+        first_line: Some(1),
         next: Some(256),
         previous: None,
         truncated: true,
@@ -230,6 +231,7 @@ fn fixtures() -> Vec<Page> {
                 expected_revision: "abc".into(),
                 message: "Delete docs/old.md".into(),
                 error: Some("This branch is protected".into()),
+                saved: false,
                 protected: true,
                 commit_to_new_branch: true,
                 new_branch: "alice-patch-1".into(),
@@ -3362,6 +3364,41 @@ fn repository_root_bar_counts_refs_and_opens_go_to_file() {
     };
     let html = dioxus_ssr::render_element(tree(&repo, &empty));
     assert!(!html.contains("aria-label=\"Go to file\""));
+}
+
+#[test]
+fn applied_deletion_does_not_claim_refusal_or_offer_a_second_delete() {
+    let file = DeleteFile {
+        branch: "main".into(),
+        path: "old.md".into(),
+        saved: true,
+        error: Some("Refresh failed".into()),
+        ..Default::default()
+    };
+    let html = dioxus_ssr::render_element(delete_file(&RepoChrome::default(), &file));
+    assert!(html.contains(super::editor::SAVED_FOLLOWUP_FAILED));
+    assert!(!html.contains(super::editor::DELETE_REFUSED));
+    assert!(!html.contains("name=\"expected_revision\""));
+    assert!(!html.contains("type=\"submit\""));
+}
+
+#[test]
+fn markdown_preview_has_no_code_expansion_and_later_code_windows_have_global_anchors() {
+    let mut page = BlobPage {
+        reference: "main".into(),
+        path: "README.md".into(),
+        content: "# Heading\ntext\n".into(),
+        ..Default::default()
+    };
+    let html = dioxus_ssr::render_element(blob(&RepoChrome::default(), &page));
+    assert!(html.contains("markdown-body"));
+    assert!(!html.contains("class=\"repo-code-line\""));
+    page.code_view = true;
+    page.offset = 300_000;
+    page.first_line = Some(50_001);
+    let html = dioxus_ssr::render_element(blob(&RepoChrome::default(), &page));
+    assert!(html.contains("id=\"L50001\""));
+    assert!(html.contains("href=\"#L50002\""));
 }
 
 #[test]

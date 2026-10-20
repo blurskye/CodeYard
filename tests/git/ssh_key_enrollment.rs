@@ -582,6 +582,106 @@ async fn session_enrollment_contract(pg: bool) {
 }
 
 #[tokio::test]
+async fn postgres_enrollment_locks_membership_before_accounts_and_fingerprints() {
+    let mut f = Database::new(true).await;
+    let actor = f.actor("ordered_key_owner").await;
+    let repository = db::repositories::records::create_repository(
+        f.pool(),
+        actor,
+        "keys",
+        None,
+        true,
+        "/unused/keys.git",
+    )
+    .await
+    .unwrap();
+    let session = native::token();
+    db::users::sessions::create_session(
+        f.pool(),
+        &session,
+        actor,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let db::DbPool::Postgres(raw) = f.pool() else {
+        unreachable!()
+    };
+    for deploy in [false, true] {
+        let public =
+            ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
+                .unwrap()
+                .public_key()
+                .to_openssh()
+                .unwrap();
+        let fingerprint = db::users::ssh_keys::calculate_fingerprint(&public).unwrap();
+        let mut gate = raw.begin().await.unwrap();
+        let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *gate)
+            .await
+            .unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37002)")
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+        let pool = f.pool().clone();
+        let original = session.clone();
+        let key = db::deploy_keys::NewDeployKey {
+            repo_id: repository.id,
+            title: "ordered".into(),
+            fingerprint: fingerprint.clone(),
+            public_key: public.clone(),
+            can_write: false,
+            created_by_id: actor,
+        };
+        let task = tokio::spawn(async move {
+            if deploy {
+                db::deploy_keys::insert_deploy_key(&pool, &key, &original)
+                    .await
+                    .map(|_| ())
+            } else {
+                db::users::ssh_keys::add_ssh_key_for_session(
+                    &pool, actor, &original, "ordered", &public,
+                )
+                .await
+                .map(|_| ())
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(5),async {
+            loop {
+                let waiting:bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))").bind(holder).fetch_one(raw).await.unwrap();
+                if waiting { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("enrollment waits for membership before taking rows or fingerprint");
+        sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE NOWAIT")
+            .bind(actor)
+            .fetch_one(&mut *gate)
+            .await
+            .unwrap();
+        let free: bool =
+            sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,37000003))")
+                .bind(&fingerprint)
+                .fetch_one(&mut *gate)
+                .await
+                .unwrap();
+        assert!(
+            free,
+            "enrollment must not retain a fingerprint while waiting for membership"
+        );
+        gate.rollback().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+    f.finish().await;
+}
+
+#[tokio::test]
 async fn sqlite_ssh_enrollment_rechecks_its_session_after_password_changes() {
     session_enrollment_contract(false).await;
 }

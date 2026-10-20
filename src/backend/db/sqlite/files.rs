@@ -262,6 +262,13 @@ pub async fn delete_file(
     {
         return Ok(DeleteFileOutcome::ReferencedOrganizationAvatar);
     }
+    let allowed = sqlx::query_scalar::<_, bool>(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or(false);
     let Some(file) = sqlx::query_as::<_, File>("SELECT * FROM files WHERE id=?1 AND user_id=?2")
         .bind(file_id)
         .bind(user_id)
@@ -270,6 +277,9 @@ pub async fn delete_file(
     else {
         return Ok(DeleteFileOutcome::NotFound);
     };
+    if !allowed {
+        return Ok(DeleteFileOutcome::Denied);
+    }
     // A release asset's file is removed with the asset, through its release.
     if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM release_assets WHERE file_id=?1)")
         .bind(file_id)

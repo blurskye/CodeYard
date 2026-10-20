@@ -5,11 +5,7 @@ use std::collections::BTreeSet;
 
 /// Literal `runs-on` labels used by the workflow's jobs. In local mode jobs run
 /// directly on the worker host, so container jobs and Docker actions are refused.
-pub(super) fn runner_labels(definition: &[u8], local: bool) -> Result<BTreeSet<String>> {
-    labels_from_value(&super::workflows::parse_yaml(definition)?, local)
-}
-
-fn labels_from_value(workflow: &Value, local: bool) -> Result<BTreeSet<String>> {
+pub(super) fn labels_from_value(workflow: &Value, local: bool) -> Result<BTreeSet<String>> {
     let jobs = workflow
         .get("jobs")
         .and_then(Value::as_mapping)

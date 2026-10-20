@@ -613,7 +613,7 @@
 .repo-readme-edit { position: relative; display: inline-flex; margin-left: auto; padding: 4px; color: var(--muted-foreground, #8b949e); }
 .repo-readme-edit .repo-icon { width: 15px; height: 15px; }
 @media (min-width: 768px) {
-  #repo-files-toggle:checked ~ .repo-files-panel { flex-basis: 0; width: 0; padding: 0; border-color: transparent; opacity: 0; overflow: hidden; }
+  #repo-files-toggle:checked ~ .repo-files-panel { flex-basis: 0; width: 0; padding: 0; border-color: transparent; opacity: 0; overflow: hidden; visibility: hidden; }
 }
 @media (max-width: 767px) {
   .repo-blob-layout { flex-direction: column; }

@@ -1,4 +1,4 @@
-use crate::backend::db::activity::ActivityRow;
+use crate::backend::db::activity::{ActivityBatch, ScannedActivity};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -28,9 +28,9 @@ pub async fn list_user_activity(
     viewer: Option<i64>,
     limit: i64,
     offset: i64,
-) -> Result<Vec<ActivityRow>> {
+) -> Result<ActivityBatch> {
     let readable = super::repositories::access::readable_condition();
-    Ok(sqlx::query_as::<_, ActivityRow>(&format!(
+    let rows = sqlx::query_as::<_, ScannedActivity>(&format!(
         r#"
         WITH activity AS (
             SELECT 'push' AS kind, p.id AS item_id, p.repo_id, p.created_at,
@@ -76,13 +76,12 @@ pub async fn list_user_activity(
         )
         SELECT a.kind, a.item_id, a.repo_id, a.created_at, a.number, a.title, a.branch,
                a.commit_count, COALESCE(owner.username, organizations.name) AS owner_name,
-               r.name AS repo_name
+               r.name AS repo_name, COALESCE(({readable}),FALSE) AS readable
         FROM scanned a
         JOIN repositories r ON r.id = a.repo_id
         LEFT JOIN users owner ON r.owner_kind = 'user' AND r.owner_user_id = owner.id
         LEFT JOIN organizations ON r.owner_kind = 'org' AND r.owner_org_id = organizations.id
         LEFT JOIN users u ON u.id = ?4
-        WHERE {readable}
         ORDER BY a.created_at DESC, a.kind, a.item_id DESC
         "#,
     ))
@@ -91,5 +90,6 @@ pub async fn list_user_activity(
     .bind(offset)
     .bind(viewer)
     .fetch_all(pool)
-    .await?)
+    .await?;
+    Ok(ActivityBatch::from_scan(rows))
 }

@@ -226,6 +226,10 @@ pub async fn create_invite(
         "an invite can be valid for at most 365d"
     );
     let ticket = JoinTicket::new(node, address);
+    ensure!(
+        ticket.encode().len() <= MAX_TICKET_LEN,
+        "too many advertised addresses for a join ticket (maximum {MAX_TICKET_LEN} bytes)"
+    );
     let expires_at = Utc::now() + chrono::Duration::from_std(options.expires_in)?;
     db::cluster::create_join_token(
         pool,
@@ -597,12 +601,20 @@ pub async fn apply_declared_nodes(
 
 /// Makes a pending or revoked node active. `Authority::Administrator` must still be an
 /// active administrator when the change commits.
-pub async fn approve(pool: &DbPool, authority: Authority, name: &str) -> Result<NodeStatusChange> {
+pub async fn approve(
+    pool: &DbPool,
+    authority: Authority<'_>,
+    name: &str,
+) -> Result<NodeStatusChange> {
     db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "active").await
 }
 
 /// Stops a node from connecting. Its next connection attempt is refused.
-pub async fn revoke(pool: &DbPool, authority: Authority, name: &str) -> Result<NodeStatusChange> {
+pub async fn revoke(
+    pool: &DbPool,
+    authority: Authority<'_>,
+    name: &str,
+) -> Result<NodeStatusChange> {
     db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "revoked").await
 }
 

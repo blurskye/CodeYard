@@ -284,9 +284,16 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-    pull_requests::refresh_open_pull_requests(f.pool(), &fork, None, &ci_runs, bob_id)
-        .await
-        .unwrap();
+    pull_requests::refresh_open_pull_requests(
+        f.pool(),
+        &fork,
+        None,
+        &ci_runs,
+        bob_id,
+        codeyard::backend::db::models::AccessLevel::Owner,
+    )
+    .await
+    .unwrap();
     let moved = bob.pull(1).await;
     assert_eq!(moved["head_sha"], h2);
     assert!(pulls::moved_forward(&opened, &moved));
@@ -1116,6 +1123,7 @@ async fn private_fork_revocation_contract(pg: bool) {
         Some(&["main", "later"][..]),
         &ci,
         alice_id,
+        codeyard::backend::db::models::AccessLevel::Owner
     )
     .await
     .is_err());

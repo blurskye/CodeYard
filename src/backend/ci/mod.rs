@@ -56,7 +56,11 @@ pub fn visible_run_error(error: Option<&str>) -> Option<String> {
 
 /// The title and body of the notification a run's starter gets when the run fails.
 pub fn failure_notification(run: &CiRun, message: Option<&str>) -> (String, Option<String>) {
-    let branch = branch_name(&run.branch);
+    let branch = if run.event == "pull_request" {
+        run.branch.as_str()
+    } else {
+        branch_name(&run.branch)
+    };
     let title = match run.head_sha.as_deref().and_then(|sha| sha.get(..7)) {
         Some(short) => format!("CI run failed: {} on {branch} ({short})", run.workflow_path),
         None => format!("CI run failed: {} on {branch}", run.workflow_path),

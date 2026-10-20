@@ -4,6 +4,19 @@ use crate::backend::db::DbPool;
 use crate::backend::repositories::store::repo_store;
 use anyhow::Result;
 
+/// Keep untrusted fields on one terminal line without interpreting control bytes.
+fn terminal_text(value: &str) -> String {
+    let mut text = String::new();
+    for character in value.chars() {
+        if character.is_control() {
+            text.extend(character.escape_default());
+        } else {
+            text.push(character);
+        }
+    }
+    text
+}
+
 /// Copy every table between SQLite and PostgreSQL and print the row counts
 pub async fn copy_database_cmd(from: &str, to: &str) -> Result<()> {
     let counts = db::copy::copy_database(from, to).await?;
@@ -88,8 +101,8 @@ pub async fn list_users_cmd(pool: &DbPool) -> Result<()> {
         println!(
             "{:<5} {:<20} {:<30} {}",
             user.id,
-            user.username,
-            user.email.unwrap_or_default(),
+            terminal_text(&user.username),
+            terminal_text(user.email.as_deref().unwrap_or_default()),
             if user.is_admin { "yes" } else { "no" }
         );
     }
@@ -108,8 +121,12 @@ pub async fn add_key_cmd(
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
     let key = db::users::ssh_keys::add_ssh_key(pool, user.id, key_name, public_key).await?;
-    println!("Added SSH key '{}' for user '{}'", key.name, username);
-    println!("Fingerprint: {}", key.fingerprint);
+    println!(
+        "Added SSH key '{}' for user '{}'",
+        terminal_text(&key.name),
+        terminal_text(username)
+    );
+    println!("Fingerprint: {}", terminal_text(&key.fingerprint));
     Ok(())
 }
 
@@ -142,7 +159,10 @@ pub async fn list_keys_cmd(pool: &DbPool, username: &str) -> Result<()> {
     for key in keys {
         println!(
             "{:<5} {:<20} {:<15} {}",
-            key.id, key.name, key.key_type, key.fingerprint
+            key.id,
+            terminal_text(&key.name),
+            terminal_text(&key.key_type),
+            terminal_text(&key.fingerprint)
         );
     }
     Ok(())
@@ -206,9 +226,9 @@ pub async fn list_repos_cmd(pool: &DbPool, username: &str) -> Result<()> {
         println!(
             "{:<5} {:<30} {:<10} {}",
             repo.id,
-            repo.name,
+            terminal_text(&repo.name),
             if repo.is_private { "yes" } else { "no" },
-            repo.description.unwrap_or_default()
+            terminal_text(repo.description.as_deref().unwrap_or_default())
         );
     }
     Ok(())
@@ -265,22 +285,28 @@ pub async fn repo_info_cmd(
     println!("Repository: {}/{}", owner, repo_name);
     println!("ID: {}", repo.id);
     println!("Private: {}", if repo.is_private { "yes" } else { "no" });
-    println!("Default branch: {}", repo.default_branch);
+    println!("Default branch: {}", terminal_text(&repo.default_branch));
     let context = crate::backend::cluster::client_context(pool, state_dir, repos_path).await?;
     let store = repo_store(&repo, context.as_ref());
-    println!("Disk path: {}", store.location());
-    println!("Description: {}", repo.description.unwrap_or_default());
+    println!("Disk path: {}", terminal_text(store.location()));
+    println!(
+        "Description: {}",
+        terminal_text(repo.description.as_deref().unwrap_or_default())
+    );
     println!("Created: {}", repo.created_at);
 
     if store.exists().await {
         match tokio::try_join!(store.info(), store.commit_count()) {
             Ok((info, commit_count)) => {
                 println!("\nGit Info:");
-                println!("  Branches: {}", info.branches.join(", "));
+                println!("  Branches: {}", terminal_text(&info.branches.join(", ")));
                 println!("  Commits: {}", commit_count);
             }
             Err(e) => {
-                println!("\nGit Info: Error reading - {}", e);
+                println!(
+                    "\nGit Info: Error reading - {}",
+                    terminal_text(&e.to_string())
+                );
             }
         }
     }

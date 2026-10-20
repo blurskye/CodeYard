@@ -44,7 +44,6 @@ pub fn toggle_task(text: &str, index: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn counts_ticked_and_total_items() {
         assert_eq!(

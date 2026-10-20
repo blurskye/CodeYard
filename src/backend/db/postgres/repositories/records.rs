@@ -186,8 +186,8 @@ pub async fn list_user_repository_page(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Repository>, i64)> {
-    let condition = "owner_kind='user' AND owner_user_id=$1 AND ($2 OR NOT is_private) AND (strpos(lower(name),$3)>0 OR strpos(lower(COALESCE(description,'')),$3)>0)";
-    let needle = text.trim().to_lowercase();
+    let condition = "owner_kind='user' AND owner_user_id=$1 AND ($2 OR NOT is_private) AND (name ILIKE $3 ESCAPE '\\' OR COALESCE(description,'') ILIKE $3 ESCAPE '\\')";
+    let needle = crate::backend::db::discussions::contains_pattern(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
     ))
@@ -217,10 +217,10 @@ pub async fn list_shared_repository_page(
     offset: i64,
 ) -> Result<(Vec<SharedRepository>, i64)> {
     let condition = format!(
-        "{} AND (strpos(lower(r.name),$2)>0 OR strpos(lower(COALESCE(r.description,'')),$2)>0)",
+        "{} AND (r.name ILIKE $2 ESCAPE '\\' OR COALESCE(r.description,'') ILIKE $2 ESCAPE '\\')",
         shared_repository_condition()
     );
-    let needle = text.trim().to_lowercase();
+    let needle = crate::backend::db::discussions::contains_pattern(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=$1 WHERE {condition}"
     ))
@@ -255,8 +255,7 @@ pub async fn search_public_repositories(
     let kind = filter.kind.condition();
     Ok(sqlx::query_as::<_, Repository>(&format!(
         r#"SELECT * FROM repositories WHERE is_private = false
-            AND (LOWER(name COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\'
-                OR LOWER(description COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\')
+            AND (name ILIKE $2 ESCAPE '\' OR description ILIKE $2 ESCAPE '\')
             AND ($4::TEXT = '' OR id IN (SELECT repo_id FROM repo_languages WHERE language = $4::TEXT))
             AND ($5::TEXT = '' OR id IN (SELECT repo_id FROM repository_topics WHERE topic = $5::TEXT))
             AND {kind}
@@ -326,7 +325,7 @@ pub async fn update_repository(
     actor_id: i64,
     repo_id: i64,
     description: Option<&str>,
-    is_private: bool,
+    is_private: impl Into<crate::backend::db::repositories::records::VisibilityUpdate>,
     merge_methods: MergeMethodUpdate,
 ) -> Result<()> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
@@ -338,11 +337,18 @@ pub async fn update_repository(
         .await?,
         Refusal::Denied
     );
-    let locked: bool =
-        sqlx::query_scalar("SELECT visibility_locked FROM repositories WHERE id=$1 FOR UPDATE")
-            .bind(repo_id)
-            .fetch_one(&mut *tx)
-            .await?;
+    let update = is_private.into();
+    let is_private = update.is_private;
+    let (locked, current): (bool, bool) = sqlx::query_as(
+        "SELECT visibility_locked, is_private FROM repositories WHERE id=$1 FOR UPDATE",
+    )
+    .bind(repo_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(
+        update.expected.is_none_or(|expected| expected == current),
+        Refusal::Denied
+    );
     anyhow::ensure!(is_private || !locked, Refusal::VisibilityLocked);
     apply_merge_methods(&mut tx, repo_id, merge_methods).await?;
     let result = sqlx::query(
@@ -411,6 +417,35 @@ async fn apply_merge_methods(
     Ok(())
 }
 
+pub async fn update_repo_default_branch(pool: &PgPool, repo_id: i64, branch: &str) -> Result<()> {
+    sqlx::query("UPDATE repositories SET default_branch=$1, updated_at=NOW() WHERE id=$2")
+        .bind(branch)
+        .bind(repo_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_repo_size(pool: &PgPool, repo_id: i64, size: i64) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    let changed =
+        sqlx::query("UPDATE repositories SET size_bytes=$1 WHERE id=$2 AND size_bytes<>$1")
+            .bind(size)
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+    if changed > 0 {
+        sqlx::query("INSERT INTO repo_storage_history (repo_id, size_bytes) VALUES ($1, $2)")
+            .bind(repo_id)
+            .bind(size)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn update_repo_default_branch_and_size(
     pool: &PgPool,
     repo_id: i64,
@@ -449,7 +484,7 @@ pub async fn delete_repository(pool: &PgPool, actor_id: i64, repo_id: i64) -> Re
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        crate::backend::db::postgres::discussions::lock_repository_mutation_authority(
+        crate::backend::db::postgres::discussions::lock_archive_authority(
             &mut tx, actor_id, repo_id
         )
         .await?,
@@ -535,6 +570,29 @@ async fn transfer_repository_once(
     use crate::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let mut tx = pool.begin().await?;
+    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let original: (String, Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT owner_kind,owner_user_id,owner_org_id FROM repositories WHERE id=$1",
+    )
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(Refusal::Denied)?;
+    let target_org = match target {
+        RepositoryTarget::Organization(id) => Some(id),
+        RepositoryTarget::Personal(_) => None,
+    };
+    // Organization authority comes before any repository or fork-family lock.
+    let _: Vec<i64> = sqlx::query_scalar(&format!(
+        "SELECT id FROM organizations WHERE id IN (
+            SELECT owner_org_id FROM repositories WHERE id=$1 OR id IN ({ANCESTORS})
+            UNION SELECT $2::bigint
+        ) ORDER BY id FOR UPDATE"
+    ))
+    .bind(repo_id)
+    .bind(target_org)
+    .fetch_all(&mut *tx)
+    .await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_repository_mutation_authority(
             &mut tx, actor_id, repo_id
@@ -553,6 +611,7 @@ async fn transfer_repository_once(
     .bind(repo_id)
     .fetch_one(&mut *tx)
     .await?;
+    anyhow::ensure!(previous == original, Refusal::Denied);
     let (kind, user, org) = match target {
         RepositoryTarget::Personal(id) => ("user", Some(id), None),
         RepositoryTarget::Organization(id) => ("org", None, Some(id)),
@@ -642,23 +701,10 @@ pub async fn set_repository_archived(
     repo_id: i64,
     archived: bool,
 ) -> Result<bool> {
-    use super::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
     use crate::backend::db::repositories::records::RepositorySettingsRefusal;
     let mut tx = pool.begin().await?;
-    let authority = lock_user_repo_access_in_transaction(
-        &mut tx,
-        actor_id,
-        repo_id,
-        RepositoryRowLock::Exclusive,
-        true,
-    )
-    .await?;
     anyhow::ensure!(
-        authority.is_some_and(|a| {
-            (!a.organization || a.organization_usable)
-                && (a.access.can_admin()
-                    || (!a.organization && (a.is_admin || a.owner_user_id == Some(actor_id))))
-        }),
+        super::super::discussions::lock_archive_authority(&mut tx, actor_id, repo_id).await?,
         RepositorySettingsRefusal::Denied
     );
     let result = sqlx::query(

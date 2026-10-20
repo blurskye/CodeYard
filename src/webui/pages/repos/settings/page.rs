@@ -798,7 +798,7 @@ pub fn rejected_form(
                             }
                             for event in ["issues", "pulls", "releases"] {
                                 label { class: "repo-check-label",
-                                    input { r#type: "checkbox", name: "events_{event}", value: "yes", checked: values.get(&format!("events_{event}")).is_some_and(|value| matches!(value.as_str(), "on" | "yes" | "true" | "1")) }
+                                    input { r#type: "checkbox", name: "events_{event}", value: "on", checked: values.get(&format!("events_{event}")).is_some_and(|value| matches!(value.as_str(), "on" | "yes" | "true" | "1")) }
                                     "{event}"
                                 }
                             }
@@ -847,6 +847,7 @@ mod tests {
             .find(|part| part.contains("name=\"events_issues\""))
             .unwrap();
         assert!(event.contains("checked"), "{html}");
+        assert!(event.contains("value=\"on\""), "{html}");
     }
 
     #[test]

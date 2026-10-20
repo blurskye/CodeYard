@@ -110,9 +110,10 @@ fn is_private_v6(ip: Ipv6Addr) -> bool {
     ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_multicast()
-        // Unique local (fc00::/7) and link-local (fe80::/10).
+        // Unique local, link-local and deprecated site-local addresses.
         || (first & 0xfe00) == 0xfc00
         || (first & 0xffc0) == 0xfe80
+        || (first & 0xffc0) == 0xfec0
 }
 
 #[cfg(test)]
@@ -141,6 +142,18 @@ mod tests {
             );
         }
         assert!(validate_url("http://127.0.0.1/hook", true).is_ok());
+    }
+
+    #[tokio::test]
+    async fn site_local_ipv6_is_blocked_at_save_and_delivery() {
+        for text in ["http://[fec0::1]:8080/admin", "http://[feff:ffff::1]/hook"] {
+            assert_eq!(validate_url(text, false), Err(Refusal::Blocked));
+            let url = validate_url(text, true).unwrap();
+            assert_eq!(resolve(&url, false).await, Err(Refusal::Blocked));
+            assert!(resolve(&url, true).await.is_ok());
+        }
+        assert!(validate_url("http://[febf::1]/hook", false).is_err());
+        assert!(validate_url("http://[ff00::1]/hook", false).is_err());
     }
 
     #[test]

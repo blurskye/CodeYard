@@ -197,6 +197,15 @@ pub async fn get_user_by_ssh_key_id(pool: &SqlitePool, key_id: i64) -> Result<Op
         .filter(|identity| identity.key.id == key_id))
 }
 
+pub async fn list_user_key_summaries(
+    pool: &SqlitePool,
+    user_id: i64,
+    after: i64,
+) -> Result<Vec<crate::backend::db::users::ssh_keys::SshKeySummary>> {
+    Ok(sqlx::query_as("SELECT id,name,fingerprint,key_type,created_at FROM ssh_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
+        .bind(user_id).bind(after.max(0)).fetch_all(pool).await?)
+}
+
 pub async fn list_user_keys(pool: &SqlitePool, user_id: i64) -> Result<Vec<SshKey>> {
     let keys = sqlx::query_as::<_, SshKey>(
         "SELECT * FROM ssh_keys WHERE user_id = ?1 ORDER BY created_at",

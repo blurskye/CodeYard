@@ -202,6 +202,50 @@ async fn contract(pg: bool) {
             .is_empty()
     );
 
+    // An empty repository's directory-upload action must resolve its unborn qualified ref.
+    let directory_page = "/upload_owner/private-upload/upload/main/docs";
+    let (status, _, html) = send(&router, &writer.session, "GET", directory_page, "", vec![]).await;
+    assert_eq!(status, StatusCode::OK, "{html}");
+    let action = "/upload_owner/private-upload/upload/refs/heads/main/docs";
+    assert!(html.contains(&format!("action=\"{action}\"")));
+    let (content_type, body) = form(
+        &replacement.id.to_string(),
+        &[
+            ("csrf_token", &csrf),
+            ("expected_revision", "unborn"),
+            ("message", "Directory upload"),
+        ],
+        &[("new.txt", b"directory content")],
+    );
+    let (status, location, reply) = send(
+        &router,
+        &writer.session,
+        "POST",
+        action,
+        &content_type,
+        body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{reply}");
+    assert_eq!(
+        send(
+            &router,
+            &writer.session,
+            "GET",
+            location.as_deref().unwrap(),
+            "",
+            vec![]
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let replacement_disk = std::path::PathBuf::from(&replacement.disk_path);
+    assert_eq!(
+        file_at(&replacement_disk, head(&replacement_disk), "docs/new.txt").unwrap(),
+        b"directory content"
+    );
+
     // A writer sees the form. A reader is refused, and a visitor is sent to sign in.
     let (status, _, html) = send(&router, &writer.session, "GET", page, "", Vec::new()).await;
     assert_eq!(status, StatusCode::OK, "{html}");

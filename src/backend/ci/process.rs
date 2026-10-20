@@ -70,11 +70,17 @@ where
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let work = async {
-        tokio::try_join!(
+        let (_, _, status) = tokio::try_join!(
             forward(stdout, false, &on_line),
-            forward(stderr, true, &on_line)
+            forward(stderr, true, &on_line),
+            async {
+                let status = child.wait().await?;
+                // Descendants can inherit the output pipes after the runner exits.
+                stop_process_group(&mut child, group.pid()).await?;
+                Ok::<_, anyhow::Error>(status)
+            }
         )?;
-        Ok::<_, anyhow::Error>(child.wait().await?)
+        Ok::<_, anyhow::Error>(status)
     };
     let result = tokio::select! {
         result = tokio::time::timeout(timeout, work) => match result {
@@ -457,6 +463,19 @@ mod tests {
             !marker.exists(),
             "background descendant performed a delayed effect"
         );
+    }
+
+    #[tokio::test]
+    async fn inherited_pipes_do_not_keep_a_successful_runner_open() {
+        let mut child = command("/bin/sh");
+        child.args(["-c", "sleep 60 & echo done"]);
+        let (_tx, cancel) = watch::channel(false);
+        let status = run(child, Duration::from_secs(10), cancel, |_, _| async {
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(status.success());
     }
 
     #[tokio::test]

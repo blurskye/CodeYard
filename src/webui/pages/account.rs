@@ -263,6 +263,8 @@ mod tests {
                             email: "bob@example.test".into(),
                             created: "2026-10-02".into(),
                         }],
+                        requests_count: 1,
+                        requests_page: 1,
                         values: values.clone(),
                         two_factor: Default::default(),
                     }),
@@ -304,6 +306,9 @@ mod tests {
                     days: 7,
                     manage_access: true,
                     requests: vec![],
+                    pending_requests: 0,
+                    requests_count: 0,
+                    requests_page: 1,
                     values,
                 },
                 csrf_token: "csrf-marker".into(),
@@ -315,6 +320,7 @@ mod tests {
         pages.push((
             Page::AdminUsers {
                 model: AdminUsers {
+                    managed_accounts: true,
                     current_user_id: 1,
                     accounts: vec![crate::webui::pages::admin::AccountMetadata {
                         two_factor: false,

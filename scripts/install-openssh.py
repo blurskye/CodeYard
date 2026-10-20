@@ -174,8 +174,11 @@ os.execve({str(o.binary)!r}, [{str(o.binary)!r}, "ssh", "keys", "--socket", {str
 import re
 import sys
 
-if (len(sys.argv) != 2 or not re.fullmatch(r"[1-9][0-9]{{0,18}}", sys.argv[1], re.ASCII)
-        or int(sys.argv[1]) > 9223372036854775807):
+if len(sys.argv) != 2 or not re.fullmatch(r"(?:deploy:)?[1-9][0-9]{{0,18}}", sys.argv[1], re.ASCII):
+    sys.exit(1)
+deploy = sys.argv[1].startswith("deploy:")
+key_id = sys.argv[1].removeprefix("deploy:")
+if int(key_id) > 9223372036854775807:
     sys.exit(1)
 original = os.environ.get("SSH_ORIGINAL_COMMAND", "")
 protocol = os.environ.get("GIT_PROTOCOL")
@@ -187,13 +190,14 @@ if protocol is not None:
 os.chdir("/")
 os.execve({str(h.sudo)!r}, [{str(h.sudo)!r}, "-n", "-u", {o.service_user!r},
     "--preserve-env=SSH_ORIGINAL_COMMAND,GIT_PROTOCOL", "--", {str(o.binary)!r},
-    "ssh", "serve", "--socket", {str(o.socket)!r}, "--key-id", sys.argv[1]], environment)
+    "ssh", "serve", "--socket", {str(o.socket)!r},
+    "--deploy-key-id" if deploy else "--key-id", key_id], environment)
 '''
     # Sudo >= 1.9.10 supports anchored argument regexes. No wildcard that can
     # consume whitespace, options, other subcommands or arbitrary shell commands.
     socket_regex = str(o.socket).replace(".", "[.]")
     sudoers = (MARKER
-        + f"Cmnd_Alias GIT_SERV_37_SSH = {o.binary} ^ssh serve --socket {socket_regex} --key-id [1-9][0-9]*$\n"
+        + f"Cmnd_Alias GIT_SERV_37_SSH = {o.binary} ^ssh serve --socket {socket_regex} --(key|deploy-key)-id [1-9][0-9]*$\n"
         + 'Defaults!GIT_SERV_37_SSH env_reset, !setenv, !requiretty, env_keep += "SSH_ORIGINAL_COMMAND GIT_PROTOCOL"\n'
         + f"{o.git_user} ALL=({o.service_user}) NOPASSWD: NOSETENV: GIT_SERV_37_SSH\n")
     snippet = (MARKER + f"Match User {o.git_user}\n"

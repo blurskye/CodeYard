@@ -68,7 +68,7 @@ async fn profile_stars(
     }
     let (sort, text) = star_order_and_text(&ctx.query)
         .map_err(|message| ctx.error(StatusCode::BAD_REQUEST, message))?;
-    let page = usize::try_from(page.max(1)).unwrap_or(usize::MAX);
+    let page = usize::try_from(page.clamp(1, 10_000)).unwrap_or(1);
     let listed = starred_page(&ctx.state, target, viewer, &text, star_sort(&sort), page)
         .await
         .map_err(|_| unavailable())?;

@@ -19,6 +19,7 @@ pub struct AppState {
     pub ci_runs: Arc<CiRuns>,
     pub(crate) git_tasks: Arc<crate::backend::repositories::git_sessions::GitTasks>,
     pub(crate) form_reads: Arc<tokio::sync::Semaphore>,
+    pub(crate) anonymous_form_reads: Arc<tokio::sync::Semaphore>,
     /// Upload forms held in memory until their commit lands. Only a few run at once.
     pub upload_reads: Arc<tokio::sync::Semaphore>,
     pub(crate) repository_downloads: Arc<tokio::sync::Semaphore>,
@@ -51,6 +52,7 @@ impl AppState {
             ci_runs,
             git_tasks: Arc::default(),
             form_reads: Arc::new(tokio::sync::Semaphore::new(8)),
+            anonymous_form_reads: Arc::new(tokio::sync::Semaphore::new(8)),
             upload_reads: Arc::new(tokio::sync::Semaphore::new(4)),
             // Each buffered raw file or archive is limited to 32 MiB.
             repository_downloads: Arc::new(tokio::sync::Semaphore::new(4)),

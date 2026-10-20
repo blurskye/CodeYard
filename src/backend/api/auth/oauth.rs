@@ -116,9 +116,18 @@ fn failure(error: OAuthError, provider: &str) -> Response {
     api_error(status, code, &message)
 }
 
+fn local_return_to(target: &str) -> &str {
+    if crate::backend::api::http::origin::safe_redirect_path(target) {
+        target
+    } else {
+        "/"
+    }
+}
+
 pub async fn oauth_redirect(
     State(state): State<Arc<AppState>>,
     Path(provider): Path<String>,
+    Query(query): Query<std::collections::HashMap<String, String>>,
 ) -> Response {
     if providers::provider_meta(&provider).is_none() {
         return failure(OAuthError::UnknownProvider, &provider);
@@ -142,7 +151,18 @@ pub async fn oauth_redirect(
         String::new()
     };
     let redirect = format!("{origin}/api/auth/oauth/{provider}/callback");
-    match oauth::begin(&state.pool, &provider, &redirect, &nonce, &token, &verifier).await {
+    let return_to = local_return_to(query.get("redirect").map(String::as_str).unwrap_or("/"));
+    match oauth::begin(
+        &state.pool,
+        &provider,
+        &redirect,
+        &nonce,
+        &token,
+        &verifier,
+        return_to,
+    )
+    .await
+    {
         Ok(location) => (
             StatusCode::FOUND,
             [
@@ -219,7 +239,7 @@ pub async fn oauth_callback(
     )
     .await
     {
-        Ok(authenticated) => (
+        Ok((authenticated, return_to)) => (
             StatusCode::FOUND,
             [
                 (
@@ -229,10 +249,31 @@ pub async fn oauth_callback(
                         session::session_duration_days(),
                     ),
                 ),
-                (header::LOCATION, "/".to_owned()),
+                (header::LOCATION, local_return_to(&return_to).to_owned()),
             ],
         )
             .into_response(),
         Err(error) => failure(error, &provider),
+    }
+}
+
+#[cfg(test)]
+mod return_tests {
+    use super::*;
+
+    #[test]
+    fn oauth_returns_only_to_local_destinations() {
+        assert_eq!(
+            local_return_to("/alice/project/issues/7?tab=comments"),
+            "/alice/project/issues/7?tab=comments"
+        );
+        for target in [
+            "https://evil.test",
+            "//evil.test",
+            "/\\evil.test",
+            "/%2fevil.test",
+        ] {
+            assert_eq!(local_return_to(target), "/");
+        }
     }
 }

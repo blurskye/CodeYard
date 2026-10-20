@@ -113,6 +113,7 @@ pub const REPLICA_BUSY: &str = "Repository writes are in progress.";
 /// Specific failure reasons remain internal; the released RPC shape is unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RepoErrorReason {
+    NotFile,
     StorageNodeUnavailable,
     SessionsBusy,
     ReplicaBusy,
@@ -311,6 +312,11 @@ impl<'de> Deserialize<'de> for RepoError {
         // Released peers carry only kind/message. Decode fixed typed reasons
         // here; operation and HTTP callers never select behavior from error text.
         Ok(match (wire.kind, wire.message.as_str()) {
+            (ErrorKind::MissingPath, "The path is not a file") => Self {
+                kind: wire.kind,
+                reason: Some(RepoErrorReason::NotFile),
+                message: wire.message,
+            },
             (ErrorKind::Unavailable, "storage node unavailable") => {
                 Self::storage_node_unavailable()
             }
@@ -384,6 +390,13 @@ impl From<anyhow::Error> for RepoError {
             || error.is::<crate::backend::git::ObjectTooLarge>()
         {
             return Self::response_too_large();
+        }
+        if error.is::<crate::backend::git::repository::NotFile>() {
+            return Self {
+                kind: ErrorKind::MissingPath,
+                reason: Some(RepoErrorReason::NotFile),
+                message: "The path is not a file".into(),
+            };
         }
         if error.is::<crate::backend::git::InvalidByteRange>() {
             return Self::range_not_satisfiable();
@@ -866,6 +879,7 @@ impl RepoStore {
                         Operation::FilePaths {
                             git_ref: git_ref.into(),
                             limit,
+                            raw_json: true,
                         },
                         b"",
                     )
@@ -879,6 +893,28 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.workflow_files(revision).await,
             Backend::Remote(remote) => remote.workflow_files(revision).await,
+        }
+    }
+
+    /// Bounded template texts at one revision, in input order. Non-files are absent.
+    pub async fn template_texts(
+        &self,
+        revision: &str,
+        paths: &[String],
+    ) -> Result<Vec<Option<(String, String)>>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.template_texts(revision, paths).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::TemplateTexts {
+                            revision: revision.into(),
+                            paths: paths.to_vec(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -1030,6 +1066,7 @@ impl RepoStore {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
                             limit,
+                            raw_json: true,
                         },
                         b"",
                     )
@@ -1937,6 +1974,14 @@ impl RepoStore {
     }
 
     /// Pipes the client to Git on the owning node, with the shared receive hooks.
+    pub(crate) async fn session_permit(&self) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit> {
+        use crate::backend::git::repository::process;
+        match &self.0 {
+            Backend::Local(_) => process::session_permit().await,
+            Backend::Remote(_) => process::forwarding_permit().await,
+        }
+    }
+
     pub async fn git_session(
         &self,
         session: GitSession,

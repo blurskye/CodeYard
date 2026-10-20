@@ -232,6 +232,7 @@ async fn contract(pg: bool) {
         repository.id,
         &late_head,
         late_pull["id"].as_i64().unwrap(),
+        "main",
     )
     .await
     .unwrap()
@@ -463,9 +464,10 @@ async fn contract(pg: bool) {
                 .collect();
             assert_eq!(states.get(context_a.as_str()), Some(&"failure"));
             assert_eq!(states.get(context_b.as_str()), Some(&"success"));
-            let latest = db::ci::latest_ci_runs_for_commit(f.pool(), repository.id, &head, 0)
-                .await
-                .unwrap();
+            let latest =
+                db::ci::latest_ci_runs_for_commit(f.pool(), repository.id, &head, 0, "main")
+                    .await
+                    .unwrap();
             assert_eq!(latest.len(), 2);
 
             // Retries replace only this source. A late older failure cannot replace success.
@@ -511,9 +513,10 @@ async fn contract(pg: bool) {
                     .state,
                 "success"
             );
-            let latest = db::ci::latest_ci_runs_for_commit(f.pool(), repository.id, &head, 0)
-                .await
-                .unwrap();
+            let latest =
+                db::ci::latest_ci_runs_for_commit(f.pool(), repository.id, &head, 0, "main")
+                    .await
+                    .unwrap();
             assert_eq!(latest.len(), 2);
             assert!(latest.iter().all(|run| run.status == "success"));
             assert!(latest.iter().any(|run| run.id == retry.id));
@@ -798,7 +801,7 @@ async fn protection_contract(pg: bool) {
         .await
         .unwrap();
     assert!(
-        activity.iter().any(|row| row.kind == "push"
+        activity.rows.iter().any(|row| row.kind == "push"
             && row.branch.as_deref() == Some("main")
             && row.commit_count == Some(1)),
         "a saved commit is recorded as a push of one commit"

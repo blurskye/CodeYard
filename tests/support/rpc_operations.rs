@@ -42,6 +42,13 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             false,
         ),
         (
+            Operation::TemplateTexts {
+                revision: "main".into(),
+                paths: vec![".github/ISSUE_TEMPLATE.md".into()],
+            },
+            false,
+        ),
+        (
             Operation::WorkflowFiles {
                 revision: "main".into(),
             },
@@ -97,6 +104,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base_ref: "main".into(),
                 head_ref: "main".into(),
                 limit: 10,
+                raw_json: false,
             },
             false,
         ),
@@ -167,6 +175,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::FilePaths {
                 git_ref: "main".into(),
                 limit: 10,
+                raw_json: false,
             },
             false,
         ),

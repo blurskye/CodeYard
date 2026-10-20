@@ -17,9 +17,9 @@ pub async fn create_notification(
 ) -> Result<Notification> {
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if input.kind == "user_followed" {
-        let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=?1 AND actor_id=?2 AND kind='user_followed' AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))")
-            .bind(input.user_id).bind(input.actor_id).fetch_one(&mut *tx).await?;
+    if matches!(input.kind, "user_followed" | "repository_starred") {
+        let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=?1 AND actor_id=?2 AND kind=?3 AND (?3='user_followed' OR repo_id=?4) AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))")
+            .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);
     }
     if matches!(input.kind, "issue_comment" | "mention") {
@@ -38,6 +38,23 @@ pub async fn create_notification(
             .await?;
             anyhow::ensure!(comment.is_some(), NotificationSuppressed);
         }
+    }
+    let pull_comment_id = match input.kind {
+        "pull_request_comment" | "pull_request_comment_reply" => input.metadata.get("comment_id"),
+        "mention" => input.metadata.get("pull_request_comment_id"),
+        _ => None,
+    }
+    .and_then(serde_json::Value::as_i64);
+    if let Some(comment_id) = pull_comment_id {
+        let comment: Option<i64> = sqlx::query_scalar(
+            "SELECT c.id FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id
+             WHERE c.id=?1 AND p.repo_id=?2 AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state='pending')",
+        )
+        .bind(comment_id)
+        .bind(input.repo_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        anyhow::ensure!(comment.is_some(), NotificationSuppressed);
     }
     let notification = sqlx::query_as::<_, Notification>(
         r#"
@@ -96,6 +113,15 @@ async fn notification_scopes(
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
 ) -> Result<NotificationScopes> {
+    decide_scopes(connection, user_id, false, None).await
+}
+
+async fn decide_scopes(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    unread_only: bool,
+    notification_id: Option<i64>,
+) -> Result<NotificationScopes> {
     let readable = scope_readable_condition();
     let decided: Vec<(i64, bool)> = sqlx::query_as(&format!(
         "SELECT s.scope, EXISTS(
@@ -103,9 +129,12 @@ async fn notification_scopes(
             JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
             WHERE r.id=s.scope AND {readable})
          FROM (SELECT DISTINCT scope_repository_id AS scope FROM notifications
-               WHERE user_id=?1 AND scope_repository_id>0) s"
+               WHERE user_id=?1 AND scope_repository_id>0
+                 AND (NOT ?2 OR (read_at IS NULL AND done_at IS NULL) OR id=?3)) s"
     ))
     .bind(user_id)
+    .bind(unread_only)
+    .bind(notification_id)
     .fetch_all(&mut *connection)
     .await?;
     Ok(NotificationScopes {
@@ -193,7 +222,7 @@ pub async fn list_notifications_for_user(
         return Ok(Vec::new());
     }
     let scopes = notification_scopes(&mut tx, user_id).await?;
-    let (notifications, _) = notification_list(
+    let (mut notifications, _) = notification_list(
         &mut tx,
         user_id,
         &scopes,
@@ -202,6 +231,7 @@ pub async fn list_notifications_for_user(
         None,
     )
     .await?;
+    refresh_links(&mut tx, &mut notifications).await?;
     tx.commit().await?;
     Ok(notifications)
 }
@@ -418,6 +448,24 @@ pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64>
     )).bind(user_id).fetch_one(pool).await?)
 }
 
+async fn refresh_links(
+    connection: &mut sqlx::SqliteConnection,
+    notifications: &mut [Notification],
+) -> Result<()> {
+    let ids: Vec<_> = notifications.iter().filter_map(|n| n.repo_id).collect();
+    let names: Vec<(i64,String,String)> = sqlx::query_as("SELECT r.id,COALESCE(u.username,o.name),r.name FROM repositories r LEFT JOIN users u ON r.owner_kind='user' AND u.id=r.owner_user_id LEFT JOIN organizations o ON r.owner_kind='org' AND o.id=r.owner_org_id WHERE r.id IN (SELECT value FROM json_each(?1))")
+        .bind(serde_json::to_string(&ids)?).fetch_all(connection).await?;
+    for notification in notifications {
+        if let Some((_, owner, name)) = names
+            .iter()
+            .find(|(id, _, _)| Some(*id) == notification.repo_id)
+        {
+            crate::backend::db::notifications::records::refresh_link(notification, owner, name);
+        }
+    }
+    Ok(())
+}
+
 pub async fn notification_delivery(
     pool: &SqlitePool,
     session_id: &str,
@@ -434,7 +482,7 @@ pub async fn notification_delivery(
     let Some(expiry) = expiry else {
         return Ok(None);
     };
-    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let scopes = decide_scopes(&mut tx, user_id, true, notification_id).await?;
     let mut notification = None;
     if let Some(id) = notification_id {
         let scope: Option<i64> = sqlx::query_scalar(
@@ -452,6 +500,9 @@ pub async fn notification_delivery(
         }
     }
     let unread_count = notification_unread_count(&mut tx, user_id, &scopes).await?;
+    if let Some(notification) = notification.as_mut() {
+        refresh_links(&mut tx, std::slice::from_mut(notification)).await?;
+    }
     let alive: bool = sqlx::query_scalar("SELECT ?1>strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(expiry)
         .fetch_one(&mut *tx)
@@ -632,7 +683,7 @@ pub async fn notification_inbox(
     let scopes = notification_scopes(&mut tx, user_id).await?;
     let mut next_cursor = None;
     let wants_counts = matches!(action, NotificationInboxAction::List { .. });
-    let (notifications, updated) = match action {
+    let (mut notifications, updated) = match action {
         NotificationInboxAction::List {
             filter,
             limit,
@@ -693,6 +744,7 @@ pub async fn notification_inbox(
     } else {
         None
     };
+    refresh_links(&mut tx, &mut notifications).await?;
     let alive: bool = sqlx::query_scalar("SELECT ?1>strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(expiry)
         .fetch_one(&mut *tx)

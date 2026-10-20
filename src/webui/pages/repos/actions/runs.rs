@@ -45,8 +45,12 @@ pub struct ActionsPage {
     #[serde(default)]
     pub can_manage_runs: bool,
     #[serde(default)]
+    pub can_cancel: bool,
+    #[serde(default)]
     pub workflow_warning: Option<String>,
     pub run_limit: usize,
+    #[serde(default)]
+    pub next_before: Option<i64>,
     pub log_limit: usize,
 }
 
@@ -62,6 +66,14 @@ impl ActionsPage {
 
 pub fn query_url(base: &str, query: &BTreeMap<String, String>, changes: &[(&str, &str)]) -> String {
     let mut query = query.clone();
+    if changes.iter().any(|(key, _)| {
+        matches!(
+            *key,
+            "workflow" | "event" | "status" | "branch" | "actor" | "q"
+        )
+    }) {
+        query.remove("before");
+    }
     for (key, value) in changes {
         if value.is_empty() {
             query.remove(*key);
@@ -348,27 +360,18 @@ pub(in crate::webui::pages) fn ActionsView(model: ActionsPage) -> Element {
     // Only the timer component is removed on terminal status, which cancels its
     // use_future task without discarding the user's unsubmitted local controls.
     rsx! {
-        if active { ActiveRunPoll {} }
+        if active {
+            super::polling::ActiveRunPoll { key: "{model.selected.as_ref().unwrap().run.id}", run_id: model.selected.as_ref().unwrap().run.id.clone() }
+        }
         {actions_page(model)}
     }
-}
-
-#[component]
-fn ActiveRunPoll() -> Element {
-    use_future(move || async move {
-        #[cfg(target_arch = "wasm32")]
-        loop {
-            gloo_timers::future::TimeoutFuture::new(2000).await;
-            crate::webui::navigation::refresh_page();
-        }
-    });
-    rsx! {}
 }
 
 // Quoted native default attributes intentionally bypass Dioxus's volatile
 // controlled-input setters. Unrelated model polls must not reset unsent GET or
 // dispatch drafts; the signal-owned log controls below remain controlled.
-pub fn actions_page(model: ActionsPage) -> Element {
+pub fn actions_page(mut model: ActionsPage) -> Element {
+    let selected = model.selected.take().map(std::rc::Rc::new);
     let filtered: Vec<_> = model
         .runs
         .iter()
@@ -406,16 +409,16 @@ pub fn actions_page(model: ActionsPage) -> Element {
             if let Some(warning) = &model.workflow_warning {
                 p { role: "alert", "{warning}" }
             }
-            if let Some(selected) = &model.selected {
-                {selected_run(&model, selected)}
+            if let Some(selected) = &selected {
+                {selected_run(&model, selected.clone())}
             } else {
                 div { class: "actions-list-layout",
                     aside { class: "actions-sidebar", "aria-label": "Workflows",
                         h2 { class: "actions-sidebar-heading", {icon("actions")} "Actions" }
-                        NavLink { class: if model.value("workflow").is_empty() { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("workflow", "")]), {workflow_icon()} "All workflows" }
+                        NavLink { class: if model.value("workflow").is_empty() { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("workflow", ""), ("before", "")]), {workflow_icon()} "All workflows" }
                         div { class: "actions-sidebar-divider" }
                         for workflow in &model.workflows {
-                            NavLink { class: if model.value("workflow") == workflow.path { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("workflow", &workflow.path)]), "{workflow.name}" }
+                            NavLink { class: if model.value("workflow") == workflow.path { "actions-nav-item is-selected" } else { "actions-nav-item" }, href: model.url(&[("workflow", &workflow.path), ("before", "")]), "{workflow.name}" }
                         }
                     }
                     section { class: "actions-content", "aria-label": "Actions runs",
@@ -439,7 +442,7 @@ pub fn actions_page(model: ActionsPage) -> Element {
                             div { class: "actions-run-toolbar",
                                 span { class: "actions-run-count", "{filtered.len()} workflow run" if filtered.len() != 1 { "s" } }
                                 form { id: "actions-run-filters", method: "get", action: model.base_path.clone(), class: "actions-filters",
-                                    {preserved_inputs(&model, &["q", "workflow", "event", "status", "branch", "job", "view", "workflow_job"])}
+                                    {preserved_inputs(&model, &["q", "workflow", "event", "status", "branch", "actor", "before", "job", "view", "workflow_job"])}
                                     label { class: "actions-search-field",
                                         span { class: "actions-sr-only", "Search runs" }
                                         {icon("search")}
@@ -464,6 +467,10 @@ pub fn actions_page(model: ActionsPage) -> Element {
                                         span { class: "actions-sr-only", "Filter by branch" }
                                         input { class: "actions-filter actions-branch-filter", name: "branch", "value": model.value("branch"), placeholder: "Branch" }
                                     }
+                                    label { class: "actions-filter-field",
+                                        span { class: "actions-sr-only", "Actor" }
+                                        input { class: "actions-filter", name: "actor", "value": model.value("actor"), placeholder: "Actor" }
+                                    }
                                     button { class: "actions-button", r#type: "submit", "Filter runs" }
                                 }
                             }
@@ -484,10 +491,10 @@ pub fn actions_page(model: ActionsPage) -> Element {
                                     }
                                 }
                             }
-                            if model.runs.len() >= model.run_limit {
+                            if model.next_before.is_some() || !model.value("before").is_empty() {
                                 div { class: "actions-list-footer",
-                                    p { class: "actions-list-footnote", "Showing the latest {model.run_limit} runs." }
-                                    if model.run_limit < 200 { NavLink { class: "actions-history-link", href: model.url(&[("limit", "200")]), "Show more runs" } }
+                                    if !model.value("before").is_empty() { NavLink { class: "actions-history-link", href: model.url(&[("before", "")]), "Newest runs" } }
+                                    if let Some(before) = model.next_before { NavLink { class: "actions-history-link", href: model.url(&[("before", &before.to_string())]), if ["q", "workflow", "event", "status", "branch", "actor"].iter().any(|key| !model.value(key).is_empty()) { "Older matching runs" } else { "Older runs" } } }
                                 }
                             }
                         }

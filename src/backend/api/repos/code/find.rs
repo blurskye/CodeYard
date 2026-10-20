@@ -31,15 +31,30 @@ async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository is empty."));
     }
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
+    let reference = if !super::super::chrome::is_branch(loaded, &resolved.reference)
+        && !resolved.reference.starts_with("refs/")
+    {
+        store
+            .commit(&resolved.reference)
+            .await
+            .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?
+            .sha
+    } else {
+        resolved.reference
+    };
     let files = store
-        .file_paths(&resolved.reference, view::find::MAX_LISTED_FILES)
+        .file_paths(&reference, view::find::MAX_LISTED_FILES)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
     let page = view::find::FindPage {
-        reference: resolved.reference,
+        reference,
         paths: files.paths,
         truncated: files.truncated,
-        query: ctx.query.get("q").cloned().unwrap_or_default(),
+        query: ctx
+            .query
+            .get("q")
+            .map(|query| query.chars().take(256).collect())
+            .unwrap_or_default(),
     };
     Ok(ctx.page_model(
         &format!(

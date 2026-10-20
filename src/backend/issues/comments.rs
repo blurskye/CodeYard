@@ -1,4 +1,4 @@
-use super::{comment_link, OperationError};
+use super::OperationError;
 use crate::backend::db;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
@@ -10,9 +10,11 @@ use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use serde::Deserialize;
 use serde_json::json;
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct CreateCommentRequest {
     pub body: String,
+    pub repository_id: Option<i64>,
+    pub issue_id: Option<i64>,
 }
 
 fn read_error(_: anyhow::Error) -> OperationError {
@@ -114,19 +116,22 @@ pub async fn create_issue_comment(
         });
     }
 
+    if req.repository_id.is_some_and(|id| id != repository.id)
+        || req.issue_id.is_some_and(|id| id != issue.id)
+    {
+        return Err(OperationError::Conflict {
+            code: "stale_target",
+            message: "The comment target changed. Reload before submitting.".into(),
+        });
+    }
     let comment = db::issues::add_issue_comment(pool, issue.id, user.id, &req.body)
         .await
         .map_err(super::write_error)?;
 
-    // The comment position is counted only when a notification leads to the comment.
     let notifies_author = issue.author_id != user.id;
     if notifies_author || mentions_anyone(&req.body) {
         let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
-        let link = comment_link(
-            &base,
-            comment.id,
-            db::issues::issue_comment_position(pool, comment.id).await,
-        );
+        let link = format!("{base}?comment={}#comment-{}", comment.id, comment.id);
         if notifies_author {
             let title = format!("{} commented on issue #{}", user.username, issue.number);
             let _ = create_and_broadcast_notification(
@@ -224,16 +229,16 @@ pub async fn edit_issue_comment(
         return Err(refusal);
     }
     let previous = issue_comment(pool, &issue, comment_id).await?;
-    if expected_body.is_some_and(|body| body != previous.body) {
-        return Err(OperationError::Conflict {
-            code: "stale_comment",
-            message: "The comment changed. Reload before ticking a task.".into(),
-        });
-    }
     if previous.author_id != user.id {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
             message: "Only the author can edit this comment.".to_owned(),
+        });
+    }
+    if expected_body.is_some_and(|body| body != previous.body) {
+        return Err(OperationError::Conflict {
+            code: "stale_comment",
+            message: "The comment changed. Your draft is preserved; reload before saving.".into(),
         });
     }
     if let Err(message) = super::validate_body(&req.body, true) {
@@ -256,7 +261,8 @@ pub async fn edit_issue_comment(
     .ok_or_else(|| match expected_body {
         Some(_) => OperationError::Conflict {
             code: "conflict",
-            message: "This comment changed; reload before ticking a task.".to_owned(),
+            message: "This comment changed; your draft is preserved. Reload before saving."
+                .to_owned(),
         },
         None => OperationError::Denied {
             code: "comment_forbidden",
@@ -268,11 +274,7 @@ pub async fn edit_issue_comment(
     // author's notice for the comment is not a mention, so the author is not excluded here.
     if mentions_anyone(&req.body) {
         let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
-        let link = comment_link(
-            &base,
-            comment.id,
-            db::issues::issue_comment_position(pool, comment.id).await,
-        );
+        let link = format!("{base}?comment={}#comment-{}", comment.id, comment.id);
         notify_mentions(
             pool,
             broadcaster,

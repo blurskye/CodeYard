@@ -196,11 +196,13 @@ pub async fn provision(
                 .await
                 .map_err(git_storage_error)?;
         }
-        // A fork's branches and tags are a change that replicas have to copy.
-        db::cluster::bump_write_version(pool, repository.id, None)
-            .await
-            .map(|_| ())
-            .map_err(|_| unavailable())
+        // Fork initialization records its version on the owning store before refreshing languages.
+        if source.is_none() {
+            db::cluster::bump_write_version(pool, repository.id, None)
+                .await
+                .map_err(|_| unavailable())?;
+        }
+        Ok(())
     }
     .await;
     if let Err(error) = initialized {
@@ -208,23 +210,19 @@ pub async fn provision(
     }
     let mut repository = repository;
     if source.is_some() {
-        let size = store
-            .size_bytes()
-            .await
-            .map_err(git_storage_error)?
-            .min(i64::MAX as u64) as i64;
-        db::repositories::records::update_repo_default_branch_and_size(
-            pool,
-            repository.id,
-            &repository.default_branch,
-            size,
-        )
-        .await
-        .map_err(|_| unavailable())?;
-        db::repositories::records::insert_repo_storage_snapshot(pool, repository.id, size)
-            .await
-            .map_err(|_| unavailable())?;
-        repository.size_bytes = size;
+        // The fork is already usable. Accounting failures must not report creation as failed.
+        let accounting = async {
+            let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
+            db::repositories::records::update_repo_size(pool, repository.id, size).await?;
+            Ok::<_, anyhow::Error>(size)
+        }
+        .await;
+        match accounting {
+            Ok(size) => repository.size_bytes = size,
+            Err(error) => {
+                tracing::warn!(repo_id = repository.id, %error, "fork created but size accounting failed")
+            }
+        }
     }
     Ok(repository)
 }
@@ -245,7 +243,7 @@ impl InitialFiles {
 }
 
 /// Creates a repository as [`provision`] does and, when `files` asks for any, commits them as
-/// the first commit on the default branch. A commit that fails removes the repository again.
+/// the first commit on the default branch. Once storage is published, later failures leave it intact.
 pub async fn provision_with_initial_files(
     node: (&db::DbPool, Option<&NodeContext>),
     repos_path: &Path,
@@ -260,7 +258,7 @@ pub async fn provision_with_initial_files(
         return Ok(repository);
     }
     let (pool, context) = node;
-    match commit_initial_files(
+    commit_initial_files(
         pool,
         context,
         owner.actor_id,
@@ -269,12 +267,11 @@ pub async fn provision_with_initial_files(
         files,
     )
     .await
-    {
-        Ok(()) => Ok(repository),
-        Err(error) => {
-            Err(abandon_repository(pool, context, owner.actor_id, &repository, error).await)
-        }
-    }
+    .map_err(|_| StorageError {
+        kind: LifecycleFailure::Unavailable,
+        message: "The repository was created, but its initial files could not be committed. The repository and any accepted writes were preserved.",
+    })?;
+    Ok(repository)
 }
 
 async fn commit_initial_files(

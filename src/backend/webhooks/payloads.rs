@@ -1,6 +1,6 @@
 //! Payloads in the shape GitHub documents for each event, as far as this data model has the
 //! fields. Fields without a Codeyard counterpart are left out rather than invented.
-use crate::backend::api::http::config::public_origin;
+use crate::backend::api::http::config::{http_clone_base, public_origin};
 use crate::backend::db::models::{
     Issue, IssueComment, PullRequest, PullRequestComment, PullRequestReview, Release, Repository,
     User,
@@ -67,7 +67,7 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
             "type": if repo.owner_org_id.is_some() { "Organization" } else { "User" },
         },
         "html_url": html_url,
-        "clone_url": format!("{html_url}.git"),
+        "clone_url": format!("{}/{owner}/{}.git", http_clone_base().trim_end_matches('/'), repo.name),
         "description": repo.description,
         "fork": repo.is_fork,
         "archived": repo.is_archived,
@@ -503,6 +503,18 @@ mod tests {
 
     #[test]
     fn push_marks_created_and_deleted_from_zero_ids() {
+        const CHILD: &str = "CODEYARD_CLONE_URL_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .arg("push_marks_created_and_deleted_from_zero_ids")
+                .env(CHILD, "1")
+                .env("PUBLIC_URL", "https://web.example")
+                .env("PUBLIC_HTTP_CLONE_BASE", "https://git.example/")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
         let repo = Repository {
             id: 1,
             owner_kind: "user".into(),
@@ -546,6 +558,14 @@ mod tests {
         assert_eq!(value["created"], json!(true));
         assert_eq!(value["deleted"], json!(false));
         assert_eq!(value["repository"]["full_name"], json!("ann/app"));
+        assert_eq!(
+            value["repository"]["html_url"],
+            "https://web.example/ann/app"
+        );
+        assert_eq!(
+            value["repository"]["clone_url"],
+            "https://git.example/ann/app.git"
+        );
         assert_eq!(value["head_commit"], Value::Null);
     }
 }

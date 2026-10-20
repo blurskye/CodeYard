@@ -25,6 +25,8 @@ pub struct NodeContext {
     pub peers: Arc<RwLock<HashMap<i64, CorePeer>>>,
     /// Nodes a dial failed for, and when.
     pub unreachable: Arc<Mutex<HashMap<i64, Instant>>>,
+    /// Read targets supplied by the core for a database-free CI claim.
+    pub ci_replicas: Arc<RwLock<HashMap<uuid::Uuid, Vec<i64>>>>,
 }
 
 impl std::fmt::Debug for NodeContext {

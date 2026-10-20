@@ -32,7 +32,7 @@ pub async fn profile_activity(
     let mut items = Vec::with_capacity(wanted);
     let mut offset = 0i64;
     'scan: while offset < MAX_SCAN_ROWS {
-        let rows = db::activity::list_user_activity(
+        let batch = db::activity::list_user_activity(
             pool,
             user_id,
             viewer.map(|u| u.id),
@@ -40,7 +40,8 @@ pub async fn profile_activity(
             offset,
         )
         .await?;
-        for row in rows {
+        let exhausted = batch.scanned < SCAN_ROWS as usize;
+        for row in batch.rows {
             if visible_before >= skip {
                 items.push(row);
                 if items.len() == wanted {
@@ -48,6 +49,9 @@ pub async fn profile_activity(
                 }
             }
             visible_before += 1;
+        }
+        if exhausted {
+            break;
         }
         offset += SCAN_ROWS;
     }

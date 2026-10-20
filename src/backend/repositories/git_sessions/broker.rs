@@ -40,6 +40,7 @@ pub(super) struct Gateway {
 
 pub(super) struct Operation {
     pub(super) credential: ReceiveCredential,
+    pub(super) actor_id: i64,
     pub(super) repo_id: i64,
     pub(super) owner: String,
     pub(super) path: PathBuf,
@@ -51,6 +52,7 @@ pub(super) struct Operation {
 #[derive(Default)]
 pub(super) struct HookState {
     pub(super) proposed: Option<Vec<RefUpdate>>,
+    pub(super) previous_refs: Vec<String>,
     pub(super) post_started: bool,
     pub(super) dispatch_failed: bool,
     // Held from admission until Git reports publication (or the receive ends).
@@ -316,7 +318,7 @@ impl Gateway {
     async fn handle(self: &Arc<Self>, stream: &mut UnixStream, request: Request) -> Result<()> {
         match request {
             Request::Serve {
-                key_id,
+                credential,
                 command,
                 git_protocol,
             } => {
@@ -333,7 +335,7 @@ impl Gateway {
                     let result = gateway
                         .serve(
                             &mut owned_stream,
-                            key_id,
+                            credential,
                             &command,
                             git_protocol.as_deref(),
                             slot,
@@ -475,9 +477,37 @@ impl Gateway {
         }
         let supplied = validation::canonical_key(key_type, blob)?;
         let fingerprint = db::users::ssh_keys::calculate_fingerprint(&supplied)?;
-        let Some(identity) =
-            db::users::ssh_keys::get_user_by_key_fingerprint(&self.pool, &fingerprint).await?
-        else {
+        let account =
+            db::users::ssh_keys::get_user_by_key_fingerprint(&self.pool, &fingerprint).await?;
+        let deploy =
+            db::deploy_keys::get_deploy_key_by_fingerprint(&self.pool, &fingerprint).await?;
+        if account.is_some() && deploy.is_some() {
+            return Ok(None);
+        }
+        if let Some(key) = deploy {
+            let repo = db::repositories::records::get_repository_by_id(&self.pool, key.repo_id)
+                .await?
+                .context("repository unavailable")?;
+            if ReceiveCredential::DeployKey(key.id)
+                .authorize(&self.pool, &repo, false)
+                .await
+                .is_err()
+            {
+                return Ok(None);
+            }
+            let canonical = validation::canonical_db_key(&key.public_key, key_type)?;
+            ensure!(
+                canonical == supplied
+                    && db::users::ssh_keys::calculate_fingerprint(&canonical)? == key.fingerprint,
+                "stored key mismatch"
+            );
+            private_files::trusted_executable(Path::new(helper), self.uid)?;
+            return Ok(Some(format!(
+                "restrict,command=\"{helper} deploy:{}\" {supplied}\n",
+                key.id
+            )));
+        }
+        let Some(identity) = account else {
             return Ok(None);
         };
         if identity.user.is_banned || identity.user.must_change_password {
@@ -527,7 +557,7 @@ impl Gateway {
     async fn serve(
         self: &Arc<Self>,
         stream: &mut UnixStream,
-        key_id: i64,
+        credential: ReceiveCredential,
         raw_command: &str,
         git_protocol: Option<&str>,
         slot: OwnedSemaphorePermit,
@@ -538,9 +568,19 @@ impl Gateway {
             db::repositories::records::get_repository(&self.pool, &command.owner, &command.repo)
                 .await?
                 .context("repository unavailable")?;
-        ReceiveCredential::SshKey(key_id)
+        ensure!(
+            matches!(
+                credential,
+                ReceiveCredential::SshKey(_) | ReceiveCredential::DeployKey(_)
+            ),
+            "SSH credential required"
+        );
+        credential
             .authorize(&self.pool, &repo, command.write)
             .await?;
+        if let ReceiveCredential::DeployKey(id) = credential {
+            crate::backend::repositories::deploy_keys::record_use(&self.pool, id).await;
+        }
         let path = self.bare_path(&repo).await?;
         let _slot = slot;
         let (input, mut child_input) = tokio::io::duplex(CHUNK);
@@ -557,7 +597,7 @@ impl Gateway {
             },
             stateless: false,
             git_protocol: git_protocol.map(str::to_owned),
-            credential: Some(ReceiveCredential::SshKey(key_id)),
+            credential: Some(credential),
             owner: command.owner,
             allow_unreachable: false,
         };
@@ -598,11 +638,12 @@ impl Gateway {
     ) -> Result<std::process::ExitStatus> {
         let write = options.service == GitService::ReceivePack;
         let credential = options.credential.context("Git credential required")?;
-        credential.authorize(&self.pool, repo, write).await?;
+        let (actor, _) = credential.authorize(&self.pool, repo, write).await?;
         let token = uuid::Uuid::new_v4().simple().to_string();
         let hooks = self.make_hooks(credential.id(), repo.id, write)?;
         let operation = Arc::new(Operation {
             credential,
+            actor_id: actor.id,
             repo_id: repo.id,
             owner: options.owner,
             path,
@@ -648,12 +689,27 @@ impl Gateway {
             write,
         )
         .await?;
-        if operation
-            .state
-            .lock()
-            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
-            .dispatch_failed
-        {
+        let (dispatch_failed, missing_post, _publication) = {
+            let mut state = operation
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+            let publication = state.publication.take();
+            (
+                state.dispatch_failed,
+                (!state.post_started)
+                    .then(|| state.proposed.clone())
+                    .flatten(),
+                publication,
+            )
+        };
+        let published_without_post = if let Some(updates) = missing_post {
+            let path = operation.path.clone();
+            tokio::task::spawn_blocking(move || published_updates(&path, &updates)).await??
+        } else {
+            false
+        };
+        if dispatch_failed || published_without_post {
             let _ = streams
                 .errors
                 .write_all(
@@ -718,6 +774,25 @@ impl Gateway {
         }
         Ok(directory)
     }
+}
+
+/// A missing hook is a failure only if at least one admitted update actually published.
+fn published_updates(path: &Path, updates: &[RefUpdate]) -> Result<bool> {
+    let repo = git2::Repository::open_bare(path)?;
+    for update in updates {
+        match repo.refname_to_id(&update.reference) {
+            Ok(id) if id.to_string() == update.new => return Ok(true),
+            Err(error)
+                if error.code() == git2::ErrorCode::NotFound
+                    && update.new == validation::ZERO_SHA =>
+            {
+                return Ok(true)
+            }
+            Err(error) if error.code() != git2::ErrorCode::NotFound => return Err(error.into()),
+            _ => {}
+        }
+    }
+    Ok(false)
 }
 
 async fn framed_input<R: AsyncRead + Unpin>(

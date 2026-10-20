@@ -170,7 +170,7 @@ async fn merge_refused(alice: &Client, number: i64, reason: &str) {
 }
 
 async fn code_owners_request_contract(pg: bool) {
-    let world = World::new(pg).await;
+    let mut world = World::new(pg).await;
     // Alice owns src/ too, but she is the author, so she is not asked. Dave can only read.
     let number = open_pull(
         &world.alice,
@@ -221,10 +221,11 @@ async fn code_owners_request_contract(pg: bool) {
         requested(&world.alice, other).await,
         names(&["bob", "carol"])
     );
+    world._database.finish().await;
 }
 
 async fn merge_gate_contract(pg: bool) {
-    let world = World::new(pg).await;
+    let mut world = World::new(pg).await;
     let number = open_pull(&world.alice, "docs", &world.base, &["docs/a.md"]).await;
     // Only Bob can write to docs/ among its owners, so only Bob's approval counts.
     set_rule(&world.alice, true).await;
@@ -265,10 +266,11 @@ async fn merge_gate_contract(pg: bool) {
     let open = open_pull(&world.alice, "plain", &world.base, &["docs/c.md"]).await;
     world.alice.merge_current(open).await;
     assert_eq!(world.alice.pull(open).await["state"], "merged");
+    world._database.finish().await;
 }
 
 async fn owner_regressions_contract(pg: bool) {
-    let world = World::new(pg).await;
+    let mut world = World::new(pg).await;
     world.alice.branch("reader", &world.base).await;
     world
         .alice
@@ -365,6 +367,166 @@ async fn owner_regressions_contract(pg: bool) {
             );
         }
     }
+    world._database.finish().await;
+}
+
+async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
+    use codeyard::backend::repositories::code_owners::resolve_owners;
+    let mut world = World::new(pg).await;
+    let pool = world._database.pool();
+    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let alice = repo.owner_user_id.unwrap();
+    let carol = db::users::accounts::get_user_by_username(pool, "carol")
+        .await
+        .unwrap()
+        .unwrap();
+    world
+        ._database
+        .execute(
+            "INSERT INTO organizations(id,name) VALUES(909090,'acme')",
+            &[],
+        )
+        .await;
+    world
+        ._database
+        .execute(
+            "INSERT INTO org_memberships(org_id,user_id,role) VALUES(909090,$1,'owner')",
+            &[alice],
+        )
+        .await;
+    world
+        ._database
+        .execute(
+            "INSERT INTO org_memberships(org_id,user_id,role) VALUES(909090,$1,'member')",
+            &[carol.id],
+        )
+        .await;
+    world._database.execute("INSERT INTO teams(id,org_id,name,slug,privacy) VALUES(909090,909090,'Council','council','visible')", &[]).await;
+    world
+        ._database
+        .execute(
+            "INSERT INTO team_memberships(team_id,user_id,role) VALUES(909090,$1,'member')",
+            &[carol.id],
+        )
+        .await;
+    let resolved = resolve_owners(pool, &repo, ["@acme/council"])
+        .await
+        .unwrap();
+    assert!(
+        resolved["@acme/council"].is_empty(),
+        "personal repositories must not expand organization teams"
+    );
+    let org_repo = codeyard::backend::repositories::lifecycle::provision(
+        (pool, None),
+        world._root.path(),
+        db::repositories::creation::RepositoryCreationOwner {
+            actor_id: alice,
+            target: db::repositories::creation::RepositoryTarget::Organization(909090),
+        },
+        "owned",
+        None,
+        true,
+        None,
+    )
+    .await
+    .unwrap();
+    db::repositories::access::grant_repo_access(
+        pool,
+        carol.id,
+        org_repo.id,
+        db::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        resolve_owners(pool, &org_repo, ["@acme/council"])
+            .await
+            .unwrap()["@acme/council"],
+        [carol.id]
+    );
+    world
+        ._database
+        .execute("UPDATE teams SET privacy='secret' WHERE id=909090", &[])
+        .await;
+    assert!(resolve_owners(pool, &org_repo, ["@acme/council"])
+        .await
+        .unwrap()["@acme/council"]
+        .is_empty());
+    world
+        ._database
+        .execute(
+            "UPDATE users SET email='security@corp.test', email_verified=FALSE WHERE id=$1",
+            &[carol.id],
+        )
+        .await;
+    assert!(resolve_owners(pool, &repo, ["security@corp.test"])
+        .await
+        .unwrap()["security@corp.test"]
+        .is_empty());
+    world
+        ._database
+        .execute(
+            "UPDATE users SET email_verified=TRUE WHERE id=$1",
+            &[carol.id],
+        )
+        .await;
+    assert_eq!(
+        resolve_owners(pool, &repo, ["security@corp.test"])
+            .await
+            .unwrap()["security@corp.test"],
+        [carol.id]
+    );
+    world._database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_private_teams_and_unverified_email_do_not_resolve() {
+    private_teams_and_unverified_email_do_not_resolve(false).await;
+}
+#[tokio::test]
+async fn postgres_private_teams_and_unverified_email_do_not_resolve() {
+    private_teams_and_unverified_email_do_not_resolve(true).await;
+}
+
+async fn email_owner_remains_required_after_email_change(pg: bool) {
+    let world = World::new(pg).await;
+    world
+        ._database
+        .execute(
+            "UPDATE users SET email='bob@example.invalid' WHERE username='bob'",
+            &[],
+        )
+        .await;
+    let saved = world.alice.expect("PUT", "/api/repos/alice/proj/contents/.github/CODEOWNERS",
+        json!({"branch": "main", "expected_revision": world.base, "message": "Email owner",
+            "content": base64::engine::general_purpose::STANDARD.encode("/self/ bob@example.invalid\n")}), StatusCode::OK).await;
+    let base = saved["commit"]["sha"].as_str().unwrap();
+    world.alice.branch("bob-owned", base).await;
+    world.bob.save("bob-owned", "self/file.txt", base).await;
+    let pull = world.bob.open_pull("My files", "bob-owned", "main").await;
+    let number = pull["number"].as_i64().unwrap();
+    set_rule(&world.alice, true).await;
+    merge_refused(&world.alice, number, "bob@example.invalid").await;
+    world
+        ._database
+        .execute(
+            "UPDATE users SET email='new@example.invalid' WHERE username='bob'",
+            &[],
+        )
+        .await;
+    merge_refused(&world.alice, number, "bob@example.invalid").await;
+}
+
+#[tokio::test]
+async fn sqlite_email_change_does_not_remove_code_owner_requirement() {
+    email_owner_remains_required_after_email_change(false).await;
+}
+#[tokio::test]
+async fn postgres_email_change_does_not_remove_code_owner_requirement() {
+    email_owner_remains_required_after_email_change(true).await;
 }
 
 #[tokio::test]

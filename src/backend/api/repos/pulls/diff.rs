@@ -107,20 +107,10 @@ pub async fn get_pull_request_diff(
         .diff(&pull_request.base_sha, &pull_request.head_sha)
         .await
         .map_err(|error| {
-            if error.is_response_too_large() {
-                crate::backend::api::repos::responses::repo_store_error(
-                    error,
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                )
-            } else {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "git_error",
-                        "Collaboration storage is temporarily unavailable",
-                    )),
-                )
-            }
+            crate::backend::api::repos::responses::repo_store_error(
+                error,
+                StatusCode::INTERNAL_SERVER_ERROR,
+            )
         })?;
 
     Ok(Json(diff))
@@ -159,10 +149,12 @@ async fn viewed_marks(
     user_id: i64,
     files: &[DiffFileInfo],
 ) -> ResultPage<pulls::Viewed> {
+    let displayed: Vec<String> = files.iter().map(|file| file.filename.clone()).collect();
     let marks: HashMap<String, String> = db::pull_requests::viewed::list_pull_request_viewed_files(
         &ctx.state.pool,
         pull_id,
         user_id,
+        &displayed,
     )
     .await
     .map_err(|_| unavailable(ctx))?
@@ -194,6 +186,7 @@ fn composer_from_query(query: &HashMap<String, String>) -> Option<LineComment> {
         return None;
     }
     Some(LineComment {
+        repository_id: None,
         path: query.get("path")?.clone(),
         side: side.clone(),
         line: line.clone(),
@@ -201,6 +194,7 @@ fn composer_from_query(query: &HashMap<String, String>) -> Option<LineComment> {
         body: String::new(),
         preview: false,
         commit: String::new(),
+        base: String::new(),
     })
 }
 
@@ -315,14 +309,26 @@ pub(crate) async fn render_diff(
         .iter()
         .map(|file| file.filename.clone())
         .collect();
-    let owned: HashMap<String, Vec<String>> = rules
+    let owned: HashMap<String, &[String]> = rules
         .owned_paths(&paths)
         .unwrap_or_default()
         .into_iter()
         .collect();
     for file in &mut diff.files {
-        file.owners = owned.get(&file.filename).cloned().unwrap_or_default();
+        file.owners = owned
+            .get(&file.filename)
+            .copied()
+            .unwrap_or_default()
+            .to_vec();
     }
+    let mut ctx = ctx.clone();
+    let split = ctx.query.get("view").is_some_and(|view| view == "split");
+    ctx.return_to = Some(format!(
+        "{}/{}/diff{}",
+        repo.view.family_url(Kind::Pull),
+        value.number,
+        if split { "?view=split" } else { "" }
+    ));
     Ok(with_status(
         ctx.page_model(
             "Pull request diff",
@@ -337,7 +343,7 @@ pub(crate) async fn render_diff(
                 pending_comments,
                 error: error.map(str::to_owned),
                 references: Box::new(references),
-                split: ctx.query.get("view").is_some_and(|view| view == "split"),
+                split,
             }),
         ),
         status,

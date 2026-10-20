@@ -1059,6 +1059,79 @@ async fn pending_picture_contract(pg: bool) {
 }
 
 #[tokio::test]
+async fn postgres_organization_picture_swaps_lock_files_in_uuid_order() {
+    let mut f = Database::new(true).await;
+    let actor = f.actor("picture_swap_owner").await;
+    let first = organization(f.pool(), actor, "picture-swap-one").await;
+    let second = organization(f.pool(), actor, "picture-swap-two").await;
+    let mut pictures = Vec::new();
+    for _ in 0..2 {
+        let file = db::files::reserve_upload(
+            f.pool(),
+            db::files::ReserveUpload {
+                user_id: actor,
+                filename: "picture.png",
+                content_type: "image/png",
+                file_size: PNG.len() as i64,
+                reason: db::models::FileReason::OrgAvatar,
+                visibility: db::models::FileVisibility::Public,
+                sha256_hex: &hex::encode(Sha256::digest(PNG)),
+            },
+        )
+        .await
+        .unwrap();
+        db::files::verify_pending_upload(f.pool(), file.id, actor)
+            .await
+            .unwrap();
+        pictures.push(file.id);
+    }
+    for (org, file) in [(first, pictures[0]), (second, pictures[1])] {
+        assert!(matches!(
+            organizations::set_organization_avatar(f.pool(), actor, org, Some(file))
+                .await
+                .unwrap(),
+            OrganizationOutcome::Applied(_)
+        ));
+    }
+    let db::DbPool::Postgres(raw) = f.pool() else {
+        unreachable!()
+    };
+    let mut gate = raw.begin().await.unwrap();
+    sqlx::query("SELECT id FROM files WHERE id=$1 FOR UPDATE")
+        .bind(*pictures.iter().max().unwrap())
+        .fetch_one(&mut *gate)
+        .await
+        .unwrap();
+    let mut tasks = Vec::new();
+    for (org, file) in [(first, pictures[1]), (second, pictures[0])] {
+        let pool = f.pool().clone();
+        tasks.push(tokio::spawn(async move {
+            organizations::set_organization_avatar(&pool, actor, org, Some(file)).await
+        }));
+    }
+    tokio::time::timeout(Duration::from_secs(5),async {
+        loop {
+            let waiting:i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0 AND query LIKE '%files%' AND pid<>pg_backend_pid()").fetch_one(raw).await.unwrap();
+            if waiting >= 2 { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    gate.rollback().await.unwrap();
+    for task in tasks {
+        let result = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            result,
+            OrganizationOutcome::Applied(_) | OrganizationOutcome::Conflict
+        ));
+    }
+    f.finish().await;
+}
+
+#[tokio::test]
 async fn sqlite_pending_pictures_activate_only_with_assignment() {
     pending_picture_contract(false).await;
 }

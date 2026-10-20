@@ -32,7 +32,20 @@ pub async fn build(
     place: &Place<'_>,
     query: &HashMap<String, String>,
 ) -> Result<WebhookPanel, HookError> {
-    settings::authorize(pool, actor, place.owner).await?;
+    let mut snapshot = hooks::read_settings(
+        pool,
+        place.owner,
+        actor.id,
+        query.get("hook").and_then(|id| id.parse().ok()),
+        query.get("delivery").and_then(|id| id.parse().ok()),
+        query
+            .get("hook_after")
+            .and_then(|id| id.parse().ok())
+            .unwrap_or(0),
+    )
+    .await
+    .map_err(|_| HookError::Unavailable)?
+    .ok_or(HookError::Denied)?;
     let mut panel = WebhookPanel {
         base: place.base.to_owned(),
         action_base: place.action_base.to_owned(),
@@ -44,13 +57,24 @@ pub async fn build(
             .map(str::to_owned),
         ..WebhookPanel::default()
     };
-    let rows = hooks::list_webhooks(pool, place.owner)
-        .await
-        .map_err(|_| HookError::Unavailable)?;
-    for hook in &rows {
-        panel.hooks.push(hook_row(pool, place, hook).await?);
-    }
     let selected = query.get("hook").map(String::as_str);
+    if selected.is_none() {
+        let after = query
+            .get("hook_after")
+            .and_then(|id| id.parse().ok())
+            .unwrap_or(0);
+        let mut rows = std::mem::take(&mut snapshot.hooks);
+        if rows.len() > 30 {
+            rows.truncate(30);
+            panel.next_href = rows
+                .last()
+                .map(|row| format!("{}&hook_after={}", place.base, row.id));
+        }
+        if after > 0 {
+            panel.first_href = Some(place.base.to_owned());
+        }
+        panel.hooks = rows.iter().map(|hook| hook_row(place, hook)).collect();
+    }
     match selected {
         Some("new") => {
             panel.editing = Some(HookDraft {
@@ -65,14 +89,15 @@ pub async fn build(
         }
         Some(id) => {
             let id: i64 = id.parse().map_err(|_| HookError::NotFound)?;
-            let hook = rows
-                .iter()
-                .find(|hook| hook.id == id)
+            let hook = snapshot
+                .hook
+                .as_ref()
+                .filter(|hook| hook.id == id)
                 .ok_or(HookError::NotFound)?;
             if query.get("edit").map(String::as_str) == Some("1") {
                 panel.editing = Some(draft_of(hook));
             } else {
-                panel.detail = Some(detail(pool, place, hook, query).await?);
+                panel.detail = Some(detail(place, hook, &snapshot));
             }
         }
         None => {}
@@ -106,10 +131,8 @@ fn draft_of(hook: &Webhook) -> HookDraft {
     }
 }
 
-async fn hook_row(pool: &DbPool, place: &Place<'_>, hook: &Webhook) -> Result<HookRow, HookError> {
-    let last = hooks::latest_delivery_status(pool, hook.id)
-        .await
-        .map_err(|_| HookError::Unavailable)?;
+fn hook_row(place: &Place<'_>, hook: &hooks::WebhookSummary) -> HookRow {
+    let last = hook.delivery_id.map(|_| hook.status_code);
     let last = match last {
         None => "No deliveries yet".to_owned(),
         Some(status_code) => match status_code {
@@ -117,14 +140,14 @@ async fn hook_row(pool: &DbPool, place: &Place<'_>, hook: &Webhook) -> Result<Ho
             None => "Last delivery failed".to_owned(),
         },
     };
-    Ok(HookRow {
+    HookRow {
         id: hook.id,
         url: hook.payload_url.clone(),
         events: events_label(&hook.events),
         active: hook.active,
         last,
         open_href: format!("{}&hook={}", place.base, hook.id),
-    })
+    }
 }
 
 fn events_label(stored: &str) -> String {
@@ -135,16 +158,9 @@ fn events_label(stored: &str) -> String {
     }
 }
 
-async fn detail(
-    pool: &DbPool,
-    place: &Place<'_>,
-    hook: &Webhook,
-    query: &HashMap<String, String>,
-) -> Result<HookDetail, HookError> {
-    let recorded = hooks::list_delivery_summaries(pool, hook.id)
-        .await
-        .map_err(|_| HookError::Unavailable)?;
-    let deliveries = recorded
+fn detail(place: &Place<'_>, hook: &Webhook, snapshot: &hooks::HookSettings) -> HookDetail {
+    let deliveries = snapshot
+        .deliveries
         .iter()
         .map(|delivery| DeliveryRow {
             id: delivery.id,
@@ -161,29 +177,23 @@ async fn detail(
             href: format!("{}&hook={}&delivery={}", place.base, hook.id, delivery.id),
         })
         .collect();
-    let open = match query.get("delivery").and_then(|id| id.parse::<i64>().ok()) {
-        Some(id) => hooks::get_delivery(pool, hook.id, id)
-            .await
-            .map_err(|_| HookError::Unavailable)?
-            .map(|delivery| DeliveryDetail {
-                id: delivery.id,
-                guid: delivery.guid.clone(),
-                summary: format!("{} · {}", status_text(&delivery), label(&delivery)),
-                status: status_text(&delivery),
-                error: delivery.error.clone().unwrap_or_default(),
-                request_headers: delivery.request_headers.clone(),
-                request_body: delivery.request_body.clone(),
-                response_headers: delivery.response_headers.clone().unwrap_or_default(),
-                response_body: delivery.response_body.clone().unwrap_or_default(),
-            }),
-        None => None,
-    };
-    Ok(HookDetail {
+    let open = snapshot.delivery.as_ref().map(|delivery| DeliveryDetail {
+        id: delivery.id,
+        guid: delivery.guid.clone(),
+        summary: format!("{} · {}", status_text(delivery), label(delivery)),
+        status: status_text(delivery),
+        error: delivery.error.clone().unwrap_or_default(),
+        request_headers: delivery.request_headers.clone(),
+        request_body: delivery.request_body.clone(),
+        response_headers: delivery.response_headers.clone().unwrap_or_default(),
+        response_body: delivery.response_body.clone().unwrap_or_default(),
+    });
+    HookDetail {
         id: hook.id,
         url: hook.payload_url.clone(),
         deliveries,
         open,
-    })
+    }
 }
 
 fn label(delivery: &WebhookDelivery) -> String {

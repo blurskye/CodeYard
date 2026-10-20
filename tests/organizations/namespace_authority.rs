@@ -972,7 +972,7 @@ async fn managed_account_sessions(database: &Database) {
     }
     assert_eq!(accounts::count_users(&database.pool).await.unwrap(), 4);
     assert!(
-        db::users::signup_requests::list_signup_requests(&database.pool, "pending")
+        db::users::signup_requests::list_signup_requests(&database.pool, "pending", 100, 0, 0)
             .await
             .unwrap()
             .is_empty()

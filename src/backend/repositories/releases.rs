@@ -27,6 +27,23 @@ pub use crate::backend::db::releases::{ReleaseChanges, ReleaseFields, ReleaseRef
 
 pub const MAX_ASSET_BYTES: usize = 100 * 1024 * 1024;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn authority_storage_failure_is_not_a_permission_refusal() {
+        let raw = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = db::DbPool::Sqlite(raw);
+        pool.close().await;
+        assert!(matches!(
+            can_write(&pool, Some(1), 1).await,
+            Err(ReleaseError::Access(AccessError::Unavailable))
+        ));
+        assert!(!can_write(&pool, None, 1).await.unwrap());
+    }
+}
+
 #[derive(Debug)]
 pub enum ReleaseError {
     Access(AccessError),
@@ -36,6 +53,7 @@ pub enum ReleaseError {
     TagTaken,
     /// The release already has an asset with this name.
     AssetNameTaken,
+    Conflict,
     /// The tag is new and no branch or commit was given to create it on.
     TargetRequired,
     Ref(RefError),
@@ -55,6 +73,7 @@ impl From<AccessError> for ReleaseError {
 /// does not exist yet: then it is created at `target`, a branch or commit.
 #[derive(Debug, Clone, Default)]
 pub struct ReleaseInput {
+    pub repository_id: i64,
     pub tag: String,
     pub target: String,
     pub fields: ReleaseFields,
@@ -114,10 +133,18 @@ async fn writable(
     Ok(access::check_write(pool, repository.id, actor).await?)
 }
 
-async fn can_write(pool: &db::DbPool, viewer: Option<i64>, repo_id: i64) -> bool {
+async fn can_write(
+    pool: &db::DbPool,
+    viewer: Option<i64>,
+    repo_id: i64,
+) -> Result<bool, ReleaseError> {
     match viewer {
-        Some(actor) => access::check_write(pool, repo_id, actor).await.is_ok(),
-        None => false,
+        Some(actor) => match access::check_write(pool, repo_id, actor).await {
+            Ok(_) => Ok(true),
+            Err(error @ AccessError::Unavailable) => Err(error.into()),
+            Err(_) => Ok(false),
+        },
+        None => Ok(false),
     }
 }
 
@@ -132,6 +159,7 @@ fn write_error(error: Error) -> ReleaseError {
         Some(ReleaseRefusal::NotFound) => ReleaseError::NotFound,
         Some(ReleaseRefusal::TagTaken) => ReleaseError::TagTaken,
         Some(ReleaseRefusal::AssetNameTaken) => ReleaseError::AssetNameTaken,
+        Some(ReleaseRefusal::Conflict) => ReleaseError::Conflict,
         None => ReleaseError::Unavailable,
     }
 }
@@ -183,17 +211,16 @@ pub async fn list(
     page: i64,
     per_page: i64,
 ) -> Result<ReleasesPage, ReleaseError> {
+    let offset = page
+        .checked_sub(1)
+        .filter(|_| page > 0 && (1..=100).contains(&per_page))
+        .and_then(|page| page.checked_mul(per_page))
+        .ok_or(ReleaseError::Invalid("Release pagination is out of range"))?;
     let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await;
-    let releases = db::releases::list_releases(
-        pool,
-        repository.id,
-        can_write,
-        per_page,
-        (page - 1).max(0) * per_page,
-    )
-    .await
-    .map_err(unavailable)?;
+    let can_write = can_write(pool, viewer, repository.id).await?;
+    let releases = db::releases::list_releases(pool, repository.id, can_write, per_page, offset)
+        .await
+        .map_err(unavailable)?;
     let total = db::releases::count_releases(pool, repository.id, can_write)
         .await
         .map_err(unavailable)?;
@@ -214,7 +241,7 @@ pub async fn detail_by_tag(
     tag: &str,
 ) -> Result<ReleaseDetail, ReleaseError> {
     let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await;
+    let can_write = can_write(pool, viewer, repository.id).await?;
     let release = db::releases::get_release_by_tag(pool, repository.id, tag)
         .await
         .map_err(unavailable)?
@@ -242,7 +269,7 @@ pub async fn detail_by_id(
     release_id: i64,
 ) -> Result<ReleaseDetail, ReleaseError> {
     let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await;
+    let can_write = can_write(pool, viewer, repository.id).await?;
     let release = db::releases::get_release(pool, repository.id, release_id)
         .await
         .map_err(unavailable)?
@@ -318,7 +345,7 @@ pub async fn summary(
     viewer: Option<i64>,
     repository: &Repository,
 ) -> Result<ReleaseSummary, ReleaseError> {
-    let writer = can_write(pool, viewer, repository.id).await;
+    let writer = can_write(pool, viewer, repository.id).await?;
     let count = db::releases::count_releases(pool, repository.id, writer)
         .await
         .map_err(unavailable)?;
@@ -344,7 +371,7 @@ pub async fn create(
     name: &str,
     input: &ReleaseInput,
 ) -> Result<Release, ReleaseError> {
-    let (repository, user) = writable(pool, actor, owner, name).await?;
+    let (repository, user) = access::check_write(pool, input.repository_id, actor).await?;
     validate_tag(&input.tag)?;
     validate_fields(&input.fields)?;
     if db::releases::get_release_by_tag(pool, repository.id, &input.tag)
@@ -457,21 +484,14 @@ pub async fn update(
         body: fields.body.clone().flatten(),
         ..Default::default()
     })?;
-    let before = db::releases::get_release(pool, repository.id, release_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    let release = db::releases::update_release(pool, actor, repository.id, release_id, fields)
-        .await
-        .map_err(write_error)?;
-    if before.release.is_draft && !release.is_draft {
+    let (release, published) =
+        db::releases::update_release(pool, actor, repository.id, release_id, fields)
+            .await
+            .map_err(write_error)?;
+    if published {
         notify_published(pool, broadcaster, &user, &repository, owner, name, &release).await;
     }
-    let action = if before.release.is_draft && !release.is_draft {
-        "published"
-    } else {
-        "edited"
-    };
+    let action = if published { "published" } else { "edited" };
     let (release_for_hook, repository_for_hook) = (release.clone(), repository.clone());
     let (author_id, sender_id) = (release.author_id, actor);
     webhooks::emit(
@@ -662,15 +682,12 @@ pub async fn download(
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write(pool, viewer, repository.id).await {
+    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
         return Err(ReleaseError::NotFound);
     }
-    let assets = db::releases::list_release_assets(pool, release.release.id)
+    let asset = db::releases::get_release_asset_by_name(pool, release.release.id, asset_name)
         .await
-        .map_err(unavailable)?;
-    let asset = assets
-        .into_iter()
-        .find(|asset| asset.name == asset_name)
+        .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
     let file = db::files::get_file_by_id(pool, asset.file_id)
         .await

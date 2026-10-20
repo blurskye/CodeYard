@@ -15,6 +15,8 @@ pub enum DeleteError {
     StorageUnavailable,
     #[error("File not found")]
     NotFound,
+    #[error("File deletion is not allowed")]
+    Denied,
     #[error("The file is the current picture of an organization")]
     ReferencedOrganizationAvatar,
     #[error("The file is a release asset")]
@@ -23,7 +25,7 @@ pub enum DeleteError {
 
 /// Removes the owner's metadata immediately and records durable object cleanup in
 /// the same transaction. The immediate object delete is best-effort: the persisted
-/// work remains until any PUT that could still arrive has had its grace period.
+/// work survives the initial PUT grace period; S3 keys remain queued for reconciliation.
 pub async fn delete_owned_file(
     pool: &DbPool,
     store: &ObjectStore,
@@ -45,6 +47,7 @@ pub async fn delete_owned_file(
     {
         files_db::DeleteFileOutcome::Deleted(file) => file,
         files_db::DeleteFileOutcome::NotFound => return Err(DeleteError::NotFound),
+        files_db::DeleteFileOutcome::Denied => return Err(DeleteError::Denied),
         files_db::DeleteFileOutcome::ReferencedOrganizationAvatar => {
             return Err(DeleteError::ReferencedOrganizationAvatar)
         }
@@ -155,13 +158,20 @@ pub async fn remove_expired_uploads(
     for key in due {
         objects.insert(key, true);
     }
+    let mut remaining: std::collections::HashSet<_> = objects
+        .iter()
+        .filter(|(_, due)| **due)
+        .map(|(key, _)| key.clone())
+        .collect();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let deletions = stream::iter(objects)
         .map(|(key, due)| async move {
-            let deleted = match store.lock_file(&key).await {
-                Ok(_file_lock) => store.delete(&key).await.is_ok(),
-                Err(_) => false,
-            };
+            let deleted = tokio::time::timeout(Duration::from_secs(1), async {
+                let _file_lock = store.lock_file(&key).await?;
+                store.delete(&key).await
+            })
+            .await
+            .is_ok_and(|result| result.is_ok());
             (key, due, deleted)
         })
         .buffer_unordered(4);
@@ -169,10 +179,15 @@ pub async fn remove_expired_uploads(
     while let Ok(Some((key, due, deleted))) =
         tokio::time::timeout_at(deadline, deletions.next()).await
     {
-        let recorded = if deleted {
+        remaining.remove(&key);
+        let recorded = if deleted && store.kind() == "local" {
             files_db::finish_object_deletion(pool, &key)
                 .await
                 .map(|_| ())
+        } else if deleted && due {
+            // S3 expiry limits when a PUT starts, not when it finishes. Keep its tombstone
+            // and reconcile late objects even after a successful DELETE.
+            files_db::postpone_object_deletion(pool, &key, 24 * 60 * 60).await
         } else if due {
             files_db::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS).await
         } else {
@@ -182,6 +197,15 @@ pub async fn remove_expired_uploads(
             removed,
             object_removed: None,
         })?;
+    }
+    // Work cancelled at the batch deadline must not occupy the next batch again.
+    for key in remaining {
+        files_db::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS)
+            .await
+            .map_err(|_| ExpiryError {
+                removed,
+                object_removed: None,
+            })?;
     }
     Ok(removed)
 }

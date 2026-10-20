@@ -133,6 +133,66 @@ async fn contract(pg: bool) {
             .unwrap()
     );
 
+    // Uploading an unchanged source alongside changed documentation must not run source CI.
+    use codeyard::backend::repositories::{
+        files,
+        store::{FileWrite, UploadFile, UploadWrite},
+    };
+    let uploaded = files::upload_files(
+        f.pool(),
+        None,
+        &service,
+        actor,
+        "writer",
+        repo.id,
+        UploadWrite {
+            branch: "main".into(),
+            message: "docs only".into(),
+            expected_revision: main.clone(),
+            files: vec![
+                UploadFile {
+                    path: "src.txt".into(),
+                    size: 4,
+                },
+                UploadFile {
+                    path: "docs.txt".into(),
+                    size: 7,
+                },
+            ],
+        },
+        b"basedocs v2".to_vec(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+        .await
+        .unwrap()
+        .is_empty());
+    files::write_file_bytes(
+        f.pool(),
+        None,
+        &service,
+        actor,
+        "writer",
+        "project",
+        FileWrite {
+            branch: "main".into(),
+            path: "src.txt".into(),
+            message: "unchanged".into(),
+            expected_revision: uploaded.commit.sha,
+            creating: false,
+            deleting: false,
+        },
+        b"base".to_vec(),
+    )
+    .await
+    .unwrap();
+    assert!(db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 20)
+        .await
+        .unwrap()
+        .is_empty());
+
     // A new ref compares against the empty tree. src.txt matches, docs/** does not.
     {
         let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
@@ -255,6 +315,45 @@ async fn contract(pg: bool) {
         assert_eq!(again.branch, run.branch);
         assert_eq!(again.head_sha, run.head_sha);
     }
+    let count = db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 200)
+        .await
+        .unwrap()
+        .len();
+    codeyard::backend::repositories::files::upload_files(
+        f.pool(),
+        None,
+        &service,
+        actor,
+        "writer",
+        repo.id,
+        codeyard::backend::repositories::store::UploadWrite {
+            branch: "feature".into(),
+            expected_revision: new.clone(),
+            message: "Docs only".into(),
+            files: vec![
+                codeyard::backend::repositories::store::UploadFile {
+                    path: "src.txt".into(),
+                    size: 7,
+                },
+                codeyard::backend::repositories::store::UploadFile {
+                    path: "docs.txt".into(),
+                    size: 7,
+                },
+            ],
+        },
+        b"featureupdated".to_vec(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 200)
+            .await
+            .unwrap()
+            .len(),
+        count,
+        "uploading unchanged src.txt must not trigger its path-filtered workflow"
+    );
     f.finish().await;
 }
 

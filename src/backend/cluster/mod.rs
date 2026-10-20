@@ -415,6 +415,11 @@ pub async fn start(
             .context("cannot register this node (if its name is taken, set NODE_NAME to another)")?
         }
     };
+    anyhow::ensure!(
+        roles.names().iter().all(|role| node.roles.contains(role)),
+        "requested service roles exceed enrollment for '{}'; update CLUSTER_NODES with the allowed roles and restart a core node before starting these services",
+        node.name
+    );
     match node.status.as_str() {
         "revoked" => bail!(
             "this node ('{}') was revoked from the cluster; run `codeyard cluster approve {}` to let it back in, or remove its cluster settings",
@@ -456,6 +461,7 @@ pub async fn start(
         repos_path: repos_path.clone(),
         peers: Default::default(),
         unreachable: Default::default(),
+        ci_replicas: Default::default(),
     };
     let storage_path = roles.contains(NodeRole::Storage).then_some(repos_path);
     let rpc = storage_path
@@ -534,6 +540,10 @@ pub async fn client_context(
         .await?
         .filter(|node| node.status == "active")
         .ok_or_else(|| anyhow!("this node is not an active cluster member"))?;
+    ensure!(
+        node.roles.iter().any(|role| role == "web" || role == "ssh"),
+        "repository operator commands require an active web or ssh node identity"
+    );
     Ok(Some(NodeContext {
         pool: Some(pool.clone()),
         iroh: IrohDialer::new(settings.relay.clone(), key.clone()),
@@ -542,6 +552,7 @@ pub async fn client_context(
         repos_path: std::path::absolute(repos_path)?,
         peers: Default::default(),
         unreachable: Default::default(),
+        ci_replicas: Default::default(),
     }))
 }
 
@@ -641,12 +652,25 @@ async fn heartbeat(
 /// in `repos_path`. Returns how many it took.
 pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) -> Result<usize> {
     let mut adopted = 0;
-    for (id, disk_path) in db::cluster::list_unplaced_repositories(pool).await? {
-        let here = rpc::repository_uuid(&disk_path)
-            .is_ok_and(|uuid| repos_path.join(format!("{uuid}.git")).exists());
-        if here && db::cluster::place_repository(pool, id, node_id).await? {
-            adopted += 1;
+    // A fork inserted while a family is being locked leaves that family untouched. Refresh
+    // the directory snapshot to include it; never move the source without its current forks.
+    for _ in 0..3 {
+        let local: Vec<_> = db::cluster::list_unplaced_repositories(pool)
+            .await?
+            .into_iter()
+            .filter(|(_, disk_path)| {
+                rpc::repository_uuid(disk_path)
+                    .is_ok_and(|uuid| repos_path.join(format!("{uuid}.git")).exists())
+            })
+            .map(|(id, _)| id)
+            .collect();
+        let mut placed = std::collections::HashSet::new();
+        for &id in &local {
+            if !placed.contains(&id) {
+                placed.extend(db::cluster::place_fork_family(pool, id, node_id, &local).await?);
+            }
         }
+        adopted += placed.len();
     }
     Ok(adopted)
 }

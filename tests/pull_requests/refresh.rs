@@ -745,6 +745,7 @@ async fn concurrent_refresh_converges(pg: bool) {
                 Some(&["main", "topic"][..]),
                 &ci,
                 actor,
+                codeyard::backend::db::models::AccessLevel::Owner,
             )
             .await
         })

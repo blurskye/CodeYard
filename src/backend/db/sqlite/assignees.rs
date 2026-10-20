@@ -2,6 +2,18 @@ use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNE
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
+// Public visibility alone does not make a user an assignment candidate.
+const CANDIDATES: &str = "u.id IN (
+    SELECT owner_user_id FROM repositories WHERE id=?1 AND owner_user_id IS NOT NULL
+    UNION SELECT user_id FROM repo_access WHERE repo_id=?1 AND access_level BETWEEN 1 AND 5
+    UNION SELECT m.user_id FROM repositories r JOIN org_memberships m ON m.org_id=r.owner_org_id
+        WHERE r.id=?1 AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS (
+            SELECT 1 FROM teams t JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=m.user_id
+            JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id
+            WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret')
+                AND tm.role IN ('member','maintainer') AND a.permission BETWEEN 1 AND 5)))
+)";
+
 /// The table of the item, its assignee link table and the link column that names the item.
 fn tables(item: AssignedItem) -> (&'static str, &'static str, &'static str) {
     match item {
@@ -57,11 +69,11 @@ pub async fn assign_user(
 ) -> Result<bool> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     let (link, column) = locate_item(&mut tx, repo_id, item).await?;
-    // The personal owner and anyone with direct access to the repository may be assigned.
-    let assignable: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM repositories WHERE id = ?1 AND owner_user_id = ?2)
-            OR EXISTS (SELECT 1 FROM repo_access WHERE repo_id = ?1 AND user_id = ?2 AND access_level >= 1)",
-    )
+    let assignable: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS (SELECT 1 FROM repositories r JOIN users u ON u.id=?2
+         WHERE r.id=?1 AND {CANDIDATES} AND ({})>=1)",
+        super::repositories::access::USER_REPO_ACCESS_SQL
+    ))
     .bind(repo_id)
     .bind(user_id)
     .fetch_one(&mut *tx)
@@ -156,12 +168,11 @@ pub async fn list_item_assignees(
 }
 
 pub async fn list_assignable_usernames(pool: &SqlitePool, repo_id: i64) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT username FROM users WHERE id IN (
-            SELECT owner_user_id FROM repositories WHERE id = ?1 AND owner_user_id IS NOT NULL
-            UNION SELECT user_id FROM repo_access WHERE repo_id = ?1 AND access_level >= 1
-        ) ORDER BY username",
-    )
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT u.username FROM repositories r JOIN users u ON {CANDIDATES}
+         WHERE r.id=?1 AND ({})>=1 ORDER BY u.username",
+        super::repositories::access::USER_REPO_ACCESS_SQL
+    ))
     .bind(repo_id)
     .fetch_all(pool)
     .await?)

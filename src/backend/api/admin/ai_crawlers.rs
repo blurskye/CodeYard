@@ -47,7 +47,9 @@ pub async fn admin_set_ai_crawlers(
             "ai_crawlers must be allow or block.",
         )),
     ))?;
-    let updated = db::node_config::set_ai_crawlers(&state.pool, actor.id, value)
+    let session =
+        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
+    let updated = db::node_config::set_ai_crawlers(&state.pool, actor.id, &session, value)
         .await
         .map_err(|_| database_failure())?;
     if !updated {
@@ -88,9 +90,12 @@ pub(crate) async fn ai_crawlers_post(
         )
         .await;
     };
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     match db::node_config::set_ai_crawlers(
         &ctx.state.pool,
         ctx.user.as_ref().expect("admin guard").id,
+        &session,
         value,
     )
     .await

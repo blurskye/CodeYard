@@ -135,8 +135,22 @@ async fn discovery_and_deletion(pg: bool) {
         let Page::IssueRepositories(choices) = model else {
             panic!("chooser")
         };
-        assert_eq!(choices.len(), expected as usize);
-        assert!(choices.iter().all(|repo| repo.owner == "first_org"));
+        assert_eq!(choices.repositories.len(), expected.min(30) as usize);
+        assert_eq!(choices.has_older, expected > 30);
+        assert!(choices
+            .repositories
+            .iter()
+            .all(|repo| repo.owner == "first_org"));
+        if expected > 30 {
+            let (status, page) = client.model("/issues/new?page=2").await;
+            assert_eq!(status, StatusCode::OK);
+            let Page::IssueRepositories(second) = page else {
+                panic!("chooser page 2")
+            };
+            assert_eq!(second.repositories.len(), 1);
+            assert!(!second.has_older);
+            assert!(!choices.repositories.contains(&second.repositories[0]));
+        }
     }
     let (status, model) = owner_client.model("/?page=2").await;
     assert_eq!(status, StatusCode::OK);
@@ -265,6 +279,87 @@ async fn sqlite_organization_discovery_paging_and_scoped_deletion() {
 #[tokio::test]
 async fn postgres_organization_discovery_paging_and_scoped_deletion() {
     discovery_and_deletion(true).await;
+}
+
+async fn release_upload_cleanup(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let owner = f.actor("release_owner").await;
+    let org = org(&f, owner, "release_org").await;
+    let repo = repository(&f, owner, org, "release_repo").await;
+    let release =
+        db::releases::create_release(f.pool(), owner, repo.id, "v1", "main", &Default::default())
+            .await
+            .unwrap();
+    let id = uuid::Uuid::new_v4();
+    let key = format!("uploads/{id}");
+    let insert = "INSERT INTO files(id,user_id,filename,original_name,content_type,file_size,sha256_hex,object_key,reason,visibility,is_active,confirmed_at,upload_expires_at) VALUES($1,$2,'asset.bin','asset.bin','application/octet-stream',12,$3,$4,'release_asset','owner',FALSE,'2026-01-01T00:00:00.000000Z','2099-01-01T00:00:00.000000Z')";
+    match f.pool() {
+        db::DbPool::Postgres(raw) => {
+            sqlx::query(insert)
+                .bind(id)
+                .bind(owner)
+                .bind("aa".repeat(32))
+                .bind(&key)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        db::DbPool::Sqlite(raw) => {
+            sqlx::query(insert)
+                .bind(id)
+                .bind(owner)
+                .bind("aa".repeat(32))
+                .bind(&key)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+    db::releases::add_release_asset(
+        f.pool(),
+        owner,
+        repo.id,
+        release.id,
+        &db::releases::NewReleaseAsset {
+            file_id: id,
+            name: "asset.bin",
+            label: None,
+            content_type: "application/octet-stream",
+            size: 12,
+        },
+    )
+    .await
+    .unwrap();
+    applied(
+        delete_organization_repository(f.pool(), owner, org, repo.id)
+            .await
+            .unwrap(),
+    );
+    let check = "SELECT (SELECT COUNT(*) FROM files WHERE id=$1), (SELECT COUNT(*) FROM pending_object_deletions WHERE object_key=$2)";
+    let counts: (i64, i64) = match f.pool() {
+        db::DbPool::Postgres(raw) => sqlx::query_as(check)
+            .bind(id)
+            .bind(&key)
+            .fetch_one(raw)
+            .await
+            .unwrap(),
+        db::DbPool::Sqlite(raw) => sqlx::query_as(check)
+            .bind(id)
+            .bind(&key)
+            .fetch_one(raw)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(counts, (0, 1));
+    f.finish().await;
+}
+#[tokio::test]
+async fn sqlite_organization_deletion_queues_release_upload_cleanup() {
+    release_upload_cleanup(false).await;
+}
+#[tokio::test]
+async fn postgres_organization_deletion_queues_release_upload_cleanup() {
+    release_upload_cleanup(true).await;
 }
 
 #[tokio::test]

@@ -377,6 +377,164 @@ mod fixture {
     }
 
     #[tokio::test]
+    async fn accepted_push_bookkeeping_survives_key_removal_and_token_expiry() {
+        for change in ["ssh", "deploy", "expired-token", "revoked-token"] {
+            let mut fixture = Fixture::with_authority(
+                if change.contains("token") {
+                    CredentialKind::Token
+                } else {
+                    CredentialKind::SshKey
+                },
+                AccessKind::Direct,
+            )
+            .await;
+            if change == "deploy" {
+                let account =
+                    db::users::ssh_keys::get_user_by_ssh_key_id(&fixture.pool, fixture.key_id)
+                        .await
+                        .unwrap()
+                        .unwrap();
+                db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
+                    .await
+                    .unwrap();
+                sqlx::query("INSERT INTO deploy_keys(repo_id,name,fingerprint,public_key,read_only,created_by_id) VALUES(?,'deploy',?,?,FALSE,?)")
+                    .bind(fixture.repo_id).bind(account.key.fingerprint).bind(account.key.public_key).bind(fixture.actor_id)
+                    .execute(&fixture.native).await.unwrap();
+                let id: i64 = sqlx::query_scalar("SELECT id FROM deploy_keys")
+                    .fetch_one(&fixture.native)
+                    .await
+                    .unwrap();
+                fixture.credential = ReceiveCredential::DeployKey(id);
+            }
+            let bare = git2::Repository::open_bare(&fixture.path).unwrap();
+            bare.reference("refs/heads/topic", fixture.oid, false, "fixture")
+                .unwrap();
+            let parent = bare.find_commit(fixture.oid).unwrap();
+            let signature = git2::Signature::now("Writer", "writer@example.invalid").unwrap();
+            let next = bare
+                .commit(
+                    None,
+                    &signature,
+                    &signature,
+                    "accepted",
+                    &parent.tree().unwrap(),
+                    &[&parent],
+                )
+                .unwrap();
+            let pull = db::pull_requests::records::create_pull_request(
+                &fixture.pool,
+                db::pull_requests::records::NewPullRequest {
+                    repo_id: fixture.repo_id,
+                    head_repo_id: None,
+                    author_id: fixture.actor_id,
+                    title: "Topic",
+                    body: "",
+                    head_branch: "topic",
+                    head_sha: &fixture.oid.to_string(),
+                    base_branch: "main",
+                    base_sha: &fixture.oid.to_string(),
+                    is_draft: false,
+                },
+            )
+            .await
+            .unwrap();
+            fixture.request = receive_request(
+                &fixture.path,
+                "refs/heads/topic",
+                &fixture.oid.to_string(),
+                &next.to_string(),
+            );
+            let (reached, release) = hold_next_hook(fixture.path.clone(), true);
+            let mut task = fixture.receive();
+            hook_reached(reached, &mut task).await;
+            match change {
+                "ssh" => {
+                    db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
+                        .await
+                        .unwrap();
+                }
+                "deploy" => {
+                    sqlx::query("DELETE FROM deploy_keys")
+                        .execute(&fixture.native)
+                        .await
+                        .unwrap();
+                }
+                "expired-token" => {
+                    sqlx::query(
+                        "UPDATE personal_access_tokens SET expires_at='2000-01-01T00:00:00Z'",
+                    )
+                    .execute(&fixture.native)
+                    .await
+                    .unwrap();
+                }
+                "revoked-token" => {
+                    db::users::tokens::delete_token(
+                        &fixture.pool,
+                        fixture.actor_id,
+                        fixture.token_id,
+                    )
+                    .await
+                    .unwrap();
+                }
+                _ => unreachable!(),
+            }
+            release.send(()).unwrap();
+            assert!(timeout(std::time::Duration::from_secs(15), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err());
+            let refreshed =
+                db::pull_requests::records::get_pull_request_by_id(&fixture.pool, pull.id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(refreshed.head_sha, next.to_string(), "{change}");
+            let count: i64 = sqlx::query_scalar(
+                "SELECT SUM(commit_count) FROM repository_pushes WHERE repo_id=? AND actor_id=?",
+            )
+            .bind(fixture.repo_id)
+            .bind(fixture.actor_id)
+            .fetch_one(&fixture.native)
+            .await
+            .unwrap();
+            assert_eq!(count, 1, "{change}");
+            assert!(
+                db::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+            fixture.pool.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn multi_ref_first_push_records_each_branch_against_the_same_snapshot() {
+        let mut fixture = Fixture::new().await;
+        let bare = git2::Repository::open_bare(&fixture.path).unwrap();
+        bare.find_reference("refs/heads/main")
+            .unwrap()
+            .delete()
+            .unwrap();
+        fixture.request = receive_requests(
+            &fixture.path,
+            &[
+                ("refs/heads/one", ZERO_SHA, &fixture.oid.to_string()),
+                ("refs/heads/two", ZERO_SHA, &fixture.oid.to_string()),
+            ],
+        );
+        fixture.receive().await.unwrap().unwrap();
+        let counts: Vec<i64> =
+            sqlx::query_scalar("SELECT commit_count FROM repository_pushes ORDER BY branch")
+                .fetch_all(&fixture.native)
+                .await
+                .unwrap();
+        assert_eq!(counts, [1, 1]);
+        fixture.pool.close().await;
+    }
+
+    #[tokio::test]
     async fn account_git_credentials_keep_the_personal_site_admin_override_only() {
         for organization in [false, true] {
             let fixture = Fixture::with_authority(
@@ -1362,6 +1520,7 @@ mod fixture {
                 repos_path: fixture.path.parent().unwrap().to_owned(),
                 peers: Default::default(),
                 unreachable: Default::default(),
+                ci_replicas: Default::default(),
             }),
             Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
                 &fixture.pool,
@@ -1432,6 +1591,71 @@ mod fixture {
         assert_eq!(
             bare.find_reference("refs/heads/main").unwrap().target(),
             Some(fixture.oid)
+        );
+        fixture.pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn accepted_pushes_are_remembered_without_matching_workflows() {
+        let mut fixture = Fixture::new().await;
+        fixture.ci = Arc::new(CiRuns::new(
+            fixture.pool.clone(),
+            Arc::new(crate::backend::ci::CiConfig {
+                trusted_actor_ids: [fixture.actor_id].into(),
+                ..Default::default()
+            }),
+            Arc::new(tokio::sync::Notify::new()),
+            None,
+            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+                &fixture.pool,
+            )),
+        ));
+        let bare = git2::Repository::open_bare(&fixture.path).unwrap();
+        let parent = bare.find_commit(fixture.oid).unwrap();
+        let author = git2::Signature::now("Tester", "test@example.invalid").unwrap();
+        for (reference, message) in [
+            ("refs/heads/no-workflow", "no workflows"),
+            ("refs/tags/skipped", "[skip ci]"),
+        ] {
+            let oid = bare
+                .commit(
+                    None,
+                    &author,
+                    &author,
+                    message,
+                    &parent.tree().unwrap(),
+                    &[&parent],
+                )
+                .unwrap();
+            let sha = if reference.starts_with("refs/tags/") {
+                bare.tag_annotation_create(
+                    "skipped",
+                    &bare.find_object(oid, None).unwrap(),
+                    &author,
+                    "annotated",
+                )
+                .unwrap()
+            } else {
+                oid
+            };
+            fixture.request = receive_request(&fixture.path, reference, ZERO_SHA, &sha.to_string());
+            let output = fixture.receive().await.unwrap().unwrap();
+            assert!(String::from_utf8_lossy(&output).contains(&format!("ok {reference}")));
+            assert!(db::ci::has_ci_accepted_push(
+                &fixture.pool,
+                fixture.repo_id,
+                fixture.actor_id,
+                reference,
+                &oid.to_string()
+            )
+            .await
+            .unwrap());
+        }
+        assert!(
+            db::ci::list_ci_runs_for_repo(&fixture.pool, fixture.repo_id, 10)
+                .await
+                .unwrap()
+                .is_empty()
         );
         fixture.pool.close().await;
     }

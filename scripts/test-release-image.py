@@ -44,6 +44,16 @@ class ReleaseImageTests(unittest.TestCase):
                     subprocess.run([
                         PODMAN, "build", "-f", "Containerfile", "-t", image, "."
                     ], cwd=root, check=True)
+                    config = json.loads(subprocess.check_output([PODMAN, "image", "inspect", image]))[0]["Config"]
+                    self.assertEqual(config["Entrypoint"], ["/usr/bin/tini", "--"])
+                    subprocess.run([PODMAN, "run", "--rm", image], check=True)
+                    subprocess.run([
+                        PODMAN, "run", "--rm", image, "/bin/sh", "-c",
+                        "(sleep .2 & echo $! > /tmp/orphan) & wait; "
+                        "pid=$(cat /tmp/orphan); "
+                        "for i in 1 2 3 4 5 6 7 8 9 10; do "
+                        "kill -0 $pid 2>/dev/null || exit 0; sleep .1; done; exit 1",
+                    ], check=True)
                     saved = root / "image.tar"
                     subprocess.run([
                         PODMAN, "save", "--format", "docker-archive", "-o", str(saved), image

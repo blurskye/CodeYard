@@ -62,7 +62,7 @@ pub async fn create_milestone(
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
     ensure_unique_title(&mut tx, repo_id, title, None).await?;
     let number: i32 = sqlx::query_scalar(
-        "SELECT (COALESCE(MAX(number), 0) + 1)::INTEGER FROM milestones WHERE repo_id = $1",
+        "UPDATE repositories SET milestone_number = milestone_number + 1 WHERE id = $1 RETURNING milestone_number",
     )
     .bind(repo_id)
     .fetch_one(&mut *tx)
@@ -209,11 +209,56 @@ pub async fn list_repo_milestones(
     .await?)
 }
 
-/// Picker rows need no discussion counts.
+pub async fn list_milestones_page(
+    pool: &PgPool,
+    repo_id: i64,
+    state: &str,
+    sort: &str,
+    offset: i64,
+) -> Result<Vec<MilestoneSummary>> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT * FROM ({SUMMARY_SELECT} WHERE m.repo_id=$1 AND m.state=$2) summaries ORDER BY {} LIMIT $3 OFFSET $4",
+        crate::backend::db::milestones::milestone_order(sort)
+    )).bind(repo_id).bind(state).bind(crate::backend::db::milestones::MILESTONES_PER_PAGE).bind(offset).fetch_all(pool).await?)
+}
+
+pub async fn count_milestones(pool: &PgPool, repo_id: i64) -> Result<(i64, i64)> {
+    Ok(sqlx::query_as("SELECT COUNT(*) FILTER (WHERE state='open'), COUNT(*) FILTER (WHERE state='closed') FROM milestones WHERE repo_id=$1").bind(repo_id).fetch_one(pool).await?)
+}
+
+/// Issue/PR list filters keep counts and dates, but never load description bodies.
+pub async fn list_milestone_filters(pool: &PgPool, repo_id: i64) -> Result<Vec<MilestoneSummary>> {
+    let select = SUMMARY_SELECT.replace("m.description", "NULL::text AS description");
+    Ok(sqlx::query_as(&format!(
+        "{select} WHERE m.repo_id=$1 ORDER BY m.due_date IS NULL, m.due_date, m.number LIMIT 1000"
+    ))
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Picker rows need no descriptions or discussion counts.
 pub async fn list_milestone_choices(pool: &PgPool, repo_id: i64) -> Result<Vec<Milestone>> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {MILESTONE_COLUMNS} FROM milestones WHERE repo_id=$1 ORDER BY due_date IS NULL, due_date, number"
-    )).bind(repo_id).fetch_all(pool).await?)
+        "SELECT {} FROM milestones WHERE repo_id=$1 ORDER BY state DESC, due_date IS NULL, due_date, number LIMIT $2",
+        MILESTONE_COLUMNS.replace("description", "NULL::TEXT AS description")
+    )).bind(repo_id).bind(crate::backend::db::milestones::MAX_MILESTONE_CHOICES).fetch_all(pool).await?)
+}
+
+pub async fn milestone_choices_by_ids(
+    pool: &PgPool,
+    repo_id: i64,
+    ids: &[i64],
+) -> Result<Vec<Milestone>> {
+    anyhow::ensure!(ids.len() <= 101, "Milestone page exceeds its limit");
+    Ok(sqlx::query_as(&format!(
+        "SELECT {} FROM milestones WHERE repo_id=$1 AND id=ANY($2)",
+        MILESTONE_COLUMNS.replace("description", "NULL::TEXT AS description")
+    ))
+    .bind(repo_id)
+    .bind(ids)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn set_issue_milestone(

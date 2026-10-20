@@ -188,6 +188,10 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
             code: "conversation_locked",
             message: "This conversation is locked.".into(),
         },
+        Some(DiscussionWriteRefusal::RevisionChanged) => OperationError::Conflict {
+            code: "revision_conflict",
+            message: "The discussion revision changed".into(),
+        },
         Some(DiscussionWriteRefusal::InvalidReview) => OperationError::Conflict {
             code: "conflict",
             message: "The pull request no longer accepts this review".into(),

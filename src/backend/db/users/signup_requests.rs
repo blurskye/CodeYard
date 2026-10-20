@@ -8,6 +8,7 @@ pub enum ReviewError {
     Denied,
     Missing,
     Processed,
+    Conflict,
 }
 
 impl std::fmt::Display for ReviewError {
@@ -16,6 +17,7 @@ impl std::fmt::Display for ReviewError {
             Self::Denied => "Current administrator authority required",
             Self::Missing => "Signup request not found",
             Self::Processed => "Signup request already processed",
+            Self::Conflict => "Account identity already in use",
         })
     }
 }
@@ -31,9 +33,23 @@ native_operation!(crate::backend::db::postgres::users::signup_requests::create_s
     password_hash: &str,
 ) -> Result<SignupRequest>);
 
+/// Review metadata only; password verifiers never belong in a listing.
+#[derive(Debug, sqlx::FromRow, serde::Serialize)]
+pub struct SignupSummary {
+    pub id: i64,
+    pub username: String,
+    pub email: Option<String>,
+    pub status: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+native_operation!(crate::backend::db::postgres::users::signup_requests::count_signup_requests,
+    crate::backend::db::sqlite::users::signup_requests::count_signup_requests,
+    fn count_signup_requests(pool: &DbPool, status: &str) -> Result<i64>);
+
 native_operation!(crate::backend::db::postgres::users::signup_requests::list_signup_requests,
     crate::backend::db::sqlite::users::signup_requests::list_signup_requests,
-    fn list_signup_requests(pool: &DbPool, status: &str) -> Result<Vec<SignupRequest>>);
+    fn list_signup_requests(pool: &DbPool, status: &str, limit: i64, offset: i64, after: i64) -> Result<Vec<SignupSummary>>);
 
 native_operation!(crate::backend::db::postgres::users::signup_requests::get_pending_signup_request_by_identity,
     crate::backend::db::sqlite::users::signup_requests::get_pending_signup_request_by_identity,

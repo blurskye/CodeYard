@@ -236,10 +236,18 @@ impl Repo<'_> {
                 bytes
                     .split(|b| *b == 0)
                     .filter(|b| !b.is_empty())
-                    .map(Vec::from)
-                    .collect::<Vec<_>>()
+                    .try_fold(BTreeMap::new(), |mut records, record| {
+                        let entry = split_entry(record)?;
+                        if records
+                            .insert(entry.name.to_vec(), record.to_vec())
+                            .is_some()
+                        {
+                            return Err(unavailable());
+                        }
+                        Ok(records)
+                    })?
             } else {
-                Vec::new()
+                BTreeMap::new()
             };
             let mut groups: BTreeMap<&str, Vec<Change<'_>>> = BTreeMap::new();
             for change in changes {
@@ -251,16 +259,8 @@ impl Repo<'_> {
                 });
             }
             for (name, group) in groups {
-                let mut existing = None;
-                for (index, record) in records.iter().enumerate() {
-                    let entry = split_entry(record)?;
-                    if entry.name == name.as_bytes() {
-                        if existing.is_some() {
-                            return Err(unavailable());
-                        }
-                        existing = Some((index, entry));
-                    }
-                }
+                let record = records.remove(name.as_bytes());
+                let existing = record.as_deref().map(split_entry).transpose()?;
                 let new_entry = if group.iter().any(|change| change.path.is_empty()) {
                     if group.len() != 1 {
                         return Err(invalid("A parent path is not a directory."));
@@ -273,8 +273,11 @@ impl Repo<'_> {
                         (None, Existing::Require) => {
                             return Err(invalid("The file to edit does not exist."))
                         }
-                        (Some((_, entry)), _) => {
-                            if entry.kind != "blob" || !matches!(entry.mode, "100644" | "100755") {
+                        (Some(entry), _) => {
+                            if entry.kind != "blob"
+                                || (change.content.is_some()
+                                    && !matches!(entry.mode, "100644" | "100755"))
+                            {
                                 return Err(invalid("Only regular files can be edited."));
                             }
                             entry.mode.to_owned()
@@ -294,7 +297,7 @@ impl Repo<'_> {
                     }
                 } else {
                     let subtree = match &existing {
-                        Some((_, entry)) if entry.mode == "040000" && entry.kind == "tree" => {
+                        Some(entry) if entry.mode == "040000" && entry.kind == "tree" => {
                             Some(entry.object.to_owned())
                         }
                         Some(_) => return Err(invalid("A parent path is not a directory.")),
@@ -304,16 +307,15 @@ impl Repo<'_> {
                         .await?
                         .map(|subtree| format!("040000 tree {subtree}\t{name}").into_bytes())
                 };
-                if let Some((index, _)) = existing {
-                    records.remove(index);
+                if let Some(entry) = new_entry {
+                    records.insert(name.as_bytes().to_vec(), entry);
                 }
-                records.extend(new_entry);
             }
             if records.is_empty() {
                 return Ok(None);
             }
             let mut input = Vec::new();
-            for record in records {
+            for record in records.into_values() {
                 input.extend(record);
                 input.push(0);
             }
@@ -802,6 +804,108 @@ mod tests {
         assert!(entries(&fourth).is_empty());
         let missing = checked_write(temp.path(), &deletion("keep.txt", &fourth), b"").unwrap_err();
         assert_eq!(missing.kind, ErrorKind::Invalid);
+    }
+
+    #[test]
+    fn symlink_blobs_can_be_deleted_but_not_edited() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(root.path()).unwrap();
+        let mut tree = repo.treebuilder(None).unwrap();
+        tree.insert("link", repo.blob(b"/outside/target").unwrap(), 0o120000)
+            .unwrap();
+        let tree = repo.find_tree(tree.write().unwrap()).unwrap();
+        let author = git2::Signature::now("Tester", "test@example.invalid").unwrap();
+        let sha = repo
+            .commit(
+                Some("refs/heads/main"),
+                &author,
+                &author,
+                "symlink",
+                &tree,
+                &[],
+            )
+            .unwrap()
+            .to_string();
+        let mut write = deletion("link", &sha);
+        write.deleting = false;
+        assert_eq!(
+            checked_write(root.path(), &write, b"replacement")
+                .unwrap_err()
+                .kind,
+            ErrorKind::Invalid
+        );
+        let deleted = checked_write(root.path(), &deletion("link", &sha), b"").unwrap();
+        assert!(repo
+            .find_commit(git2::Oid::from_str(&deleted).unwrap())
+            .unwrap()
+            .tree()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn upload_indexes_a_large_directory_once_and_preserves_untouched_files() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(root.path()).unwrap();
+        let blob = repo.blob(b"keep").unwrap();
+        let mut builder = repo.treebuilder(None).unwrap();
+        for index in 0..100_000 {
+            builder
+                .insert(format!("file-{index:06}"), blob, 0o100644)
+                .unwrap();
+        }
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        let author = git2::Signature::now("Tester", "test@example.invalid").unwrap();
+        let sha = repo
+            .commit(
+                Some("refs/heads/main"),
+                &author,
+                &author,
+                "large directory",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        let write = UploadWrite {
+            branch: "main".into(),
+            message: "upload".into(),
+            expected_revision: sha.to_string(),
+            files: (0..100)
+                .map(|i| UploadFile {
+                    path: format!("file-{i:06}"),
+                    size: 1,
+                })
+                .collect(),
+        };
+        let bytes = vec![b'x'; 100];
+        let prepared = tokio::time::timeout(
+            Duration::from_secs(30),
+            prepare_upload(
+                root.path(),
+                &write,
+                &bytes,
+                "Tester",
+                "test@example.invalid",
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let tree = repo
+            .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
+            .unwrap()
+            .tree()
+            .unwrap();
+        assert_eq!(tree.len(), 100_000);
+        for file in &write.files {
+            assert_eq!(
+                repo.find_blob(tree.get_name(&file.path).unwrap().id())
+                    .unwrap()
+                    .content(),
+                b"x"
+            );
+        }
+        assert_eq!(tree.get_name("file-099999").unwrap().id(), blob);
     }
 
     #[test]

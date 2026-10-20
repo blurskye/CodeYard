@@ -297,8 +297,10 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
 }
 
 async fn lock_access_repository(connection: &mut PgConnection, repo_id: i64) -> Result<bool> {
+    lock_membership_shared(&mut *connection).await?;
+    // Conflicts with authority readers even when no direct grant existed at their first read.
     Ok(
-        sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
+        sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
             .bind(repo_id)
             .fetch_optional(connection)
             .await?
@@ -393,7 +395,7 @@ impl CollaboratorAccessTransaction for PgPool {
             return Ok(CollaboratorChange::NotFound);
         }
         let owned = sqlx::query_scalar::<_, i64>(
-            "SELECT id FROM repositories WHERE id=$1 AND owner_kind='user' AND owner_user_id=$2 AND owner_org_id IS NULL FOR SHARE",
+            "SELECT id FROM repositories WHERE id=$1 AND owner_kind='user' AND owner_user_id=$2 AND owner_org_id IS NULL FOR UPDATE",
         )
         .bind(repo_id)
         .bind(actor)

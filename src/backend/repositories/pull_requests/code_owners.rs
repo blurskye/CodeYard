@@ -8,8 +8,8 @@ use crate::backend::db::models::{PullRequest, Repository};
 use crate::backend::repositories::code_owners::{load_rules, resolve_owners};
 use crate::backend::repositories::store::repo_store;
 
-/// A changed file with owners who can review it. `owners` are the written names that have such a
-/// user, and `writers` their users, including the author. Self-review is excluded separately.
+/// A changed file with review requirements. Unresolved emails still require approval;
+/// changing an account's email must not remove that requirement. Self-review is excluded separately.
 struct OwnedFile {
     owners: Vec<String>,
     writers: Vec<i64>,
@@ -42,18 +42,13 @@ async fn owned_files(
             let mut named = Vec::new();
             let mut writers = Vec::new();
             for owner in owners {
-                let ids: Vec<i64> = resolved
-                    .get(&owner)
-                    .into_iter()
-                    .flatten()
-                    .copied()
-                    .collect();
-                if !ids.is_empty() {
-                    named.push(owner);
+                let ids: Vec<i64> = resolved.get(owner).into_iter().flatten().copied().collect();
+                if !ids.is_empty() || !owner.starts_with('@') {
+                    named.push(owner.clone());
                     writers.extend(ids);
                 }
             }
-            (!writers.is_empty()).then_some(OwnedFile {
+            (!named.is_empty()).then_some(OwnedFile {
                 owners: named,
                 writers,
             })
@@ -74,7 +69,14 @@ pub async fn request_code_owner_reviews(
     if pull.state != "open" || pull.is_draft {
         return;
     }
-    let files = match owned_files(pool, ci, repository, &pull.base_sha, &pull.head_sha).await {
+    let base_sha = match super::stacks::merge_target(pool, pull).await {
+        Ok((_, base_sha, _)) => base_sha,
+        Err(error) => {
+            tracing::warn!(pull_request_id = pull.id, %error, "code owner target unavailable");
+            return;
+        }
+    };
+    let files = match owned_files(pool, ci, repository, &base_sha, &pull.head_sha).await {
         Ok(files) => files,
         Err(error) => {
             tracing::warn!(repo_id = repository.id, pull_number = pull.number, %error, "code owners unavailable for pull request");

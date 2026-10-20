@@ -50,6 +50,8 @@ pub async fn create_pull_request(
 #[derive(Deserialize)]
 pub struct PullRequestQuery {
     pub state: Option<String>,
+    pub page: Option<u32>,
+    pub per_page: Option<u32>,
 }
 pub async fn list_pull_requests(
     State(state): State<Arc<AppState>>,
@@ -91,14 +93,20 @@ pub async fn list_pull_requests(
         }
     };
 
+    let (offset, limit) = crate::backend::api::repos::chrome::json_page(
+        query.page,
+        Some(query.per_page.unwrap_or(100)),
+    )?;
     let prs = db::pull_requests::records::list_repo_pull_requests(
         &state.pool,
         repository.id,
         &db::discussions::ListFilter {
             state: pr_state,
+            include_merged: true,
+            offset: offset as i64,
             ..Default::default()
         },
-        100,
+        limit as i64,
     )
     .await
     .map_err(|_| {

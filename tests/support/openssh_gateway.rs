@@ -388,6 +388,176 @@ fn assert_refused(output: &Output) {
 }
 
 #[tokio::test]
+async fn missing_post_hook_is_reported_after_git_publishes() {
+    let database = database().await;
+    let owner = db::users::accounts::create_user(&database.pool, "post_owner", None)
+        .await
+        .unwrap();
+    let broker = Broker::new(database.pool.clone()).await;
+    let owner_key = db::users::ssh_keys::add_ssh_key(&database.pool, owner.id, "owner", &key(17))
+        .await
+        .unwrap();
+    let path = broker.gateway.repos_root.join("missing.git");
+    let bare = git2::Repository::init_bare(&path).unwrap();
+    db::repositories::records::create_repository(
+        &database.pool,
+        owner.id,
+        "missing",
+        None,
+        true,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let source_path = broker.directory.path().join("source");
+    let source = git2::Repository::init(&source_path).unwrap();
+    let id = commit(&source, "published\n");
+    {
+        let (reached, release) = policy_tests::hold_next_hook(path.clone(), false);
+        let push = broker.git(
+            &source_path,
+            owner_key.id,
+            &[
+                "push",
+                "ssh://git@localhost/post_owner/missing.git",
+                "HEAD:refs/heads/main",
+            ],
+        );
+        tokio::pin!(push);
+        tokio::select! {
+            result = &mut push => panic!("push ended before pre hook: {result:?}"),
+            result = timeout(Duration::from_secs(15), reached) => result.unwrap().unwrap(),
+        }
+        let operation = broker
+            .gateway
+            .operations
+            .lock()
+            .unwrap()
+            .values()
+            .next()
+            .unwrap()
+            .clone();
+        std::fs::remove_file(operation.hooks.path().join("post-receive")).unwrap();
+        release.send(()).unwrap();
+        let result = push.await;
+        assert!(!result.status.success());
+        assert_eq!(bare.refname_to_id("refs/heads/main").unwrap(), id);
+        assert!(String::from_utf8_lossy(&result.stderr).contains("post-push"));
+        drop(operation);
+    }
+    broker.no_hooks_left().await;
+    broker.stop().await;
+}
+
+#[tokio::test]
+async fn host_openssh_deploy_keys_clone_push_and_keep_repository_scope() {
+    let database = database().await;
+    let owner = db::users::accounts::create_user(&database.pool, "deploy_host", None)
+        .await
+        .unwrap();
+    let broker = Broker::new(database.pool.clone()).await;
+    let source_path = broker.directory.path().join("source");
+    let source = git2::Repository::init(&source_path).unwrap();
+    commit(&source, "base\n");
+    let path = broker.gateway.repos_root.join("deploy.git");
+    let bare = git2::Repository::init_bare(&path).unwrap();
+    let repo = db::repositories::records::create_repository(
+        &database.pool,
+        owner.id,
+        "deploy",
+        None,
+        true,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let other_path = broker.gateway.repos_root.join("other.git");
+    git2::Repository::init_bare(&other_path).unwrap();
+    db::repositories::records::create_repository(
+        &database.pool,
+        owner.id,
+        "other",
+        None,
+        true,
+        other_path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let session = "d".repeat(64);
+    db::users::sessions::create_session(
+        &database.pool,
+        &session,
+        owner.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    for writable in [false, true] {
+        let public_key = key(if writable { 22 } else { 21 });
+        let key = db::deploy_keys::insert_deploy_key(
+            &database.pool,
+            &db::deploy_keys::NewDeployKey {
+                repo_id: repo.id,
+                title: "deploy".into(),
+                fingerprint: db::users::ssh_keys::calculate_fingerprint(&public_key).unwrap(),
+                public_key: public_key.clone(),
+                can_write: writable,
+                created_by_id: owner.id,
+            },
+            &session,
+        )
+        .await
+        .unwrap();
+        let lookup = broker.keys(&public_key, "git").await;
+        assert!(lookup.status.success());
+        assert!(String::from_utf8_lossy(&lookup.stdout).contains(&format!("deploy:{}", key.id)));
+        let wrapper = broker.directory.path().join(format!("deploy-{}", key.id));
+        std::fs::write(&wrapper, format!("#!/bin/sh\nfor argument do command=$argument; done\nexport SSH_ORIGINAL_COMMAND=\"$command\"\nexec {} ssh serve --socket {} --deploy-key-id {}\n", broker.helper.display(), broker.gateway.socket.display(), key.id)).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let run = |args: Vec<String>| {
+            let mut cmd = Command::new(&broker.gateway.git);
+            cmd.current_dir(&source_path)
+                .env("GIT_SSH_COMMAND", &wrapper)
+                .env("GIT_SSH_VARIANT", "ssh")
+                .args(args)
+                .kill_on_drop(true);
+            async move {
+                timeout(Duration::from_secs(20), cmd.output())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            }
+        };
+        let pushed = run(vec![
+            "push".into(),
+            "ssh://git@localhost/deploy_host/deploy.git".into(),
+            "HEAD:refs/heads/main".into(),
+        ])
+        .await;
+        assert_eq!(pushed.status.success(), writable, "{pushed:?}");
+        let cloned = broker.directory.path().join(format!("clone-{}", key.id));
+        let clone = run(vec![
+            "clone".into(),
+            "ssh://git@localhost/deploy_host/deploy.git".into(),
+            cloned.to_str().unwrap().into(),
+        ])
+        .await;
+        assert!(clone.status.success(), "{clone:?}");
+        let outside = run(vec![
+            "ls-remote".into(),
+            "ssh://git@localhost/deploy_host/other.git".into(),
+        ])
+        .await;
+        assert!(!outside.status.success());
+    }
+    assert!(bare.find_reference("refs/heads/main").is_ok());
+    broker.no_hooks_left().await;
+    broker.stop().await;
+}
+
+#[tokio::test]
 async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     let database = database().await;
     let owner = db::users::accounts::create_user(&database.pool, "alice", None)
@@ -811,7 +981,7 @@ async fn helper_disconnect_releases_shared_git_session_during_negotiation_and_in
         protocol::write_request(
             &mut connection,
             &Request::Serve {
-                key_id: key.id,
+                credential: ReceiveCredential::SshKey(key.id),
                 command: command.to_owned(),
                 git_protocol: None,
             },
@@ -889,7 +1059,7 @@ async fn stop_finishes_open_connections_and_refuses_new_ones() {
     protocol::write_request(
         &mut open,
         &Request::Serve {
-            key_id: key.id,
+            credential: ReceiveCredential::SshKey(key.id),
             command: "git-upload-pack 'drain-owner/drain.git'".to_owned(),
             git_protocol: None,
         },
@@ -1067,7 +1237,7 @@ async fn stop_finishes_a_push_after_its_helper_disconnects() {
     protocol::write_request(
         &mut connection,
         &Request::Serve {
-            key_id: key.id,
+            credential: ReceiveCredential::SshKey(key.id),
             command: "git-receive-pack 'drain-owner/drain.git'".to_owned(),
             git_protocol: None,
         },

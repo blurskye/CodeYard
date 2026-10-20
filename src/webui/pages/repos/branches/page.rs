@@ -5,10 +5,7 @@ use crate::webui::pages::repos::{
     ref_path::{compare_url, file_url},
 };
 use crate::webui::{
-    components::{
-        compact_date, confirm_dialog, count_label, DraftInput, DraftSelect, DraftTextarea,
-        SelectOption,
-    },
+    components::{compact_date, confirm_dialog, count_label, DraftInput, DraftTextarea},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -105,7 +102,7 @@ pub fn refs(
                                 div { class: "repo-ref-row-icon", {icon(if tags { "tags" } else { "branches" })} }
                                 div { class: "repo-ref-row-content",
                                     div { class: "repo-ref-row-title",
-                                        NavLink { href: file_url(&base, "tree", &if tags { format!("refs/tags/{}", row.name) } else { row.name.clone() }, ""), "{row.name}" }
+                                        NavLink { href: file_url(&base, "tree", &format!("refs/{}/{}", if tags { "tags" } else { "heads" }, row.name), ""), "{row.name}" }
                                         if row.is_default { span { class: "repo-label-neutral", "Default" } }
                                         if let Some(pull) = &row.pull {
                                             NavLink { class: "repo-ref-pull", href: format!("{base}/pulls/{}", pull.number), title: Some(pull.title.clone()), {icon("pulls")} "#{pull.number}" }
@@ -173,21 +170,6 @@ fn CreateRefForm(repo: RepoChrome, tags: bool, branches: Vec<RefRow>) -> Element
     let kind = if tags { "tag" } else { "branch" };
     // The form posts the full commit SHA of the chosen branch. The default branch comes first
     // and starts selected.
-    let options: Vec<SelectOption> = branches
-        .iter()
-        .map(|branch| SelectOption {
-            value: branch.sha.clone(),
-            label: format!(
-                "{} ({})",
-                branch.name,
-                branch.sha.get(..7).unwrap_or(&branch.sha)
-            ),
-        })
-        .collect();
-    let initial = options
-        .first()
-        .map(|option| option.value.clone())
-        .unwrap_or_default();
     rsx! {
         form { method: "post", action: repo.action(&format!("create-{kind}")), class: "repo-settings-section panel",
             {csrf(&repo.csrf_token)}
@@ -197,7 +179,14 @@ fn CreateRefForm(repo: RepoChrome, tags: bool, branches: Vec<RefRow>) -> Element
             }
             div { class: "repo-form-body",
                 label { class: "repo-field", span { "Name" } DraftInput { name: "name", required: true, maxlength: Some(255), initial_value: String::new(), placeholder: format!("New {kind} name") } }
-                label { class: "repo-field", span { "Start from branch" } DraftSelect { name: "sha", required: true, initial_value: initial, options } }
+                label { class: "repo-field", span { "Start from branch" }
+                    // Native selection tracks the option, not its possibly shared SHA.
+                    select { name: "sha", required: true,
+                        for (index, branch) in branches.iter().enumerate() {
+                            option { key: "{branch.name}", value: branch.sha.clone(), "selected": index == 0, "{branch.name} ({branch.sha.get(..7).unwrap_or(&branch.sha)})" }
+                        }
+                    }
+                }
                 if tags { label { class: "repo-field", span { "Message " small { "Optional" } } DraftTextarea { name: "message", rows: 3, initial_value: String::new() } } }
                 button { class: "btn btn-primary", r#type: "submit", "Create {kind}" }
             }
@@ -208,6 +197,51 @@ fn CreateRefForm(repo: RepoChrome, tags: bool, branches: Vec<RefRow>) -> Element
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn branch_names_are_distinct_options_even_when_their_commits_match() {
+        let branch = RefRow {
+            name: "main".into(),
+            sha: "a".repeat(40),
+            message: None,
+            is_default: true,
+            ahead_behind: None,
+            updated: None,
+            pull: None,
+        };
+        let topic = RefRow {
+            name: "-topic".into(),
+            is_default: false,
+            ..branch.clone()
+        };
+        let repo = RepoChrome {
+            owner: "u".into(),
+            name: "r".into(),
+            can_write: true,
+            ..Default::default()
+        };
+        let html = crate::webui::tests::in_scope(|| {
+            dioxus_ssr::render_element(refs(
+                &repo,
+                &[branch.clone(), topic.clone()],
+                false,
+                &[branch, topic],
+                "",
+                "",
+                0,
+            ))
+        });
+        assert!(html.contains("href=\"/u/r/tree/refs/heads/-topic\""));
+        let options: Vec<_> = html.split("<option").skip(1).collect();
+        assert_eq!(options.len(), 2);
+        assert!(options[0].contains("main (aaaaaaa)"));
+        assert!(options[1].contains("-topic (aaaaaaa)"));
+        assert!(options[0].split('>').next().unwrap().contains("selected"));
+        assert!(!options[1].split('>').next().unwrap().contains("selected"));
+        for option in options {
+            assert!(option.contains(&format!("value=\"{}\"", "a".repeat(40))));
+        }
+    }
+
     #[test]
     fn a_tag_row_browses_its_object_not_a_same_named_branch() {
         let row = RefRow {

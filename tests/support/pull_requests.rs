@@ -273,6 +273,21 @@ impl Client {
     pub async fn form_reply(&self, path: &str, pairs: &[(&str, &str)]) -> Reply {
         let mut body = url::form_urlencoded::Serializer::new(String::new());
         body.append_pair("csrf_token", &self.csrf);
+        // Comment forms carry the repository identity rendered in the page.
+        if path.contains("/pulls/")
+            && path.split('?').next().unwrap().ends_with("/comments")
+            && !pairs.iter().any(|(key, _)| *key == "repository_id")
+        {
+            let page_path = path.split("/comments").next().unwrap();
+            let (_, page) = self.page(page_path).await;
+            if let Some(value) = page
+                .split_once("name=\"repository_id\"")
+                .and_then(|(_, tail)| tail.split_once("value=\""))
+                .and_then(|(_, tail)| tail.split('"').next())
+            {
+                body.append_pair("repository_id", value);
+            }
+        }
         // New-issue forms carry the repository identity and the rendered template revision.
         if path.ends_with("/issues/new") {
             let template = pairs
@@ -295,6 +310,53 @@ impl Client {
                         {
                             body.append_pair(name, value);
                         }
+                    }
+                }
+            }
+        }
+        let path_only = path.split('?').next().unwrap();
+        if path_only.ends_with("/milestones/new")
+            || (path_only.contains("/issues/") && path_only.ends_with("/comments"))
+        {
+            let page_path = path_only.strip_suffix("/comments").unwrap_or(path_only);
+            let (_, page) = self.page(page_path).await;
+            for name in ["repository_id", "issue_id"] {
+                if !pairs.iter().any(|(key, _)| *key == name) {
+                    if let Some(value) = page
+                        .split_once(&format!("name=\"{name}\""))
+                        .and_then(|(_, rest)| rest.split_once("value=\""))
+                        .and_then(|(_, rest)| rest.split('"').next())
+                    {
+                        body.append_pair(name, value);
+                    }
+                }
+            }
+        }
+        if path_only.contains("/issues/")
+            && path_only.ends_with("/edit")
+            && !pairs.iter().any(|(key, _)| *key == "expected_body")
+        {
+            if let Some((issue, comment)) = path_only.split_once("/comments/") {
+                let comment_id = comment.trim_end_matches("/edit").parse::<i64>().unwrap();
+                let (status, comments) = self
+                    .api(
+                        "GET",
+                        &format!("/api/repos{issue}/comments?per_page=100"),
+                        Value::Null,
+                    )
+                    .await;
+                if status == StatusCode::OK {
+                    if let Some(original) = comments
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|value| value["id"].as_i64() == Some(comment_id))
+                        .and_then(|value| value["body"].as_str())
+                    {
+                        body.append_pair(
+                            "expected_body",
+                            &serde_json::to_string(original).unwrap(),
+                        );
                     }
                 }
             }

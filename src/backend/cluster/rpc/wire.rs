@@ -54,6 +54,10 @@ pub enum Operation {
     WorkflowFiles {
         revision: String,
     },
+    TemplateTexts {
+        revision: String,
+        paths: Vec<String>,
+    },
     Blob {
         git_ref: String,
         path: String,
@@ -121,6 +125,9 @@ pub enum Operation {
         base_ref: String,
         head_ref: String,
         limit: usize,
+        /// The caller can decode JSON from the raw response frame.
+        #[serde(default)]
+        raw_json: bool,
     },
     DiffFile {
         base_ref: String,
@@ -150,6 +157,8 @@ pub enum Operation {
     FilePaths {
         git_ref: String,
         limit: usize,
+        #[serde(default)]
+        raw_json: bool,
     },
     Blame {
         git_ref: String,
@@ -274,6 +283,7 @@ impl Operation {
         match self {
             Self::Tree { .. }
             | Self::SidebarTrees { .. }
+            | Self::TemplateTexts { .. }
             | Self::Blob { .. }
             | Self::BlobBytes { .. }
             | Self::BlobById { .. }

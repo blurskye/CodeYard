@@ -263,10 +263,13 @@ pub async fn delete_file(
     }
     // Deleting the current avatar clears it on the account, so lock the account before the
     // file, as `set_user_avatar` does.
-    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(user_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let allowed = sqlx::query_scalar::<_, bool>(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR UPDATE",
+    )
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or(false);
     let Some(file) =
         sqlx::query_as::<_, File>("SELECT * FROM files WHERE id=$1 AND user_id=$2 FOR UPDATE")
             .bind(file_id)
@@ -276,6 +279,9 @@ pub async fn delete_file(
     else {
         return Ok(DeleteFileOutcome::NotFound);
     };
+    if !allowed {
+        return Ok(DeleteFileOutcome::Denied);
+    }
     if sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM organizations WHERE avatar_file_id=$1)",
     )

@@ -17,6 +17,15 @@ pub enum CiAdmissionRefusal {
     Invalid(&'static str),
 }
 
+pub(crate) fn may_cancel_run(
+    actor_id: i64,
+    triggered_by_id: Option<i64>,
+    personal_admin: bool,
+    access: super::models::AccessLevel,
+) -> bool {
+    triggered_by_id == Some(actor_id) || personal_admin || access.can_admin()
+}
+
 pub struct NewCiRun<'a> {
     pub repo_id: i64,
     pub triggered_by_id: i64,
@@ -46,6 +55,11 @@ pub const ACCESS_LOST_MESSAGE: &str = "The person who started this run no longer
 /// How many queued runs one claim looks at, so a long run of cancellations cannot
 /// keep one transaction open for long. The worker asks again.
 pub const CLAIM_SCAN_LIMIT: usize = 64;
+
+// Commits retained by recorded runs, including runs whose branch no longer exists.
+native_operation!(crate::backend::db::postgres::ci::retained_ci_commits,
+    crate::backend::db::sqlite::ci::retained_ci_commits,
+    fn retained_ci_commits(pool: &DbPool, repo_id: i64) -> Result<Vec<String>>);
 
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run,
     crate::backend::db::sqlite::ci::enqueue_ci_run,
@@ -104,7 +118,7 @@ native_operation!(crate::backend::db::postgres::ci::finish_ci_run,
 
 native_operation!(crate::backend::db::postgres::ci::fail_stale_ci_runs,
     crate::backend::db::sqlite::ci::fail_stale_ci_runs,
-    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<usize>);
+    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(usize, Vec<(i64, i64)>)>);
 
 native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation,
     crate::backend::db::sqlite::ci::request_ci_cancellation,
@@ -114,6 +128,21 @@ native_operation!(crate::backend::db::postgres::ci::get_ci_run_by_run_id,
     crate::backend::db::sqlite::ci::get_ci_run_by_run_id,
     fn get_ci_run_by_run_id(pool: &DbPool, run_id: Uuid) -> Result<Option<CiRun>>);
 
+#[derive(Debug, Default)]
+pub struct CiRunFilter {
+    pub workflow: String,
+    pub event: String,
+    pub branch: String,
+    pub status: String,
+    pub text: String,
+    pub actor: String,
+    pub before: Option<i64>,
+}
+
+native_operation!(crate::backend::db::postgres::ci::list_filtered_ci_runs,
+    crate::backend::db::sqlite::ci::list_filtered_ci_runs,
+    fn list_filtered_ci_runs(pool: &DbPool, actor: i64, repo: Option<i64>, filter: &CiRunFilter, limit: i64) -> Result<Vec<CiRun>>);
+
 native_operation!(crate::backend::db::postgres::ci::list_ci_runs_for_repo,
     crate::backend::db::sqlite::ci::list_ci_runs_for_repo,
     fn list_ci_runs_for_repo(pool: &DbPool, repo_id: i64, limit: i64) -> Result<Vec<CiRun>>);
@@ -122,7 +151,7 @@ native_operation!(crate::backend::db::postgres::ci::latest_ci_runs_for_commit,
     crate::backend::db::sqlite::ci::latest_ci_runs_for_commit,
     /// The latest attempt of every independent workflow or grouped pipeline for a commit.
     /// Runs that belong to another pull request with the same head commit are left out.
-    fn latest_ci_runs_for_commit(pool: &DbPool, repo_id: i64, sha: &str, pull_request_id: i64) -> Result<Vec<CiRun>>);
+    fn latest_ci_runs_for_commit(pool: &DbPool, repo_id: i64, sha: &str, pull_request_id: i64, target_branch: &str) -> Result<Vec<CiRun>>);
 
 native_operation!(crate::backend::db::postgres::ci::list_pull_request_check_statuses,
     crate::backend::db::sqlite::ci::list_pull_request_check_statuses,
@@ -139,7 +168,7 @@ native_operation!(crate::backend::db::postgres::ci::append_ci_logs,
     run_id: i64,
     worker: &str,
     lines: &[crate::backend::ci::queue::LogLine],
-) -> Result<()>);
+) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::ci::list_ci_logs,
     crate::backend::db::sqlite::ci::list_ci_logs,

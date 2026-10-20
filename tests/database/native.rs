@@ -175,10 +175,11 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
             .unwrap(),
         AccountAdmission::Conflict
     ));
-    let request = db::users::signup_requests::list_signup_requests(&fixture.pool, "pending")
-        .await
-        .unwrap()
-        .remove(0);
+    let request =
+        db::users::signup_requests::list_signup_requests(&fixture.pool, "pending", 100, 0, 0)
+            .await
+            .unwrap()
+            .remove(0);
     let (a, b) = tokio::join!(
         db::users::signup_requests::approve_signup_request(&fixture.pool, request.id, admin.id),
         db::users::signup_requests::approve_signup_request(&fixture.pool, request.id, admin.id)
@@ -442,6 +443,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         "github",
         "https://fixture.invalid/callback",
         &binding,
+        "/alice/project/issues/7",
     )
     .await
     .unwrap();
@@ -455,10 +457,14 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
     .await
     .unwrap()
     .is_none());
-    assert!(sessions::get_oauth_state(&fixture.pool, &state)
-        .await
-        .unwrap()
-        .is_some());
+    assert_eq!(
+        sessions::get_oauth_state(&fixture.pool, &state)
+            .await
+            .unwrap()
+            .unwrap()
+            .return_to,
+        "/alice/project/issues/7"
+    );
     let (a, b) = tokio::join!(
         sessions::consume_bound_oauth_state(
             &fixture.pool,
@@ -1183,7 +1189,7 @@ async fn execute_sql(pool: &db::DbPool, sql: &str) {
     };
 }
 
-async fn assert_indexed_plan(pool: &db::DbPool, sql: &str, indexes: &[&str]) {
+pub(crate) async fn assert_indexed_plan(pool: &db::DbPool, sql: &str, indexes: &[&str]) {
     let plan = match pool {
         db::DbPool::Sqlite(raw) => {
             // EXPLAIN QUERY PLAN does not reload the schema; refresh this pooled connection first.
@@ -1504,6 +1510,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
                 pr_id: pr.id,
                 author_id: owner.id,
                 body: "first",
+                expected_revisions: None,
                 path: None,
                 line: None,
                 side: None,
@@ -2126,9 +2133,11 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
             .is_err(),
         "VARCHAR bounds remain constraints in native SQLite"
     );
+    let profile_session = profile_session(&fixture.pool, reader.id).await;
     db::users::accounts::update_user_profile(
         &fixture.pool,
         reader.id,
+        &profile_session,
         Some("CAFÉ maintainer"),
         None,
         None,
@@ -2282,9 +2291,11 @@ async fn search_batches_preserve_unicode_order_and_limits_on_both_databases() {
                 .await
                 .unwrap();
             if index % 2 == 0 {
+                let profile_session = profile_session(pool, user.id).await;
                 db::users::accounts::update_user_profile(
                     pool,
                     user.id,
+                    &profile_session,
                     Some("CAFé"),
                     None,
                     None,
@@ -2415,8 +2426,11 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     );
     db::repository_stats::upsert_repo_languages(
         pool,
-        repo.id,
-        &repo.default_branch,
+        &db::repository_stats::language_source(pool, repo.id)
+            .await
+            .unwrap()
+            .unwrap(),
+        "fixture-revision",
         &[
             ("Rust".into(), 900, 90.25, "#123456".into()),
             ("Other".into(), 100, 9.75, "#654321".into()),
@@ -2587,7 +2601,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         .await
         .unwrap()
         .unwrap();
-    let summaries = db::users::accounts::list_admin_account_summaries(pool)
+    let summaries = db::users::accounts::list_admin_account_summaries(pool, 100, 0)
         .await
         .unwrap();
     let activity = db::users::accounts::list_admin_activity_points(pool, 7)
@@ -2752,9 +2766,11 @@ async fn check_list_display_projections(pool: &db::DbPool) {
     )
     .await
     .unwrap();
+    let profile_session = profile_session(pool, writer.id).await;
     accounts::update_user_profile(
         pool,
         writer.id,
+        &profile_session,
         Some("Writer name"),
         Some("Public bio"),
         Some("Location"),
@@ -3022,6 +3038,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             pr_id: pull.id,
             author_id: writer.id,
             body: "PR comment",
+            expected_revisions: None,
             path: None,
             line: None,
             side: None,
@@ -3043,6 +3060,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             pr_id: pull.id,
             author_id: writer.id,
             body: "PR second",
+            expected_revisions: None,
             path: None,
             line: None,
             side: None,
@@ -3058,6 +3076,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
             pr_id: pull.id,
             author_id: writer.id,
             body: "PR third",
+            expected_revisions: None,
             path: None,
             line: None,
             side: None,
@@ -3292,18 +3311,19 @@ async fn postgres_list_projections_and_owned_notification_listener() {
         .await
         .unwrap()
         .unwrap();
-    let payload =
-        r#"{"origin":"projection-test","event":{"type":"read_all","user_id":1,"unread_count":0}}"#;
-    db::notifications::events::announce(&fixture.pool, payload)
+    let payload = format!("projection-test-{}", uuid::Uuid::new_v4());
+    db::notifications::events::announce(&fixture.pool, &payload)
         .await
         .unwrap();
-    assert_eq!(
-        tokio::time::timeout(std::time::Duration::from_secs(5), listener.recv())
-            .await
-            .unwrap()
-            .unwrap(),
-        payload
-    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if listener.recv().await.unwrap() == payload {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
     drop(listener);
     fixture.pool.close().await;
 }
@@ -3662,6 +3682,21 @@ async fn check_expired_identity_rows_are_removed_in_batches(pool: &db::DbPool) {
         .is_some());
 }
 
+async fn profile_session(pool: &db::DbPool, actor: i64) -> String {
+    let session = token();
+    sessions::create_session(
+        pool,
+        &session,
+        actor,
+        None,
+        None,
+        Utc::now() + Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    session
+}
+
 async fn check_processed_signup_verifiers_are_cleared(pool: &db::DbPool) {
     use db::users::signup_requests;
     let admin = setup(pool, "private").await;
@@ -3690,16 +3725,34 @@ async fn check_processed_signup_verifiers_are_cleared(pool: &db::DbPool) {
         sessions::remove_expired_identity_rows(pool).await.unwrap(),
         0
     );
-    let pending = signup_requests::list_signup_requests(pool, "pending")
-        .await
-        .unwrap();
-    assert_eq!(pending[0].password_hash, "hash-pending");
+    let pending =
+        signup_requests::get_pending_signup_request_by_identity(pool, "applicant-pending", None)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(pending.password_hash, "hash-pending");
     for status in ["approved", "rejected"] {
-        let processed = signup_requests::list_signup_requests(pool, status)
+        let processed = signup_requests::list_signup_requests(pool, status, 100, 0, 0)
             .await
             .unwrap();
         assert_eq!(processed.len(), 1);
-        assert_eq!(processed[0].password_hash, "");
+        let hash: String = match pool {
+            db::DbPool::Postgres(raw) => {
+                sqlx::query_scalar("SELECT password_hash FROM signup_requests WHERE id=$1")
+                    .bind(processed[0].id)
+                    .fetch_one(raw)
+                    .await
+                    .unwrap()
+            }
+            db::DbPool::Sqlite(raw) => {
+                sqlx::query_scalar("SELECT password_hash FROM signup_requests WHERE id=?1")
+                    .bind(processed[0].id)
+                    .fetch_one(raw)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(hash, "");
     }
     // The created account keeps its own verifier after the signup copy is cleared.
     let user = db::users::accounts::get_user_by_username(pool, "applicant-approved")

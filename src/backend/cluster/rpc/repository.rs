@@ -18,6 +18,19 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+fn encode_json(
+    value: &impl serde::Serialize,
+    raw: bool,
+    body: &mut Vec<u8>,
+) -> Result<Value, Failure> {
+    if raw {
+        *body = serde_json::to_vec(value).map_err(|_| Failure::Repository(unavailable()))?;
+        Ok(Value::Null)
+    } else {
+        serde_json::to_value(value).map_err(|_| Failure::Repository(unavailable()))
+    }
+}
+
 /// Returns the operation name for safe logging; workers also need a running claim.
 pub fn authorize_operation(
     roles: &[String],
@@ -36,6 +49,7 @@ pub fn authorize_operation(
         Operation::Tree { .. } => ("Tree", false),
         Operation::SidebarTrees { .. } => ("SidebarTrees", false),
         Operation::WorkflowFiles { .. } => ("WorkflowFiles", false),
+        Operation::TemplateTexts { .. } => ("TemplateTexts", false),
         Operation::Blob { .. } => ("Blob", false),
         Operation::BlobBytes { .. } => ("BlobBytes", false),
         Operation::BlobById { .. } => ("BlobById", true),
@@ -171,6 +185,13 @@ impl RpcHandler {
         let primary_here = repo.storage_node_id == Some(self.context.node_id)
             || (repo.storage_node_id.is_none() && primary.exists());
         if primary_here {
+            let copy = copy_path(&self.context.repos_path, uuid);
+            if !primary.exists() && copy.exists() {
+                // Promotion changes the row before the periodic replica pass relocates Git.
+                if tokio::fs::rename(&copy, &primary).await.is_err() && !primary.exists() {
+                    return Err(unavailable());
+                }
+            }
             return Ok((Some(repo.id), primary));
         }
         if read_only && holds_copy(pool, repo.id, self.context.node_id).await? {
@@ -428,6 +449,9 @@ impl RpcHandler {
             Operation::SidebarTrees { git_ref, paths } => {
                 json!(store.sidebar_trees(&git_ref, &paths))
             }
+            Operation::TemplateTexts { revision, paths } => {
+                json!(store.template_texts(&revision, &paths))
+            }
             Operation::WorkflowFiles { revision } => {
                 let files = store.workflow_files(&revision).await?;
                 let mut manifest = Vec::with_capacity(files.len());
@@ -520,11 +544,10 @@ impl RpcHandler {
                 base_ref,
                 head_ref,
                 limit,
+                raw_json,
             } => {
-                output =
-                    serde_json::to_vec(&store.commits_between(&base_ref, &head_ref, limit).await?)
-                        .map_err(|_| Failure::Repository(unavailable()))?;
-                Value::Null
+                let commits = store.commits_between(&base_ref, &head_ref, limit).await?;
+                encode_json(&commits, raw_json, &mut output)?
             }
             Operation::DiffFile {
                 base_ref,
@@ -560,13 +583,42 @@ impl RpcHandler {
                 output = store.archive(&git_ref, &prefix, format).await?;
                 Value::Null
             }
-            Operation::Languages { git_ref } => json!(store.languages(&git_ref)),
-            Operation::FilePaths { git_ref, limit } => {
-                output = serde_json::to_vec(&store.file_paths(&git_ref, limit).await?)
+            Operation::Languages { git_ref } => {
+                let repository = db::repositories::records::get_repository_by_id(
+                    pool,
+                    repo_id.ok_or_else(|| invalid("repository unavailable"))?,
+                )
+                .await
+                .map_err(|_| unavailable())?
+                .ok_or_else(|| invalid("repository unavailable"))?;
+                let default_branch = store.info().await?.default_branch;
+                if repository.storage_node_id == Some(self.context.node_id)
+                    && (git_ref == default_branch
+                        || git_ref == format!("refs/heads/{default_branch}"))
+                {
+                    json!(crate::backend::repositories::languages::compute_and_store(
+                        pool,
+                        &store,
+                        &repository,
+                        &default_branch
+                    ))
+                } else {
+                    json!(store.languages(&git_ref))
+                }
+            }
+            Operation::FilePaths {
+                git_ref,
+                limit,
+                raw_json,
+            } => {
+                let paths = store.file_paths(&git_ref, limit).await?;
+                encode_json(&paths, raw_json, &mut output)?
+            }
+            Operation::Blame { git_ref, path } => {
+                output = serde_json::to_vec(&store.blame(&git_ref, &path).await?)
                     .map_err(|_| Failure::Repository(unavailable()))?;
                 Value::Null
             }
-            Operation::Blame { git_ref, path } => json!(store.blame(&git_ref, &path)),
             Operation::Contributors => json!(store.contributors()),
             Operation::IsAncestor {
                 ancestor,
@@ -780,4 +832,41 @@ pub fn repository_uuid(path: &str) -> Result<Uuid, RepoError> {
         .strip_suffix(".git")
         .ok_or_else(|| invalid("invalid repository UUID"))?;
     Uuid::parse_str(uuid).map_err(|_| invalid("invalid repository UUID"))
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    #[test]
+    fn raw_json_is_opt_in_for_same_generation_peers() {
+        for operation in [
+            r#"{"FilePaths":{"git_ref":"main","limit":10}}"#,
+            r#"{"CommitsBetween":{"base_ref":"main","head_ref":"topic","limit":10}}"#,
+        ] {
+            let operation: Operation = serde_json::from_str(operation).unwrap();
+            assert!(matches!(
+                operation,
+                Operation::FilePaths {
+                    raw_json: false,
+                    ..
+                } | Operation::CommitsBetween {
+                    raw_json: false,
+                    ..
+                }
+            ));
+        }
+        let paths = vec!["one"];
+        let mut body = Vec::new();
+        assert_eq!(
+            encode_json(&paths, false, &mut body).unwrap(),
+            serde_json::json!(paths)
+        );
+        assert!(body.is_empty());
+        assert_eq!(encode_json(&paths, true, &mut body).unwrap(), Value::Null);
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            serde_json::json!(paths)
+        );
+    }
 }

@@ -753,7 +753,8 @@ async fn idempotent_relationship_notifications(pg: bool) {
         CiConfig::default(),
         None,
     );
-    let mut events = state.notification_broadcaster.subscribe();
+    let mut events = state.notification_broadcaster.subscribe(owner_id);
+    let mut reviewer_events = state.notification_broadcaster.subscribe(reviewer_id);
     let router = create_router(state);
     let owner = Client::login(&router, f.pool(), owner_id).await;
     let watcher = Client::login(&router, f.pool(), watcher_id).await;
@@ -773,7 +774,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
     assert_eq!(first["user_id"], reviewer_id);
     assert_created_event(
         f.pool(),
-        events.recv().await.unwrap(),
+        reviewer_events.recv().await.unwrap(),
         reviewer_id,
         "pull_request_review_requested",
     )
@@ -786,7 +787,9 @@ async fn idempotent_relationship_notifications(pg: bool) {
             StatusCode::OK,
         )
         .await;
+    assert_no_event(&mut reviewer_events);
     assert_no_event(&mut events);
+    assert_no_event(&mut reviewer_events);
     assert_eq!(
         db::pull_requests::reviews::list_pull_request_reviewers(f.pool(), pull.id)
             .await
@@ -842,23 +845,32 @@ async fn idempotent_relationship_notifications(pg: bool) {
         json!({"watched": false, "watchers_count": 0})
     );
 
-    // Repeated star requests still notify.
+    // Repeated PUTs and toggles must not flood the owner's inbox.
     let star_path = "/api/repos/idempotent_owner/idempotent_project/star";
-    for _ in 0..2 {
-        watcher
-            .expect("PUT", star_path, Value::Null, StatusCode::OK)
-            .await;
-        assert_created_event(
-            f.pool(),
-            events.recv().await.unwrap(),
-            owner_id,
-            "repository_starred",
-        )
+    watcher
+        .expect("PUT", star_path, Value::Null, StatusCode::OK)
         .await;
-    }
+    assert_created_event(
+        f.pool(),
+        events.recv().await.unwrap(),
+        owner_id,
+        "repository_starred",
+    )
+    .await;
+    watcher
+        .expect("PUT", star_path, Value::Null, StatusCode::OK)
+        .await;
+    assert_no_event(&mut events);
+    watcher
+        .expect("DELETE", star_path, Value::Null, StatusCode::OK)
+        .await;
+    watcher
+        .expect("PUT", star_path, Value::Null, StatusCode::OK)
+        .await;
+    assert_no_event(&mut events);
     assert_eq!(
         notice_count(f.pool(), owner_id, "repository_starred").await,
-        2
+        1
     );
 
     f.close().await;

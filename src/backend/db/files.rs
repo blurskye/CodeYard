@@ -11,9 +11,8 @@ pub const MAX_UPLOAD_BYTES: i64 = 100 * 1024 * 1024;
 /// How long a client has to send the bytes after reserving an upload.
 pub const PUT_LIFETIME_SECONDS: i64 = 900;
 
-/// A PUT accepted before its deadline can keep transferring after it, and a replayed
-/// PUT can recreate bytes that were already removed. Deleted files' bytes therefore
-/// stay queued this long past the deadline before cleanup removes them.
+/// Initial cleanup delay after a direct PUT expires. S3 PUT completion has no fixed
+/// deadline, so S3 deletion records remain for periodic reconciliation after this delay.
 pub const IN_FLIGHT_PUT_GRACE_SECONDS: i64 = 3600;
 
 #[derive(Debug, thiserror::Error)]
@@ -32,6 +31,7 @@ pub enum AdmissionError {
 pub enum DeleteFileOutcome {
     Deleted(Box<File>),
     NotFound,
+    Denied,
     ReferencedOrganizationAvatar,
     ReferencedReleaseAsset,
 }

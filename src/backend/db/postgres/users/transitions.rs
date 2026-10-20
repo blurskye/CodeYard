@@ -376,7 +376,7 @@ pub async fn change_email(
         return Ok(EmailChange::Taken);
     }
     let user = sqlx::query_as::<_, User>(
-        "UPDATE users SET email=$2,updated_at=NOW() WHERE id=$1 RETURNING *",
+        "UPDATE users SET email_verified=CASE WHEN email IS DISTINCT FROM $2 THEN FALSE ELSE email_verified END,email=$2,updated_at=NOW() WHERE id=$1 RETURNING *",
     )
     .bind(user_id)
     .bind(email)
@@ -468,12 +468,14 @@ pub async fn register_password(
     if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1 OR ($2::text IS NOT NULL AND email=$2))")
         .bind(username).bind(email).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
     if config.node_mode == "private" && administrator.is_none() {
-        if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM signup_requests WHERE status='pending' AND (LOWER(username)=LOWER($1) OR ($2::text IS NOT NULL AND LOWER(email)=LOWER($2))))")
-            .bind(username).bind(email).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
-        sqlx::query("INSERT INTO signup_requests (username,email,password_hash) VALUES ($1,$2,$3)")
+        if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM signup_requests WHERE status='pending' AND (username_key=$1 OR ($2::text IS NOT NULL AND email_key=$2)))")
+            .bind(username.to_lowercase()).bind(email.map(str::to_lowercase)).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
+        sqlx::query("INSERT INTO signup_requests (username,email,password_hash,username_key,email_key) VALUES ($1,$2,$3,$4,$5)")
             .bind(username)
             .bind(email)
             .bind(hash)
+            .bind(username.to_lowercase())
+            .bind(email.map(str::to_lowercase))
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
@@ -481,6 +483,10 @@ pub async fn register_password(
     }
     let user = sqlx::query_as::<_, User>("INSERT INTO users (username,email,password_hash,is_admin,must_change_password) VALUES ($1,$2,$3,$5,$4) RETURNING *")
         .bind(username).bind(email).bind(hash).bind(administrator.is_some()).bind(administrator.is_some_and(|(_, _, admin)| admin)).fetch_one(&mut *tx).await?;
+    if let Some((actor, _, _)) = administrator {
+        sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'user.create','user',$2,$3)")
+            .bind(actor).bind(user.id).bind(serde_json::json!({"is_admin":user.is_admin,"must_change_password":true})).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(AccountAdmission::User(Box::new(user)))
 }

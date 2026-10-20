@@ -1,3 +1,5 @@
+mod regressions;
+
 use super::editor::MarkdownEditor;
 use super::list::empty_title;
 use super::*;
@@ -14,6 +16,43 @@ use crate::webui::pages::repos::pulls::{
 use crate::webui::pages::repos::{self, ref_path::file_url};
 use crate::webui::pages::repos::{labels, milestones};
 use dioxus::prelude::*;
+
+#[test]
+fn new_issue_textareas_have_repository_and_template_draft_identity() {
+    for form in [
+        Vec::new(),
+        vec![new::FormField {
+            kind: new::FieldKind::Textarea,
+            label: "Details".into(),
+            ..Default::default()
+        }],
+    ] {
+        let draft = NewDraft {
+            repository_id: "42".into(),
+            template: ".github/ISSUE_TEMPLATE/bug.yml".into(),
+            template_revision: "template-A".into(),
+            form,
+            ..Default::default()
+        };
+        let html = crate::webui::tests::in_scope(|| {
+            dioxus_ssr::render_element(new::new(
+                &repository(),
+                Kind::Issue,
+                &draft,
+                &BranchChoices::default(),
+                &IssueChoices::default(),
+                None,
+                None,
+                false,
+                &References::default(),
+            ))
+        });
+        assert!(html.contains("name=\"repository_id\" value=\"42\""));
+        assert!(html.contains("name=\"template\" value=\".github/ISSUE_TEMPLATE/bug.yml\""));
+        assert!(html.contains("name=\"template_revision\" value=\"template-A\""));
+        assert!(html.contains("<textarea"));
+    }
+}
 
 #[test]
 fn refused_orphaned_replies_keep_their_text_in_a_recovery_composer() {
@@ -109,6 +148,7 @@ fn detail(
         reviewers,
         &[],
         &[],
+        &[],
     )
 }
 fn repository() -> Repository {
@@ -143,6 +183,7 @@ fn repository_at(kind: Kind, tail: &str) -> Repository {
 }
 fn item() -> Item {
     Item {
+        id: 7,
         number: 7,
         stacked: false,
         stack: None,
@@ -266,6 +307,7 @@ fn page_modes() -> Vec<Page> {
             comments: CommentPage {
                 events_next: None,
                 comments: vec![Comment {
+                    revision: "comment-revision".into(),
                     id: 23,
                     author: "alice".into(),
                     body: "<script>comment()</script>".into(),
@@ -293,7 +335,10 @@ fn page_modes() -> Vec<Page> {
                 title: Some("preserved & title".into()),
                 body: Some("</textarea><script>edit()</script>".into()),
                 comment: "preserved comment".into(),
+                repository_id: None,
+                issue_id: None,
                 editing: None,
+                expected_body: String::new(),
                 label: "11".into(),
                 preview: true,
                 merge_method: String::new(),
@@ -302,6 +347,7 @@ fn page_modes() -> Vec<Page> {
             error: Some("Stale revision; review your preserved submission.".into()),
             references: Default::default(),
             reviewers: Vec::new(),
+            reviewer_choices: Vec::new(),
             assignable: Vec::new(),
             milestones: Vec::new(),
         });
@@ -360,6 +406,8 @@ fn page_modes() -> Vec<Page> {
         counts: ListCounts::default(),
         items: vec![milestone(3, hostile, 1, 3)],
         sort: String::new(),
+        page_number: 1,
+        has_next: false,
     });
     modes.push(Page::Labels {
         repository: repository(),
@@ -389,7 +437,9 @@ fn page_modes() -> Vec<Page> {
         state: "all".into(),
         items: vec![item()],
         pull_requests: vec![item()],
+        pagination: (1, false),
         draft: MilestoneDraft {
+            repository_id: None,
             title: hostile.into(),
             description: "Ship it".into(),
             due_date: "2026-10-20".into(),
@@ -426,7 +476,17 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     counts,
                     items,
                     sort,
-                } => milestones::list(repository, state, *counts, items, sort),
+                    page_number,
+                    has_next,
+                } => milestones::list(
+                    repository,
+                    state,
+                    *counts,
+                    items,
+                    sort,
+                    *page_number,
+                    *has_next,
+                ),
                 Page::Labels {
                     repository,
                     items,
@@ -455,6 +515,7 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     state,
                     items,
                     pull_requests,
+                    pagination,
                     draft,
                     error,
                 } => milestones::detail(
@@ -463,6 +524,7 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     state,
                     items,
                     pull_requests,
+                    *pagination,
                     draft,
                     error.as_deref(),
                 ),
@@ -508,6 +570,7 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     reviewers,
                     assignable,
                     milestones,
+                    reviewer_choices,
                 } => super::detail(
                     repository,
                     *kind,
@@ -518,6 +581,7 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     error.as_deref(),
                     references,
                     reviewers,
+                    reviewer_choices,
                     assignable,
                     milestones,
                 ),
@@ -739,6 +803,7 @@ fn discussion_pages_link_to_the_neighbouring_pages() {
         let comments = CommentPage {
             events_next: None,
             comments: vec![Comment {
+                revision: "comment-revision".into(),
                 id: 1,
                 author: "alice".into(),
                 body: "Text".into(),
@@ -1113,6 +1178,7 @@ fn merge_box_names_a_change_request_beside_what_branch_protection_allows() {
                 None,
                 &Default::default(),
                 &requested,
+                &[],
                 &[],
                 &[],
             ))
@@ -1628,6 +1694,7 @@ fn same_location_edit_refresh_preserves_draft_and_conflict_snapshot_together() {
             error: None,
             references: Default::default(),
             reviewers: Vec::new(),
+            reviewer_choices: Vec::new(),
             assignable: Vec::new(),
             milestones: Vec::new(),
         })),
@@ -1890,15 +1957,22 @@ fn dense_rows_show_loaded_items_and_issue_pagination_uses_has_more() {
         ));
         assert!(last.contains("page=1"));
         assert!(!last.contains("page=3"));
-        let capped_pulls = dioxus_ssr::render_element(list(
+        let capped_pulls = dioxus_ssr::render_element(super::list(
             &repo,
             Kind::Pull,
             "all",
             "",
             ListCounts::default(),
             &vec![issue; 100],
+            &ListFilters {
+                page: 1,
+                has_more: true,
+                ..Default::default()
+            },
         ));
-        assert!(capped_pulls.contains("Showing the latest 100 matching pull requests."));
+        assert!(capped_pulls.contains("aria-label=\"Pull request pages\""));
+        assert!(capped_pulls.contains("page=2"));
+        assert!(!capped_pulls.contains("Showing the latest 100 matching pull requests."));
     });
 }
 
@@ -2215,7 +2289,7 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
         "{html}"
     );
     assert!(
-        html.contains("name=\"comment_revision\" value=\"Text\""),
+        html.contains("name=\"comment_revision\" value=\"comment-revision\""),
         "{html}"
     );
     assert!(!html.contains("comments/32/edit"), "{html}");
@@ -2231,6 +2305,7 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
 
 fn comment_at(id: i64, created: &str) -> Comment {
     Comment {
+        revision: "comment-revision".into(),
         id,
         author: "alice".into(),
         body: "Text".into(),
@@ -2489,6 +2564,7 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
         pending: false,
     };
     let composer = LineComment {
+        repository_id: None,
         path: "src/lib.rs".into(),
         side: "LEFT".into(),
         line: "2".into(),
@@ -2496,6 +2572,7 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
         body: "draft words".into(),
         preview: false,
         commit: String::new(),
+        base: String::new(),
     };
     let html = dioxus_ssr::render_element(diff_page(
         &repository_at(Kind::Pull, "/7/diff"),
@@ -2553,6 +2630,7 @@ fn a_refused_reply_is_drawn_once_inside_its_thread() {
         pending: false,
     };
     let reply = LineComment {
+        repository_id: None,
         path: "src/lib.rs".into(),
         side: "RIGHT".into(),
         line: "2".into(),
@@ -2560,6 +2638,7 @@ fn a_refused_reply_is_drawn_once_inside_its_thread() {
         body: "reply words".into(),
         preview: false,
         commit: String::new(),
+        base: String::new(),
     };
     let html = dioxus_ssr::render_element(diff_page(
         &repository_at(Kind::Pull, "/7/diff"),
@@ -3342,6 +3421,7 @@ fn reviewer_picker_leaves_out_the_author_of_the_pull_request() {
             &[],
             &assignable,
             &[],
+            &[],
         ));
         let start = html.find("Request reviews from").unwrap();
         let picker = &html[start..html.find("Request a review from").unwrap()];
@@ -3437,6 +3517,7 @@ fn label_delete_asks_in_a_centred_dialog_with_cancel() {
 fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
     crate::webui::tests::in_scope(|| {
         let comment = |id: i64, author: &str| Comment {
+            revision: "comment-revision".into(),
             id,
             author: author.into(),
             body: "Thanks".into(),
@@ -3471,6 +3552,7 @@ fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
             &DetailDraft::default(),
             None,
             &References::default(),
+            &[],
             &[],
             &[],
             &[],
@@ -3511,6 +3593,7 @@ fn sidebar_offers_assignees_and_milestones_to_writers_and_only_shows_them_to_rea
             None,
             &References::default(),
             &[],
+            &[],
             &assignable,
             &milestones,
         ));
@@ -3532,6 +3615,7 @@ fn sidebar_offers_assignees_and_milestones_to_writers_and_only_shows_them_to_rea
             &DetailDraft::default(),
             None,
             &References::default(),
+            &[],
             &[],
             &[],
             &[],
@@ -3560,6 +3644,7 @@ fn sidebar_offers_assignees_and_milestones_to_writers_and_only_shows_them_to_rea
             None,
             &References::default(),
             &[],
+            &[],
             &assignable,
             &milestones,
         ));
@@ -3582,6 +3667,8 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             },
             std::slice::from_ref(&release),
             "",
+            1,
+            false,
         ));
         for expected in [
             "role=\"progressbar\"",
@@ -3598,13 +3685,19 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             "all",
             &[item()],
             &[],
+            (2, true),
             &MilestoneDraft {
+                repository_id: None,
                 title: "Release".into(),
                 description: "Ship it".into(),
                 due_date: "2026-10-20".into(),
             },
             None,
         ));
+        let detail_html = detail_html
+            .replace("&#38;", "&")
+            .replace("&#x26;", "&")
+            .replace("&amp;", "&");
         for expected in [
             "action=\"/alice/repo/milestones/3/edit\"",
             "action=\"/alice/repo/milestones/3/close\"",
@@ -3619,8 +3712,13 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             "class=\"collaboration-row\"",
             "← Milestones",
             "collaboration-list-header",
+            "href=\"/alice/repo/milestones/3?state=all&page=1\"",
+            "href=\"/alice/repo/milestones/3?state=all&page=3\"",
         ] {
-            assert!(detail_html.contains(expected), "missing {expected}");
+            assert!(
+                detail_html.contains(expected),
+                "missing {expected}: {detail_html}"
+            );
         }
         assert!(!detail_html.contains("class=\"collaboration-checkbox\""));
         let mut reader = repository();
@@ -3631,6 +3729,7 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             "all",
             &[],
             &[],
+            (1, false),
             &MilestoneDraft::default(),
             None,
         ));
@@ -4092,6 +4191,7 @@ fn label_picker_rows_show_a_colour_dot_and_a_check_for_applied_labels() {
             &[],
             &[],
             &[],
+            &[],
         ));
         let picker = &html[html.find("Apply labels to this issue").unwrap()..];
         // Each row leads with a dot in its label's colour; only the applied label has a check.
@@ -4128,6 +4228,7 @@ fn assignee_picker_rows_show_avatars_and_a_check_and_offer_assign_yourself() {
                 &DetailDraft::default(),
                 None,
                 &Default::default(),
+                &[],
                 &[],
                 &assignable,
                 &[],
@@ -4173,6 +4274,7 @@ fn reviewer_picker_rows_show_avatars_and_checks_for_open_requests() {
             &Default::default(),
             &reviewers,
             &assignable,
+            &[],
             &[],
         ));
         let picker = &html[html.find("Request reviews from").unwrap()..];

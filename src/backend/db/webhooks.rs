@@ -1,11 +1,11 @@
 //! Webhook rows and their delivery records. Each change checks, in its own transaction, that
-//! the actor may manage the owner's hooks. Reads do no checks; callers decide what they show.
+//! the actor may manage the owner's hooks. Settings reads retain that authority too.
 use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
 /// The repository or organization a webhook belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookOwner {
     Repository(i64),
     Organization(i64),
@@ -26,6 +26,20 @@ impl HookOwner {
         }
     }
 }
+
+/// One settings-list row, without secrets or delivery bodies.
+#[derive(Debug, sqlx::FromRow)]
+pub struct WebhookSummary {
+    pub id: i64,
+    pub payload_url: String,
+    pub events: String,
+    pub active: bool,
+    pub delivery_id: Option<i64>,
+    pub status_code: Option<i32>,
+}
+
+native_operation!(crate::backend::db::postgres::webhooks::list_webhook_summaries, crate::backend::db::sqlite::webhooks::list_webhook_summaries,
+    fn list_webhook_summaries(pool: &DbPool, owner: HookOwner, after: i64) -> Result<Vec<WebhookSummary>>);
 
 /// Settings a webhook form saves. The secret is sealed separately by the caller.
 #[derive(Debug, Clone)]
@@ -58,8 +72,22 @@ pub struct NewDelivery {
     pub response_body: Option<String>,
 }
 
+/// The settings projection, loaded under the same authority as hook changes.
+pub struct HookSettings {
+    pub hooks: Vec<WebhookSummary>,
+    pub hook: Option<Webhook>,
+    pub deliveries: Vec<WebhookDelivery>,
+    pub delivery: Option<WebhookDelivery>,
+}
+
+native_operation!(crate::backend::db::postgres::webhooks::read_settings, crate::backend::db::sqlite::webhooks::read_settings,
+    fn read_settings(pool: &DbPool, owner: HookOwner, actor_id: i64, hook: Option<i64>, delivery: Option<i64>, after: i64) -> Result<Option<HookSettings>>);
+
 native_operation!(crate::backend::db::postgres::webhooks::list_webhooks, crate::backend::db::sqlite::webhooks::list_webhooks,
     fn list_webhooks(pool: &DbPool, owner: HookOwner) -> Result<Vec<Webhook>>);
+
+native_operation!(crate::backend::db::postgres::webhooks::webhook_secret_sample, crate::backend::db::sqlite::webhooks::webhook_secret_sample,
+    fn webhook_secret_sample(pool: &DbPool) -> Result<Option<(Vec<u8>, Vec<u8>)>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::get_webhook, crate::backend::db::sqlite::webhooks::get_webhook,
     fn get_webhook(pool: &DbPool, owner: HookOwner, id: i64) -> Result<Option<Webhook>>);

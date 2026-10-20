@@ -6,7 +6,7 @@
 //! instead of a Markdown body. `config.yml` in the directory can switch blank issues off. The
 //! pull request template is the first of a few fixed paths that exists.
 
-use super::store::{BlobRange, ErrorKind, RepoError, RepoStore};
+use super::store::{ErrorKind, RepoError, RepoStore};
 
 /// Larger template files are ignored.
 pub const MAX_TEMPLATE_BYTES: u64 = 64 * 1024;
@@ -83,34 +83,58 @@ pub struct IssueTemplates {
 
 /// The issue templates of `branch`. An empty list means the repository has none.
 pub async fn issue_templates(store: &RepoStore, branch: &str) -> Result<IssueTemplates, RepoError> {
-    let mut paths = template_files(store, branch).await?;
-    let blank_allowed = match read_text(
-        store,
-        branch,
-        &format!("{ISSUE_TEMPLATE_DIRECTORY}/config.yml"),
-    )
-    .await?
-    {
-        Some((_, config)) => blank_issues_allowed(&config),
-        None => true,
+    let Some(revision) = default_commit(store, branch).await? else {
+        return Ok(IssueTemplates {
+            templates: Vec::new(),
+            blank_allowed: true,
+        });
     };
-    if paths.is_empty() {
-        if let Some((revision, text)) = read_text(store, branch, ISSUE_TEMPLATE_FILE).await? {
-            paths.push((ISSUE_TEMPLATE_FILE.to_owned(), revision, text));
+    let mut paths = match store
+        .tree_metadata(&revision, ISSUE_TEMPLATE_DIRECTORY)
+        .await
+    {
+        Ok(entries) => template_paths(entries),
+        Err(error) if is_missing(&error) => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    paths.push(format!("{ISSUE_TEMPLATE_DIRECTORY}/config.yml"));
+    paths.push(ISSUE_TEMPLATE_FILE.to_owned());
+    let mut texts = store.template_texts(&revision, &paths).await?;
+    let fallback = texts.pop().flatten();
+    let config = texts.pop().flatten();
+    paths.truncate(paths.len() - 2);
+    let blank_allowed = config.is_none_or(|(_, text)| blank_issues_allowed(&text));
+    let mut files: Vec<_> = paths
+        .into_iter()
+        .zip(texts)
+        .filter_map(|(path, text)| text.map(|(id, text)| (path, id, text)))
+        .collect();
+    if files.is_empty() {
+        if let Some((id, text)) = fallback {
+            files.push((ISSUE_TEMPLATE_FILE.to_owned(), id, text));
         }
     }
-    let templates = paths
-        .into_iter()
-        .filter_map(|(path, revision, text)| {
-            let mut template = if path.ends_with(".yml") || path.ends_with(".yaml") {
-                parse_form_template(&path, &text)?
-            } else {
-                parse_template(&path, &text)
-            };
-            template.revision = revision;
-            Some(template)
-        })
-        .collect();
+    let templates = tokio::task::spawn_blocking(move || {
+        files
+            .into_iter()
+            .filter_map(|(path, revision, text)| {
+                let mut template = if path.ends_with(".yml") || path.ends_with(".yaml") {
+                    parse_form_template(&path, &text)?
+                } else {
+                    parse_template(&path, &text)
+                };
+                template.revision = revision;
+                Some(template)
+            })
+            .collect()
+    })
+    .await
+    .map_err(|_| {
+        RepoError::new(
+            ErrorKind::Unavailable,
+            "Issue template parsing is unavailable",
+        )
+    })?;
     Ok(IssueTemplates {
         templates,
         blank_allowed,
@@ -122,38 +146,29 @@ pub async fn pull_request_template(
     store: &RepoStore,
     branch: &str,
 ) -> Result<Option<String>, RepoError> {
-    for path in PULL_REQUEST_TEMPLATE_PATHS {
-        if let Some((_, text)) = read_text(store, branch, path).await? {
-            return Ok(Some(text));
-        }
+    let Some(revision) = default_commit(store, branch).await? else {
+        return Ok(None);
+    };
+    let paths: Vec<_> = PULL_REQUEST_TEMPLATE_PATHS
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let texts = store.template_texts(&revision, &paths).await?;
+    Ok(texts.into_iter().flatten().next().map(|(_, text)| text))
+}
+
+async fn default_commit(store: &RepoStore, branch: &str) -> Result<Option<String>, RepoError> {
+    match store.commit(&format!("refs/heads/{branch}")).await {
+        Ok(commit) => Ok(Some(commit.sha)),
+        Err(error) if is_missing(&error) => Ok(None),
+        Err(error) => Err(error),
     }
-    Ok(None)
 }
 
 /// A `.md` or `.yml` file, not the `config.yml` of the directory.
 fn is_template_name(name: &str) -> bool {
     name.ends_with(".md")
         || ((name.ends_with(".yml") || name.ends_with(".yaml")) && !name.starts_with("config."))
-}
-
-/// The `.md` and `.yml` files of the template directory with their text, in path order, up to the cap.
-/// Files over the size cap are skipped.
-async fn template_files(
-    store: &RepoStore,
-    branch: &str,
-) -> Result<Vec<(String, String, String)>, RepoError> {
-    let entries = match store.tree_metadata(branch, ISSUE_TEMPLATE_DIRECTORY).await {
-        Ok(entries) => entries,
-        Err(error) if is_missing(&error) => return Ok(Vec::new()),
-        Err(error) => return Err(error),
-    };
-    let mut files = Vec::new();
-    for path in template_paths(entries) {
-        if let Some((revision, text)) = read_text(store, branch, &path).await? {
-            files.push((path, revision, text));
-        }
-    }
-    Ok(files)
 }
 
 fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
@@ -166,29 +181,6 @@ fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
     paths.sort();
     paths.truncate(MAX_TEMPLATES);
     paths
-}
-
-/// The text of a file, or `None` when it is missing, binary, not UTF-8 or over the size cap.
-async fn read_text(
-    store: &RepoStore,
-    branch: &str,
-    path: &str,
-) -> Result<Option<(String, String)>, RepoError> {
-    let window = BlobRange::Window {
-        offset: 0,
-        length: MAX_TEMPLATE_BYTES + 1,
-    };
-    let blob = match store.blob_range(branch, path, window).await {
-        Ok(blob) => blob,
-        Err(error) if is_missing(&error) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    if blob.is_binary || blob.size > MAX_TEMPLATE_BYTES {
-        return Ok(None);
-    }
-    Ok(String::from_utf8(blob.bytes)
-        .ok()
-        .map(|text| (blob.id, text)))
 }
 
 fn is_missing(error: &RepoError) -> bool {
@@ -247,7 +239,11 @@ fn parse_template(path: &str, text: &str) -> IssueTemplate {
 /// An issue form. A file that is not valid YAML, or has no fields to fill in, is left out, as
 /// GitHub leaves it out of its chooser.
 fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
-    let document: serde_yaml::Value = serde_yaml::from_str(text).ok()?;
+    let document = crate::backend::ci::workflows::parse_yaml_with_limit(
+        text.as_bytes(),
+        4 * MAX_TEMPLATE_BYTES as usize,
+    )
+    .ok()?;
     let text_of = |value: Option<&serde_yaml::Value>| match value {
         Some(serde_yaml::Value::String(text)) => text.trim_end_matches('\n').to_owned(),
         Some(serde_yaml::Value::Number(number)) => number.to_string(),
@@ -263,9 +259,11 @@ fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
         Some(serde_yaml::Value::String(text)) => list_items(text),
         _ => Vec::new(),
     };
-    let form: Vec<FormElement> = document
-        .get("body")?
-        .as_sequence()?
+    let elements = document.get("body")?.as_sequence()?;
+    if elements.len() > 50 {
+        return None;
+    }
+    let form: Vec<FormElement> = elements
         .iter()
         .filter_map(|element| form_element(element, &text_of))
         .collect();
@@ -309,6 +307,13 @@ fn form_element(
     };
     let attributes = element.get("attributes");
     let attribute = |key: &str| text_of(attributes.and_then(|map| map.get(key)));
+    if attributes
+        .and_then(|map| map.get("options"))
+        .and_then(serde_yaml::Value::as_sequence)
+        .is_some_and(|items| items.len() > 100)
+    {
+        return None;
+    }
     let options = attributes
         .and_then(|map| map.get("options"))
         .and_then(serde_yaml::Value::as_sequence)
@@ -532,6 +537,23 @@ mod tests {
     }
 
     const FORM: &str = "name: Bug report\ndescription: Something breaks\ntitle: \"[Bug] \"\nlabels: [bug, triage]\nbody:\n  - type: markdown\n    attributes:\n      value: Thanks for the report.\n  - type: input\n    attributes:\n      label: Version\n    validations:\n      required: true\n  - type: textarea\n    attributes:\n      label: Log\n      render: shell\n  - type: dropdown\n    attributes:\n      label: Area\n      options: [Web, Git]\n  - type: checkboxes\n    attributes:\n      label: Checks\n      options:\n        - label: I searched first\n          required: true\n        - label: I can help\n";
+
+    #[test]
+    fn issue_forms_bound_alias_expansion_fields_and_options() {
+        let bomb = format!("name: &large {}\nbody:\n  - type: dropdown\n    attributes:\n      label: Choice\n      options: [{}]\n", "x".repeat(16_384), vec!["*large"; 5000].join(", "));
+        assert!(bomb.len() < MAX_TEMPLATE_BYTES as usize);
+        assert!(parse_form_template("bomb.yml", &bomb).is_none());
+        let fields = format!(
+            "body:\n{}",
+            "  - type: input\n    attributes:\n      label: Field\n".repeat(51)
+        );
+        assert!(parse_form_template("fields.yml", &fields).is_none());
+        let options = format!(
+            "body:\n  - type: dropdown\n    attributes:\n      label: Choice\n      options: [{}]",
+            vec!["x"; 101].join(", ")
+        );
+        assert!(parse_form_template("options.yml", &options).is_none());
+    }
 
     #[test]
     fn an_issue_form_reads_its_fields() {

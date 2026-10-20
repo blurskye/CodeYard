@@ -9,6 +9,10 @@ pub async fn set_pull_request_file_viewed(
     path: &str,
     blob_sha: Option<&str>,
 ) -> Result<()> {
+    anyhow::ensure!(
+        path.len() <= crate::backend::db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES,
+        "Path exceeds its size limit"
+    );
     match blob_sha {
         Some(blob_sha) => {
             sqlx::query(
@@ -42,12 +46,14 @@ pub async fn list_pull_request_viewed_files(
     pool: &SqlitePool,
     pr_id: i64,
     user_id: i64,
+    paths: &[String],
 ) -> Result<Vec<(String, String)>> {
     let marks: Vec<(String, String)> = sqlx::query_as(
-        "SELECT path, blob_sha FROM pull_request_viewed_files WHERE user_id = ?1 AND pull_request_id = ?2",
+        "SELECT path, blob_sha FROM pull_request_viewed_files WHERE user_id = ?1 AND pull_request_id = ?2 AND path IN (SELECT value FROM json_each(?3))",
     )
     .bind(user_id)
     .bind(pr_id)
+    .bind(serde_json::to_string(paths)?)
     .fetch_all(pool)
     .await?;
     Ok(marks)

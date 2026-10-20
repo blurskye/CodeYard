@@ -100,6 +100,10 @@ fn revisions(
 
 /// Moves the recorded head of an open pull request from `from` to `to`, unless another
 /// refresh moved it first. The head it records gets CI, as every head move does.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Head refresh carries an optional CI access cap."
+)]
 async fn move_head(
     pool: &DbPool,
     ci: &CiRuns,
@@ -108,6 +112,7 @@ async fn move_head(
     from: &str,
     to: &str,
     actor_id: i64,
+    ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to)
         .await
@@ -119,7 +124,9 @@ async fn move_head(
         .await
         .map_err(|_| RefreshError::Database)?;
     if let Some(current) = current {
-        let _ = queue_pull_request_ci(pool, ci, base, &current, actor_id, false).await;
+        if let Some(access) = ci_access {
+            let _ = queue_pull_request_ci(pool, ci, base, &current, actor_id, false, access).await;
+        }
         super::code_owners::request_code_owner_reviews(pool, ci, base, &current, actor_id).await;
         // Describe this successful CAS even if another refresh already moved the row again.
         let mut current = current;
@@ -162,6 +169,7 @@ async fn record_published_head(
     base_store: &RepoStore,
     pull: &db::pull_requests::records::PullRequestRevisions,
     actor_id: i64,
+    ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     let reference = format!("refs/pull/{}/head", pull.number);
     let published = match base_store.commit_from_primary(&reference).await {
@@ -180,6 +188,7 @@ async fn record_published_head(
         &pull.head_sha,
         &published,
         actor_id,
+        ci_access,
     )
     .await
 }
@@ -191,6 +200,7 @@ async fn refresh_one(
     actor_id: i64,
     listed: &mut ListedRefs,
     mut pull: db::pull_requests::records::PullRequestRevisions,
+    ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     let context = ci.cluster.as_ref();
     let mut changed = false;
@@ -280,7 +290,8 @@ async fn refresh_one(
         let mut head_ready = true;
         let mut head_failed = false;
         if head.is_none()
-            && record_published_head(pool, ci, &base, &base_store, &pull, actor_id).await?
+            && record_published_head(pool, ci, &base, &base_store, &pull, actor_id, ci_access)
+                .await?
         {
             changed = true;
             retry = true;
@@ -314,7 +325,11 @@ async fn refresh_one(
                     pool,
                     base.id,
                     head.id,
-                    pull.author_id,
+                    if head.id == base.id {
+                        actor_id
+                    } else {
+                        pull.author_id
+                    },
                     &repo_store(head, context),
                     pull.number,
                     &new_head,
@@ -325,8 +340,16 @@ async fn refresh_one(
                 head_ready = false;
                 if error.kind == ErrorKind::Conflict {
                     if head.id != base.id
-                        && record_published_head(pool, ci, &base, &base_store, &pull, actor_id)
-                            .await?
+                        && record_published_head(
+                            pool,
+                            ci,
+                            &base,
+                            &base_store,
+                            &pull,
+                            actor_id,
+                            ci_access,
+                        )
+                        .await?
                     {
                         changed = true;
                     }
@@ -346,6 +369,7 @@ async fn refresh_one(
                 &pull.head_sha,
                 &new_head,
                 actor_id,
+                ci_access,
             )
             .await?
             {
@@ -376,6 +400,7 @@ pub async fn refresh_open_pull_request(
     ci: &CiRuns,
     actor_id: i64,
     pull_request_id: i64,
+    ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
     let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, pull_request_id)
         .await
@@ -388,7 +413,7 @@ pub async fn refresh_open_pull_request(
         return Err(RefreshError::MissingBase);
     }
     let mut listed = ListedRefs::new();
-    refresh_one(pool, repository, ci, actor_id, &mut listed, pull).await
+    refresh_one(pool, repository, ci, actor_id, &mut listed, pull, ci_access).await
 }
 
 /// Refreshes the open pull requests that use one of `branches` in this repository, as
@@ -402,6 +427,7 @@ pub async fn refresh_open_pull_requests(
     branches: Option<&[&str]>,
     ci: &CiRuns,
     actor_id: i64,
+    ci_access: db::models::AccessLevel,
 ) -> Result<usize, RefreshError> {
     let open = match branches.filter(|names| names.len() <= MAX_FILTERED_BRANCHES) {
         Some(names) => {
@@ -418,7 +444,7 @@ pub async fn refresh_open_pull_requests(
     let mut first_error = None;
     for pull in open {
         let pull_id = pull.id;
-        match refresh_one(pool, repo, ci, actor_id, &mut listed, pull).await {
+        match refresh_one(pool, repo, ci, actor_id, &mut listed, pull, Some(ci_access)).await {
             Ok(true) => changed += 1,
             Ok(false) => {}
             Err(error) => {
@@ -438,7 +464,16 @@ pub async fn refresh_open_pull_requests(
 /// A branch already moved, so refresh failures are logged and retried by the next
 /// branch move, reopen, ready or merge.
 pub async fn branches_moved(pool: &DbPool, repo: &Repository, ci: &CiRuns, actor_id: i64) {
-    if let Err(error) = refresh_open_pull_requests(pool, repo, None, ci, actor_id).await {
+    if let Err(error) = refresh_open_pull_requests(
+        pool,
+        repo,
+        None,
+        ci,
+        actor_id,
+        crate::backend::db::models::AccessLevel::Owner,
+    )
+    .await
+    {
         tracing::warn!(repo_id = repo.id, %error, "could not refresh open pull requests after a branch moved");
     }
 }

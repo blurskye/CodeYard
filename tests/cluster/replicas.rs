@@ -659,6 +659,90 @@ async fn copies_follow_commits_tags_branches_and_force_moves() {
 }
 
 #[tokio::test]
+async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "ci_retained").await;
+    let first = repo.save("main", "README.md", "unborn", b"main\n").await;
+    repo.branch("ci-input", &first).await;
+    let workflow = b"on: workflow_dispatch\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo retained\n";
+    let path = ".github/workflows/check.yml";
+    let sha = repo.save("ci-input", path, &first, workflow).await;
+    let blob = repo
+        .store
+        .ci_workflow_file(&sha, path)
+        .await
+        .unwrap()
+        .blob_id;
+    let before = db::cluster::get_write_version(repo.pool, repo.id())
+        .await
+        .unwrap()
+        .unwrap();
+    db::ci::enqueue_ci_run(
+        repo.pool,
+        db::ci::NewCiRun {
+            repo_id: repo.id(),
+            triggered_by_id: repo.actor,
+            pipeline: "ci",
+            event: "workflow_dispatch",
+            pull_request_id: None,
+            branch: "refs/heads/ci-input",
+            head_sha: &sha,
+            workflow_path: path,
+            workflow_blobs: &serde_json::json!({(path): blob}),
+            workflow_inputs: None,
+            environment: None,
+            manual: true,
+        },
+        &[repo.actor],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        db::cluster::get_write_version(repo.pool, repo.id())
+            .await
+            .unwrap(),
+        Some(before + 1)
+    );
+    repo.delete_branch("ci-input").await;
+    assert_current(&primary, &copy, &repo).await;
+    let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
+    let copied = RepoStore::from_disk_path(copy_path(&copy, uuid).to_str().unwrap());
+    assert_eq!(
+        copied
+            .ci_workflow_file(&sha, path)
+            .await
+            .unwrap()
+            .content
+            .as_bytes(),
+        workflow
+    );
+    primary.shutdown().await;
+    assert!(matches!(
+        db::cluster::promote_repository(
+            repo.pool,
+            repo.id(),
+            primary.context.node_id,
+            copy.context.node_id,
+            true
+        )
+        .await
+        .unwrap(),
+        PromoteOutcome::Promoted { .. }
+    ));
+    pass(&copy).await;
+    let promoted = RepoStore::from_disk_path(primary_path(&copy, uuid).to_str().unwrap());
+    let checkout = root.path().join("checkout");
+    promoted.checkout(&checkout, &sha).await.unwrap();
+    assert_eq!(
+        tokio::fs::read(checkout.join(path)).await.unwrap(),
+        workflow
+    );
+    copy.shutdown().await;
+}
+
+#[tokio::test]
 async fn empty_repositories_and_large_files_copy() {
     let database = native::PostgresDatabase::new().await;
     let root = tempfile::tempdir().unwrap();
@@ -806,7 +890,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
             "test",
             &serde_json::to_string(&cluster::NodeAddress::of(&node.endpoint().unwrap().addr()))
                 .unwrap(),
-            Some(100),
+            Some(1024 * 1024 * 1024),
         )
         .await
         .unwrap());
@@ -1337,6 +1421,71 @@ async fn primary_of(pool: &DbPool, repository: i64) -> i64 {
         .unwrap()
 }
 
+async fn check_old_transfers_after_rollback(pool: &DbPool) {
+    let a = reporting_storage_node(pool, "rollback-a").await;
+    let b = reporting_storage_node(pool, "rollback-b").await;
+    let c = reporting_storage_node(pool, "rollback-c").await;
+    let repo = placed_repository(pool, a).await;
+    for _ in 0..5 {
+        db::cluster::bump_write_version(pool, repo, None)
+            .await
+            .unwrap();
+    }
+    for node in [b, c] {
+        assert!(db::cluster::insert_replica(pool, repo, node, a)
+            .await
+            .unwrap());
+    }
+    assert!(db::cluster::set_applied_version(pool, repo, b, a, 3)
+        .await
+        .unwrap());
+    assert!(matches!(
+        db::cluster::promote_repository(pool, repo, a, b, false)
+            .await
+            .unwrap(),
+        PromoteOutcome::Promoted { .. }
+    ));
+    let version = db::cluster::get_write_version(pool, repo)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        version, 6,
+        "rolling back the chosen history advances its version"
+    );
+    assert!(db::cluster::set_applied_version(pool, repo, a, b, version)
+        .await
+        .unwrap());
+    assert!(matches!(
+        db::cluster::promote_repository(pool, repo, b, a, true)
+            .await
+            .unwrap(),
+        PromoteOutcome::Promoted { .. }
+    ));
+    // C completes its original version-5 copy from A, after A is primary again.
+    assert!(db::cluster::set_applied_version(pool, repo, c, a, 5)
+        .await
+        .unwrap());
+    assert!(matches!(
+        db::cluster::promote_repository(pool, repo, a, c, true)
+            .await
+            .unwrap(),
+        PromoteOutcome::Stale { .. }
+    ));
+}
+
+#[tokio::test]
+async fn sqlite_old_transfers_cannot_become_current_after_rollback_and_return() {
+    let database = native::NativeDatabase::new().await;
+    check_old_transfers_after_rollback(&database.pool).await;
+}
+
+#[tokio::test]
+async fn postgres_old_transfers_cannot_become_current_after_rollback_and_return() {
+    let database = native::PostgresDatabase::new().await;
+    check_old_transfers_after_rollback(&database.pool).await;
+}
+
 #[tokio::test]
 async fn promotion_on_sqlite() {
     let database = native::NativeDatabase::new().await;
@@ -1395,6 +1544,105 @@ async fn delete_names_the_promoted_primary_on_postgres() {
 }
 
 #[tokio::test]
+async fn database_free_ci_checkout_uses_claimed_replica_targets() {
+    use codeyard::backend::ci::{
+        queue::{ClaimedRun, RunQueue},
+        CiConfig, CiExecutionMode,
+    };
+    use codeyard::backend::notifications::NotificationBroadcaster;
+    let database = native::PostgresDatabase::new().await;
+    let pool = &database.pool;
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(pool, root.path()).await;
+    let repo = create_repository(pool, &primary, "ci_copy").await;
+    let yaml = b"on: push\njobs: {test: {runs-on: ubuntu-latest, steps: [{run: echo ok}]}}";
+    let sha = repo
+        .save("main", ".github/workflows/ci.yml", "unborn", yaml)
+        .await;
+    assert_current(&primary, &copy, &repo).await;
+    let blob = git2::Oid::hash_object(git2::ObjectType::Blob, yaml)
+        .unwrap()
+        .to_string();
+    let key = cluster::NodeKey::generate();
+    db::cluster::register_own_node(
+        pool,
+        &key.public_hex(),
+        "ci-copy-worker",
+        &["actions-worker".into()],
+        "test",
+    )
+    .await
+    .unwrap();
+    let worker = format!("{}/slot", key.public_hex());
+    let config = Arc::new(CiConfig {
+        trusted_actor_ids: [repo.actor].into_iter().collect(),
+        ..CiConfig::default()
+    });
+    let queue = RunQueue::Database {
+        pool: pool.clone(),
+        config,
+        secrets: None,
+        context: Some(primary.context.clone()),
+        notifications: Arc::new(NotificationBroadcaster::new(pool)),
+    };
+    db::ci::enqueue_ci_run(
+        pool,
+        db::ci::NewCiRun {
+            repo_id: repo.id(),
+            triggered_by_id: repo.actor,
+            pipeline: "ci",
+            event: "push",
+            pull_request_id: None,
+            branch: "main",
+            head_sha: &sha,
+            workflow_path: ".github/workflows/ci.yml",
+            workflow_blobs: &serde_json::json!({".github/workflows/ci.yml":blob}),
+            workflow_inputs: None,
+            environment: None,
+            manual: false,
+        },
+        &[repo.actor],
+    )
+    .await
+    .unwrap();
+    let claim = queue
+        .claim(&worker, CiExecutionMode::Local)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(claim
+        .storage_replicas
+        .iter()
+        .any(|(id, _)| *id == copy.context.node_id));
+    let claim: ClaimedRun = serde_json::from_slice(&serde_json::to_vec(&claim).unwrap()).unwrap();
+    let mut context = primary.context.clone();
+    context.pool = None;
+    context.node_id = 0;
+    context.iroh = cluster::IrohDialer::new(cluster::Relay::Off, key.clone());
+    context.key = key;
+    let remote = RunQueue::Remote {
+        context: context.clone(),
+        peers: vec![],
+        preferred: Default::default(),
+    };
+    let store = remote.store(&claim).unwrap();
+    primary.shutdown().await;
+    let checkout = root.path().join("worker-checkout");
+    store.checkout(&checkout, &sha).await.unwrap();
+    assert_eq!(
+        std::fs::read(checkout.join(".github/workflows/ci.yml")).unwrap(),
+        yaml
+    );
+    assert_eq!(store.blob_by_id(&blob).await.unwrap(), yaml);
+    db::ci::finish_ci_run(pool, claim.run.id, &worker, "success", None)
+        .await
+        .unwrap();
+    assert!(store.blob_by_id(&blob).await.is_err());
+    context.iroh.close().await;
+    copy.shutdown().await;
+}
+
+#[tokio::test]
 async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     let database = native::PostgresDatabase::new().await;
     let root = tempfile::tempdir().unwrap();
@@ -1416,7 +1664,15 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
             lost_writes: 0
         }]
     );
-    // The copy's directory moves to the primary location on its next pass.
+    // RPC admission relocates a promoted copy immediately, before its periodic pass.
+    let web = web_node(&database.pool, root.path()).await;
+    let (reply, _) = web
+        .context
+        .call(copy.context.node_id, request(uuid, Operation::Refs), b"")
+        .await
+        .unwrap();
+    assert!(reply.result.is_ok(), "{reply:?}");
+    assert!(primary_path(&copy, uuid).is_dir());
     pass(&copy).await;
     assert!(primary_path(&copy, uuid).is_dir());
     assert!(!copy_path(&copy, uuid).exists());
@@ -1442,6 +1698,7 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     assert!(copy_path(&primary, uuid).is_dir());
     assert!(!primary_path(&primary, uuid).exists());
 
+    web.shutdown().await;
     copy.shutdown().await;
     primary.shutdown().await;
 }
@@ -2860,6 +3117,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
         &ci,
         repo.actor,
         pull.id,
+        Some(codeyard::backend::db::models::AccessLevel::Owner),
     )
     .await;
     assert!(matches!(
@@ -3188,6 +3446,71 @@ async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
 
     own.shutdown().await;
     other.shutdown().await;
+}
+
+#[tokio::test]
+async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let web = web_node(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "review-primary").await;
+    let head = repo.save("main", "README.md", "unborn", b"base\n").await;
+    repo.branch("topic", &head).await;
+    let pull = db::pull_requests::records::create_pull_request(
+        &database.pool,
+        db::pull_requests::records::NewPullRequest {
+            repo_id: repo.id(),
+            head_repo_id: Some(repo.id()),
+            author_id: repo.actor,
+            title: "Review",
+            body: "",
+            head_branch: "topic",
+            head_sha: &head,
+            base_branch: "main",
+            base_sha: &head,
+            is_draft: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert_current(&primary, &copy, &repo).await;
+    repo.save("topic", "new.txt", &head, b"new head\n").await;
+    primary.shutdown().await;
+    let store =
+        codeyard::backend::repositories::store::repo_store(&repo.repository, Some(&web.context));
+    assert_eq!(
+        store.commit("refs/heads/topic").await.unwrap().sha,
+        head,
+        "ordinary reads can use the lagging copy"
+    );
+    let actor = db::users::accounts::get_user_by_id(&database.pool, repo.actor)
+        .await
+        .unwrap()
+        .unwrap();
+    let error = codeyard::backend::repositories::pull_requests::reviews::create_pull_request_review(
+        &database.pool, Some(&web.context),
+        &codeyard::backend::notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
+        (actor.username, repo.repository.name.clone(), pull.number),
+        codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
+            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head),
+        },
+    ).await.unwrap_err();
+    assert!(matches!(
+        error,
+        codeyard::backend::repositories::pull_requests::OperationError::Unavailable {
+            code: "git_unavailable",
+            ..
+        }
+    ));
+    assert!(
+        db::pull_requests::reviews::list_pull_request_reviews(&database.pool, pull.id, 100, 0)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    web.shutdown().await;
+    copy.shutdown().await;
 }
 
 #[tokio::test]

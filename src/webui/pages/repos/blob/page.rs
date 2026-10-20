@@ -16,6 +16,9 @@ use crate::webui::{
 };
 use dioxus::prelude::*;
 
+/// The raw endpoint's full-response limit; larger files support byte ranges or Git clone.
+pub const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
+
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BlobPage {
     pub reference: String,
@@ -24,6 +27,9 @@ pub struct BlobPage {
     pub binary: bool,
     pub size: u64,
     pub offset: u64,
+    /// Global line number of the first source line in this window.
+    #[serde(default)]
+    pub first_line: Option<usize>,
     pub next: Option<u64>,
     pub previous: Option<u64>,
     pub truncated: bool,
@@ -87,32 +93,7 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let language = language_of_path(&page.path);
     let display = display_text(&page.content);
     let line_count = display.lines().count();
-    // A preview that starts mid-file cannot say which line it starts at, so its lines get no
-    // numbers and no #L anchors.
-    let numbered = page.offset == 0;
-    let line_numbers = if numbered {
-        (1..=line_count)
-            .map(|line| format!("<a href=\"#L{line}\">{line}</a>"))
-            .collect::<String>()
-    } else {
-        String::new()
-    };
-    // Each line is its own block so the #L target can be highlighted, and the numbers line up
-    // with the code without a newline between blocks.
-    let code_lines = themed_highlight_lines(&display, language)
-        .into_iter()
-        .enumerate()
-        .map(|(index, line)| {
-            if numbered {
-                format!(
-                    "<span class=\"repo-code-line\" id=\"L{}\">{line}</span>",
-                    index + 1
-                )
-            } else {
-                format!("<span class=\"repo-code-line\">{line}</span>")
-            }
-        })
-        .collect::<String>();
+    let downloadable = page.size <= MAX_DOWNLOAD_BYTES;
     let markdown = page.renders_markdown();
     let markdown_html = markdown.then(|| {
         document_html(
@@ -159,11 +140,30 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
         rsx! {
             div { class: "repo-readme-body", div { class: "markdown-body leading-relaxed text-foreground", dangerous_inner_html: html } }
         }
-    } else if page.binary && is_inline_image(&page.path) {
+    } else if page.binary && downloadable && is_inline_image(&page.path) {
         rsx! { div { class: "repo-image", img { src: raw.clone(), alt: "{name}" } } }
     } else if page.binary {
-        rsx! { p { class: "repo-binary", "Binary file. Download it to view it." } }
+        rsx! { p { class: "repo-binary", if downloadable { "Binary file. Download it to view it." } else { "Binary file. Clone the repository to view it." } } }
     } else {
+        let first = page.first_line.or((page.offset == 0).then_some(1));
+        let line_numbers = first
+            .map(|start| {
+                (start..start + line_count)
+                    .map(|line| format!("<a href=\"#L{line}\">{line}</a>"))
+                    .collect::<String>()
+            })
+            .unwrap_or_default();
+        let code_lines = themed_highlight_lines(&display, language)
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| match first {
+                Some(start) => format!(
+                    "<span class=\"repo-code-line\" id=\"L{}\">{line}</span>",
+                    start + index
+                ),
+                None => format!("<span class=\"repo-code-line\">{line}</span>"),
+            })
+            .collect::<String>();
         rsx! {
             div { class: "repo-code-body overflow-x-auto font-mono text-sm",
                 div { class: "repo-code-lines",
@@ -186,17 +186,19 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
                     span { class: "repo-blob-stats", "{stats}" }
                 }
                 div { class: "repo-blob-actions",
-                    {file_downloads(&raw, name, if page.binary { None } else { Some((page.content.as_str(), copy_label)) })}
+                    if downloadable { {file_downloads(&raw, name, if page.binary { None } else { Some((page.content.as_str(), copy_label)) })} }
+                    else if !page.binary { CopyButton { text: page.content.clone(), label: copy_label.to_owned(), icon_only: true } }
                     if repo.can_write && page.editable {
                         NavLink { class: "repo-icon-button icon-tooltip".to_owned(), href: edit, aria_label: Some("Edit file".to_owned()), {icon("edit")} }
                     }
                     if outline.len() > 1 { {outline_menu(&outline)} }
-                    {more_menu(&page.path, &page.permalink, delete_link, Some((raw.as_str(), name)))}
+                    {more_menu(&page.path, &page.permalink, delete_link, downloadable.then_some((raw.as_str(), name)))}
                 }
             }
             {body}
         }
-        if page.truncated { p { class: "text-sm text-muted-foreground", "Showing a bounded preview starting at byte {page.offset}. Raw contains the complete file." } }
+        if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the 32 MiB download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
+        if page.truncated { p { class: "text-sm text-muted-foreground", "Showing a bounded preview starting at byte {page.offset}." if downloadable { " Raw contains the complete file." } } }
         nav { class: "flex gap-4", "aria-label": "File preview",
             if let Some(offset) = page.previous { NavLink { href: format!("{url}?offset={offset}"), "Previous" } }
             if let Some(offset) = page.next { NavLink { href: format!("{url}?offset={offset}"), "Next" } }
@@ -369,7 +371,7 @@ pub(in crate::webui::pages::repos) fn matching_entries<'a>(
     let mut matches: Vec<&TreeEntry> = folders
         .iter()
         .flat_map(|listing| listing.entries.iter())
-        .filter(|entry| entry.name.to_lowercase().contains(query))
+        .filter(|entry| entry.kind != "gitlink" && entry.name.to_lowercase().contains(query))
         .collect();
     matches.sort_by_key(|entry| entry.path.clone());
     matches
@@ -625,6 +627,8 @@ fn folder_items(
                             {icon("folder")} span { title: "{entry.name}", "{entry.name}" }
                         }
                     }
+                } else if entry.kind == "gitlink" {
+                    li { key: "{entry.path}", span { class: "repo-files-item", title: "Submodule", {icon("file")} "{entry.name} (submodule)" } }
                 } else {
                     li { key: "{entry.path}",
                         NavLink { class: (if entry.path == current { "repo-files-item repo-files-current" } else { "repo-files-item" }).to_owned(), href: file_url(base, "blob", reference, &entry.path),

@@ -110,7 +110,9 @@ services:
       # Cluster mode (PostgreSQL only); empty = single node. See .env.example.
       NODE_NAME: ${NODE_NAME:-}
       NODE_KEY: ${NODE_KEY:-}
+      NODE_KEY_FILE: ${NODE_KEY_FILE:-}
       CLUSTER_NODES: ${CLUSTER_NODES:-}
+      CLUSTER_NODES_FILE: ${CLUSTER_NODES_FILE:-}
       CLUSTER_JOIN_TOKEN: ${CLUSTER_JOIN_TOKEN:-}
       IROH_BIND: ${IROH_BIND:-}
       IROH_ADVERTISE: ${IROH_ADVERTISE:-}

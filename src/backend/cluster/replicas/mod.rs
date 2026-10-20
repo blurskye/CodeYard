@@ -63,6 +63,7 @@ mod tests {
             repos_path: PathBuf::new(),
             peers: Default::default(),
             unreachable: Default::default(),
+            ci_replicas: Default::default(),
         };
         let held: Vec<_> = (1..=5)
             .map(|id| HeldReplica {
@@ -85,6 +86,77 @@ mod tests {
         copying.finish(&mut retry).await;
         assert!(copying.pending.is_empty());
         assert_eq!(retry.failures.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn pending_replica_assignments_reserve_disk_space_across_repositories() {
+        let root = tempfile::tempdir().unwrap();
+        let pool = db::init_db(&format!(
+            "sqlite://{}",
+            root.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        let mut nodes = Vec::new();
+        const GIB: i64 = 1024 * 1024 * 1024;
+        for (name, free) in [("a", 100 * GIB), ("b", 12 * GIB), ("c", 11 * GIB)] {
+            let key = crate::backend::cluster::NodeKey::generate();
+            let node = db::cluster::register_own_node(
+                &pool,
+                &key.public_hex(),
+                name,
+                &["storage".into()],
+                "test",
+            )
+            .await
+            .unwrap();
+            db::cluster::record_node_heartbeat(&pool, &key.public_hex(), "test", "{}", Some(free))
+                .await
+                .unwrap();
+            nodes.push(node.id);
+        }
+        let owner = db::users::accounts::create_user(&pool, "owner", None)
+            .await
+            .unwrap();
+        let DbPool::Sqlite(raw) = &pool else {
+            unreachable!()
+        };
+        for index in 0..20 {
+            let repo = db::repositories::records::create_repository(
+                &pool,
+                owner.id,
+                &format!("repo-{index}"),
+                None,
+                false,
+                &format!("/repos/{}.git", Uuid::new_v4()),
+            )
+            .await
+            .unwrap();
+            sqlx::query("UPDATE repositories SET storage_node_id=?1,size_bytes=?2 WHERE id=?3")
+                .bind(nodes[0])
+                .bind(GIB)
+                .bind(repo.id)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        let primaries = group_primaries(
+            db::cluster::list_primary_repositories(&pool, nodes[0])
+                .await
+                .unwrap(),
+        );
+        assign(&pool, nodes[0], ReplicaSetting::Copies(2), &primaries)
+            .await
+            .unwrap();
+        let allocations = db::cluster::pending_replica_bytes(&pool).await.unwrap();
+        assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 20 * GIB);
+        assert!(allocations
+            .iter()
+            .any(|row| row.0 == nodes[1] && row.1 <= 12 * GIB));
+        assert!(allocations
+            .iter()
+            .any(|row| row.0 == nodes[2] && row.1 <= 11 * GIB));
     }
 
     #[test]
@@ -232,15 +304,16 @@ struct Primary {
     repository_id: i64,
     disk_path: String,
     copies: Vec<plan::Holder>,
+    size: i64,
 }
 
 /// The database lists one row per copy; rows of one repository are next to each other.
-fn group_primaries(rows: Vec<(i64, String, Option<i64>, Option<i64>)>) -> Vec<Primary> {
+fn group_primaries(rows: Vec<db::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
     let mut primaries: Vec<Primary> = Vec::new();
-    for (repository_id, disk_path, node, applied_version) in rows {
+    for (repository_id, disk_path, node, applied_version, size) in rows {
         let copy = node.map(|node| plan::Holder {
             node,
-            applied: applied_version.is_some_and(|version| version >= 0),
+            version: applied_version.unwrap_or(-1),
         });
         match primaries.last_mut() {
             Some(last) if last.repository_id == repository_id => last.copies.extend(copy),
@@ -248,6 +321,7 @@ fn group_primaries(rows: Vec<(i64, String, Option<i64>, Option<i64>)>) -> Vec<Pr
                 repository_id,
                 disk_path,
                 copies: copy.into_iter().collect(),
+                size: size.max(1),
             }),
         }
     }
@@ -265,15 +339,41 @@ async fn assign(
     if primaries.is_empty() {
         return Ok(());
     }
-    let storage: Vec<ClusterNode> = db::cluster::list_nodes(pool)
+    let mut storage: Vec<ClusterNode> = db::cluster::list_nodes(pool)
         .await?
         .into_iter()
         .filter(|candidate| {
             candidate.status == "active" && candidate.roles.iter().any(|role| role == "storage")
         })
         .collect();
+    for (holder, bytes) in db::cluster::pending_replica_bytes(pool).await? {
+        if let Some(candidate) = storage.iter_mut().find(|node| node.id == holder) {
+            candidate.disk_free = candidate.disk_free.map(|free| free.saturating_sub(bytes));
+        }
+    }
     for primary in primaries {
-        let change = plan::plan(setting, node, &storage, &primary.copies);
+        // Reconsider this repository's pending reservations against all the other copies.
+        for copy in primary.copies.iter().filter(|copy| copy.version < 0) {
+            if let Some(candidate) = storage.iter_mut().find(|node| node.id == copy.node) {
+                candidate.disk_free = candidate
+                    .disk_free
+                    .map(|free| free.saturating_add(primary.size));
+            }
+        }
+        let change = plan::plan(setting, node, &storage, &primary.copies, primary.size);
+        for holder in primary
+            .copies
+            .iter()
+            .filter(|copy| copy.version < 0 && !change.remove.contains(&copy.node))
+            .map(|copy| copy.node)
+            .chain(change.add.iter().copied())
+        {
+            if let Some(candidate) = storage.iter_mut().find(|node| node.id == holder) {
+                candidate.disk_free = candidate
+                    .disk_free
+                    .map(|free| free.saturating_sub(primary.size));
+            }
+        }
         for copy_node in change.add {
             db::cluster::insert_replica(pool, primary.repository_id, copy_node, node).await?;
         }
@@ -628,7 +728,7 @@ async fn keep_directories(context: &NodeContext) -> Result<HashSet<Uuid>> {
     for row in db::cluster::list_held_replicas(pool, node).await? {
         keep.insert(rpc::repository_uuid(&row.disk_path)?);
     }
-    for (_, disk_path, _, _) in db::cluster::list_primary_repositories(pool, node).await? {
+    for (_, disk_path, _, _, _) in db::cluster::list_primary_repositories(pool, node).await? {
         keep.insert(rpc::repository_uuid(&disk_path)?);
     }
     Ok(keep)

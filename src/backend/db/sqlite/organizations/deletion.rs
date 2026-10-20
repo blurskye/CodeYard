@@ -81,11 +81,16 @@ pub async fn delete_organization_repository(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
+    let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=?1 ORDER BY a.file_id")
+        .bind(repo).fetch_all(&mut *tx).await?;
     let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL RETURNING *")
         .bind(repo).bind(org).fetch_optional(&mut *tx).await?;
     let Some(deleted) = deleted else {
         return Ok(Conflict);
     };
+    for file in files {
+        crate::backend::db::sqlite::files::delete_unlinked_release_file(&mut tx, file).await?;
+    }
     tx.commit().await?;
     Ok(Applied(deleted))
 }

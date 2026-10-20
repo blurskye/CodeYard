@@ -74,7 +74,14 @@ pub(super) async fn recover(
         .await;
     };
     // The typed name must match the organization being recovered, and only ownerless ones are offered.
-    let ownerless = match list_ownerless_organizations(&ctx.state.pool, actor).await {
+    let ownerless = match list_ownerless_organizations(
+        &ctx.state.pool,
+        actor,
+        crate::backend::db::organizations::OrganizationPage::new(org.saturating_sub(1), 1)
+            .expect("positive organization id"),
+    )
+    .await
+    {
         Ok(OrganizationOutcome::Applied(values)) => values,
         Ok(_) => vec![],
         Err(_) => {

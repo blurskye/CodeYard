@@ -12,6 +12,8 @@ pub fn confirm_dialog(
     fields: Element,
     submit: &str,
 ) -> Element {
+    // A fragment alone cannot close an open details element without JavaScript.
+    let cancel = cancel_url(id, cancel);
     rsx! {
         div { id: id.map(str::to_owned), class: "repo-confirm-modal", role: "dialog", aria_label: label.to_owned(),
             a { class: "repo-confirm-backdrop", href: cancel.to_owned(), aria_label: "Cancel", tabindex: "-1" }
@@ -23,5 +25,27 @@ pub fn confirm_dialog(
                 }
             }
         }
+    }
+}
+
+fn cancel_url<'a>(id: Option<&str>, cancel: &'a str) -> &'a str {
+    if id.is_none() {
+        cancel.split('#').next().unwrap_or(cancel)
+    } else {
+        cancel
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn details_cancel_navigates_but_target_dialog_keeps_its_fragment() {
+        assert_eq!(cancel_url(None, "/a/r/issues/1#comment-2"), "/a/r/issues/1");
+        assert_eq!(
+            cancel_url(Some("delete"), "/a/r#comment-2"),
+            "/a/r#comment-2"
+        );
     }
 }

@@ -920,13 +920,15 @@ async fn stack_unstack_by_target_contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{value}");
     assert_eq!(value["stack_id"], one_id);
 
-    // The first unstack takes the stack apart. Another pull request then starts a new stack on the
-    // same bottom layer, which gets the same stack id.
-    assert!(
-        db::pull_requests::records::unstack_pull_requests(f.pool(), alice_id, two_id)
-            .await
-            .unwrap()
-    );
+    // The transaction returns exactly the affected members, not an earlier snapshot.
+    let removed = db::pull_requests::records::unstack_pull_requests(f.pool(), alice_id, two_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(removed.len(), 2);
+    assert!(removed.iter().all(|pull| pull.stack_id.is_none()));
+    assert!(removed.iter().any(|pull| pull.id == one_id));
+    assert!(removed.iter().any(|pull| pull.id == two_id));
     let joined = db::pull_requests::records::join_pull_request_stack(f.pool(), alice_id, three_id)
         .await
         .unwrap();
@@ -937,6 +939,8 @@ async fn stack_unstack_by_target_contract(pg: bool) {
         db::pull_requests::records::unstack_pull_requests(f.pool(), alice_id, two_id)
             .await
             .unwrap()
+            .unwrap()
+            .is_empty()
     );
     for (id, stack_id) in [
         (one_id, Some(one_id)),
@@ -1886,6 +1890,7 @@ async fn stack_upper_layer_ci_contract(pg: bool) {
         repository.id,
         &two,
         upper["id"].as_i64().unwrap(),
+        "main",
     )
     .await
     .unwrap();
@@ -1903,6 +1908,7 @@ async fn stack_upper_layer_ci_contract(pg: bool) {
         repository.id,
         &pushed,
         upper["id"].as_i64().unwrap(),
+        "main",
     )
     .await
     .unwrap();

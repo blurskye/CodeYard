@@ -89,8 +89,10 @@ fn unrelated_actions_model_refresh_emits_no_branch_draft_value_setters() {
         dispatch_branch: branch.into(),
         can_dispatch: true,
         can_manage_runs: true,
+        can_cancel: true,
         workflow_warning: None,
         run_limit: 50,
+        next_before: None,
         log_limit: 2000,
     };
     let control = Rc::new(RefCell::new(None));
@@ -182,6 +184,7 @@ fn collaboration_chrome_refresh_preserves_controlled_values_and_complete_edit_sn
         repository,
         kind: Kind::Issue,
         item: Item {
+            id: 7,
             number: 7,
             stacked: false,
             stack: None,
@@ -212,6 +215,7 @@ fn collaboration_chrome_refresh_preserves_controlled_values_and_complete_edit_sn
         error: None,
         references: Default::default(),
         reviewers: Vec::new(),
+        reviewer_choices: Vec::new(),
         assignable: Vec::new(),
         milestones: Vec::new(),
     };

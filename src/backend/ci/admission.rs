@@ -89,7 +89,17 @@ pub(super) async fn resolve(
             "CI event is unsupported; use workflow_dispatch for manual execution",
         ));
     }
-    if !is_safe_ref(&request.branch) {
+    let pr_revision = request.event == "pull_request";
+    let reference = if pr_revision || !request.branch.starts_with("refs/") {
+        format!("refs/heads/{}", request.branch)
+    } else {
+        request.branch.clone()
+    };
+    if !is_safe_ref(if pr_revision {
+        &reference
+    } else {
+        &request.branch
+    }) {
         return Err(AdmissionError::Invalid("invalid CI ref"));
     }
     let dispatch = request.event == "workflow_dispatch";
@@ -185,11 +195,6 @@ pub(super) async fn resolve(
         return Err(AdmissionError::Denied("CI deployment permission denied"));
     }
     // Recorded pushes and runs keep their ref kind even after the ref is deleted.
-    let reference = if !request.branch.starts_with("refs/") {
-        format!("refs/heads/{}", request.branch)
-    } else {
-        request.branch.clone()
-    };
     let accepted_push = if request.event == "push" {
         if let Some(sha) = request.head_sha.as_deref() {
             tokio::time::timeout(
@@ -203,7 +208,6 @@ pub(super) async fn resolve(
     } else {
         false
     };
-    let pr_revision = request.event == "pull_request";
     let configured_cd = config.workflow_cd.clone();
     if pr_revision && request.head_sha.is_none() {
         return Err(AdmissionError::Invalid(
@@ -215,7 +219,7 @@ pub(super) async fn resolve(
     let store = repo_store(&repo, context);
     let commit = store
         .resolve_ci_commit(
-            if accepted_push || rerun {
+            if accepted_push || pr_revision || rerun {
                 &reference
             } else {
                 &request.branch
@@ -264,12 +268,13 @@ pub(super) async fn resolve(
                 ));
             }
         }
+        // Pull request filters name the base branch itself, even when it looks like a ref.
         let event_ref = if pr_revision {
-            request.branch.as_str()
+            request.branch.clone()
         } else {
-            commit.full_ref.as_str()
+            commit.full_ref.clone()
         };
-        if !definition.matches_event(&request.event, event_ref) {
+        if !definition.matches_event(&request.event, &event_ref) {
             return Err(AdmissionError::Invalid(
                 "CI workflow does not support requested event/ref",
             ));

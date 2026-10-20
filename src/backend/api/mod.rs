@@ -84,6 +84,7 @@ pub fn create_router(state: AppState) -> Router {
         .fallback(render::not_found)
         .with_state(state.clone())
         // Sees every response, including errors. It reads the state, so it sits inside the Extension layer.
+        .layer(axum::middleware::from_fn(render::render_page))
         .layer(axum::middleware::from_fn(middleware::no_ai_html))
         // Resource middleware extracts this before handlers extract router state.
         .layer(Extension(state))
@@ -97,7 +98,7 @@ pub fn create_router(state: AppState) -> Router {
 pub async fn run_web_server(
     addr: SocketAddr,
     state: AppState,
-    mut stop: tokio::sync::watch::Receiver<bool>,
+    stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let git_tasks = state.git_tasks.clone();
     let app = create_router(state).layer(axum::middleware::from_fn_with_state(
@@ -114,17 +115,11 @@ pub async fn run_web_server(
             })
             .await
     };
-    tokio::pin!(server);
-    tokio::select! {
-        result = &mut server => {
-            git_tasks.drain().await;
-            result?;
-        }
-        () = wait_for_stop(&mut stop) => {
-            let (result, ()) = tokio::join!(server, git_tasks.drain());
-            result?;
-        }
-    }
+    let result = server.await;
+    // Accepted handlers may still be waiting for a Git session slot. Keep task
+    // admission open until those handlers finish or their shutdown grace expires.
+    git_tasks.drain().await;
+    result?;
     Ok(())
 }
 

@@ -65,6 +65,7 @@ pub async fn begin(
     browser_nonce: &str,
     state_token: &str,
     verifier: &str,
+    return_to: &str,
 ) -> Result<String, OAuthError> {
     let meta = providers::provider_meta(provider).ok_or(OAuthError::UnknownProvider)?;
     let (client, _) = providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
@@ -79,6 +80,7 @@ pub async fn begin(
         provider,
         redirect,
         &providers::browser_binding(browser_nonce),
+        return_to,
     )
     .await
     .map_err(|_| OAuthError::StateUnavailable)?;
@@ -103,7 +105,7 @@ pub struct Callback<'a> {
 pub async fn complete(
     pool: &DbPool,
     callback: Callback<'_>,
-) -> Result<AuthenticatedAccount, OAuthError> {
+) -> Result<(AuthenticatedAccount, String), OAuthError> {
     let Callback {
         provider,
         code,
@@ -171,5 +173,5 @@ pub async fn complete(
     let session_id = sessions::issue_authenticated_session(pool, session, user.id, None)
         .await
         .map_err(OAuthError::AccountAdmittedSessionFailed)?;
-    Ok(AuthenticatedAccount { user, session_id })
+    Ok((AuthenticatedAccount { user, session_id }, stored.return_to))
 }

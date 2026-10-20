@@ -152,14 +152,19 @@ async fn obsolete_language_refresh_does_not_replace_current_default_statistics()
             .await
             .unwrap();
         let python = vec![("Python".to_owned(), 100, 100.0, "#abcabc".to_owned())];
-        db::repository_stats::upsert_repo_languages(f.pool(), r.id, "topic", &python)
+        let mut source = db::repository_stats::language_source(f.pool(), r.id)
+            .await
+            .unwrap()
+            .unwrap();
+        db::repository_stats::upsert_repo_languages(f.pool(), &source, "python", &python)
             .await
             .unwrap();
         for stale in [
             vec![],
             vec![("Rust".to_owned(), 200, 100.0, "#123123".to_owned())],
         ] {
-            db::repository_stats::upsert_repo_languages(f.pool(), r.id, "main", &stale)
+            source.default_branch = "main".into();
+            db::repository_stats::upsert_repo_languages(f.pool(), &source, "rust", &stale)
                 .await
                 .unwrap();
             let rows = db::repository_stats::get_repo_languages(f.pool(), r.id)
@@ -221,7 +226,8 @@ async fn milestone_titles_use_ascii_case_folding_and_choices_keep_their_fields()
             .unwrap();
         assert_eq!(choices.len(), 3);
         assert_eq!(choices[0].id, first.id);
-        assert_eq!(choices[0].description.as_deref(), Some("Summer"));
+        // Choices leave out descriptions so a long list stays small.
+        assert_eq!(choices[0].description, None);
         assert_eq!(choices[0].due_date.as_deref(), Some("2030-07-01"));
         assert_eq!(
             db::milestones::get_milestone(f.pool(), r.id, first.number)
@@ -555,7 +561,13 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
     }
 }
 
+#[path = "regressions/assignment_and_search.rs"]
+mod assignment_and_search;
 #[path = "regressions/contention.rs"]
 mod contention;
+#[path = "regressions/infra.rs"]
+mod infra;
 #[path = "regressions/notifications.rs"]
 mod notification_tests;
+#[path = "regressions/session_and_delivery.rs"]
+mod session_and_delivery;

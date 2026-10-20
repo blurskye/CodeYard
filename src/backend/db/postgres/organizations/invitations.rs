@@ -106,11 +106,12 @@ pub async fn cancel_organization_invitation(
 pub async fn list_received_organization_invitations(
     pool: &PgPool,
     actor: i64,
+    page: OrganizationPage,
 ) -> Result<Vec<ReceivedInvitation>> {
     Ok(sqlx::query_as(
-        "SELECT i.org_id,o.name AS org_name,o.display_name AS org_display_name,i.role,i.created_at FROM organization_invitations i JOIN organizations o ON o.id=i.org_id WHERE i.user_id=$1 ORDER BY i.id",
+        "SELECT i.id,i.org_id,o.name AS org_name,o.display_name AS org_display_name,i.role,i.created_at FROM organization_invitations i JOIN organizations o ON o.id=i.org_id WHERE i.user_id=$1 AND i.id>$2 ORDER BY i.id LIMIT $3",
     )
-    .bind(actor)
+    .bind(actor).bind(page.after).bind(page.limit)
     .fetch_all(pool)
     .await?)
 }

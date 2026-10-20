@@ -114,6 +114,88 @@ async fn upload(
         .await
 }
 
+async fn release_creation_uses_the_checked_repository_id(pg: bool) {
+    use codeyard::backend::repositories::{
+        lifecycle,
+        releases::{self, ReleaseInput},
+    };
+    let mut world = setup(pg).await;
+    let pool = world.database.pool();
+    let original = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = original.owner_user_id.unwrap();
+    world
+        .database
+        .execute(
+            "UPDATE repositories SET name='moved', is_private=TRUE WHERE id=$1",
+            &[original.id],
+        )
+        .await;
+    let replacement = lifecycle::provision(
+        (pool, None),
+        world._root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        "proj",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let state = AppState::new(
+        pool.clone(),
+        world._root.path().to_owned(),
+        Arc::new(ObjectStore::open(world._root.path(), None).await.unwrap()),
+        None,
+        CiConfig::default(),
+        None,
+    );
+    let release = releases::create(
+        pool,
+        None,
+        &state.ci_runs,
+        &state.notification_broadcaster,
+        actor,
+        "alice",
+        "proj",
+        &ReleaseInput {
+            repository_id: original.id,
+            tag: "private-release".into(),
+            target: world.main.clone(),
+            fields: db::releases::ReleaseFields {
+                body: Some("Confidential release notes".into()),
+                ..Default::default()
+            },
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        db::releases::get_release_by_tag(pool, original.id, &release.tag_name)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        db::releases::get_release_by_tag(pool, replacement.id, &release.tag_name)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    world.database.finish().await;
+}
+#[tokio::test]
+async fn sqlite_release_creation_uses_the_checked_repository_id() {
+    release_creation_uses_the_checked_repository_id(false).await;
+}
+#[tokio::test]
+async fn postgres_release_creation_uses_the_checked_repository_id() {
+    release_creation_uses_the_checked_repository_id(true).await;
+}
+mod regressions;
+
 async fn long_release_target(pg: bool) {
     let mut world = setup(pg).await;
     let branch = format!("{}/{}", "a".repeat(128), "b".repeat(126));
@@ -463,10 +545,21 @@ async fn releases_flow(pg: bool) {
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // Edit and delete from the native forms. Deleting removes the draft and its tag stays.
+    let (_, edit) = alice
+        .page(&format!("/alice/proj/releases/edit/{draft_id}"))
+        .await;
+    let revision = edit
+        .split_once("name=\"revision\" value=\"")
+        .unwrap()
+        .1
+        .split('"')
+        .next()
+        .unwrap();
     let reply = alice
         .form_reply(
             &format!("/alice/proj/releases/edit/{draft_id}"),
             &[
+                ("revision", revision),
                 ("title", "Release candidate"),
                 ("body", "Testing"),
                 ("latest", "on"),
@@ -1402,4 +1495,264 @@ async fn sqlite_release_write_regressions() {
 #[tokio::test]
 async fn postgres_release_write_regressions() {
     release_write_regressions(true).await;
+}
+
+fn hidden_revision(html: &str) -> String {
+    html.split_once("name=\"revision\" value=\"")
+        .unwrap()
+        .1
+        .split('"')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+async fn release_edit_and_read_regressions(pg: bool) {
+    let mut world = setup(pg).await;
+    let id = publish(&world.alice, "edits").await;
+    let api = format!("/api/repos/alice/proj/releases/{id}");
+    let edit = format!("/alice/proj/releases/edit/{id}");
+    world
+        .alice
+        .expect(
+            "PATCH",
+            &api,
+            json!({"name":"Original title", "body":"Original notes"}),
+            StatusCode::OK,
+        )
+        .await;
+    let (_, old) = world.alice.page(&edit).await;
+    let revision = hidden_revision(&old);
+    let preserved = world
+        .alice
+        .expect("PATCH", &api, json!({"prerelease":true}), StatusCode::OK)
+        .await;
+    assert_eq!(preserved["name"], "Original title");
+    assert_eq!(preserved["body"], "Original notes");
+    world
+        .alice
+        .expect("PATCH", &api, json!({"body":"Newer notes"}), StatusCode::OK)
+        .await;
+    let stale = world
+        .alice
+        .form_reply(
+            &edit,
+            &[
+                ("revision", &revision),
+                ("title", "My draft title"),
+                ("body", "Original notes"),
+                ("prerelease", "on"),
+            ],
+        )
+        .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT, "{}", stale.text());
+    assert!(stale.text().contains("My draft title"));
+    assert!(stale.text().contains("Original notes"));
+    let saved = world
+        .alice
+        .expect("GET", &api, Value::Null, StatusCode::OK)
+        .await;
+    assert_eq!(saved["body"], "Newer notes");
+    let reviewed = hidden_revision(&stale.text());
+    assert_ne!(reviewed, revision);
+    let confirmed = world
+        .alice
+        .form_reply(
+            &edit,
+            &[
+                ("revision", &reviewed),
+                ("title", "My draft title"),
+                ("body", "Reviewed notes"),
+            ],
+        )
+        .await;
+    assert_eq!(
+        confirmed.status,
+        StatusCode::SEE_OTHER,
+        "{}",
+        confirmed.text()
+    );
+    let cleared = world
+        .alice
+        .expect(
+            "PATCH",
+            &api,
+            json!({"body":null, "name":null}),
+            StatusCode::OK,
+        )
+        .await;
+    assert!(cleared["body"].is_null());
+    assert!(cleared["name"].is_null());
+    for name in ["a.bin", "b.bin"] {
+        assert_eq!(
+            upload(
+                &world.alice,
+                &format!("/alice/proj/releases/{id}/assets"),
+                "",
+                name,
+                name.as_bytes()
+            )
+            .await
+            .status,
+            StatusCode::SEE_OTHER
+        );
+    }
+    let assets = db::releases::list_release_assets(world.database.pool(), id)
+        .await
+        .unwrap();
+    assert_eq!(
+        db::releases::get_release_asset_by_name(world.database.pool(), id, "b.bin")
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        assets[1].id
+    );
+    assert!(
+        db::releases::get_release_asset_by_name(world.database.pool(), id, "missing.bin")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        db::releases::get_release_asset_by_name(world.database.pool(), -1, "a.bin")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    std::fs::rename(&repo.disk_path, world._root.path().join("offline.git")).unwrap();
+    for path in [
+        "/alice/proj/releases".to_owned(),
+        "/alice/proj/releases/tag/edits".to_owned(),
+        edit.clone(),
+    ] {
+        assert_eq!(world.alice.page(&path).await.0, StatusCode::OK, "{path}");
+    }
+    let downloaded = world
+        .bob
+        .exchange(
+            "GET",
+            "/alice/proj/releases/download/edits/b.bin",
+            "",
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(downloaded.status, StatusCode::OK);
+    assert_eq!(downloaded.body, b"b.bin");
+    let missing = world
+        .bob
+        .exchange(
+            "GET",
+            "/alice/proj/releases/download/edits/missing.bin",
+            "",
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND);
+    let (_, current) = world.alice.page(&edit).await;
+    let revision = hidden_revision(&current);
+    assert_eq!(
+        world
+            .alice
+            .form_reply(
+                &edit,
+                &[
+                    ("revision", &revision),
+                    ("title", "Offline edit"),
+                    ("body", "Database notes")
+                ]
+            )
+            .await
+            .status,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        world
+            .alice
+            .form_reply(
+                &format!("/alice/proj/releases/{id}/assets/{}/delete", assets[0].id),
+                &[]
+            )
+            .await
+            .status,
+        StatusCode::SEE_OTHER
+    );
+    assert_eq!(
+        world
+            .alice
+            .form_reply(&format!("/alice/proj/releases/{id}/delete"), &[])
+            .await
+            .status,
+        StatusCode::SEE_OTHER
+    );
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_release_edit_and_read_regressions() {
+    release_edit_and_read_regressions(false).await;
+}
+#[tokio::test]
+async fn postgres_release_edit_and_read_regressions() {
+    release_edit_and_read_regressions(true).await;
+}
+
+#[tokio::test]
+async fn postgres_concurrent_release_deletion_with_shared_files() {
+    let mut world = setup(true).await;
+    let pool = world.database.pool();
+    let proj = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let vault = db::repositories::records::get_repository(pool, "alice", "vault")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = proj.owner_user_id.unwrap();
+    let first =
+        db::releases::create_release(pool, actor, proj.id, "first", "main", &Default::default())
+            .await
+            .unwrap();
+    let second =
+        db::releases::create_release(pool, actor, vault.id, "second", "main", &Default::default())
+            .await
+            .unwrap();
+    for name in ["a.bin", "b.bin"] {
+        assert_eq!(
+            upload(
+                &world.alice,
+                &format!("/alice/proj/releases/{}/assets", first.id),
+                "",
+                name,
+                b"bytes"
+            )
+            .await
+            .status,
+            StatusCode::SEE_OTHER
+        );
+    }
+    // Legacy rows can share uploads across repositories, in opposite asset order.
+    world.database.execute("INSERT INTO release_assets(release_id,file_id,name,content_type,size) SELECT $1,file_id,name,content_type,size FROM release_assets WHERE release_id=$2 ORDER BY id DESC", &[second.id, first.id]).await;
+    let (left, right) = tokio::join!(
+        db::releases::delete_release(pool, actor, proj.id, first.id),
+        db::releases::delete_release(pool, actor, vault.id, second.id)
+    );
+    let removed = left
+        .unwrap()
+        .into_iter()
+        .chain(right.unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(removed.len(), 2);
+    for file in removed {
+        assert!(db::files::get_file_by_id(pool, file.id)
+            .await
+            .unwrap()
+            .is_none());
+    }
+    world.database.finish().await;
 }

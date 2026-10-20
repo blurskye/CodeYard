@@ -25,6 +25,8 @@ const RESERVED_NAMES: &[&str] = &[
     "enter",
     "explore",
     "health",
+    "help",
+    "forgot-password",
     "issues",
     "login",
     "logout",
@@ -53,7 +55,15 @@ mod tests {
 
     #[test]
     fn the_asset_and_avatar_addresses_are_reserved() {
-        for name in ["assets", "avatars", "AVATARS", "wasm"] {
+        for name in [
+            "assets",
+            "avatars",
+            "AVATARS",
+            "wasm",
+            "help",
+            "HELP",
+            "forgot-password",
+        ] {
             assert!(is_reserved_name(name), "{name}");
         }
         assert!(!is_reserved_name("alice"));

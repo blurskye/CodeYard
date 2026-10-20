@@ -79,7 +79,7 @@ pub(super) fn safe_url(url: &str, image: bool) -> bool {
         || url.starts_with("//")
         || url
             .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+            .any(|c| (c.is_whitespace() && c != ' ') || c.is_control() || c == '\\')
     {
         return false;
     }
@@ -156,7 +156,7 @@ pub(super) fn link_href(url: &str) -> Option<String> {
     }
     Some(match url.strip_prefix('#') {
         Some(fragment) => format!("#{}", discussion_target(fragment)),
-        None => url.to_owned(),
+        None => url.replace(' ', "%20"),
     })
 }
 
@@ -1094,7 +1094,11 @@ impl<'r> Emitter<'r> {
         if !safe_url(dest, true) {
             return self.write(&escape_html(&alt));
         }
-        self.write(&image_tag(dest, &alt, &title_attribute(title)))
+        self.write(&image_tag(
+            &dest.replace(' ', "%20"),
+            &alt,
+            &title_attribute(title),
+        ))
     }
 
     /// A code block's text is read to its end. Fenced blocks with a language are
@@ -1559,20 +1563,18 @@ impl LinkBase {
 
     /// A `srcset` with the address of each candidate resolved. A candidate keeps its descriptor.
     fn resolve_srcset(&self, srcset: &str) -> String {
+        let Some(candidates) = super::markdown_html::srcset_candidates(srcset) else {
+            return String::new();
+        };
         let mut out = String::new();
-        for (index, candidate) in srcset.split(',').enumerate() {
+        for (index, (url, descriptor)) in candidates.into_iter().enumerate() {
             if index > 0 {
                 out.push_str(", ");
             }
-            let candidate = candidate.trim_start();
-            let end = candidate.find(' ').unwrap_or(candidate.len());
-            let (url, descriptor) = candidate.split_at(end);
-            match self.resolve(url, true) {
-                Some(target) => {
-                    out.push_str(&target);
-                    out.push_str(descriptor);
-                }
-                None => out.push_str(candidate),
+            out.push_str(&self.resolve(url, true).unwrap_or_else(|| url.to_owned()));
+            if !descriptor.is_empty() {
+                out.push(' ');
+                out.push_str(descriptor);
             }
         }
         out
@@ -2655,6 +2657,30 @@ mod tests {
         );
         assert!(bounded_markdown(&source, false).is_none());
         assert!(parse_markdown(&source).contains("showing a plain-text preview"));
+    }
+
+    #[test]
+    fn commonmark_destinations_encode_spaces_and_srcsets_preserve_url_commas() {
+        let html = parse_document("[Guide](<docs/My Guide.md>) ![logo](<images/my logo.png>)");
+        assert!(html.contains("href=\"docs/My%20Guide.md\""), "{html}");
+        assert!(html.contains("src=\"images/my%20logo.png\""), "{html}");
+        let base = LinkBase {
+            blob: "/a/r/blob/main".into(),
+            raw: "/a/r/raw/main".into(),
+            ..Default::default()
+        };
+        let srcset = "https://cdn.test/image?crop=10,20 2x, small.png 1x";
+        assert_eq!(
+            base.resolve_srcset(srcset),
+            "https://cdn.test/image?crop=10,20 2x, /a/r/raw/main/small.png 1x"
+        );
+        let html = parse_document("<picture><source srcset=\"https://cdn.test/image?crop=10,20 2x\"><img src=\"small.png\"></picture>");
+        assert!(
+            html.contains("srcset=\"https://cdn.test/image?crop=10,20 2x\""),
+            "{html}"
+        );
+        assert!(!safe_url("javascript:alert(1)", false));
+        assert!(!safe_url("docs/a\tb", false));
     }
 
     #[test]

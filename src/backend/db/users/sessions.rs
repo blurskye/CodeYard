@@ -54,6 +54,7 @@ native_operation!(crate::backend::db::postgres::users::sessions::save_bound_oaut
     provider: &str,
     redirect: &str,
     binding: &str,
+    return_to: &str,
 ) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::users::sessions::consume_bound_oauth_state,
@@ -70,13 +71,14 @@ native_operation!(crate::backend::db::postgres::users::sessions::get_browser_ses
     crate::backend::db::sqlite::users::sessions::get_browser_session,
     fn get_browser_session(pool: &DbPool, id: &str) -> Result<Option<BrowserSession>>);
 
-/// The proof used to issue a session. Recovery codes are consumed with the session insert.
+/// The proof used to issue a session. Second factors are consumed with the session insert.
 #[derive(Clone, Copy)]
 pub enum SessionCredential<'a> {
     Password(&'a str),
     SecondFactor {
         password: &'a str,
         recovery_hash: Option<&'a str>,
+        totp: Option<(&'a [u8], i64)>,
     },
     OAuth,
 }

@@ -128,6 +128,27 @@ pub(crate) async fn lock_repository_mutation_authority(
     )
 }
 
+/// Administration that remains available on archived repositories, including deletion.
+pub(crate) async fn lock_archive_authority(
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    let authority = super::repositories::access::lock_user_repo_access_in_transaction(
+        tx,
+        actor_id,
+        repo_id,
+        RepositoryLock::Exclusive,
+        true,
+    )
+    .await?;
+    Ok(authority.is_some_and(|a| {
+        (!a.organization || a.organization_usable)
+            && (a.access.can_admin()
+                || (!a.organization && (a.is_admin || a.owner_user_id == Some(actor_id))))
+    }))
+}
+
 async fn lock_contribution_authority_with(
     tx: &mut Transaction<'_, Postgres>,
     actor_id: i64,

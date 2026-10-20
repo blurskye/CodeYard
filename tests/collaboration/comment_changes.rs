@@ -163,7 +163,13 @@ async fn edit_and_delete_rules(pg: bool) {
     // The author's edit lands, and the page marks the comment as edited.
     tokio::time::sleep(Duration::from_millis(5)).await;
     let saved = bob
-        .form_reply(&format!("{}/edit", at(theirs)), &[("body", "Bob revised")])
+        .form_reply(
+            &format!("{}/edit", at(theirs)),
+            &[
+                ("body", "Bob revised"),
+                ("expected_body", "\"Bob's words\""),
+            ],
+        )
         .await;
     assert!(saved.status.is_redirection(), "{}", saved.text());
     let (_, page) = bob.page(issue).await;
@@ -311,7 +317,7 @@ async fn pull_request_comment_rules(pg: bool) {
     refused(
         &world.bob,
         &format!("{page}/comments/{alices}/edit"),
-        &[("body", "x")],
+        &[("body", "x"), ("expected_body", "\"Alice's question\"")],
         "Only the author can edit this comment.",
     )
     .await;
@@ -319,7 +325,10 @@ async fn pull_request_comment_rules(pg: bool) {
         .bob
         .form_reply(
             &format!("{page}/comments/{bobs}/edit"),
-            &[("body", "Bob's revised answer")],
+            &[
+                ("body", "Bob's revised answer"),
+                ("expected_body", "\"Bob's answer\""),
+            ],
         )
         .await;
     assert!(saved.status.is_redirection(), "{}", saved.text());

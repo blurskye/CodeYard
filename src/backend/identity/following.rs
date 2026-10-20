@@ -23,6 +23,8 @@ pub enum FollowError {
     SelfFollow,
     #[error("Cannot unfollow yourself")]
     SelfUnfollow,
+    #[error("An unrestricted account is required")]
+    Restricted,
     #[error("Follow storage is temporarily unavailable")]
     Unavailable,
     #[error("Follow request completed, but updated counts are temporarily unavailable")]
@@ -51,6 +53,14 @@ pub async fn status(
     })
 }
 
+fn mutation_error(error: anyhow::Error) -> FollowError {
+    if error.is::<following::FollowRestricted>() {
+        FollowError::Restricted
+    } else {
+        FollowError::Unavailable
+    }
+}
+
 pub async fn change(
     pool: &DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -66,6 +76,9 @@ pub async fn change(
         .await
         .map_err(|_| FollowError::Unavailable)?
         .ok_or(FollowError::Missing)?;
+    if current.is_banned || current.must_change_password {
+        return Err(FollowError::Restricted);
+    }
     if actor == target.id {
         return Err(if follow {
             FollowError::SelfFollow
@@ -76,7 +89,7 @@ pub async fn change(
     if follow {
         let created = following::follow_user(pool, actor, target.id)
             .await
-            .map_err(|_| FollowError::Unavailable)?;
+            .map_err(mutation_error)?;
         if created {
             let title = format!("{} started following you", current.username);
             let link = format!("/{}", current.username);
@@ -114,7 +127,7 @@ pub async fn change(
     } else {
         following::unfollow_user(pool, actor, target.id)
             .await
-            .map_err(|_| FollowError::Unavailable)?;
+            .map_err(mutation_error)?;
     }
     status(pool, target.id, Some(actor))
         .await

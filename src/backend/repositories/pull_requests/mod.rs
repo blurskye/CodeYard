@@ -134,6 +134,11 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
             code: "conflict",
             message: "The pull request no longer accepts this review".into(),
         },
+        Some(DiscussionWriteRefusal::RevisionChanged) => OperationError::Conflict {
+            code: "revision_conflict",
+            message: "The pull request revisions changed. Reload the diff before commenting."
+                .into(),
+        },
         Some(DiscussionWriteRefusal::ReviewFull) => OperationError::Invalid {
             code: "validation_error",
             message: "A review holds at most 200 comments.".into(),

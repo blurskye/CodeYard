@@ -65,7 +65,11 @@ pub(crate) fn page_history(initial: &str) -> Rc<dyn dioxus_history::History> {
     #[cfg(target_arch = "wasm32")]
     {
         let _ = initial;
-        Rc::new(dioxus_web::WebHistory::new(None, true))
+        let history = dioxus_web::WebHistory::new(None, false);
+        if let Some(history) = web_sys::window().and_then(|window| window.history().ok()) {
+            let _ = history.set_scroll_restoration(web_sys::ScrollRestoration::Manual);
+        }
+        Rc::new(history)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -164,6 +168,8 @@ fn PageRouteView(target: String) -> Element {
         let mut failure = failure;
         let router = dioxus_router::router();
         let mut started = use_signal(|| false);
+        let mut adopted = use_signal(|| None::<(String, u64)>);
+        let mut pending_scroll = use_signal(|| None::<[f64; 2]>);
         let mut generation = use_signal(|| 0_u64);
         let active = use_hook(|| Rc::new(std::cell::RefCell::new(None::<InFlight>)));
         let drop_active = active.clone();
@@ -174,7 +180,11 @@ fn PageRouteView(target: String) -> Element {
         });
         use_effect(move || {
             let target = router.full_route_string();
-            let _epoch = refresh();
+            let epoch = refresh();
+            if adopts_loaded_location(adopted.peek().as_ref(), &target, epoch) {
+                adopted.set(None);
+                return;
+            }
             if !*started.peek() {
                 started.set(true);
                 return; // The authorized initial server props are already complete.
@@ -200,6 +210,7 @@ fn PageRouteView(target: String) -> Element {
                     return;
                 }
             };
+            let scroll = (target != current.peek().location).then(history_scroll);
             let signal = controller.signal();
             let timeout_controller = controller.clone();
             let next = *generation.peek() + 1;
@@ -211,7 +222,7 @@ fn PageRouteView(target: String) -> Element {
             let request_active = active.clone();
             let task = spawn(async move {
                 let request = load::load_page(&request_target, &signal);
-                let timeout = gloo_timers::future::TimeoutFuture::new(30_000);
+                let timeout = gloo_timers::future::TimeoutFuture::new(MODEL_TIMEOUT_MS);
                 futures_util::pin_mut!(request, timeout);
                 let result = match futures_util::future::select(request, timeout).await {
                     futures_util::future::Either::Left((result, _)) => result,
@@ -246,8 +257,12 @@ fn PageRouteView(target: String) -> Element {
                             envelope.chrome.theme,
                             current.peek().chrome.theme,
                         );
+                        if let Some(scroll) = scroll {
+                            pending_scroll.set(Some(scroll));
+                        }
                         current.set(envelope);
                         if location != request_target.split('#').next().unwrap_or(&request_target) {
+                            adopted.set(Some((location.clone(), epoch)));
                             router.replace(location);
                         }
                     }
@@ -267,6 +282,11 @@ fn PageRouteView(target: String) -> Element {
         });
         use_effect(move || {
             let page = current.read();
+            if let Some([x, y]) = pending_scroll.write().take() {
+                if let Some(window) = web_sys::window() {
+                    window.scroll_to_with_x_and_y(x, y);
+                }
+            }
             if let Some(document) = web_sys::window().and_then(|w| w.document()) {
                 document.set_title(&crate::webui::app::tab_title(&page.title));
                 if let Some(html) = document.document_element() {
@@ -277,7 +297,7 @@ fn PageRouteView(target: String) -> Element {
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (refresh, appearance);
-    let envelope = current.read().clone();
+    let _ = current;
     rsx! {
         if loading() {
             div { role: "status", class: "page-navigation-progress",
@@ -290,13 +310,60 @@ fn PageRouteView(target: String) -> Element {
                 a { href: target.clone(), class: "text-primary hover:underline", "Reload this page" }
             }
         }
-        {super::app::page_tree(envelope)}
+        CurrentPageView {}
     }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn adopts_loaded_location(adopted: Option<&(String, u64)>, target: &str, epoch: u64) -> bool {
+    adopted.is_some_and(|(location, accepted_epoch)| location == target && *accepted_epoch == epoch)
+}
+
+// Content search has a 35-second server deadline; leave room for response transfer.
+#[cfg(any(target_arch = "wasm32", test))]
+const MODEL_TIMEOUT_MS: u32 = 45_000;
+
+#[cfg(target_arch = "wasm32")]
+fn history_scroll() -> [f64; 2] {
+    let state = web_sys::window()
+        .and_then(|window| window.history().ok())
+        .and_then(|history| history.state().ok());
+    let value = state.map(|state| js_sys::Array::from(&state));
+    value
+        .map(|state| {
+            [
+                state.get(0).as_f64().unwrap_or(0.0),
+                state.get(1).as_f64().unwrap_or(0.0),
+            ]
+        })
+        .unwrap_or([0.0, 0.0])
+}
+
+/// Loading and failure banners do not clone or diff the current page payload.
+#[component]
+fn CurrentPageView() -> Element {
+    let CurrentPage(current) = use_context();
+    let envelope = current.read().clone();
+    super::app::page_tree(envelope)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn canonical_adoption_skips_only_the_duplicate_route_read_not_a_refresh() {
+        let adopted = ("/a/r/tree/main".to_owned(), 3);
+        assert!(adopts_loaded_location(Some(&adopted), "/a/r/tree/main", 3));
+        assert!(!adopts_loaded_location(Some(&adopted), "/a/r/tree/main", 4));
+        assert!(!adopts_loaded_location(Some(&adopted), "/help", 3));
+        assert!(!adopts_loaded_location(None, "/a/r/tree/main", 3));
+    }
+
+    #[test]
+    fn navigation_allows_the_server_content_search_deadline_and_transfer() {
+        const { assert!(MODEL_TIMEOUT_MS > 35_000 + 5_000) };
+    }
+
     #[test]
     fn slow_same_selection_polls_are_coalesced_but_navigation_replaces_the_request() {
         let active = "/alice/repo/actions?job=10";

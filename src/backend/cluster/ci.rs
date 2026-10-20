@@ -34,14 +34,24 @@ mod tests {
         .unwrap();
         db::run_migrations(&pool).await.unwrap();
         let key = NodeKey::generate();
+        let node = db::cluster::register_own_node(
+            &pool,
+            &key.public_hex(),
+            "core",
+            &["actions-worker".into()],
+            "test",
+        )
+        .await
+        .unwrap();
         let context = NodeContext {
             pool: Some(pool.clone()),
             iroh: IrohDialer::new(Relay::Off, key.clone()),
             key,
-            node_id: 1,
+            node_id: node.id,
             repos_path: root.path().to_owned(),
             peers: Default::default(),
             unreachable: Default::default(),
+            ci_replicas: Default::default(),
         };
         let queue = RunQueue::Database {
             pool: pool.clone(),
@@ -68,6 +78,23 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), CORE_UNAVAILABLE);
+        let header = serde_json::to_vec(&request(Operation::Claim {
+            mode: CiExecutionMode::Local,
+        }))
+        .unwrap();
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(header.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&header);
+        let mut link = Link::tcp(
+            context.key.public_key(),
+            transport::ALPN_EVENTS,
+            std::io::Cursor::new(frame),
+            tokio::io::sink(),
+        );
+        assert_eq!(
+            handler.answer(&mut link).await.unwrap(),
+            Err(CORE_UNAVAILABLE.into())
+        );
         assert!(handler
             .execute(
                 context.key.public_key(),
@@ -143,12 +170,37 @@ impl CiHandler {
                 }
                 serde_json::to_value(claim)?
             }
+            Operation::Storage { run_id } => {
+                let pool = self.context.database()?;
+                let run = db::ci::get_ci_run_by_run_id(pool, run_id)
+                    .await?
+                    .filter(|run| run.status == "running" && run.worker.as_deref() == Some(&worker))
+                    .ok_or_else(|| anyhow::anyhow!("CI run does not belong to this worker"))?;
+                let repo = db::repositories::records::get_repository_by_id(pool, run.repo_id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("repository not found"))?;
+                let id = repo.storage_node_id.unwrap_or(self.context.node_id);
+                let node = db::cluster::get_node_by_id(pool, id)
+                    .await?
+                    .filter(|node| {
+                        node.status == "active" && node.roles.iter().any(|role| role == "storage")
+                    })
+                    .ok_or_else(|| anyhow::anyhow!(CORE_UNAVAILABLE))?;
+                let peer = super::CorePeer {
+                    public_key: node.public_key,
+                    address: serde_json::from_str(
+                        node.addr_hint
+                            .as_deref()
+                            .ok_or_else(|| anyhow::anyhow!(CORE_UNAVAILABLE))?,
+                    )?,
+                };
+                serde_json::to_value((id, peer))?
+            }
             Operation::Heartbeat { id } => {
                 serde_json::to_value(self.queue.heartbeat(&worker, id).await?)?
             }
             Operation::Logs { id, lines } => {
-                self.queue.logs(&worker, id, &lines).await?;
-                serde_json::Value::Null
+                serde_json::to_value(self.queue.logs(&worker, id, &lines).await?)?
             }
             Operation::Finish {
                 id,
@@ -219,7 +271,11 @@ impl CiHandler {
             Err(error) => {
                 // Never return database errors or decrypted secret contents to the peer.
                 tracing::warn!(%error, "CI queue request failed");
-                Err(REFUSED.to_owned())
+                Err(if error.to_string() == CORE_UNAVAILABLE {
+                    CORE_UNAVAILABLE.to_owned()
+                } else {
+                    REFUSED.to_owned()
+                })
             }
         })
     }

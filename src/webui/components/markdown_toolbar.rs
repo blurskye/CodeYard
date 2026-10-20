@@ -169,6 +169,7 @@ fn insert_markup(id: &str, markup: Markup) {
     area.set_value(&edited);
     // The selection is counted in UTF-16 units, as the browser counts text.
     let unit_at = |at: usize| edited[..at].encode_utf16().count() as u32;
+    let _ = area.focus();
     let _ = area.set_selection_range(unit_at(from), unit_at(to));
     let init = web_sys::EventInit::new();
     init.set_bubbles(true);

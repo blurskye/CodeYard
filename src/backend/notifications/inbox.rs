@@ -30,13 +30,10 @@ pub async fn inbox(
         action,
         NotificationInboxAction::Done { .. } | NotificationInboxAction::DoneAll { .. }
     );
-    let mut result = records::notification_inbox(pool, session_id, user_id, action)
+    let result = records::notification_inbox(pool, session_id, user_id, action)
         .await
         .map_err(|_| InboxError::Unavailable)?
         .ok_or(InboxError::Denied)?;
-    records::refresh_links(pool, &mut result.notifications)
-        .await
-        .map_err(|_| InboxError::Unavailable)?;
     match read {
         Some(Some(notification_id)) if !result.notifications.is_empty() => {
             broadcaster

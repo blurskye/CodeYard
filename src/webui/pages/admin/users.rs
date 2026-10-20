@@ -18,6 +18,7 @@ pub struct AccountMetadata {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AdminUsers {
+    pub managed_accounts: bool,
     pub current_user_id: i64,
     /// The rows on this page.
     pub accounts: Vec<AccountMetadata>,
@@ -151,11 +152,13 @@ pub fn admin_users_page(
                 }
             }
             {notice(message, error)}
+            if model.managed_accounts {
             section { class: "identity-admin-panel", aria_labelledby: "admin-create-title",
                 header { class: "identity-admin-panel-header",
                     div { h2 { id: "admin-create-title", "Create user" } p { "The new account signs in with the temporary password and must change it." } }
                 }
                 {managed_account_form(token, &model.values, "/admin/access/users", true)}
+            }
             }
             section { class: "identity-admin-panel", aria_labelledby: "admin-accounts-title",
                 header { class: "identity-admin-panel-header",

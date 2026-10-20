@@ -127,6 +127,14 @@ fn admit_updates(
         state.proposed.is_none() && !state.post_started,
         "duplicate pre-receive hook"
     );
+    if updates
+        .iter()
+        .any(|update| update.old == ZERO_SHA && update.reference.starts_with("refs/heads/"))
+    {
+        state.previous_refs = crate::backend::git::list_mirror_refs(path)?
+            .into_values()
+            .collect();
+    }
     state.proposed = Some(updates.to_vec());
     Ok(())
 }
@@ -153,12 +161,12 @@ impl Gateway {
             .context("repository unavailable")?;
         let path = self.bare_path(&repo).await?;
         ensure!(path == operation.path, "repository location changed");
-        let authorized = operation
-            .credential
-            .authorize(&self.pool, &repo, true)
-            .await;
         if !post {
-            let (identity, _) = authorized?;
+            let (identity, _) = operation
+                .credential
+                .authorize(&self.pool, &repo, true)
+                .await?;
+            ensure!(identity.id == operation.actor_id, "identity changed");
             let quarantine = match quarantine {
                 Some(claimed) => quarantine_directory(&path, claimed).await,
                 None => None,
@@ -266,8 +274,20 @@ impl Gateway {
             failed = true;
         }
         crate::backend::git::maintenance::after_push(repo.id, path.clone());
-        // Metadata describes accepted refs even if the credential has since been revoked.
-        let (identity, _) = authorized?;
+        // Accepted-write bookkeeping uses the admitted actor, not credential liveness. CI keeps
+        // the actor's live access, and a credential revoked since the push gets no access.
+        let actor_id = operation.actor_id;
+        let ci_access = match operation
+            .credential
+            .authorize(&self.pool, &repo, true)
+            .await
+        {
+            Ok((identity, access)) if identity.id == actor_id => access,
+            _ => AccessLevel::None,
+        };
+        let repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
+            .await?
+            .context("repository unavailable")?;
         // Webhooks follow the refs Git has just accepted. They never fail the push.
         let moves: Vec<RefMove> = updates
             .iter()
@@ -279,7 +299,7 @@ impl Gateway {
                 )
             })
             .collect();
-        ref_changes::emit_ref_moves(&self.pool, &repo, identity.id, &path, &moves);
+        ref_changes::emit_ref_moves(&self.pool, &repo, actor_id, &path, &moves);
         // Open pull requests follow the branches this push created, moved or deleted.
         let branches: Vec<&str> = updates
             .iter()
@@ -291,7 +311,8 @@ impl Gateway {
                 &repo,
                 Some(branches.as_slice()),
                 &self.ci,
-                identity.id,
+                actor_id,
+                ci_access,
             )
             .await
             .is_err()
@@ -302,8 +323,56 @@ impl Gateway {
             );
             failed = true;
         }
-        // Do not read or parse repository-controlled workflows until current identity,
-        // write access and host-execution trust have all been established.
+        let previous = operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .previous_refs
+            .clone();
+        // Optional profile counts share one short budget and identical ranges are walked once.
+        let activity = async {
+            let mut counts = HashMap::new();
+            for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
+                let Some(branch) = update.reference.strip_prefix("refs/heads/") else {
+                    continue;
+                };
+                languages::refresh_default_branch(
+                    self.pool.clone(),
+                    repo.id,
+                    path.clone(),
+                    branch.to_owned(),
+                    Some(repo.storage_node_id),
+                );
+                let range = (update.old.clone(), update.new.clone());
+                let count = if let Some(count) = counts.get(&range) {
+                    *count
+                } else {
+                    let count = crate::backend::git::repository::count_pushed_commits_snapshot(
+                        &path,
+                        (update.old != ZERO_SHA).then_some(update.old.as_str()),
+                        &update.new,
+                        &previous,
+                    )
+                    .await?;
+                    let count = i32::try_from(count).unwrap_or(i32::MAX);
+                    counts.insert(range, count);
+                    count
+                };
+                db::activity::record_repository_push(&self.pool, repo.id, actor_id, branch, count)
+                    .await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        if !matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), activity).await,
+            Ok(Ok(()))
+        ) {
+            tracing::warn!(
+                repo_id = repo.id,
+                "could not finish optional push activity within its budget"
+            );
+        }
+        // Live credentials remain mandatory for subsequent CI dispatch.
         let current_repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
             .await?
             .context("repository unavailable")?;
@@ -311,48 +380,27 @@ impl Gateway {
             .credential
             .authorize(&self.pool, &current_repo, true)
             .await?;
-        ensure!(current_identity.id == identity.id, "identity changed");
+        ensure!(current_identity.id == actor_id, "identity changed");
         ensure!(
             self.bare_path(&current_repo).await? == operation.path,
             "repository location changed"
         );
-        // Branch pushes appear in the pusher's profile activity, with or without CI. A push to
-        // the default branch also refreshes its stored languages.
+        // Remember every accepted commit, even when trust, skip messages or filters prevent CI.
+        let store = repo_store(&repo, self.ci.cluster.as_ref());
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
-            let Some(branch) = update.reference.strip_prefix("refs/heads/") else {
-                continue;
-            };
-            languages::refresh_default_branch(
-                self.pool.clone(),
-                repo.id,
-                path.clone(),
-                branch.to_owned(),
-            );
-            let old = (update.old != ZERO_SHA).then_some(update.old.as_str());
-            let recorded = match crate::backend::git::count_pushed_commits(
-                &path,
-                old,
-                &update.new,
-                &update.reference,
-            )
-            .await
-            {
-                Ok(count) => {
-                    let count = i32::try_from(count).unwrap_or(i32::MAX);
-                    db::activity::record_repository_push(
+            match store.commit(&update.new).await {
+                Ok(commit) => {
+                    db::ci::record_ci_accepted_push(
                         &self.pool,
                         repo.id,
-                        identity.id,
-                        branch,
-                        count,
+                        actor_id,
+                        &update.reference,
+                        &commit.sha,
                     )
-                    .await
+                    .await?;
                 }
-                Err(error) => Err(error),
-            };
-            // Profile activity is not worth failing a push that Git has already accepted.
-            if let Err(error) = recorded {
-                tracing::warn!(repo_id = repo.id, %error, "could not record a branch push");
+                Err(_) if update.reference.starts_with("refs/tags/") => {}
+                Err(_) => failed = true,
             }
         }
         if !current_identity.is_admin
@@ -450,21 +498,11 @@ impl Gateway {
                     failed = true;
                     continue;
                 }
-                ensure!(fresh_identity.id == identity.id, "identity changed");
+                ensure!(fresh_identity.id == actor_id, "identity changed");
                 ensure!(
                     self.bare_path(&fresh_repo).await? == operation.path,
                     "repository location changed"
                 );
-                // Git accepted this immutable commit even if another push has
-                // since moved the ref. Annotated tags use their peeled commit.
-                db::ci::record_ci_accepted_push(
-                    &self.pool,
-                    repo.id,
-                    fresh_identity.id,
-                    &update.reference,
-                    &commit_sha,
-                )
-                .await?;
                 let result = self
                     .ci
                     .trigger_run_with_access(
@@ -566,6 +604,7 @@ mod tests {
     fn operation(repo_id: i64) -> Arc<Operation> {
         Arc::new(Operation {
             credential: ReceiveCredential::SshKey(1),
+            actor_id: 1,
             repo_id,
             owner: "owner".to_owned(),
             path: PathBuf::new(),

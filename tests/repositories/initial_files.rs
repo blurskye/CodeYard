@@ -55,6 +55,28 @@ async fn contract(pg: bool) {
     assert!(license
         .content
         .contains(&format!("Copyright (c) {year} alice\n")));
+
+    let oversized = "x".repeat(26 * 1024 * 1024);
+    let failure = provision_with_initial_files(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        "preserved",
+        Some(&oversized),
+        false,
+        InitialFiles {
+            readme: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(failure.message.contains("preserved"));
+    let preserved = db::repositories::records::get_repository(f.pool(), "alice", "preserved")
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(std::path::Path::new(&preserved.disk_path).exists());
 }
 
 #[tokio::test]

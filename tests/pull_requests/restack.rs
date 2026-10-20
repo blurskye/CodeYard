@@ -476,7 +476,6 @@ async fn stale_publication_contract(pg: bool) {
     // A push lands on the layer between the preparation and the publication.
     let pushed = app.alice.save("feature-2", "again.txt", &two).await;
     let before = refs_of(&path);
-
     let stale = store
         .publish_restack_as(
             f.pool(),
@@ -1093,6 +1092,98 @@ async fn postgres_slow_restack_admission_finishes_after_five_seconds() {
 #[tokio::test]
 async fn postgres_slow_moved_pr_admission_finishes_after_five_seconds() {
     slow_ci_admission_contract(false).await;
+}
+
+async fn nearer_fork_beats_older_merged_ancestor(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    let path = &app.repository.disk_path;
+    let main = app.alice.save("main", "README.md", "unborn").await;
+    app.alice.branch("a", &main).await;
+    let a = app.alice.save("a", "a.txt", &main).await;
+    app.alice.open_pull("A", "a", "main").await;
+    app.alice.branch("b", &a).await;
+    let b = app.alice.save("b", "obsolete.txt", &a).await;
+    app.alice.open_pull("B", "b", "a").await;
+    join(&app.alice, 2).await;
+    app.alice.branch("c", &b).await;
+    app.alice.save("c", "child.txt", &b).await;
+    app.alice.open_pull("C", "c", "b").await;
+    join(&app.alice, 3).await;
+    let (status, result) = merge_with(&app.alice, 1, "squash").await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let rewritten = amend(
+        path,
+        "b",
+        &branch_tip(path, "main"),
+        "replacement.txt",
+        "new\n",
+    );
+    app.alice.save("b", "extra.txt", &rewritten).await;
+    let (status, result) = merge_with(&app.alice, 2, "squash").await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let child = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 3)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(child.fork_sha.as_deref(), Some(b.as_str()));
+    let (status, result) = rebase(&app.alice, 3).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let head = branch_tip(path, "c");
+    assert!(has_file(path, &head, "child.txt"));
+    assert!(has_file(path, &head, "replacement.txt"));
+    assert!(
+        !has_file(path, &head, "obsolete.txt"),
+        "older merged ancestor replayed superseded B changes"
+    );
+    f.finish().await;
+}
+
+async fn missing_replay_boundary(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    let main = app.alice.save("main", "README.md", "unborn").await;
+    app.alice.branch("lower", &main).await;
+    let old = app.alice.save("lower", "obsolete.txt", &main).await;
+    app.alice.open_pull("Lower", "lower", "main").await;
+    app.alice.branch("upper", &old).await;
+    app.alice.save("upper", "child.txt", &old).await;
+    let rewritten = amend(
+        &app.repository.disk_path,
+        "lower",
+        &main,
+        "replacement.txt",
+        "new\n",
+    );
+    app.alice.save("lower", "extra.txt", &rewritten).await;
+    // The upper PR never observed the lower head it was actually built on.
+    app.alice.open_pull("Upper", "upper", "lower").await;
+    join(&app.alice, 2).await;
+    let before = refs_of(&app.repository.disk_path);
+    let (status, result) = rebase(&app.alice, 2).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{result}");
+    assert_eq!(result["error"], "unknown_rebase_boundary");
+    assert_eq!(refs_of(&app.repository.disk_path), before);
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_recorded_fork_wins_over_older_merged_ancestor() {
+    nearer_fork_beats_older_merged_ancestor(false).await;
+}
+#[tokio::test]
+async fn postgres_recorded_fork_wins_over_older_merged_ancestor() {
+    nearer_fork_beats_older_merged_ancestor(true).await;
+}
+#[tokio::test]
+async fn sqlite_restack_refuses_an_unknown_own_commit_boundary() {
+    missing_replay_boundary(false).await;
+}
+#[tokio::test]
+async fn postgres_restack_refuses_an_unknown_own_commit_boundary() {
+    missing_replay_boundary(true).await;
 }
 
 async fn rewrite_boundary_contract(pg: bool, mode: &str) {

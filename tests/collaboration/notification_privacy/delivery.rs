@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     let replacement = "34".repeat(32);
     let pool = f.pool();
     let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(pool);
-    let mut receiver = broadcaster.subscribe();
+    let mut receiver = broadcaster.subscribe(recipient);
     broadcaster.send(hint(recipient, account)).await;
     let local = serde_json::to_value(receiver.recv().await.unwrap()).unwrap();
     assert!(
@@ -246,6 +246,112 @@ async fn contract(pg: bool) {
         "database outage never forwards a cached hint"
     );
     f.close().await;
+}
+
+async fn canonical_links(pg: bool) {
+    let mut f = Fixture::new(pg).await;
+    let owner = f.actor("link_owner").await;
+    let recipient = f.actor("link_reader").await;
+    let repo = f.repo(owner, None, "original").await;
+    db::repositories::access::grant_repo_access(
+        f.pool(),
+        recipient,
+        repo,
+        db::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    let session = "ab".repeat(32);
+    db::users::sessions::create_session(
+        f.pool(),
+        &session,
+        recipient,
+        None,
+        None,
+        Utc::now() + Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let mut ids = Vec::new();
+    for (kind, suffix) in [
+        ("ci_run_failed", "actions?job=9#log"),
+        ("release_published", "releases/tag/v1?download=1#assets"),
+    ] {
+        let id = f.notify(recipient, Some(repo), kind).await;
+        f.execute(&format!("UPDATE notifications SET kind='{kind}',link='/link_owner/original/{suffix}' WHERE id=$1"),&[id]).await;
+        ids.push((id, suffix));
+    }
+    f.execute(
+        "UPDATE repositories SET name='renamed' WHERE id=$1",
+        &[repo],
+    )
+    .await;
+    for (id, suffix) in &ids {
+        let projection = db::notifications::records::notification_delivery(
+            f.pool(),
+            &session,
+            recipient,
+            Some(*id),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            projection.notification.unwrap().link.unwrap(),
+            format!("/link_owner/renamed/{suffix}")
+        );
+    }
+    let inbox = db::notifications::records::notification_inbox(
+        f.pool(),
+        &session,
+        recipient,
+        db::notifications::records::NotificationInboxAction::List {
+            filter: Default::default(),
+            limit: 100,
+            before: None,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(inbox.notifications.len(), 2);
+    assert!(inbox.notifications.iter().all(|n| n
+        .link
+        .as_deref()
+        .unwrap()
+        .starts_with("/link_owner/renamed/")));
+    db::repositories::access::revoke_repo_access(f.pool(), recipient, repo)
+        .await
+        .unwrap();
+    f.execute(
+        "UPDATE repositories SET name='private_namespace' WHERE id=$1",
+        &[repo],
+    )
+    .await;
+    // A returned projection stays at its authorized snapshot; the next read discloses no link.
+    assert!(!serde_json::to_string(&inbox.notifications)
+        .unwrap()
+        .contains("private_namespace"));
+    let projection = db::notifications::records::notification_delivery(
+        f.pool(),
+        &session,
+        recipient,
+        Some(ids[0].0),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(projection.notification.is_none());
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_notification_links_are_projected_under_authorization() {
+    canonical_links(true).await;
+}
+#[tokio::test]
+async fn sqlite_notification_links_are_projected_under_authorization() {
+    canonical_links(false).await;
 }
 
 #[tokio::test]

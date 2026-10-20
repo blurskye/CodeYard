@@ -6,7 +6,7 @@ use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use crate::backend::db::models::Repository;
 use crate::backend::repositories::store::{repo_store, BlobRange, ErrorKind, RepoError};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Where GitHub looks, in its order. The first file found is the one used.
 const LOCATIONS: [&str; 3] = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"];
@@ -15,6 +15,10 @@ const MAX_BYTES: usize = 3 * 1024 * 1024;
 /// Lines past this one are ignored.
 const MAX_LINES: usize = 5_000;
 const MAX_PATTERN_BYTES: usize = 1024;
+const MAX_OWNERS: usize = 1000;
+const MAX_OWNER_BYTES: usize = 320;
+const MAX_OWNER_EXPANSIONS: usize = 10_000;
+pub(crate) const MAX_REVIEWERS: usize = 5000;
 
 /// One line of the file: a compiled path pattern and the owners it names.
 struct Entry {
@@ -51,13 +55,19 @@ impl Rules {
     }
 
     /// Each changed path that has owners, with those owners as written.
-    pub fn owned_paths(&self, changed: &[String]) -> anyhow::Result<Vec<(String, Vec<String>)>> {
+    pub fn owned_paths(&self, changed: &[String]) -> anyhow::Result<Vec<(String, &[String])>> {
         let mut budget = WorkflowMatchBudget::new();
         let mut paths = Vec::new();
+        let mut expanded = 0usize;
         for path in changed {
             let owners = self.owners_for(path, &mut budget)?;
             if !owners.is_empty() {
-                paths.push((path.clone(), owners.to_vec()));
+                expanded = expanded.saturating_add(owners.len());
+                anyhow::ensure!(
+                    expanded <= MAX_OWNER_EXPANSIONS,
+                    "CODEOWNERS owner expansion exceeds its limit"
+                );
+                paths.push((path.clone(), owners));
             }
         }
         Ok(paths)
@@ -139,6 +149,7 @@ fn segments_match(
 /// skipped. Owners are the tokens with an `@` in them, before any `#` that starts a comment.
 pub fn parse(text: &str) -> anyhow::Result<Rules> {
     let mut entries = Vec::new();
+    let mut owner_count = 0usize;
     for line in text
         .lines()
         .take(MAX_LINES)
@@ -164,12 +175,26 @@ pub fn parse(text: &str) -> anyhow::Result<Rules> {
             pattern.len() <= MAX_PATTERN_BYTES,
             "CODEOWNERS pattern exceeds its size limit"
         );
-        let owners = line[end..]
+        let mut owners = Vec::new();
+        let mut seen = HashSet::new();
+        for owner in line[end..]
             .split_whitespace()
             .take_while(|token| !token.starts_with('#'))
             .filter(|token| token.contains('@'))
-            .map(str::to_owned)
-            .collect();
+        {
+            anyhow::ensure!(
+                owner.len() <= MAX_OWNER_BYTES,
+                "CODEOWNERS owner exceeds its size limit"
+            );
+            if seen.insert(owner) {
+                owner_count += 1;
+                anyhow::ensure!(
+                    owner_count <= MAX_OWNERS,
+                    "CODEOWNERS owners exceed their limit"
+                );
+                owners.push(owner.to_owned());
+            }
+        }
         if let Some(entry) = Entry::compile(pattern, owners) {
             entries.push(entry);
         }
@@ -201,7 +226,7 @@ pub async fn load_rules(
                 return parse(&String::from_utf8_lossy(&blob.bytes[..end])).map_err(|_| {
                     RepoError::new(
                         ErrorKind::Invalid,
-                        "CODEOWNERS pattern exceeds its size limit",
+                        "CODEOWNERS exceeds its size or work limit",
                     )
                 });
             }
@@ -221,32 +246,74 @@ pub async fn resolve_owners<'a>(
     owners: impl IntoIterator<Item = &'a str>,
 ) -> anyhow::Result<HashMap<String, Vec<i64>>> {
     let mut resolved = HashMap::new();
+    let (mut names, mut emails, mut teams) = (Vec::new(), Vec::new(), Vec::new());
     for owner in owners {
         if resolved.contains_key(owner) {
             continue;
         }
-        let mut ids = Vec::new();
-        if let Some(name) = owner.strip_prefix('@') {
-            match name.split_once('/') {
-                Some((org, slug)) => {
-                    ids = db::organizations::teams::team_member_user_ids(pool, org, slug).await?
-                }
-                None => {
-                    if let Some(user) =
-                        db::users::accounts::get_user_by_username(pool, name).await?
-                    {
-                        ids.push(user.id);
-                    }
-                }
-            }
-        } else if let Some(user) = db::users::accounts::get_user_by_email(pool, owner).await? {
-            ids.push(user.id);
+        anyhow::ensure!(
+            owner.len() <= MAX_OWNER_BYTES,
+            "CODEOWNERS owner exceeds its size limit"
+        );
+        anyhow::ensure!(
+            resolved.len() < MAX_OWNERS,
+            "CODEOWNERS has too many distinct owners"
+        );
+        resolved.insert(owner.to_owned(), Vec::new());
+        match owner.strip_prefix('@') {
+            Some(name) if name.contains('/') => teams.push(name.to_owned()),
+            Some(name) => names.push(name.to_owned()),
+            None => emails.push(owner.to_owned()),
         }
-        resolved.insert(owner.to_owned(), ids);
+    }
+    for names in names.chunks(500) {
+        for user in db::users::accounts::get_users_by_usernames(pool, names).await? {
+            resolved
+                .get_mut(&format!("@{}", user.username))
+                .expect("requested owner")
+                .push(user.id);
+        }
+    }
+    for emails in emails.chunks(500) {
+        for user in db::users::accounts::get_users_by_emails(pool, emails).await? {
+            if !user.email_verified {
+                continue;
+            }
+            if let Some(ids) = user
+                .email
+                .as_ref()
+                .and_then(|email| resolved.get_mut(email))
+            {
+                ids.push(user.id);
+            }
+        }
+    }
+    let mut members = 0;
+    for teams in teams.chunks(500) {
+        let Some(org_id) = repository.owner_org_id else {
+            break;
+        };
+        for (team, id) in
+            db::organizations::teams::team_members_by_names(pool, org_id, teams).await?
+        {
+            members += 1;
+            anyhow::ensure!(
+                members <= MAX_REVIEWERS,
+                "CODEOWNERS resolves to too many team members"
+            );
+            resolved
+                .get_mut(&format!("@{team}"))
+                .expect("requested team")
+                .push(id);
+        }
     }
     let mut ids: Vec<i64> = resolved.values().flatten().copied().collect();
     ids.sort_unstable();
     ids.dedup();
+    anyhow::ensure!(
+        ids.len() <= MAX_REVIEWERS,
+        "CODEOWNERS resolves to too many reviewers"
+    );
     let mut writers = std::collections::HashSet::new();
     if !repository.is_archived {
         for ids in ids.chunks(500) {
@@ -388,12 +455,50 @@ mod tests {
     }
 
     #[test]
+    fn owners_are_deduplicated_and_expansion_is_bounded() {
+        let rules = parse(&format!("* {}", "@alice ".repeat(100_000))).unwrap();
+        assert_eq!(
+            rules.owned_paths(&vec!["a".into(); 1000]).unwrap().len(),
+            1000
+        );
+        let owners = (0..101)
+            .map(|n| format!("@user{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let rules = parse(&format!("* {owners}")).unwrap();
+        assert!(rules.owned_paths(&vec!["a".into(); 100]).is_err());
+        let owners = (0..=MAX_OWNERS)
+            .map(|n| format!("@user{n}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(parse(&format!("* {owners}")).is_err());
+        assert!(parse(&format!("* @{}", "x".repeat(MAX_OWNER_BYTES))).is_err());
+    }
+
+    #[test]
+    fn repeated_owners_are_deduplicated_before_expansion() {
+        let rules = parse(&format!("* {}", "@bob ".repeat(500_000))).unwrap();
+        let paths = rules.owned_paths(&vec!["file".to_owned(); 8192]).unwrap();
+        assert_eq!(paths.len(), 8192);
+        assert!(paths.iter().all(|(_, owners)| *owners == ["@bob"]));
+    }
+
+    #[test]
+    fn owner_expansion_is_bounded_before_cloning() {
+        let owners = (0..1000)
+            .map(|id| format!("@owner{id} "))
+            .collect::<String>();
+        let rules = parse(&format!("* {owners}")).unwrap();
+        assert!(rules.owned_paths(&vec!["file".to_owned(); 8192]).is_err());
+    }
+
+    #[test]
     fn owned_paths_lists_only_changed_files_with_owners() {
         let rules = parse("/src/ @dev\n").unwrap();
         let changed = vec!["src/a.rs".to_owned(), "README.md".to_owned()];
         assert_eq!(
             rules.owned_paths(&changed).unwrap(),
-            vec![("src/a.rs".to_owned(), vec!["@dev".to_owned()])]
+            vec![("src/a.rs".to_owned(), ["@dev".to_owned()].as_slice())]
         );
     }
 }

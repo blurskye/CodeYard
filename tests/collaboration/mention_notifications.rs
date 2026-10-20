@@ -239,6 +239,23 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     assert!(delayed
         .unwrap_err()
         .is::<db::notifications::records::NotificationSuppressed>());
+    let delayed_pull = db::notifications::records::create_notification(
+        world.pool(),
+        db::notifications::records::NewNotification {
+            user_id: world.bob_id,
+            actor_id: Some(world.alice_id),
+            repo_id: Some(repo.id),
+            kind: "mention",
+            title: "delayed pull",
+            body: Some("Private text for @bob"),
+            link: None,
+            metadata: &json!({"pull_request_comment_id": id}),
+        },
+    )
+    .await;
+    assert!(delayed_pull
+        .unwrap_err()
+        .is::<db::notifications::records::NotificationSuppressed>());
     assert!(mentions(&world, world.bob_id).await.is_empty());
     world.close().await;
 }
@@ -441,7 +458,10 @@ async fn edit_mentions_the_issue_author(pg: bool) {
         .carol
         .form_reply(
             &format!("/alice/proj/issues/1/comments/{comment_id}/edit"),
-            &[("body", "@bob see this")],
+            &[
+                ("body", "@bob see this"),
+                ("expected_body", "\"Plain text\""),
+            ],
         )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
@@ -472,7 +492,10 @@ async fn edit_mentions_the_pull_request_author(pg: bool) {
         .carol
         .form_reply(
             &format!("/alice/proj/pulls/1/comments/{comment_id}/edit"),
-            &[("body", "@alice see this")],
+            &[
+                ("body", "@alice see this"),
+                ("expected_body", "\"Plain text @bob\""),
+            ],
         )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());

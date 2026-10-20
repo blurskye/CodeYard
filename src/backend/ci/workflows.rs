@@ -14,7 +14,10 @@ use tracing::warn;
 
 pub(super) static PARSING_SLOTS: Semaphore = Semaphore::const_new(2);
 static DISCOVERY_SLOTS: Semaphore = Semaphore::const_new(2);
-const DISCOVERY_READ_TIMEOUT: Duration = Duration::from_secs(3);
+static DISCOVERY_PAYLOADS: Semaphore = Semaphore::const_new(4);
+// Let the store finish its address and replica fallback before discovery gives up.
+const DISCOVERY_READ_TIMEOUT: Duration =
+    crate::backend::cluster::rpc::TIMEOUT.saturating_add(Duration::from_secs(5));
 const WORKFLOW_CACHE_BYTES: usize = 8 * 1024 * 1024;
 const WORKFLOW_CACHE_ENTRIES: usize = 32;
 
@@ -131,7 +134,12 @@ impl WorkflowDefinition {
                 None => Ok(false),
             },
             "pull_request" => match self.triggers.pull_request.as_ref() {
-                Some(filter) => ref_matches_filter(filter, branch, budget),
+                Some(filter) => named_ref_matches_patterns(
+                    branch,
+                    &filter.branches,
+                    &filter.branches_ignore,
+                    budget,
+                ),
                 None => Ok(false),
             },
             _ => Ok(false),
@@ -180,7 +188,12 @@ impl WorkflowDefinition {
         let Some(filter) = filter else {
             return Ok(false);
         };
-        if !ref_matches_filter(filter, git_ref, budget)? {
+        let ref_matches = if event == "pull_request" {
+            named_ref_matches_patterns(git_ref, &filter.branches, &filter.branches_ignore, budget)?
+        } else {
+            ref_matches_filter(filter, git_ref, budget)?
+        };
+        if !ref_matches {
             return Ok(false);
         }
         paths_match_filter(filter, event, git_ref, changed_paths, budget)
@@ -238,14 +251,24 @@ const MAX_WORKFLOW_NAME_BYTES: usize = 1024;
 const MAX_WORKFLOW_FILTER_PATTERNS: usize = 256;
 const MAX_WORKFLOW_PATTERN_BYTES: usize = 1024;
 
+async fn discovery_slot(
+    slots: &Semaphore,
+    deadline: tokio::time::Instant,
+) -> Result<tokio::sync::SemaphorePermit<'_>> {
+    tokio::time::timeout_at(deadline, slots.acquire())
+        .await
+        .context("workflow discovery busy")?
+        .map_err(Into::into)
+}
+
 pub async fn list_workflows_for_ref(
     store: &RepoStore,
     git_ref: &str,
 ) -> Result<Vec<WorkflowDefinition>> {
+    let deadline = tokio::time::Instant::now() + DISCOVERY_READ_TIMEOUT;
     // Resolve on every request so a moved branch cannot return stale definitions. Only the
     // immutable result is cached; callers still authorize repository reads before discovery.
-    let deadline = tokio::time::Instant::now() + DISCOVERY_READ_TIMEOUT;
-    let sha = tokio::time::timeout_at(deadline, store.commit(git_ref))
+    let sha = tokio::time::timeout(DISCOVERY_READ_TIMEOUT, store.commit(git_ref))
         .await
         .context("workflow repository read timed out")??
         .sha;
@@ -259,8 +282,13 @@ pub async fn list_workflows_for_ref(
             return Ok(entry.definitions.clone());
         }
     }
-    // Repository I/O has its own store/RPC admission. A slow storage node must not hold
-    // either of the process-wide YAML parsing slots.
+    // Bound payloads before loading them, separately from YAML parsing capacity.
+    // A stalled storage node holds these slots up to the failover deadline, so others do not queue behind it.
+    let payload = discovery_slot(
+        &DISCOVERY_PAYLOADS,
+        deadline.min(tokio::time::Instant::now() + Duration::from_secs(10)),
+    )
+    .await?;
     let files = match tokio::time::timeout_at(deadline, store.workflow_files(&sha))
         .await
         .context("workflow repository read timed out")?
@@ -273,11 +301,11 @@ pub async fn list_workflows_for_ref(
         }
     };
 
-    let permit = DISCOVERY_SLOTS.acquire().await?;
+    let permit = discovery_slot(&DISCOVERY_SLOTS, deadline).await?;
     let git_ref = git_ref.to_owned();
     tokio::task::spawn_blocking(move || {
         // Cancellation must not release capacity while YAML is still being parsed or dropped.
-        let _permit = permit;
+        let (_permit, _payload) = (permit, payload);
         let mut workflows = Vec::new();
         for file in files {
             match parse_workflow_definition(&file.path, &file.content) {
@@ -328,19 +356,21 @@ fn parse_workflow_yaml(content: &str) -> Result<Value> {
 /// Parses workflow YAML. Reading a document copies every alias, so a small file could
 /// expand to gigabytes. The expanded size is counted first, without building anything.
 pub(crate) fn parse_yaml(content: &[u8]) -> Result<Value> {
+    parse_yaml_with_limit(content, 8 * MAX_CI_WORKFLOW_BYTES)
+}
+
+pub(crate) fn parse_yaml_with_limit(content: &[u8], max_expanded_bytes: usize) -> Result<Value> {
     use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess};
     use std::cell::Cell;
 
-    const MAX_EXPANDED_BYTES: usize = 8 * MAX_CI_WORKFLOW_BYTES;
-
     #[derive(Clone, Copy)]
-    struct Measure<'a>(&'a Cell<usize>);
+    struct Measure<'a>(&'a Cell<usize>, usize);
 
     impl Measure<'_> {
         fn add<E: de::Error>(self, bytes: usize) -> Result<(), E> {
             let total = self.0.get().saturating_add(bytes + 16);
             self.0.set(total);
-            if total > MAX_EXPANDED_BYTES {
+            if total > self.1 {
                 return Err(E::custom("the workflow is too large once aliases expand"));
             }
             Ok(())
@@ -399,7 +429,8 @@ pub(crate) fn parse_yaml(content: &[u8]) -> Result<Value> {
     }
 
     let used = Cell::new(0);
-    Measure(&used).deserialize(serde_yaml::Deserializer::from_slice(content))?;
+    Measure(&used, max_expanded_bytes)
+        .deserialize(serde_yaml::Deserializer::from_slice(content))?;
     Ok(serde_yaml::from_slice(content)?)
 }
 
@@ -622,7 +653,6 @@ fn parse_pattern_list(value: &Value) -> Result<Vec<String>> {
     );
     Ok(values
         .into_iter()
-        .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .collect())
@@ -753,27 +783,20 @@ fn matches_pattern_sequence(
     value: &str,
     budget: &mut WorkflowMatchBudget,
 ) -> std::result::Result<bool, WorkflowMatchLimit> {
-    let has_positive = patterns
-        .iter()
-        .any(|pattern| !pattern.trim_start().starts_with('!'));
+    let has_positive = patterns.iter().any(|pattern| !pattern.starts_with('!'));
     if !has_positive {
         return Ok(false);
     }
 
     let mut matched = false;
     for pattern in patterns {
-        let trimmed = pattern.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let (is_negative, matcher) = if let Some(negated) = trimmed.strip_prefix('!') {
-            (true, negated.trim())
+        let (is_negative, matcher) = if let Some(negated) = pattern.strip_prefix('!') {
+            (true, negated)
         } else {
-            (false, trimmed)
+            (false, pattern.as_str())
         };
 
-        if matcher.is_empty() || !github_glob_matches_bounded(matcher, value, budget)? {
+        if matcher.is_empty() || !workflow_glob_matches_bounded(matcher, value, budget)? {
             continue;
         }
 
@@ -789,7 +812,7 @@ fn matches_any_pattern(
     budget: &mut WorkflowMatchBudget,
 ) -> std::result::Result<bool, WorkflowMatchLimit> {
     for pattern in patterns {
-        if github_glob_matches_bounded(pattern, value, budget)? {
+        if workflow_glob_matches_bounded(pattern, value, budget)? {
             return Ok(true);
         }
     }
@@ -800,10 +823,10 @@ fn matches_any_pattern(
 /// no directory, so `**/README.md` matches a root README.md. Branch protection patterns use
 /// this too.
 pub(crate) fn github_glob_matches(pattern: &str, value: &str) -> bool {
-    glob_matches(pattern, value, false)
+    glob_matches(pattern, value, false, false)
 }
 
-fn glob_matches(pattern: &str, value: &str, escapes: bool) -> bool {
+fn glob_matches(pattern: &str, value: &str, escapes: bool, workflow: bool) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let value: Vec<char> = value.chars().collect();
     // Each row records which value prefixes match the pattern consumed so far.
@@ -857,17 +880,24 @@ fn glob_matches(pattern: &str, value: &str, escapes: bool) -> bool {
             } else {
                 None
             };
+            let end = class_end.map_or(index + 1, |end| end + 1);
+            let quantifier = workflow.then(|| pattern.get(end)).flatten().copied();
+            let repeated = quantifier == Some('+');
+            let optional = quantifier == Some('?');
+            current[0] = optional && previous[0];
             for (offset, &letter) in value.iter().enumerate() {
-                current[offset + 1] = previous[offset]
-                    && if let Some(end) = class_end {
-                        letter != '/' && glob_class_matches(&pattern[index + 1..end], letter)
-                    } else if ch == '?' && !escaped {
-                        letter != '/'
-                    } else {
-                        ch == letter
-                    };
+                let matches = if let Some(end) = class_end {
+                    letter != '/' && glob_class_matches(&pattern[index + 1..end], letter)
+                } else if ch == '?' && !escaped {
+                    letter != '/'
+                } else {
+                    ch == letter
+                };
+                current[offset + 1] = (matches
+                    && (previous[offset] || (repeated && current[offset])))
+                    || (optional && previous[offset + 1]);
             }
-            index = class_end.map_or(index + 1, |end| end + 1);
+            index = end + usize::from(repeated || optional);
         }
         std::mem::swap(&mut previous, &mut current);
     }
@@ -902,6 +932,15 @@ pub(crate) fn github_glob_matches_bounded(
     Ok(github_glob_matches(pattern, value))
 }
 
+fn workflow_glob_matches_bounded(
+    pattern: &str,
+    value: &str,
+    budget: &mut WorkflowMatchBudget,
+) -> std::result::Result<bool, WorkflowMatchLimit> {
+    budget.charge(pattern.len(), value.len())?;
+    Ok(glob_matches(pattern, value, true, true))
+}
+
 /// CODEOWNERS uses backslashes to quote whitespace and wildcard characters.
 pub(crate) fn code_owner_glob_matches_bounded(
     pattern: &str,
@@ -909,7 +948,7 @@ pub(crate) fn code_owner_glob_matches_bounded(
     budget: &mut WorkflowMatchBudget,
 ) -> std::result::Result<bool, WorkflowMatchLimit> {
     budget.charge(pattern.len(), value.len())?;
-    Ok(glob_matches(pattern, value, true))
+    Ok(glob_matches(pattern, value, true, false))
 }
 
 fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
@@ -922,6 +961,103 @@ fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workflow_quantifiers_do_not_change_other_glob_dialects() {
+        let workflow = parse_workflow_definition(
+            ".github/workflows/release.yml",
+            "on:\n  push:\n    tags: ['v[0-9]+.[0-9]+.[0-9]+']\n",
+        )
+        .unwrap();
+        for tag in ["v1.2.3", "v12.345.6"] {
+            assert!(workflow.matches_event("push", &format!("refs/tags/{tag}")));
+            assert!(workflow.matches_event_with_context(
+                "push",
+                &format!("refs/tags/{tag}"),
+                &[],
+                None
+            ));
+        }
+        for tag in ["v.2.3", "v1x2.3", "v1.2.3+"] {
+            assert!(!workflow.matches_event("push", &format!("refs/tags/{tag}")));
+        }
+        assert!(
+            workflow_glob_matches_bounded("ab?c", "ac", &mut WorkflowMatchBudget::new()).unwrap()
+        );
+        assert!(
+            workflow_glob_matches_bounded("ab?c", "abc", &mut WorkflowMatchBudget::new()).unwrap()
+        );
+        assert!(
+            workflow_glob_matches_bounded(r"a\+b", "a+b", &mut WorkflowMatchBudget::new()).unwrap()
+        );
+        assert!(github_glob_matches("v[0-9]+", "v1+"));
+        assert!(!github_glob_matches("v[0-9]+", "v12"));
+        assert!(
+            code_owner_glob_matches_bounded("v[0-9]+", "v1+", &mut WorkflowMatchBudget::new())
+                .unwrap()
+        );
+        let mut budget = WorkflowMatchBudget { remaining: 1 };
+        assert!(workflow
+            .matches_event_with_budget("push", "refs/tags/v1.2.3", &mut budget)
+            .is_err());
+    }
+
+    #[test]
+    fn pull_request_targets_are_short_branch_names_even_with_ref_prefixes() {
+        for branch in ["refs/tags/stable", "refs/heads/main"] {
+            let workflow = parse_workflow_definition(
+                ".github/workflows/ci.yml",
+                &format!(
+                    "on:\n  pull_request:\n    branches: ['{branch}']\n    paths: ['src/**']\n"
+                ),
+            )
+            .unwrap();
+            assert!(workflow.matches_event("pull_request", branch));
+            assert!(workflow.matches_event_with_context(
+                "pull_request",
+                branch,
+                &["src/a.rs".into()],
+                None
+            ));
+            assert!(!workflow.matches_event_with_context(
+                "pull_request",
+                branch,
+                &["docs/a.md".into()],
+                None
+            ));
+        }
+    }
+
+    #[test]
+    fn path_patterns_keep_literal_whitespace_including_after_negation() {
+        let workflow = parse_workflow_definition(
+            ".github/workflows/ci.yml",
+            "on:\n  push:\n    paths: ['docs/guide.md ', ' leading.md', '! leading.md']\n",
+        )
+        .unwrap();
+        assert_eq!(
+            workflow.triggers.push.as_ref().unwrap().paths[0],
+            "docs/guide.md "
+        );
+        assert!(workflow.matches_event_with_context(
+            "push",
+            "main",
+            &["docs/guide.md ".into()],
+            None
+        ));
+        assert!(!workflow.matches_event_with_context(
+            "push",
+            "main",
+            &["docs/guide.md".into()],
+            None
+        ));
+        assert!(!workflow.matches_event_with_context(
+            "push",
+            "main",
+            &[" leading.md".into()],
+            None
+        ));
+    }
 
     #[test]
     fn character_classes_match_release_filters_with_the_shared_budget() {
@@ -1290,6 +1426,24 @@ on: [push, pull_request]
         }
         let store = RepoStore::from_disk_path(directory.path().to_str().unwrap());
         (directory, store)
+    }
+
+    #[tokio::test]
+    async fn discovery_slots_bound_payloads_and_waits_separately_from_parsing() {
+        let payloads = Semaphore::new(4);
+        let held: Vec<_> = (0..4).map(|_| payloads.try_acquire().unwrap()).collect();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(10);
+        assert!(discovery_slot(&payloads, deadline).await.is_err());
+        drop(held);
+        let payload = discovery_slot(
+            &payloads,
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        assert_eq!(payloads.available_permits(), 3);
+        drop(payload);
+        assert_eq!(payloads.available_permits(), 4);
     }
 
     #[tokio::test]

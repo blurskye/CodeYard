@@ -134,7 +134,8 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
                                     td { class: "repo-file-name",
                                         div { class: "repo-file-name-inner",
                                             {icon(if entry.kind == "tree" { "folder" } else { "file" })}
-                                            NavLink { href: file_url(&base, if entry.kind == "tree" { "tree" } else { "blob" }, &page.reference, &entry.path), "{entry.name}" }
+                                            if entry.kind == "gitlink" { span { title: "Submodule", "{entry.name} (submodule)" } }
+                                            else { NavLink { href: file_url(&base, if entry.kind == "tree" { "tree" } else { "blob" }, &page.reference, &entry.path), "{entry.name}" } }
                                         }
                                     }
                                     td { class: "repo-file-message",

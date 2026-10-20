@@ -50,6 +50,7 @@ struct Lines<'a> {
     repo: &'a Repository,
     url: &'a str,
     head: &'a str,
+    base: &'a str,
     references: &'a References,
     /// The side-by-side view is shown instead of the unified one.
     split: bool,
@@ -80,11 +81,16 @@ pub fn diff_page(
         .comparison
         .as_ref()
         .map_or("", |compare| compare.head_sha.as_str());
+    let base = item
+        .comparison
+        .as_ref()
+        .map_or("", |compare| compare.base_sha.as_str());
     let open = item.state == "open";
     let lines = Lines {
         repo,
         url: &url,
         head,
+        base,
         references,
         split,
         review: open.then_some(pending_comments > 0),
@@ -120,10 +126,10 @@ pub fn diff_page(
                     p { class: "collaboration-panel collaboration-muted collaboration-diff-notice", "This pull request has more inline comments than the diff shows. The Discussion tab lists every comment." }
                 }
                 if let Some(draft) = loose_composer {
-                    div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(repo, &url, head, draft, references, split, lines.review)} }
+                    div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(repo, &url, (head, base), draft, references, split, lines.review)} }
                 }
                 for thread in unplaced {
-                    {review::thread_block(repo, &url, head, thread, composer, references, split)}
+                    {review::thread_block(repo, &url, (head, base), thread, composer, references, split)}
                 }
                 div { class: "collaboration-diff-toolbar",
                     {view_toggle(&format!("{url}/diff"), split)}
@@ -297,6 +303,14 @@ fn file_cards(
                     {file_body(lines, file, threads, composer, split)}
                 } else {
                     p { class: "collaboration-diff-notice", role: "status", "This patch is too large to display. Use git diff locally to view the complete changes." }
+                    if let Some(lines) = lines {
+                        for thread in threads.iter().filter(|thread| thread.path == file.filename) {
+                            {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
+                        }
+                        if let Some(draft) = composer.filter(|draft| draft.in_reply_to.is_none() && draft.path == file.filename) {
+                            div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
+                        }
+                    }
                 }
             }
         }
@@ -367,18 +381,22 @@ fn ViewedBox(
     viewed: bool,
 ) -> Element {
     let mut marked = use_signal(|| viewed);
+    let mut pending = use_signal(|| false);
     rsx! {
         button { r#type: "submit", class: "collaboration-viewed", role: "checkbox", form: form_id,
+            disabled: pending(),
             name: "viewed", value: if marked() { "no" } else { "yes" },
             aria_checked: if marked() { "true" } else { "false" },
             onclick: move |event| {
                 event.prevent_default();
+                if pending() { return; }
+                pending.set(true);
                 let next = !marked();
                 marked.set(next);
                 browser::set_mark(&file_id, next);
                 #[cfg(target_arch = "wasm32")]
                 {
-                    spawn(save_mark(action.clone(), csrf.clone(), (path.clone(), head.clone(), base.clone()), next, marked, file_id.clone()));
+                    spawn(save_mark(action.clone(), csrf.clone(), (path.clone(), head.clone(), base.clone()), next, marked, pending, file_id.clone()));
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 let _ = (&action, &csrf, &path, &head, &base);
@@ -396,6 +414,7 @@ async fn save_mark(
     (path, head, base): (String, String, String),
     viewed: bool,
     mut marked: Signal<bool>,
+    mut pending: Signal<bool>,
     file_id: String,
 ) {
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
@@ -419,6 +438,7 @@ async fn save_mark(
         marked.set(!viewed);
         browser::set_mark(&file_id, !viewed);
     }
+    pending.set(false);
 }
 
 /// The page-side work of the file sections: the Viewed marks and the buttons that open or close
@@ -521,10 +541,10 @@ fn file_body(
     rsx! {
         if let Some(lines) = lines {
             for thread in top {
-                {review::thread_block(lines.repo, lines.url, lines.head, thread, composer, lines.references, lines.split)}
+                {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
             }
             if let Some(draft) = composer_top {
-                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, lines.head, draft, lines.references, lines.split, lines.review)} }
+                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
             }
         }
         pre { class: "collaboration-diff-patch",
@@ -611,10 +631,10 @@ fn patch_row(
         }
         if let Some(lines) = lines {
             for thread in threads {
-                {review::thread_block(lines.repo, lines.url, lines.head, thread, reply, lines.references, lines.split)}
+                {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, reply, lines.references, lines.split)}
             }
             if let Some(draft) = line_draft {
-                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, lines.head, draft, lines.references, lines.split, lines.review)} }
+                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
             }
         }
     }
@@ -691,10 +711,10 @@ fn split_file_body(
     rsx! {
         if let Some(lines) = lines {
             for thread in top {
-                {review::thread_block(lines.repo, lines.url, lines.head, thread, composer, lines.references, lines.split)}
+                {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
             }
             if let Some(draft) = composer_top {
-                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, lines.head, draft, lines.references, lines.split, lines.review)} }
+                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
             }
         }
         div { class: "collaboration-split patch-lines",
@@ -702,11 +722,11 @@ fn split_file_body(
                 {split_row(lines, &file.filename, &rows, *pair)}
                 if let Some(lines) = lines {
                     for thread in under[index].clone() {
-                        {review::thread_block(lines.repo, lines.url, lines.head, thread, composer, lines.references, lines.split)}
+                        {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
                     }
                     if composer_pair == Some(index) {
                         if let Some(draft) = here {
-                            div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, lines.head, draft, lines.references, lines.split, lines.review)} }
+                            div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
                         }
                     }
                 }
@@ -770,6 +790,91 @@ fn split_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dioxus::core::AttributeValue;
+
+    #[test]
+    fn viewed_control_ignores_clicks_while_a_save_is_pending() {
+        use dioxus::html::{
+            geometry::*, input_data::*, HasMouseData, InteractionElementOffset,
+            InteractionLocation, Modifiers, ModifiersInteraction, PointerInteraction,
+        };
+        struct Click;
+        impl InteractionLocation for Click {
+            fn client_coordinates(&self) -> ClientPoint {
+                ClientPoint::zero()
+            }
+            fn screen_coordinates(&self) -> ScreenPoint {
+                ScreenPoint::zero()
+            }
+            fn page_coordinates(&self) -> PagePoint {
+                PagePoint::zero()
+            }
+        }
+        impl InteractionElementOffset for Click {
+            fn element_coordinates(&self) -> ElementPoint {
+                ElementPoint::zero()
+            }
+        }
+        impl ModifiersInteraction for Click {
+            fn modifiers(&self) -> Modifiers {
+                Modifiers::empty()
+            }
+        }
+        impl PointerInteraction for Click {
+            fn trigger_button(&self) -> Option<MouseButton> {
+                None
+            }
+            fn held_buttons(&self) -> MouseButtonSet {
+                MouseButtonSet::default()
+            }
+        }
+        impl HasMouseData for Click {
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        let mut dom = VirtualDom::new_with_props(
+            ViewedBox,
+            ViewedBoxProps {
+                csrf: "token".into(),
+                action: "/viewed".into(),
+                path: "a.rs".into(),
+                head: "head".into(),
+                base: "base".into(),
+                form_id: "form".into(),
+                file_id: "file".into(),
+                viewed: false,
+            },
+        );
+        dom.rebuild_in_place();
+        let click = dom
+            .get_scope(ScopeId::APP)
+            .unwrap()
+            .root_node()
+            .dynamic_attrs
+            .iter()
+            .flat_map(|attributes| attributes.iter())
+            .find_map(|attribute| {
+                if attribute.name == "onclick" {
+                    if let AttributeValue::Listener(listener) = &attribute.value {
+                        return Some(listener.clone());
+                    }
+                }
+                None
+            })
+            .unwrap();
+        for _ in 0..2 {
+            dom.in_runtime(|| {
+                click.call(crate::webui::tests::event(|| {
+                    dioxus::html::MouseData::new(Click)
+                }))
+            });
+            dom.render_immediate_to_vec();
+            let html = dioxus_ssr::render(&dom);
+            assert!(html.contains("disabled"), "{html}");
+            assert!(html.contains("aria-checked=\"true\""), "{html}");
+        }
+    }
     #[test]
     fn blank_line_patches_and_long_paths_cannot_expand_without_limit() {
         let file = |filename: String, patch: String| DiffFile {

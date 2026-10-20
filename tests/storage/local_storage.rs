@@ -44,7 +44,7 @@ use uuid::Uuid;
 #[tokio::test]
 async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
     let f = Fixture::open().await;
-    for index in 0..12 {
+    for index in 0..100 {
         sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) VALUES(?,?)")
             .bind(format!("uploads/stalled-{index}"))
             .bind(two_days_ago())
@@ -52,6 +52,15 @@ async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
             .await
             .unwrap();
     }
+    sqlx::query(
+        "INSERT INTO pending_object_deletions(object_key,delete_after) VALUES('uploads/healthy',?)",
+    )
+    .bind(timestamp(chrono::Utc::now() - chrono::Duration::days(1)))
+    .execute(&f.raw)
+    .await
+    .unwrap();
+    let healthy = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let healthy_count = healthy.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let storage = Arc::new(
@@ -75,17 +84,25 @@ async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
         loop {
             let (mut socket, _) = listener.accept().await.unwrap();
             let sent = sent.clone();
+            let healthy = healthy_count.clone();
             connections.spawn(async move {
                 let mut bytes = [0; 4096];
                 let count = socket.read(&mut bytes).await.unwrap();
                 assert!(count > 0);
-                sent.send(()).unwrap();
-                std::future::pending::<()>().await;
+                if String::from_utf8_lossy(&bytes[..count]).contains("uploads/healthy") {
+                    healthy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    socket.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
+                } else {
+                    let _ = sent.send(());
+                    std::future::pending::<()>().await;
+                }
             });
         }
     });
     let pool = f.pool.clone();
-    let cleanup = tokio::spawn(async move { files::remove_expired_uploads(&pool, &storage).await });
+    let sweeping = storage.clone();
+    let cleanup =
+        tokio::spawn(async move { files::remove_expired_uploads(&pool, &sweeping).await });
     for _ in 0..4 {
         tokio::time::timeout(Duration::from_secs(3), requests.recv())
             .await
@@ -109,7 +126,28 @@ async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
         .fetch_one(&f.raw)
         .await
         .unwrap();
-    assert_eq!(count, 12);
+    assert_eq!(count, 101);
+    // Timed-out and unattempted keys have backoff, so later healthy work is reachable.
+    files::remove_expired_uploads(&f.pool, &storage)
+        .await
+        .unwrap();
+    assert_eq!(healthy.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(files_db::due_object_deletions(&f.pool, 100)
+        .await
+        .unwrap()
+        .is_empty());
+    // Successful S3 deletion keeps its tombstone, allowing a later PUT to be reconciled.
+    sqlx::query(
+        "UPDATE pending_object_deletions SET delete_after=? WHERE object_key='uploads/healthy'",
+    )
+    .bind(two_days_ago())
+    .execute(&f.raw)
+    .await
+    .unwrap();
+    files::remove_expired_uploads(&f.pool, &storage)
+        .await
+        .unwrap();
+    assert_eq!(healthy.load(std::sync::atomic::Ordering::SeqCst), 2);
     server.abort();
     let _ = server.await;
 }
@@ -137,6 +175,67 @@ async fn confirmations_refuse_a_busy_file_instead_of_queueing_behind_a_put() {
     drop(lock);
     f.put(&reservation, b"hello", "text/plain").await.unwrap();
     f.confirm(reservation.file_id).await.unwrap();
+}
+
+#[tokio::test]
+async fn put_waiters_take_io_slots_before_waiting_on_the_file_lock() {
+    let f = Fixture::open().await;
+    let reservation = f
+        .reserve(
+            b"hello",
+            "text/plain",
+            FileReason::Other,
+            FileVisibility::Owner,
+        )
+        .await;
+    let file = files_db::get_file_by_id(&f.pool, reservation.file_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let _lock = f.storage.lock_file(&file.object_key).await.unwrap();
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..32 {
+        let (pool, store, owner, id) = (f.pool.clone(), f.storage.clone(), f.owner, file.id);
+        tasks.spawn(async move {
+            files::put_local_upload(
+                &pool,
+                &store,
+                owner,
+                id,
+                "text/plain",
+                std::io::Cursor::new(b"hello"),
+            )
+            .await
+        });
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if f.storage.try_acquire_io().is_err() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            files::put_local_upload(
+                &f.pool,
+                &f.storage,
+                f.owner,
+                file.id,
+                "text/plain",
+                std::io::Cursor::new(b"hello")
+            )
+        )
+        .await
+        .unwrap(),
+        Err(LocalUploadError::StorageUnavailable)
+    );
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
 }
 
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";

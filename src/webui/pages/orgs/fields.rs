@@ -45,6 +45,7 @@ pub(super) fn input(page: &Page, action: &str, name: &str, label: &str) -> Eleme
         if name == "description" {
             // Each form has its own description, so the draft is keyed by the form as well.
             DraftTextarea { class: FIELD, id: Some(format!("{action}-{name}")), name: name.to_owned(), initial_value: value, maxlength: Some(limit), rows: 4 }
+            small { "At most 4096 UTF-8 bytes." }
         } else {
             DraftInput { class: FIELD, name: name.to_owned(), initial_value: value, maxlength: Some(limit) }
         }

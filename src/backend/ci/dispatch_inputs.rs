@@ -55,6 +55,9 @@ pub fn check_declaration(input: &DispatchInput) -> Result<(), &'static str> {
     {
         return Err("only choice and environment workflow inputs take options");
     }
+    for option in &input.options {
+        check_value(input, option)?;
+    }
     if let Some(default) = &input.default {
         check_value(input, default)?;
     }
@@ -220,6 +223,23 @@ mod tests {
             ..input("env", InputKind::Choice)
         })
         .is_err());
+    }
+
+    #[test]
+    fn every_option_must_be_a_usable_submitted_value() {
+        for kind in [InputKind::Choice, InputKind::Environment] {
+            let mut declared = input("env", kind);
+            for bad in [
+                "x".repeat(MAX_VALUE_BYTES + 1),
+                "bad\nvalue".into(),
+                "bad\0value".into(),
+            ] {
+                declared.options = vec![bad];
+                assert!(check_declaration(&declared).is_err());
+            }
+            declared.options = vec!["x".repeat(MAX_VALUE_BYTES)];
+            assert!(check_declaration(&declared).is_ok());
+        }
     }
 
     #[test]

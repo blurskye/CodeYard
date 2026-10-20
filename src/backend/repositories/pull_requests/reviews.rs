@@ -159,7 +159,7 @@ pub async fn create_pull_request_review(
         format!("refs/pull/{}/head", pull_request.number)
     };
     let published = repo_store(&repository, cluster)
-        .commit(&published_ref)
+        .commit_from_primary(&published_ref)
         .await
         .map_err(|error| {
             if error.kind == ErrorKind::Unavailable {
@@ -262,7 +262,7 @@ pub async fn create_pull_request_review(
             Vec::new()
         });
     for entry in &published {
-        let comment_link = discussion_link(&base, page, &format!("comment-{}", entry.comment.id));
+        let comment_link = super::comments::saved_comment_link(pool, &base, &entry.comment).await;
         notify_mentions(
             pool,
             broadcaster,
@@ -274,7 +274,11 @@ pub async fn create_pull_request_review(
                 number: pull_request.number,
                 subject: &pull_request.title,
                 link: &comment_link,
-                comment_id: None,
+                comment_id: Some(
+                    crate::backend::notifications::mentions::MentionComment::PullRequest(
+                        entry.comment.id,
+                    ),
+                ),
                 old_text: None,
                 text: &entry.comment.body,
                 notified: &[pull_request.author_id],
@@ -402,15 +406,15 @@ pub async fn dismiss_pull_request_review(
             message: "Review does not belong to this pull request".to_owned(),
         });
     }
-    // A pending review is private to its author until it is submitted, so it has no dismissal.
-    if review.state == "pending" {
+    check_optional_text(req.reason.as_deref())?;
+    // Only votes can be dismissed; comments must not mask an earlier decision.
+    if !matches!(review.state.as_str(), "approved" | "changes_requested") {
         return Err(OperationError::Missing {
             code: "not_found",
             message: "Review not found".to_owned(),
         });
     }
 
-    check_optional_text(req.reason.as_deref())?;
     let dismissed = db::pull_requests::reviews::dismiss_pull_request_review(
         pool,
         review.id,

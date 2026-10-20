@@ -15,6 +15,8 @@ pub enum ReleaseRefusal {
     TagTaken,
     #[error("An asset with this name already exists")]
     AssetNameTaken,
+    #[error("Release changed")]
+    Conflict,
 }
 
 /// An uploaded file being attached to a release, with the details the asset row keeps.
@@ -42,6 +44,7 @@ pub struct ReleaseFields {
 /// Only supplied fields change; omitted values are read under the write lock.
 #[derive(Debug, Clone, Default)]
 pub struct ReleaseChanges {
+    pub expected_revision: Option<String>,
     pub name: Option<Option<String>>,
     pub body: Option<Option<String>>,
     pub is_draft: Option<bool>,
@@ -52,6 +55,7 @@ pub struct ReleaseChanges {
 impl From<&ReleaseFields> for ReleaseChanges {
     fn from(fields: &ReleaseFields) -> Self {
         Self {
+            expected_revision: None,
             name: Some(fields.name.clone()),
             body: Some(fields.body.clone()),
             is_draft: Some(fields.is_draft),
@@ -73,13 +77,28 @@ impl ReleaseChanges {
     }
 }
 
+/// A native edit checks the fields it displayed under the repository write lock.
+pub fn release_revision(release: &Release) -> String {
+    use sha2::{Digest, Sha256};
+    let fields = serde_json::to_vec(&(
+        release.id,
+        &release.name,
+        &release.body,
+        release.is_draft,
+        release.is_prerelease,
+        release.is_latest,
+    ))
+    .expect("release fields serialize");
+    format!("{:x}", Sha256::digest(fields))
+}
+
 native_operation!(crate::backend::db::postgres::releases::create_release,
     crate::backend::db::sqlite::releases::create_release,
     fn create_release(pool: &DbPool, actor_id: i64, repo_id: i64, tag: &str, target: &str, fields: &ReleaseFields) -> Result<Release>);
 
 native_operation!(crate::backend::db::postgres::releases::update_release,
     crate::backend::db::sqlite::releases::update_release,
-    fn update_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, fields: &ReleaseChanges) -> Result<Release>);
+    fn update_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, fields: &ReleaseChanges) -> Result<(Release, bool)>);
 
 // Removes the release, unused file metadata and queues object cleanup atomically.
 // Returns the removed files for an immediate best-effort object delete.
@@ -121,6 +140,10 @@ native_operation!(crate::backend::db::postgres::releases::latest_release,
 native_operation!(crate::backend::db::postgres::releases::list_release_assets,
     crate::backend::db::sqlite::releases::list_release_assets,
     fn list_release_assets(pool: &DbPool, release_id: i64) -> Result<Vec<ReleaseAsset>>);
+
+native_operation!(crate::backend::db::postgres::releases::get_release_asset_by_name,
+    crate::backend::db::sqlite::releases::get_release_asset_by_name,
+    fn get_release_asset_by_name(pool: &DbPool, release_id: i64, name: &str) -> Result<Option<ReleaseAsset>>);
 
 native_operation!(crate::backend::db::postgres::releases::list_releases_assets,
     crate::backend::db::sqlite::releases::list_releases_assets,

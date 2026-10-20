@@ -124,6 +124,8 @@ fn query_model(ctx: &PageContext) -> Result<BTreeMap<String, String>, Response> 
         "limit",
         "log_limit",
         "ref",
+        "actor",
+        "before",
     ] {
         if let Some(value) = ctx.query.get(key).filter(|value| !value.is_empty()) {
             if value.len() > 500 || value.contains(['\r', '\n', '\0']) {
@@ -174,8 +176,15 @@ pub(crate) fn map_run(
         .filter(|_| run.event == "pull_request")
         .and_then(|event| event["head_ref"].as_str());
     // Runs stored before short branch names were used still have the full ref.
-    let branch =
-        crate::backend::ci::branch_name(head_branch.unwrap_or(run.branch.as_str())).to_owned();
+    let branch = head_branch
+        .unwrap_or_else(|| {
+            if run.event == "pull_request" {
+                &run.branch
+            } else {
+                crate::backend::ci::branch_name(&run.branch)
+            }
+        })
+        .to_owned();
     view_actions::Run {
         commit_status_context: run.commit_status_context(),
         id: run.run_id.to_string(),
@@ -205,7 +214,7 @@ pub(crate) fn workflow_view(
 ) -> view_actions::Workflow {
     view_actions::Workflow {
         path: workflow.path,
-        name: workflow.name,
+        name: workflow.name.chars().take(256).collect(),
         dispatchable: workflow.triggers.workflow_dispatch,
         inputs: workflow
             .triggers
@@ -222,7 +231,7 @@ fn workflow_input_view(
     use crate::backend::ci::dispatch_inputs::InputKind;
     view_actions::WorkflowInput {
         name: input.name,
-        description: input.description,
+        description: input.description.chars().take(1024).collect(),
         kind: match input.kind {
             InputKind::Text => view_actions::InputKind::Text,
             InputKind::Boolean => view_actions::InputKind::Boolean,
@@ -239,6 +248,20 @@ fn workflow_input_view(
 pub(crate) fn bound_log_projection(
     envelope: &mut crate::webui::app::PageEnvelope,
 ) -> Result<(), serde_json::Error> {
+    if let crate::webui::app::Page::Actions(view::Page::Actions(model)) = &mut envelope.page {
+        let mut bytes = 0usize;
+        for workflow in &mut model.workflows {
+            let size = serde_json::to_vec(workflow)?.len();
+            if bytes.saturating_add(size) > 2 * 1024 * 1024 {
+                workflow.inputs.clear();
+                workflow.dispatchable = false;
+                model.workflow_warning = Some("Some workflow inputs exceed the page size limit. Use the API to dispatch those workflows.".into());
+                bytes += serde_json::to_vec(workflow)?.len();
+            } else {
+                bytes += size;
+            }
+        }
+    }
     let Some(selected) = selected_run_mut(envelope) else {
         return Ok(());
     };
@@ -371,6 +394,7 @@ async fn actions(
         .unwrap_or_else(|| ("/ci".into(), "CI/CD runs".into()));
     let mut workflows = Vec::new();
     let mut can_manage_runs = false;
+    let mut can_cancel = false;
     let mut workflow_warning = None;
     let mut dispatch_branch = "main".to_string();
     if let Some(repository) = &repository {
@@ -382,7 +406,7 @@ async fn actions(
             return ctx.error(StatusCode::BAD_REQUEST, "Invalid workflow ref.");
         }
         let store = repo_store(repository, ctx.state.cluster.as_ref());
-        let definitions = match async {
+        let definitions = match tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let refs = store.refs().await?;
             // A genuinely empty repository has no workflow tree yet. Do not
             // use a missing-ref error as proof of that condition.
@@ -391,36 +415,63 @@ async fn actions(
             }
             store.commit(&dispatch_branch).await?;
             crate::backend::ci::list_workflows_for_ref(&store, &dispatch_branch).await
-        }
+        })
         .await
         {
-            Ok(definitions) => definitions,
-            Err(_) => {
+            Ok(Ok(definitions)) => definitions,
+            _ => {
                 workflow_warning = Some("Workflow definitions could not be read from this ref. Run history and logs are still available; workflow dispatch is disabled.".to_owned());
                 Vec::new()
             }
         };
         workflows = definitions.into_iter().map(workflow_view).collect();
-        can_manage_runs = match crate::backend::repositories::access::can_write(
-            &ctx.state.pool,
-            user,
-            repository,
-        )
-        .await
+        can_manage_runs = match ctx
+            .state
+            .ci_runs
+            .actor_may_discover_workflows(repository.id, user.id)
+            .await
         {
             Ok(allowed) => allowed,
             Err(_) => return unavailable(&ctx),
         };
     }
-    let persisted_runs = match &repository {
-        Some(repository) => {
-            db::ci::list_ci_runs_for_repo(&ctx.state.pool, repository.id, run_limit as i64).await
-        }
-        None => db::ci::list_ci_runs_for_user(&ctx.state.pool, user.id, run_limit as i64).await,
+    let before = match query.get("before").map(|value| value.parse::<i64>()) {
+        None => 0,
+        Some(Ok(value)) if value > 0 => value,
+        _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid run cursor."),
     };
-    let persisted_runs = match persisted_runs {
+    let value = |key: &str| query.get(key).map(String::as_str).unwrap_or("");
+    let status = if value("status").is_empty() {
+        ""
+    } else {
+        view_actions::logs::normalize_status(value("status"))
+    };
+    let filters = db::ci::CiRunFilter {
+        workflow: value("workflow").to_owned(),
+        event: value("event").to_owned(),
+        status: status.to_owned(),
+        branch: value("branch").to_owned(),
+        actor: value("actor").to_owned(),
+        text: value("q").to_owned(),
+        before: (before > 0).then_some(before),
+    };
+    let mut persisted_runs = match db::ci::list_filtered_ci_runs(
+        &ctx.state.pool,
+        user.id,
+        repository.as_ref().map(|repo| repo.id),
+        &filters,
+        run_limit as i64 + 1,
+    )
+    .await
+    {
         Ok(runs) => runs,
         Err(_) => return unavailable(&ctx),
+    };
+    let next_before = if persisted_runs.len() > run_limit {
+        persisted_runs.truncate(run_limit);
+        persisted_runs.last().map(|run| run.id)
+    } else {
+        None
     };
     let mut runs = Vec::new();
     // Recheck current visibility for the bounded set in one database snapshot.
@@ -492,6 +543,25 @@ async fn actions(
         {
             return read_error(&ctx, status);
         }
+        let access = match db::repositories::access::get_user_repo_access(
+            &ctx.state.pool,
+            user.id,
+            run_repository.id,
+        )
+        .await
+        {
+            Ok(access) => access,
+            Err(_) => return unavailable(&ctx),
+        };
+        let personal_admin = user.is_admin
+            && run_repository.owner_kind == "user"
+            && run_repository.owner_org_id.is_none();
+        can_cancel = !user.is_banned
+            && !user.must_change_password
+            && db::ci::may_cancel_run(user.id, run.triggered_by_id, personal_admin, access);
+        if run.pipeline != "ci" || run.environment.is_some() {
+            can_manage_runs &= personal_admin || access.can_admin();
+        }
         let persisted_logs =
             match db::ci::list_ci_logs(&ctx.state.pool, run.id, log_limit as i64).await {
                 Ok(lines) => lines,
@@ -534,8 +604,8 @@ async fn actions(
     // The path only identifies the scope; the shared loader independently checks
     // read access before projecting engagement/visibility metadata for the browser.
     let repo_chrome = if let Some((owner, name)) = &scope {
-        match crate::backend::api::repos::chrome::load_chrome(&ctx, owner, name).await {
-            Ok(chrome) => Some(chrome),
+        match crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await {
+            Ok(loaded) => Some(loaded.chrome),
             Err(response) => return response,
         }
     } else {
@@ -554,8 +624,10 @@ async fn actions(
         dispatch_branch,
         can_dispatch: can_manage_runs && workflow_warning.is_none(),
         can_manage_runs,
+        can_cancel,
         workflow_warning,
         run_limit,
+        next_before,
         log_limit,
     };
     ctx.page_model(
@@ -567,6 +639,72 @@ async fn actions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn workflow_metadata_fits_the_model_budget_without_a_selected_run() {
+        use crate::backend::ci::{
+            dispatch_inputs::{DispatchInput, InputKind},
+            workflows::{WorkflowDefinition, WorkflowTriggers},
+        };
+        let workflow = workflow_view(WorkflowDefinition {
+            path: ".github/workflows/ci.yml".into(),
+            name: "quote".repeat(100_000),
+            triggers: WorkflowTriggers {
+                workflow_dispatch: true,
+                dispatch_inputs: vec![
+                    DispatchInput {
+                        name: "target".into(),
+                        description: "\"".repeat(200_000),
+                        kind: InputKind::Choice,
+                        required: false,
+                        default: None,
+                        options: vec!["\"".repeat(2048); 25]
+                    };
+                    10
+                ],
+                ..Default::default()
+            },
+        });
+        assert!(workflow.inputs[0].description.len() <= 1024);
+        let model = view_actions::ActionsPage {
+            repository: None,
+            repo_chrome: None,
+            title: "Actions".into(),
+            base_path: "/ci".into(),
+            csrf_token: "token".into(),
+            query: BTreeMap::new(),
+            runs: vec![],
+            workflows: vec![workflow; 64],
+            selected: None,
+            dispatch_branch: "main".into(),
+            can_dispatch: true,
+            can_manage_runs: true,
+            can_cancel: false,
+            workflow_warning: None,
+            run_limit: 100,
+            next_before: None,
+            log_limit: 2000,
+        };
+        let mut envelope = crate::webui::app::PageEnvelope {
+            title: "Actions".into(),
+            location: "/ci".into(),
+            chrome: Default::default(),
+            page: crate::webui::app::Page::Actions(view::Page::Actions(Box::new(model))),
+        };
+        bound_log_projection(&mut envelope).unwrap();
+        assert!(
+            serde_json::to_vec(&envelope).unwrap().len()
+                < crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES
+        );
+        let crate::webui::app::Page::Actions(view::Page::Actions(model)) = envelope.page else {
+            panic!("Actions")
+        };
+        assert!(model.workflow_warning.is_some());
+        assert!(model
+            .workflows
+            .iter()
+            .any(|workflow| !workflow.dispatchable && workflow.inputs.is_empty()));
+    }
+
     #[test]
     fn selected_run_cannot_cross_repository_scope() {
         assert!(run_matches_repository(9, Some(9)));

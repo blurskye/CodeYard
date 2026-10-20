@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert!(
-        raw.iter().all(|row| row.repo_id != secret.id),
+        raw.rows.iter().all(|row| row.repo_id != secret.id),
         "SQL authorizes each scan together with its content"
     );
     f.execute(
@@ -206,7 +206,7 @@ async fn contract(pg: bool) {
     let later = db::activity::list_user_activity(&pool, alice, None, 100, 0)
         .await
         .unwrap();
-    assert!(later.iter().all(|row| row.repo_id != public.id));
+    assert!(later.rows.iter().all(|row| row.repo_id != public.id));
     f.finish().await;
 }
 

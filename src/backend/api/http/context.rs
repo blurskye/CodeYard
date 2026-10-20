@@ -60,6 +60,7 @@ pub(crate) async fn csrf_token_for_existing_session(
         .ok_or(ExistingCsrfError::Missing)
 }
 
+#[derive(Clone)]
 pub struct PageContext {
     pub state: Arc<AppState>,
     pub headers: HeaderMap,
@@ -247,6 +248,10 @@ impl PageContext {
 
     pub(in crate::backend::api) fn chrome(&self) -> Chrome {
         Chrome {
+            submitted_form: self
+                .headers
+                .contains_key("x-codeyard-submitted")
+                .then(|| self.path.clone()),
             username: self.user.as_ref().map(|u| u.username.clone()),
             is_admin: self.user.as_ref().is_some_and(|u| u.is_admin),
             unread_notifications: self.unread_notifications,

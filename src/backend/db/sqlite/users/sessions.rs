@@ -119,9 +119,10 @@ pub async fn save_bound_oauth_state(
     provider: &str,
     redirect: &str,
     binding: &str,
+    return_to: &str,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO oauth_states (state,pkce_verifier,provider,redirect_uri,browser_binding,expires_at) VALUES (?1,?2,?3,?4,?5,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+10 minutes'))")
-        .bind(state).bind(verifier).bind(provider).bind(redirect).bind(binding).execute(pool).await?;
+    sqlx::query("INSERT INTO oauth_states (state,pkce_verifier,provider,redirect_uri,browser_binding,return_to,expires_at) VALUES (?1,?2,?3,?4,?5,?6,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+10 minutes'))")
+        .bind(state).bind(verifier).bind(provider).bind(redirect).bind(binding).bind(return_to).execute(pool).await?;
     Ok(())
 }
 
@@ -228,7 +229,24 @@ pub async fn rotate_authenticated_session(
         SessionCredential::Password(_) if user.two_factor_enabled => return Ok(None),
         SessionCredential::SecondFactor { .. } if !user.two_factor_enabled => return Ok(None),
         SessionCredential::SecondFactor {
+            recovery_hash: None,
+            totp: Some((nonce, step)),
+            ..
+        } => {
+            let changed = sqlx::query("UPDATE two_factor_auth SET last_used_step=?2 WHERE user_id=?1 AND totp_nonce=?3 AND (last_used_step IS NULL OR last_used_step<?2)")
+                .bind(user_id).bind(step).bind(nonce).execute(&mut *tx).await?.rows_affected();
+            if changed != 1 {
+                return Ok(None);
+            }
+        }
+        SessionCredential::SecondFactor {
+            recovery_hash: None,
+            totp: None,
+            ..
+        } => return Ok(None),
+        SessionCredential::SecondFactor {
             recovery_hash: Some(hash),
+            totp: None,
             ..
         } => {
             let removed = sqlx::query(
@@ -243,6 +261,7 @@ pub async fn rotate_authenticated_session(
                 return Ok(None);
             }
         }
+        SessionCredential::SecondFactor { .. } => return Ok(None),
         _ => {}
     }
     if let Some(old) = old {

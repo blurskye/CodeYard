@@ -355,6 +355,7 @@ async fn merge_blockers(
                     repository.id,
                     &pull_request.head_sha,
                     pull_request.id,
+                    target.0,
                 )
                 .await
                 .map_err(|_| OperationError::Unavailable {
@@ -576,12 +577,19 @@ async fn refresh_chain(
             layers.push(layer);
             continue;
         }
-        pull_requests::refresh_open_pull_request(pool, repository, ci, user_id, layer.id)
-            .await
-            .map_err(|_| OperationError::Unavailable {
-                code: "git_unavailable",
-                message: "Pull request revisions could not be refreshed; merge denied.".into(),
-            })?;
+        pull_requests::refresh_open_pull_request(
+            pool,
+            repository,
+            ci,
+            user_id,
+            layer.id,
+            Some(crate::backend::db::models::AccessLevel::Owner),
+        )
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "git_unavailable",
+            message: "Pull request revisions could not be refreshed; merge denied.".into(),
+        })?;
         let refreshed = db::pull_requests::records::get_pull_request_by_id(pool, layer.id)
             .await
             .map_err(|_| OperationError::Unavailable {
@@ -803,12 +811,19 @@ pub async fn prepare_pull_request_merge(
         })?;
     // A merge uses this pull request's branches as they are now. An unrelated
     // broken fork must not deny a healthy pull request.
-    pull_requests::refresh_open_pull_request(pool, &repository, ci, user.id, pull_request.id)
-        .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "git_unavailable",
-            message: "Pull request revisions could not be refreshed; merge denied.".into(),
-        })?;
+    pull_requests::refresh_open_pull_request(
+        pool,
+        &repository,
+        ci,
+        user.id,
+        pull_request.id,
+        Some(crate::backend::db::models::AccessLevel::Owner),
+    )
+    .await
+    .map_err(|_| OperationError::Unavailable {
+        code: "git_unavailable",
+        message: "Pull request revisions could not be refreshed; merge denied.".into(),
+    })?;
     let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
         .await
         .map_err(|_| OperationError::Unavailable {
@@ -1060,7 +1075,13 @@ pub async fn publish_prepared_merge(
             )
             .await
     };
-    published.map_err(|error| publish_failure(error, merge.method))?;
+    let bookkeeping_failed = match published {
+        Err(error) if error.is_applied_followup_failed() => true,
+        result => {
+            result.map_err(|error| publish_failure(error, merge.method))?;
+            false
+        }
+    };
     let marked =
         db::pull_requests::records::mark_pull_requests_merged(pool, &chain, user.id, &merge_sha)
             .await;
@@ -1096,7 +1117,18 @@ pub async fn publish_prepared_merge(
     // retarget's own transaction, as a head move is.
     pull_requests::workflows::queue_moved_pull_requests_ci(pool, ci, &repository, &moved, user.id)
         .await;
-    pull_requests::branches_moved(pool, &repository, ci, user.id).await;
+    if let Err(error) = pull_requests::refresh_open_pull_requests(
+        pool,
+        &repository,
+        Some(&[&merge.base_branch]),
+        ci,
+        user.id,
+        crate::backend::db::models::AccessLevel::Owner,
+    )
+    .await
+    {
+        tracing::warn!(repo_id = repository.id, %error, "could not refresh pull requests after merge");
+    }
     ci.queue_push_runs(
         &repository,
         &owner,
@@ -1181,7 +1213,14 @@ pub async fn publish_prepared_merge(
     Ok(MergeResponse {
         sha: merge_sha,
         merged: true,
-        message: format!("Pull request #{} merged successfully", current.number),
+        message: if bookkeeping_failed {
+            format!(
+                "Pull request #{} merged; repository bookkeeping failed",
+                current.number
+            )
+        } else {
+            format!("Pull request #{} merged successfully", current.number)
+        },
     })
 }
 

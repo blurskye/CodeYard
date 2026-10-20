@@ -472,6 +472,26 @@ async fn contract(pg: bool) {
     tip = api_file(&client, "latin1.txt", raw_update, &tip, false).await;
     assert_eq!(blob_bytes(&repo, "latin1.txt"), raw_update);
 
+    // A text input would strip these line breaks and submit another file's name.
+    tip = api_file(&client, "docs/ab.txt", b"keep me", &tip, true).await;
+    for (encoded, path) in [
+        ("docs/a%0Ab.txt", "docs/a\nb.txt"),
+        ("docs/a%0Db.txt", "docs/a\rb.txt"),
+    ] {
+        tip = api_file(&client, encoded, b"other file", &tip, true).await;
+        let (status, body) = client
+            .page(&format!("/editor_boundary/save/edit/main/{encoded}"))
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body.contains("Filenames containing line breaks cannot be edited"),
+            "{body}"
+        );
+        assert!(!body.contains("id=\"repo-editor-form\""));
+        assert_eq!(blob_bytes(&repo, path), b"other file");
+        assert_eq!(blob_bytes(&repo, "docs/ab.txt"), b"keep me");
+    }
+
     tip = api_file(&client, "script.sh", b"#!/bin/sh\necho old\n", &tip, true).await;
     let (status, page) = model(&client, "/editor_boundary/save/edit/main/script.sh").await;
     assert_eq!(status, StatusCode::OK);
@@ -664,6 +684,19 @@ async fn stale_repository_contract(pg: bool) {
     for (owner, populated) in [("unborn_editor", false), ("populated_editor", true)] {
         let actor = f.actor(owner).await;
         let (client, root) = long_name_client(&f, actor).await;
+        if !populated {
+            let (status, page) = model(
+                &client,
+                &format!("/{owner}/save/new/refs/heads/main/.github/workflows"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            let Page::Repositories(view::page::Page::Editor { editor, .. }) = page else {
+                panic!("workflow editor")
+            };
+            assert_eq!(editor.branch, "main");
+            assert_eq!(editor.path, ".github/workflows/");
+        }
         if populated {
             save_file(
                 &client,

@@ -6,6 +6,49 @@ use super::search::{byte_index, highlight_pieces, insert_word, suggestions, utf1
 use super::{Kind, ListFilters};
 use dioxus::prelude::*;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dioxus::core::AttributeValue;
+    #[test]
+    fn search_enhancement_waits_for_the_native_input_to_mount() {
+        let mut dom = VirtualDom::new_with_props(
+            SearchBox,
+            SearchBoxProps {
+                kind: Kind::Issue,
+                value: "original".into(),
+                filters: ListFilters::default(),
+            },
+        );
+        dom.rebuild_in_place();
+        dom.render_immediate_to_vec();
+        assert!(!dioxus_ssr::render(&dom).contains("is-enhanced"));
+        let mounted = dom
+            .get_scope(ScopeId::APP)
+            .unwrap()
+            .root_node()
+            .dynamic_attrs
+            .iter()
+            .flat_map(|attributes| attributes.iter())
+            .find_map(|attribute| {
+                if attribute.name == "onmounted" {
+                    if let AttributeValue::Listener(listener) = &attribute.value {
+                        return Some(listener.clone());
+                    }
+                }
+                None
+            })
+            .unwrap();
+        dom.in_runtime(|| {
+            mounted.call(crate::webui::tests::event(|| {
+                dioxus::html::MountedData::from(())
+            }))
+        });
+        dom.render_immediate_to_vec();
+        assert!(dioxus_ssr::render(&dom).contains("is-enhanced"));
+    }
+}
+
 const INPUT_ID: &str = "list-search-input";
 const SUGGESTIONS_ID: &str = "list-search-suggestions";
 
@@ -20,7 +63,7 @@ pub(super) fn SearchBox(kind: Kind, value: String, filters: ListFilters) -> Elem
     let mut enhanced = use_signal(|| false);
     let mut scroll = use_signal(|| 0_i32);
     let mut pending = use_signal(|| None::<usize>);
-    use_effect(move || enhanced.set(true));
+
     // A new caret is placed after the render, because setting the value moves the caret to the end.
     use_effect(move || {
         if let Some(position) = pending() {
@@ -87,6 +130,20 @@ pub(super) fn SearchBox(kind: Kind, value: String, filters: ListFilters) -> Elem
                 "aria-expanded": if enhanced() { Some((if showing { "true" } else { "false" }).to_owned()) } else { None },
                 "aria-controls": if showing { Some(SUGGESTIONS_ID.to_owned()) } else { None },
                 "aria-activedescendant": highlighted.filter(|_| showing).map(|index| format!("{SUGGESTIONS_ID}-option-{index}")),
+                onmounted: move |event| {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        use wasm_bindgen::JsCast;
+                        if let Some(input) = event.data().downcast::<web_sys::Element>().and_then(|element| element.dyn_ref::<web_sys::HtmlInputElement>()) {
+                            text.set(input.value());
+                            caret.set(input.selection_start().ok().flatten().map_or_else(|| utf16_index(&input.value(), input.value().len()), |position| position as usize));
+                            scroll.set(input.scroll_left());
+                        }
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let _ = event;
+                    enhanced.set(true);
+                },
                 oninput: move |event| {
                     let next = event.value();
                     let position = input_caret(INPUT_ID).unwrap_or_else(|| utf16_index(&next, next.len()));

@@ -101,7 +101,7 @@ pub async fn get_blob(
     Path((owner, repo, git_ref, path)): Path<(String, String, String, String)>,
     Query(query): Query<BlobQuery>,
     headers: HeaderMap,
-) -> Result<Json<BlobResponse>, (StatusCode, Json<ApiError>)> {
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
     let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
         .await
         .map_err(|_| {
@@ -121,6 +121,19 @@ pub async fn get_blob(
         })?;
 
     check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let permit = state
+        .repository_downloads
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiError::new(
+                    "busy",
+                    "Repository downloads are busy. Try again.",
+                )),
+            )
+        })?;
 
     let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
     if refs.is_empty() {
@@ -210,7 +223,7 @@ pub async fn get_blob(
             )
         };
 
-    Ok(Json(BlobResponse {
+    let response = serde_json::to_vec(&BlobResponse {
         path,
         content,
         encoding,
@@ -221,7 +234,109 @@ pub async fn get_blob(
         next_offset,
         prev_offset,
         truncated,
-    }))
+    })
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::new(
+                "serialization_error",
+                "Repository preview is unavailable",
+            )),
+        )
+    })?;
+    Ok(Response::builder()
+        .header(axum::http::header::CONTENT_TYPE, "application/json")
+        .body(crate::backend::api::http::middleware::buffered_download_body(response, permit))
+        .expect("valid JSON response"))
+}
+
+const PREVIEW_BYTES: u64 = 256 * 1024;
+const PREVIEW_LINES: usize = 2000;
+
+fn limit_lines(mut window: TextWindow) -> TextWindow {
+    let bytes = window.text.as_bytes();
+    let mut lines = 0;
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'\n' || (*byte == b'\r' && bytes.get(index + 1) != Some(&b'\n')) {
+            lines += 1;
+            if lines == PREVIEW_LINES {
+                window.text.truncate(index + 1);
+                window.end = window.start + window.text.len() as u64;
+                break;
+            }
+        }
+    }
+    window
+}
+
+/// Scan bounded chunks, keeping only the window to display and its global line number.
+async fn preview_at(
+    store: &RepoStore,
+    reference: &str,
+    path: &str,
+    offset: u64,
+    target: Option<usize>,
+) -> Result<(BlobBytes, usize), RepoError> {
+    let mut position = 0;
+    let mut line = 1;
+    let mut start = offset;
+    loop {
+        if target.is_none() && position >= offset || target == Some(line) {
+            break;
+        }
+        let length = if target.is_none() {
+            PREVIEW_BYTES.min(offset - position)
+        } else {
+            PREVIEW_BYTES
+        };
+        let chunk = store
+            .blob_range(
+                reference,
+                path,
+                BlobRange::Window {
+                    offset: position,
+                    length,
+                },
+            )
+            .await?;
+        if chunk.is_binary {
+            return Ok((chunk, 1));
+        }
+        if chunk.bytes.is_empty() {
+            start = chunk.size;
+            break;
+        }
+        let mut found = false;
+        for (index, byte) in chunk.bytes.iter().enumerate() {
+            if *byte == b'\n' {
+                line += 1;
+                if target == Some(line) {
+                    start = position + index as u64 + 1;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if found {
+            break;
+        }
+        position += chunk.bytes.len() as u64;
+        if position >= chunk.size {
+            start = chunk.size;
+            break;
+        }
+    }
+    let chunk = store
+        .blob_range(
+            reference,
+            path,
+            BlobRange::Window {
+                offset: start,
+                length: PREVIEW_BYTES,
+            },
+        )
+        .await?;
+    Ok((chunk, line))
 }
 
 async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
@@ -230,6 +345,11 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository is empty."));
     }
     let offset = number(ctx, "offset", 0, usize::MAX)?;
+    let target = ctx
+        .query
+        .contains_key("line")
+        .then(|| number(ctx, "line", 1, u32::MAX as usize))
+        .transpose()?;
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
     // Resolve the ref once. The content, the Files panel and the permalink then name the same
     // commit, even if a push moves the branch while this page loads.
@@ -237,35 +357,45 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         .commit(&resolved.reference)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
-    let read = store
-        .blob_range(
-            &head.sha,
-            &resolved.path,
-            BlobRange::Window {
-                offset: offset as u64,
-                length: 256 * 1024,
-            },
-        )
-        .await;
-    let BlobBytes {
-        id,
-        bytes,
-        is_binary: binary,
-        size,
-        offset: start,
-    } = match read {
-        Ok(blob) => blob,
+    let read = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        preview_at(&store, &head.sha, &resolved.path, offset as u64, target),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        Err(RepoError::new(
+            crate::backend::repositories::store::ErrorKind::Unavailable,
+            "File preview timed out",
+        ))
+    });
+    let (preview, first_line) = match read {
+        Ok(value) => value,
         Err(error) => {
+            if store.tree_metadata(&head.sha, &resolved.path).await.is_ok() {
+                return Ok(ctx.redirect(&view::ref_path::file_url(
+                    &loaded.chrome.base(),
+                    "tree",
+                    &resolved.reference,
+                    &resolved.path,
+                )));
+            }
             return match root_if_missing(ctx, loaded, &resolved.reference, &error) {
                 Some(redirect) => Ok(redirect),
                 None => Err(store_error(ctx, Some(&loaded.chrome), error)),
             };
         }
     };
+    let BlobBytes {
+        id,
+        bytes,
+        is_binary: binary,
+        size,
+        offset: start,
+    } = preview;
     let (start, end, content) = if binary {
         (start, start + bytes.len() as u64, String::new())
     } else {
-        let window = text_window(start, &bytes, size);
+        let window = limit_lines(text_window(start, &bytes, size));
         (window.start, window.end, window.text)
     };
     let editable = if !binary && size <= MAX_EDITOR_BYTES as u64 {
@@ -282,12 +412,17 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     };
     let on_branch = is_branch(loaded, &resolved.reference);
     let mut page = view::blob::BlobPage {
-        reference: resolved.reference.clone(),
+        reference: if !on_branch && !resolved.reference.starts_with("refs/") {
+            head.sha.clone()
+        } else {
+            resolved.reference.clone()
+        },
         path: resolved.path,
         content,
         binary,
         size,
         offset: start,
+        first_line: Some(first_line),
         next: if end < size { Some(end) } else { None },
         previous: if start > 0 {
             Some(start.saturating_sub(256 * 1024))
@@ -429,6 +564,99 @@ pub(in crate::backend::api::repos) async fn page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn binary_json_previews_hold_download_slots_until_consumed_or_timed_out() {
+        let pool = db::init_db("sqlite::memory:").await.unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let user = db::users::accounts::create_user(&pool, "alice", None)
+            .await
+            .unwrap();
+        let repository = crate::backend::repositories::lifecycle::provision(
+            (&pool, None),
+            root.path(),
+            db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+            "proj",
+            None,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        {
+            let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
+            let blob = git.blob(&vec![0; 256 * 1024]).unwrap();
+            let mut builder = git.treebuilder(None).unwrap();
+            builder.insert("binary.dat", blob, 0o100644).unwrap();
+            let tree_id = builder.write().unwrap();
+            let tree = git.find_tree(tree_id).unwrap();
+            let signature = git2::Signature::now("alice", "alice@example.test").unwrap();
+            git.commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "Initial",
+                &tree,
+                &[],
+            )
+            .unwrap();
+        }
+        let state = Arc::new(AppState::new(
+            pool,
+            root.path().to_owned(),
+            Arc::new(
+                crate::backend::storage::ObjectStore::open(root.path(), None)
+                    .await
+                    .unwrap(),
+            ),
+            None,
+            crate::backend::ci::CiConfig::default(),
+            None,
+        ));
+        let path = || {
+            Path((
+                "alice".into(),
+                "proj".into(),
+                "main".into(),
+                "binary.dat".into(),
+            ))
+        };
+        let query = || {
+            Query(BlobQuery {
+                offset: None,
+                limit: None,
+            })
+        };
+        let slots = state.repository_downloads.clone();
+        let permit = slots.clone().acquire_many_owned(4).await.unwrap();
+        let refused = get_blob(State(state.clone()), path(), query(), HeaderMap::new()).await;
+        assert!(matches!(refused, Err((StatusCode::SERVICE_UNAVAILABLE, _))));
+        drop(permit);
+        let response = get_blob(State(state.clone()), path(), query(), HeaderMap::new())
+            .await
+            .unwrap_or_else(|(status, _)| panic!("preview: {status}"));
+        assert_eq!(slots.available_permits(), 3);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["encoding"], "base64");
+        assert_eq!(slots.available_permits(), 4);
+        let response = get_blob(State(state), path(), query(), HeaderMap::new())
+            .await
+            .unwrap_or_else(|(status, _)| panic!("preview: {status}"));
+        tokio::time::pause();
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_secs(31)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            slots.available_permits(),
+            4,
+            "unread JSON must release its buffer and slot"
+        );
+        drop(response);
+    }
 
     #[test]
     fn chained_text_windows_reproduce_the_text_without_splitting_characters() {

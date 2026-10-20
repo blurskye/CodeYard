@@ -18,6 +18,11 @@ use axum::response::Response;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub(crate) fn comment_revision(body: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(body.as_bytes()))
+}
+
 /// `task` is the box's number in the text; `comment` is the comment it is in, or empty for the
 /// body. A body save also sends the `expected_state` and `expected_updated` it was read at.
 pub(crate) async fn native_toggle_task(
@@ -152,7 +157,7 @@ async fn comment_body(
     }
     .map_err(|_| unavailable(ctx))?;
     let body = body.ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?;
-    if expected != body {
+    if expected != comment_revision(&body) {
         return Err(ctx.error(
             StatusCode::CONFLICT,
             "The comment changed. Reload before ticking a task.",
@@ -187,7 +192,10 @@ async fn save_comment_text(
                 broadcaster,
                 actor_id,
                 target,
-                CreateCommentRequest { body },
+                CreateCommentRequest {
+                    body,
+                    ..Default::default()
+                },
                 Some(expected_body),
             )
             .await

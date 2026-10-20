@@ -1,7 +1,7 @@
 use crate::backend::{api::http::session::get_optional_user, app::AppState, files};
 use axum::{
     extract::{Path, State},
-    http::HeaderMap,
+    http::{HeaderMap, Method},
     response::Response,
 };
 use std::sync::Arc;
@@ -28,6 +28,7 @@ pub async fn get_public_download_url(
 
 pub async fn public_file_redirect(
     State(state): State<Arc<AppState>>,
+    method: Method,
     headers: HeaderMap,
     Path(file_id): Path<String>,
 ) -> Result<Response, Failure> {
@@ -38,5 +39,5 @@ pub async fn public_file_redirect(
     let download = files::open_asset_download(&state.pool, &state.storage, actor, file_id)
         .await
         .map_err(download_failure)?;
-    asset_response(download)
+    asset_response(download, method)
 }

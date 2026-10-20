@@ -16,6 +16,19 @@ pub enum SshKeyWriteRefusal {
     InvalidSession,
 }
 
+#[derive(Debug, sqlx::FromRow)]
+pub struct SshKeySummary {
+    pub id: i64,
+    pub name: String,
+    pub fingerprint: String,
+    pub key_type: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+native_operation!(crate::backend::db::postgres::users::ssh_keys::list_user_key_summaries,
+    crate::backend::db::sqlite::users::ssh_keys::list_user_key_summaries,
+    fn list_user_key_summaries(pool: &DbPool, user_id: i64, after: i64) -> Result<Vec<SshKeySummary>>);
+
 fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
     use SshKeyWriteRefusal::InvalidKey;
     if !matches!(

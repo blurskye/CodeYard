@@ -27,7 +27,7 @@ pub(crate) enum Request {
         serve_command: String,
     },
     Serve {
-        key_id: i64,
+        credential: super::ReceiveCredential,
         command: String,
         git_protocol: Option<String>,
     },

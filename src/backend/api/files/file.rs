@@ -45,6 +45,11 @@ fn deletion_failure(error: DeleteError) -> Failure {
             "File storage is unavailable; the file was not deleted. Try again.",
         ),
         DeleteError::NotFound => (StatusCode::NOT_FOUND, "not_found", "File not found"),
+        DeleteError::Denied => (
+            StatusCode::FORBIDDEN,
+            "denied",
+            "File deletion is not allowed",
+        ),
         DeleteError::ReferencedOrganizationAvatar => (
             StatusCode::CONFLICT,
             "file_in_use",

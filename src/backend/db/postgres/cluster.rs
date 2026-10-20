@@ -3,9 +3,12 @@ use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };
 use crate::backend::db::cluster::{
-    Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PromoteOutcome,
+    Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
+    PromoteOutcome,
 };
-use crate::backend::db::postgres::users::transitions::active_admin;
+use crate::backend::db::postgres::users::transitions::{
+    active_admin, live_session, lock_membership_shared,
+};
 use anyhow::{anyhow, bail, Result};
 use sqlx::{PgConnection, PgPool};
 
@@ -70,6 +73,43 @@ pub async fn place_repository(pool: &PgPool, repo_id: i64, node_id: i64) -> Resu
     .await?
     .rows_affected()
         == 1)
+}
+
+/// Adopts a whole current fork family, serialized with fork insertion on its source rows.
+pub async fn place_fork_family(
+    pool: &PgPool,
+    repo_id: i64,
+    node_id: i64,
+    local: &[i64],
+) -> Result<Vec<i64>> {
+    let mut tx = pool.begin().await?;
+    let members: Vec<(i64, Option<i64>, i64)> =
+        sqlx::query_as(&format!("{FORK_FAMILY} FOR NO KEY UPDATE OF r"))
+            .bind(repo_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    if members.is_empty()
+        || members
+            .iter()
+            .any(|(id, node, _)| node.is_some() || !local.contains(id))
+    {
+        return Ok(Vec::new());
+    }
+    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repo_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    if current != members {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<_> = members.into_iter().map(|row| row.0).collect();
+    sqlx::query("UPDATE repositories SET storage_node_id=$2 WHERE id=ANY($1)")
+        .bind(&ids)
+        .bind(node_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(ids)
 }
 
 pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<JoinOutcome> {
@@ -230,15 +270,16 @@ pub async fn is_active_node(pool: &PgPool, public_key: &str) -> Result<bool> {
 
 pub async fn set_node_status(
     pool: &PgPool,
-    authority: Authority,
+    authority: Authority<'_>,
     name: &str,
     status: &str,
 ) -> Result<NodeStatusChange> {
     let mut tx = pool.begin().await?;
-    if let Authority::Administrator(actor) = authority {
-        // This locks the administrator's row until commit, so a concurrent ban either
-        // waits for this change or lands before it.
-        if !active_admin(&mut tx, actor).await? {
+    lock_membership_shared(&mut tx).await?;
+    if let Authority::Administrator { user_id, session } = authority {
+        if !active_admin(&mut tx, user_id).await?
+            || !live_session(&mut tx, user_id, session).await?
+        {
             return Ok(NodeStatusChange::Denied);
         }
     }
@@ -250,6 +291,11 @@ pub async fn set_node_status(
     let Some(before) = before else {
         return Ok(NodeStatusChange::Missing);
     };
+    if let Authority::Administrator { user_id, session } = authority {
+        if !live_session(&mut tx, user_id, session).await? {
+            return Ok(NodeStatusChange::Denied);
+        }
+    }
     let node = sqlx::query_as::<_, ClusterNode>(
         "UPDATE nodes SET status = $2 WHERE name = $1 RETURNING *, NOW() AS observed_at",
     )
@@ -257,6 +303,10 @@ pub async fn set_node_status(
     .bind(status)
     .fetch_one(&mut *tx)
     .await?;
+    if let Authority::Administrator { user_id: actor, .. } = authority {
+        sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'node.status','node',$2,$3)")
+            .bind(actor).bind(node.id).bind(serde_json::json!({"before":before,"status":status})).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(NodeStatusChange::Changed {
         before,
@@ -373,9 +423,9 @@ pub async fn get_write_version(pool: &PgPool, repo_id: i64) -> Result<Option<i64
 pub async fn list_primary_repositories(
     pool: &PgPool,
     node_id: i64,
-) -> Result<Vec<(i64, String, Option<i64>, Option<i64>)>> {
+) -> Result<Vec<PrimaryReplicaRow>> {
     Ok(sqlx::query_as(
-        "SELECT r.id, r.disk_path, rr.node_id, rr.applied_version
+        "SELECT r.id, r.disk_path, rr.node_id, rr.applied_version, r.size_bytes
          FROM repositories r
          LEFT JOIN repository_replicas rr ON rr.repository_id = r.id
          WHERE r.storage_node_id = $1
@@ -384,6 +434,11 @@ pub async fn list_primary_repositories(
     .bind(node_id)
     .fetch_all(pool)
     .await?)
+}
+
+pub async fn pending_replica_bytes(pool: &PgPool) -> Result<Vec<(i64, i64)>> {
+    Ok(sqlx::query_as("SELECT rr.node_id, SUM(GREATEST(r.size_bytes,1))::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 GROUP BY rr.node_id")
+        .fetch_all(pool).await?)
 }
 
 pub async fn list_held_replicas(pool: &PgPool, node_id: i64) -> Result<Vec<HeldReplica>> {
@@ -666,9 +721,11 @@ async fn move_primary(
     to: i64,
     applied_version: i64,
 ) -> Result<()> {
-    sqlx::query("UPDATE repositories SET storage_node_id = $2 WHERE id = $1")
+    // A forced rollback must not reuse the version of an earlier primary's history.
+    sqlx::query("UPDATE repositories SET storage_node_id = $2, write_version = write_version + CASE WHEN $3 < write_version THEN 1 ELSE 0 END WHERE id = $1")
         .bind(repo_id)
         .bind(to)
+        .bind(applied_version)
         .execute(&mut *conn)
         .await?;
     sqlx::query(
