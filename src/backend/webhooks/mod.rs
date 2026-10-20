@@ -258,9 +258,14 @@ mod tests {
 
     #[test]
     fn construction_and_delivery_share_the_queue_limit() {
-        let tickets: Vec<_> = (0..QUEUE_LIMIT).map(|_| Ticket::take().unwrap()).collect();
+        // Other tests in this process may hold tickets, so take whatever is left.
+        let mut tickets = Vec::new();
+        while let Some(ticket) = Ticket::take() {
+            tickets.push(ticket);
+        }
+        assert!(tickets.len() <= QUEUE_LIMIT);
         assert!(Ticket::take().is_none());
-        drop(tickets);
+        tickets.pop();
         assert!(Ticket::take().is_some());
     }
 }

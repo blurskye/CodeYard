@@ -455,30 +455,46 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let term_marker = directory.path().join("term");
         let pids = directory.path().join("pids");
+        let ready = [
+            directory.path().join("ready-1"),
+            directory.path().join("ready-2"),
+        ];
         let mut child = command("/bin/sh");
         child
             .args([
                 "-c",
-                "(trap 'echo term > \"$1\"; exit 0' TERM; while :; do sleep .1; done) & graceful=$!; (trap '' TERM; while :; do sleep .1; done) & stubborn=$!; printf '%s %s\n' \"$graceful\" \"$stubborn\" > \"$2\"; wait",
+                "(trap 'echo term > \"$1\"; exit 0' TERM; : > \"$3\"; while :; do sleep .1; done) & graceful=$!; (trap '' TERM; : > \"$4\"; while :; do sleep .1; done) & stubborn=$!; printf '%s %s\n' \"$graceful\" \"$stubborn\" > \"$2\"; wait",
                 "sh",
             ])
             .arg(&term_marker)
-            .arg(&pids);
-        let (_tx, cancel) = watch::channel(false);
-        let started = Instant::now();
-        // The shell must have installed its trap before the timeout fires, which a busy
-        // machine can take a while to do.
-        let limit = Duration::from_secs(1);
-        let error = run(child, limit, cancel, |_, _| async { Ok(()) })
-            .await
-            .unwrap_err();
-        assert!(matches!(error.downcast_ref(), Some(Stopped::TimedOut)));
+            .arg(&pids)
+            .args(&ready);
+        let (tx, cancel) = watch::channel(false);
+        // Cancel only once both traps are installed, however slow the machine is.
+        let cancel_when_ready = async {
+            let deadline = Instant::now() + Duration::from_secs(30);
+            while !(pids.exists() && ready.iter().all(|file| file.exists())) {
+                assert!(Instant::now() < deadline, "shell never became ready");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let cancelled_at = Instant::now();
+            tx.send(true).unwrap();
+            cancelled_at
+        };
+        let (result, cancelled_at) = tokio::join!(
+            run(child, Duration::from_secs(60), cancel, |_, _| async {
+                Ok(())
+            }),
+            cancel_when_ready
+        );
+        let error = result.unwrap_err();
+        assert!(matches!(error.downcast_ref(), Some(Stopped::Cancelled)));
         assert!(
             term_marker.exists(),
             "SIGTERM was not delivered before SIGKILL"
         );
-        assert!(started.elapsed() >= TERM_GRACE);
-        assert!(started.elapsed() < limit + TERM_GRACE + KILL_GRACE + Duration::from_secs(2));
+        assert!(cancelled_at.elapsed() >= TERM_GRACE);
+        assert!(cancelled_at.elapsed() < TERM_GRACE + KILL_GRACE + Duration::from_secs(2));
         for pid in std::fs::read_to_string(pids)
             .unwrap()
             .split_whitespace()
