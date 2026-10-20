@@ -32,6 +32,15 @@ pub(super) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
+    // A server started with SIGTERM ignored (nohup, some supervisors) would otherwise hand that
+    // to every job, and cancelling a job could only end in SIGKILL.
+    // SAFETY: `signal` is async-signal-safe, which is all `pre_exec` allows.
+    unsafe {
+        command.pre_exec(|| {
+            libc::signal(libc::SIGTERM, libc::SIG_DFL);
+            Ok(())
+        });
+    }
     command
 }
 
