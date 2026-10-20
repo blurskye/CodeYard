@@ -1,5 +1,7 @@
 use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
-use crate::backend::db::releases::{NewReleaseAsset, ReleaseFields, ReleaseRefusal};
+use crate::backend::db::releases::{
+    NewReleaseAsset, ReleaseChanges, ReleaseFields, ReleaseRefusal,
+};
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
@@ -109,10 +111,11 @@ pub async fn update_release(
     actor_id: i64,
     repo_id: i64,
     release_id: i64,
-    fields: &ReleaseFields,
+    fields: &ReleaseChanges,
 ) -> Result<Release> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    release_in_repo(&mut tx, repo_id, release_id).await?;
+    let current = release_in_repo(&mut tx, repo_id, release_id).await?;
+    let fields = fields.apply_to(&current);
     // A release first published keeps its date. A draft gets one when it is published.
     sqlx::query(
         "UPDATE releases SET name = ?1, body = ?2, is_draft = ?3, is_prerelease = ?4,
@@ -128,7 +131,7 @@ pub async fn update_release(
     .bind(release_id)
     .execute(&mut *tx)
     .await?;
-    set_latest_flag(&mut tx, repo_id, release_id, fields).await?;
+    set_latest_flag(&mut tx, repo_id, release_id, &fields).await?;
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     tx.commit().await?;
     Ok(release)
@@ -318,6 +321,18 @@ pub async fn list_release_assets(pool: &SqlitePool, release_id: i64) -> Result<V
     .bind(release_id)
     .fetch_all(pool)
     .await?)
+}
+
+pub async fn list_releases_assets(
+    pool: &SqlitePool,
+    release_ids: &[i64],
+) -> Result<Vec<ReleaseAsset>> {
+    if release_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as::<_, ReleaseAsset>(&format!(
+        "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id IN (SELECT value FROM json_each(?1)) ORDER BY release_id, name"
+    )).bind(serde_json::to_string(release_ids)?).fetch_all(pool).await?)
 }
 
 pub async fn count_asset_download(pool: &SqlitePool, asset_id: i64) -> Result<()> {

@@ -377,6 +377,228 @@ mod fixture {
     }
 
     #[tokio::test]
+    async fn account_git_credentials_keep_the_personal_site_admin_override_only() {
+        for organization in [false, true] {
+            let fixture = Fixture::with_authority(
+                CredentialKind::SshKey,
+                if organization {
+                    AccessKind::OrganizationTeam
+                } else {
+                    AccessKind::Direct
+                },
+            )
+            .await;
+            sqlx::query("UPDATE users SET is_admin=TRUE WHERE id=?")
+                .bind(fixture.actor_id)
+                .execute(&fixture.native)
+                .await
+                .unwrap();
+            if !organization {
+                db::repositories::access::revoke_repo_access(
+                    &fixture.pool,
+                    fixture.actor_id,
+                    fixture.repo_id,
+                )
+                .await
+                .unwrap();
+            }
+            let repo =
+                db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
+                    .await
+                    .unwrap()
+                    .unwrap();
+            for credential in [
+                ReceiveCredential::SshKey(fixture.key_id),
+                ReceiveCredential::Token(fixture.token_id),
+            ] {
+                let (_, access) = credential
+                    .authorize(&fixture.pool, &repo, true)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    access,
+                    if organization {
+                        AccessLevel::Write
+                    } else {
+                        AccessLevel::Owner
+                    }
+                );
+            }
+            fixture.pool.close().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn independent_receive_gateways_share_the_repository_ref_limit() {
+        let mut fixture = Fixture::new().await;
+        // Packed refs keep the large fixture cheap while exercising the same quota.
+        let mut packed = String::from("# pack-refs with: peeled fully-peeled sorted\n");
+        for index in 1..9_744 {
+            packed.push_str(&format!("{} refs/heads/held-{index:05}\n", fixture.oid));
+        }
+        std::fs::write(fixture.path.join("packed-refs"), packed).unwrap();
+        let mut tasks = Vec::new();
+        for group in 0..3 {
+            let names = (0..256)
+                .map(|i| format!("refs/heads/push-{group}-{i}"))
+                .collect::<Vec<_>>();
+            let sha = fixture.oid.to_string();
+            let updates = names
+                .iter()
+                .map(|name| (name.as_str(), ZERO_SHA, sha.as_str()))
+                .collect::<Vec<_>>();
+            // Each receive creates an independent socket and gateway for this repository.
+            fixture.request = receive_requests(&fixture.path, &updates);
+            tasks.push(fixture.receive());
+        }
+        for task in tasks {
+            tokio::time::timeout(std::time::Duration::from_secs(30), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
+        assert_eq!(
+            crate::backend::git::branches_and_tags_in_use(&fixture.path)
+                .unwrap()
+                .count,
+            10_000
+        );
+        fixture.pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn receive_rejects_tags_that_exceed_the_aggregate_annotation_reader_budget() {
+        let mut fixture = Fixture::new().await;
+        let bare = git2::Repository::open_bare(&fixture.path).unwrap();
+        let target = bare.find_object(fixture.oid, None).unwrap();
+        let signature = git2::Signature::now("Alice", "alice@example.invalid").unwrap();
+        let message = "x".repeat(crate::backend::git::MAX_TAG_MESSAGE_BYTES);
+        for index in 0..4 {
+            bare.tag(
+                &format!("large-{index}"),
+                &target,
+                &signature,
+                &message,
+                false,
+            )
+            .unwrap();
+        }
+        let oid = bare
+            .tag("too-many", &target, &signature, &message, false)
+            .unwrap();
+        bare.find_reference("refs/tags/too-many")
+            .unwrap()
+            .delete()
+            .unwrap();
+        fixture.request = receive_request(
+            &fixture.path,
+            "refs/tags/too-many",
+            ZERO_SHA,
+            &oid.to_string(),
+        );
+        let result = fixture.receive().await.unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&result).contains("ng refs/tags/too-many"));
+        assert!(bare.find_reference("refs/tags/too-many").is_err());
+        assert_eq!(
+            crate::backend::git::repository::list_tags(&fixture.path)
+                .unwrap()
+                .len(),
+            4
+        );
+        fixture.pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn receive_deletion_waits_for_the_same_guard_as_default_branch_changes() {
+        let mut fixture = Fixture::new().await;
+        fixture.delete_spare_branch();
+        let repo = db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let guard = crate::backend::git::locks::lock(&fixture.path).await;
+        let (pool, repo_id, actor) = (fixture.pool.clone(), fixture.repo_id, fixture.owner_id);
+        let setter = tokio::spawn(async move {
+            repo_store(&repo, None)
+                .set_default_branch_as(&pool, repo_id, actor, "spare")
+                .await
+        });
+        tokio::task::yield_now().await;
+        let (reached, release) = hold_next_hook(fixture.path.clone(), false);
+        let mut push = fixture.receive();
+        hook_reached(reached, &mut push).await;
+        release.send(()).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let bare = git2::Repository::open_bare(&fixture.path).unwrap();
+        assert!(
+            bare.find_reference("refs/heads/spare").is_ok(),
+            "receive published while the write guard was held"
+        );
+        drop(guard);
+        tokio::time::timeout(std::time::Duration::from_secs(15), setter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(15), push)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(String::from_utf8_lossy(&result).contains("ng refs/heads/spare"));
+        assert_eq!(
+            bare.find_reference("HEAD").unwrap().symbolic_target(),
+            Some("refs/heads/spare")
+        );
+        fixture.pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn revoked_first_push_still_repairs_head_and_persists_storage_metadata() {
+        let mut fixture = Fixture::new().await;
+        let bare = git2::Repository::open_bare(&fixture.path).unwrap();
+        bare.find_reference("refs/heads/main")
+            .unwrap()
+            .delete()
+            .unwrap();
+        bare.set_head("refs/heads/main").unwrap();
+        fixture.request = receive_request(
+            &fixture.path,
+            "refs/heads/trunk",
+            ZERO_SHA,
+            &fixture.oid.to_string(),
+        );
+        let (reached, release) = hold_next_hook(fixture.path.clone(), true);
+        let mut task = fixture.receive();
+        hook_reached(reached, &mut task).await;
+        assert!(
+            db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
+                .await
+                .unwrap()
+        );
+        release.send(()).unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(15), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_err()
+        );
+        assert_eq!(
+            bare.find_reference("HEAD").unwrap().symbolic_target(),
+            Some("refs/heads/trunk")
+        );
+        let row = db::repositories::records::get_repository_by_id(&fixture.pool, fixture.repo_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.default_branch, "trunk");
+        assert!(row.size_bytes > 0);
+        fixture.pool.close().await;
+    }
+
+    #[tokio::test]
     async fn push_rechecks_revocation_and_protection_in_pre_receive() {
         for change in [
             "unchanged",

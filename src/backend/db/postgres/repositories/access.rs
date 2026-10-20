@@ -366,6 +366,7 @@ impl CollaboratorAccessTransaction for PgPool {
         permission: Option<AccessLevel>,
     ) -> Result<CollaboratorChange> {
         let mut tx = self.begin().await?;
+        lock_membership_shared(&mut tx).await?;
         let actor_state: Option<(bool, bool)> = sqlx::query_as(
             "SELECT is_banned,must_change_password FROM users WHERE id=$1 FOR SHARE",
         )

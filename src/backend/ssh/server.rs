@@ -317,6 +317,7 @@ async fn serve_connection(
     }
     let (signal, authenticated) = oneshot::channel();
     handler.set_authenticated_signal(signal);
+    let rate_limiter = handler.rate_limiter.clone();
     let session =
         match tokio::time::timeout_at(deadline, russh::server::run_stream(config, stream, handler))
             .await
@@ -334,16 +335,23 @@ async fn serve_connection(
     // The slot and the socket control are released when the client authenticates
     // or when the session ends first (the handler drops its signal then).
     let login = async move {
-        if tokio::time::timeout_at(deadline, authenticated)
-            .await
-            .is_err()
-        {
-            warn!("SSH client {} did not authenticate in time", source.ip());
+        let authenticated = matches!(
+            tokio::time::timeout_at(deadline, authenticated).await,
+            Ok(Ok(()))
+        );
+        if !authenticated {
             let _ = control.shutdown(std::net::Shutdown::Both);
         }
         drop(slot);
+        authenticated
     };
-    let ((), result) = tokio::join!(login, session);
+    let (authenticated, result) = tokio::join!(login, session);
+    if !authenticated && rate_limiter.record_failure(source.ip()).await {
+        warn!(
+            "IP {} banned after too many failed connections",
+            source.ip()
+        );
+    }
     if let Err(error) = result {
         warn!("SSH session failed: {}", error);
     }
@@ -369,7 +377,10 @@ impl SshServer {
             key_pem
         } else {
             let bootstrap_key = if let Some(path) = host_key_path {
-                if Path::new(path).exists() {
+                if Path::new(path)
+                    .try_exists()
+                    .with_context(|| format!("Failed to inspect host key at {}", path))?
+                {
                     secure_host_key_file(path)?;
                     info!("Bootstrapping cluster SSH host key from {}", path);
                     std::fs::read_to_string(path)

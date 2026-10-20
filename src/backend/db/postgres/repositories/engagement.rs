@@ -5,7 +5,7 @@ use crate::backend::db::repositories::engagement::StarSort;
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 
-/// Locks the repository before any watch row. Repository deletion locks the repository
+/// Locks the repository before any watch or star row. Repository deletion locks the repository
 /// first and then the watch rows it cascades to, so a watch change must not hold a watch
 /// row while the counter trigger waits for the repository.
 async fn lock_repository(tx: &mut Transaction<'_, Postgres>, repo_id: i64) -> Result<bool> {
@@ -79,11 +79,16 @@ pub async fn star_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool
 }
 
 pub async fn unstar_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    if !lock_repository(&mut tx, repo_id).await? {
+        return Ok(false);
+    }
     let result = sqlx::query("DELETE FROM stars WHERE user_id = $1 AND repo_id = $2")
         .bind(user_id)
         .bind(repo_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
 
     Ok(result.rows_affected() > 0)
 }

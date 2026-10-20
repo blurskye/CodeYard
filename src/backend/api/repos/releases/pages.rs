@@ -185,7 +185,7 @@ async fn new_form(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to publish a release.");
     };
-    let choices = match releases::form_choices(
+    let (tags, branches, default_branch) = match releases::form_choices(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         actor,
@@ -194,7 +194,10 @@ async fn new_form(
     )
     .await
     {
-        Ok(choices) => choices,
+        Ok(choices) => (choices.tags, choices.branches, choices.default_branch),
+        Err(ReleaseError::Git(_)) if error.is_some() => {
+            (Vec::new(), Vec::new(), draft.target.clone())
+        }
         Err(error) => return refusal(ctx, repo, error),
     };
     ctx.page_model(
@@ -204,9 +207,9 @@ async fn new_form(
             ReleasePage::Form {
                 editing: None,
                 draft,
-                tags: choices.tags,
-                branches: choices.branches,
-                default_branch: choices.default_branch,
+                tags,
+                branches,
+                default_branch,
                 assets: Vec::new(),
                 error,
             },
@@ -289,7 +292,15 @@ pub(crate) async fn list(
     let viewer = ctx.user.as_ref().map(|user| user.id);
     match releases::list(&ctx.state.pool, viewer, &owner, &name, page, PER_PAGE).await {
         Ok(listing) => {
-            let items = listing.releases.iter().map(release_item).collect();
+            let items = listing
+                .releases
+                .iter()
+                .map(|row| {
+                    let mut item = release_item(row);
+                    item.body.clear();
+                    item
+                })
+                .collect();
             ctx.page_model(
                 "Releases",
                 repo_page(
@@ -483,7 +494,7 @@ pub(crate) async fn update(
         &owner,
         &name,
         id,
-        &fields_of(&draft),
+        &(&fields_of(&draft)).into(),
     )
     .await
     {
@@ -551,34 +562,59 @@ pub(crate) async fn upload_asset(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    // The body is read before the CSRF field can be checked, so only signed-in users get that far.
-    if ctx.user.is_none() {
+    let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to upload an asset.");
+    };
+    if let Err(error) = releases::edit_detail(&ctx.state.pool, actor, &owner, &name, id).await {
+        let (status, message) = refused(&error);
+        return ctx.error(status, &message);
     }
-    let mut fields = HashMap::new();
-    let mut file = None;
-    loop {
-        let part = match multipart.next_field().await {
-            Ok(Some(part)) => part,
-            Ok(None) => break,
-            Err(_) => return ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read."),
-        };
-        let part_name = part.name().unwrap_or_default().to_owned();
-        if part_name == "file" {
-            let filename = part.file_name().unwrap_or_default().to_owned();
-            match part.bytes().await {
-                Ok(bytes) => file = Some((filename, bytes.to_vec())),
+    let Ok(_slot) = ctx.state.upload_reads.clone().try_acquire_owned() else {
+        return ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Uploads are busy. Try again in a moment.",
+        );
+    };
+    let read = async {
+        let mut fields = HashMap::new();
+        let mut file = None;
+        loop {
+            let part = match multipart.next_field().await {
+                Ok(Some(part)) => part,
+                Ok(None) => break,
                 Err(_) => {
-                    return ctx.error(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "Assets are limited to 100 MiB.",
-                    )
+                    return Err(ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read."))
                 }
+            };
+            let part_name = part.name().unwrap_or_default().to_owned();
+            if part_name == "file" {
+                let filename = part.file_name().unwrap_or_default().to_owned();
+                match part.bytes().await {
+                    Ok(bytes) => file = Some((filename, bytes.to_vec())),
+                    Err(_) => {
+                        return Err(ctx.error(
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            "Assets are limited to 100 MiB.",
+                        ))
+                    }
+                }
+            } else if let Ok(text) = part.text().await {
+                fields.insert(part_name, text);
             }
-        } else if let Ok(text) = part.text().await {
-            fields.insert(part_name, text);
         }
-    }
+        Ok((fields, file))
+    };
+    let (fields, file) = match tokio::time::timeout(std::time::Duration::from_secs(30), read).await
+    {
+        Ok(Ok(parts)) => parts,
+        Ok(Err(response)) => return response,
+        Err(_) => {
+            return ctx.error(
+                StatusCode::REQUEST_TIMEOUT,
+                "The upload timed out. Choose the file again.",
+            )
+        }
+    };
     if let Err(response) = authorize_post(&ctx, &fields) {
         return response;
     }

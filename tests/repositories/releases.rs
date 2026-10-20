@@ -24,6 +24,7 @@ struct World {
     carol: Client,
     anonymous: Client,
     main: String,
+    upload_reads: Arc<tokio::sync::Semaphore>,
 }
 
 async fn setup(pg: bool) -> World {
@@ -53,14 +54,16 @@ async fn setup(pg: bool) -> World {
             &[],
         )
         .await;
-    let router = create_router(AppState::new(
+    let state = AppState::new(
         database.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    ));
+    );
+    let upload_reads = state.upload_reads.clone();
+    let router = create_router(state);
     let alice = Client::login(&router, database.pool(), alice_id).await;
     let main = alice.save("main", "README.md", "unborn").await;
     alice.save("main", "docs.txt", &main).await;
@@ -75,6 +78,7 @@ async fn setup(pg: bool) -> World {
         carol,
         anonymous,
         main,
+        upload_reads,
     }
 }
 
@@ -206,6 +210,14 @@ async fn releases_flow(pg: bool) {
         )
         .await;
     assert!(tags.to_string().contains("v1.0"), "{tags}");
+    assert!(first["tarball_url"]
+        .as_str()
+        .unwrap()
+        .ends_with("/archive/refs%2Ftags%2Fv1.0.tar.gz"));
+    assert!(first["zipball_url"]
+        .as_str()
+        .unwrap()
+        .ends_with("/archive/refs%2Ftags%2Fv1.0.zip"));
     let first_id = first["id"].as_i64().unwrap();
 
     // A draft is visible to writers only.
@@ -329,6 +341,29 @@ async fn releases_flow(pg: bool) {
         .await;
     assert_eq!(release["assets"][0]["download_count"], 1, "{release}");
     let asset_id = release["assets"][0]["id"].as_i64().unwrap();
+    let listed_assets = alice
+        .expect(
+            "GET",
+            "/api/repos/alice/proj/releases?per_page=100",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(
+        listed_assets
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == first_id)
+            .unwrap()["assets"],
+        release["assets"]
+    );
+    assert!(listed_assets
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["id"] != first_id)
+        .all(|row| row["assets"].as_array().unwrap().is_empty()));
     let duplicate = upload(alice, &form_path, "", "tool.bin", b"again").await;
     assert_eq!(
         duplicate.status,
@@ -383,6 +418,18 @@ async fn releases_flow(pg: bool) {
     assert_eq!(gone.status, StatusCode::NOT_FOUND);
 
     // Pages render for readers, with the source archives and the draft hidden from them.
+    let (model_status, model) = bob.model("/alice/proj/releases").await;
+    assert_eq!(model_status, StatusCode::OK);
+    let codeyard::webui::app::Page::Repositories(
+        codeyard::webui::pages::repos::page::Page::Releases {
+            page: codeyard::webui::pages::repos::releases::Page::List { items, .. },
+            ..
+        },
+    ) = model
+    else {
+        panic!("not a release list")
+    };
+    assert!(items.iter().all(|item| item.body.is_empty()));
     let (status, html) = bob.page("/alice/proj/releases").await;
     assert_eq!(status, StatusCode::OK);
     assert!(html.contains("v1.1") && !html.contains("v2.0-rc"), "{html}");
@@ -681,6 +728,41 @@ async fn publish_notifies_release_watchers(pg: bool) {
 }
 
 #[tokio::test]
+async fn releases_do_not_read_every_tag_annotation_to_find_one_tag() {
+    let world = setup(false).await;
+    let repository =
+        db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    let bare = git2::Repository::open_bare(&repository.disk_path).unwrap();
+    let target = bare
+        .find_commit(git2::Oid::from_str(&world.main).unwrap())
+        .unwrap();
+    let signature = git2::Signature::now("Alice", "alice@example.invalid").unwrap();
+    // Simulate tags already present before aggregate admission was enforced.
+    for index in 0..5 {
+        bare.tag(
+            &format!("large-{index}"),
+            target.as_object(),
+            &signature,
+            &"x".repeat(codeyard::backend::git::MAX_TAG_MESSAGE_BYTES),
+            false,
+        )
+        .unwrap();
+    }
+    world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": "large-0", "name": "Existing tag"}),
+            StatusCode::CREATED,
+        )
+        .await;
+}
+
+#[tokio::test]
 async fn postgres_releases_flow() {
     releases_flow(true).await;
 }
@@ -722,6 +804,15 @@ async fn large_assets_upload(pg: bool) {
         "{}",
         uploaded.text()
     );
+    let refused = upload(
+        &world.bob,
+        &format!("/alice/proj/releases/{release_id}/assets"),
+        "",
+        "reader.bin",
+        &vec![7u8; 5 * 1024 * 1024],
+    )
+    .await;
+    assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text());
     // A visitor who is not signed in is refused before the body is read.
     let refused = upload(
         &world.anonymous,
@@ -834,7 +925,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
         .unwrap()
         .contains_key("refs/tags/invalid"));
 
-    // Unrelated large annotations cannot prevent publishing an ordinary tag.
+    // Publication refuses a tag set over the metadata budget, even for a lightweight tag.
     let git = git2::Repository::open_bare(&repo.disk_path).unwrap();
     let object = git
         .find_object(git2::Oid::from_str(&world.main).unwrap(), None)
@@ -850,6 +941,21 @@ async fn release_validation_and_atomic_files(pg: bool) {
         )
         .unwrap();
     }
+    world
+        .alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/releases",
+            json!({"tag_name": "v-small", "target_commitish": "main"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+        )
+        .await;
+    assert!(git.find_reference("refs/tags/v-small").is_err());
+    git.find_reference("refs/tags/large-4")
+        .unwrap()
+        .delete()
+        .unwrap();
+    // Unrelated annotations within the budget do not prevent publishing a release.
     let release_id = publish(&world.alice, "v-small").await;
     let refused = upload(
         &world.alice,
@@ -1108,4 +1214,192 @@ async fn postgres_release_publish_notifies_release_watchers() {
 #[tokio::test]
 async fn sqlite_release_publish_notifies_release_watchers() {
     publish_notifies_release_watchers(false).await;
+}
+
+async fn release_write_regressions(pg: bool) {
+    use axum::{
+        body::Body,
+        http::{header, Request},
+    };
+    use tower::ServiceExt;
+    let mut world = setup(pg).await;
+    let id = publish(&world.alice, "partial").await;
+    let api = format!("/api/repos/alice/proj/releases/{id}");
+    let title = json!({"name":"Concurrent title"});
+    let notes = json!({"body":"Concurrent notes"});
+    let (first, second) = tokio::join!(
+        world.alice.api("PATCH", &api, title),
+        world.alice.api("PATCH", &api, notes)
+    );
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(second.0, StatusCode::OK);
+    let saved = world
+        .alice
+        .expect("GET", &api, Value::Null, StatusCode::OK)
+        .await;
+    assert_eq!(saved["name"], "Concurrent title");
+    assert_eq!(saved["body"], "Concurrent notes");
+
+    let pending = || {
+        Body::from_stream(futures_util::stream::pending::<
+            Result<bytes::Bytes, std::io::Error>,
+        >())
+    };
+    let request = |client: &Client| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/alice/proj/releases/{id}/assets"))
+            .header(header::COOKIE, format!("session_id={}", client.session))
+            .header(
+                header::CONTENT_TYPE,
+                "multipart/form-data; boundary=upload-test",
+            )
+            .body(pending())
+            .unwrap()
+    };
+    let permits = world
+        .upload_reads
+        .clone()
+        .acquire_many_owned(4)
+        .await
+        .unwrap();
+    let busy = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        world.alice.router.clone().oneshot(request(&world.alice)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let denied = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        world.bob.router.clone().oneshot(request(&world.bob)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+    drop(permits);
+    let timed_out = tokio::time::timeout(
+        std::time::Duration::from_secs(35),
+        world.alice.router.clone().oneshot(request(&world.alice)),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(timed_out.status(), StatusCode::REQUEST_TIMEOUT);
+    assert_eq!(world.upload_reads.available_permits(), 4);
+
+    let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    for delete_release in [false, true] {
+        let id = publish(
+            &world.alice,
+            if delete_release {
+                "delete-release"
+            } else {
+                "delete-asset"
+            },
+        )
+        .await;
+        assert_eq!(
+            upload(
+                &world.alice,
+                &format!("/alice/proj/releases/{id}/assets"),
+                "",
+                "cleanup.bin",
+                b"bytes"
+            )
+            .await
+            .status,
+            StatusCode::SEE_OTHER
+        );
+        let assets = db::releases::list_release_assets(world.database.pool(), id)
+            .await
+            .unwrap();
+        let asset = &assets[0];
+        // Stop at the database commit, before the domain's immediate object cleanup.
+        if delete_release {
+            assert_eq!(
+                db::releases::delete_release(
+                    world.database.pool(),
+                    repo.owner_user_id.unwrap(),
+                    repo.id,
+                    id
+                )
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|file| file.id)
+                .collect::<Vec<_>>(),
+                vec![asset.file_id]
+            );
+        } else {
+            assert_eq!(
+                db::releases::delete_release_asset(
+                    world.database.pool(),
+                    repo.owner_user_id.unwrap(),
+                    repo.id,
+                    id,
+                    asset.id
+                )
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+                asset.file_id
+            );
+        }
+        assert!(
+            db::files::get_file_by_id(world.database.pool(), asset.file_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        world
+            .database
+            .execute(
+                "UPDATE pending_object_deletions SET delete_after='2000-01-01T00:00:00Z'",
+                &[],
+            )
+            .await;
+        assert!(!db::files::due_object_deletions(world.database.pool(), 100)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+    std::fs::rename(&repo.disk_path, world._root.path().join("offline.git")).unwrap();
+    let reply = world
+        .alice
+        .form_reply(
+            "/alice/proj/releases/new",
+            &[
+                ("repository_id", &repo.id.to_string()),
+                ("tag", "outage-tag"),
+                ("target", "main"),
+                ("title", "Preserved title"),
+                ("body", "Release notes during outage"),
+            ],
+        )
+        .await;
+    assert!(!reply.status.is_success() && !reply.status.is_redirection());
+    for value in [
+        "outage-tag",
+        "Preserved title",
+        "Release notes during outage",
+    ] {
+        assert!(reply.text().contains(value), "{}", reply.text());
+    }
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_release_write_regressions() {
+    release_write_regressions(false).await;
+}
+#[tokio::test]
+async fn postgres_release_write_regressions() {
+    release_write_regressions(true).await;
 }

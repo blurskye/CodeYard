@@ -39,13 +39,47 @@ pub struct ReleaseFields {
     pub make_latest: bool,
 }
 
+/// Only supplied fields change; omitted values are read under the write lock.
+#[derive(Debug, Clone, Default)]
+pub struct ReleaseChanges {
+    pub name: Option<Option<String>>,
+    pub body: Option<Option<String>>,
+    pub is_draft: Option<bool>,
+    pub is_prerelease: Option<bool>,
+    pub make_latest: Option<bool>,
+}
+
+impl From<&ReleaseFields> for ReleaseChanges {
+    fn from(fields: &ReleaseFields) -> Self {
+        Self {
+            name: Some(fields.name.clone()),
+            body: Some(fields.body.clone()),
+            is_draft: Some(fields.is_draft),
+            is_prerelease: Some(fields.is_prerelease),
+            make_latest: Some(fields.make_latest),
+        }
+    }
+}
+
+impl ReleaseChanges {
+    pub fn apply_to(&self, current: &Release) -> ReleaseFields {
+        ReleaseFields {
+            name: self.name.clone().unwrap_or_else(|| current.name.clone()),
+            body: self.body.clone().unwrap_or_else(|| current.body.clone()),
+            is_draft: self.is_draft.unwrap_or(current.is_draft),
+            is_prerelease: self.is_prerelease.unwrap_or(current.is_prerelease),
+            make_latest: self.make_latest.unwrap_or(current.is_latest),
+        }
+    }
+}
+
 native_operation!(crate::backend::db::postgres::releases::create_release,
     crate::backend::db::sqlite::releases::create_release,
     fn create_release(pool: &DbPool, actor_id: i64, repo_id: i64, tag: &str, target: &str, fields: &ReleaseFields) -> Result<Release>);
 
 native_operation!(crate::backend::db::postgres::releases::update_release,
     crate::backend::db::sqlite::releases::update_release,
-    fn update_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, fields: &ReleaseFields) -> Result<Release>);
+    fn update_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, fields: &ReleaseChanges) -> Result<Release>);
 
 // Removes the release, unused file metadata and queues object cleanup atomically.
 // Returns the removed files for an immediate best-effort object delete.
@@ -87,6 +121,10 @@ native_operation!(crate::backend::db::postgres::releases::latest_release,
 native_operation!(crate::backend::db::postgres::releases::list_release_assets,
     crate::backend::db::sqlite::releases::list_release_assets,
     fn list_release_assets(pool: &DbPool, release_id: i64) -> Result<Vec<ReleaseAsset>>);
+
+native_operation!(crate::backend::db::postgres::releases::list_releases_assets,
+    crate::backend::db::sqlite::releases::list_releases_assets,
+    fn list_releases_assets(pool: &DbPool, release_ids: &[i64]) -> Result<Vec<ReleaseAsset>>);
 
 native_operation!(crate::backend::db::postgres::releases::count_asset_download,
     crate::backend::db::sqlite::releases::count_asset_download,

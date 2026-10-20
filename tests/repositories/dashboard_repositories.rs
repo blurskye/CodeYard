@@ -110,6 +110,83 @@ async fn contract(pg: bool) {
     f.finish().await;
 }
 
+async fn bounded_repository_pages(pg: bool) {
+    bundle::install();
+    let mut f = Database::new(pg).await;
+    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    let owner = f.actor("page_owner").await;
+    let viewer = f.actor("page_viewer").await;
+    f.execute("WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<35) INSERT INTO repositories(owner_kind,owner_user_id,name,is_private,disk_path) SELECT 'user',$1,'bulk-' || n,FALSE,'fixture' FROM numbers", &[owner]).await;
+    f.execute("INSERT INTO repositories(owner_kind,owner_user_id,name,is_private,disk_path) VALUES('user',$1,'secret',TRUE,'fixture-secret')", &[owner]).await;
+    let root = tempfile::tempdir().unwrap();
+    let router = create_router(AppState::new(
+        f.pool().clone(),
+        root.path().to_owned(),
+        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
+        None,
+        CiConfig::default(),
+        None,
+    ));
+    let alice = Client::login(&router, f.pool(), owner).await;
+    let bob = Client::login(&router, f.pool(), viewer).await;
+    let first = home(&alice, "/").await;
+    let second = home(&alice, "/?page=2").await;
+    assert_eq!(
+        (first.repositories.len(), second.repositories.len()),
+        (30, 6)
+    );
+    assert_eq!(first.repository_count, 36);
+    assert!(first.has_older && !second.has_older);
+    assert!(first
+        .repositories
+        .iter()
+        .all(|a| second.repositories.iter().all(|b| a.name != b.name)));
+    let filtered = home(&alice, "/?q=bulk-35").await;
+    assert_eq!(
+        (filtered.repositories.len(), filtered.repository_count),
+        (1, 1)
+    );
+    for (client, total, tail) in [(&bob, 35, 5), (&alice, 36, 6)] {
+        let (status, page) = client.model("/page_owner?repo_page=2").await;
+        assert_eq!(status, StatusCode::OK);
+        let Page::Identity(codeyard::webui::pages::account::Page::Profile {
+            repositories,
+            repository_count,
+            repositories_newer,
+            repositories_older,
+            ..
+        }) = page
+        else {
+            panic!("profile")
+        };
+        assert_eq!(repository_count, total);
+        assert_eq!(repositories.len(), tail);
+        assert!(repositories_newer.is_some() && repositories_older.is_none());
+        let response = client
+            .expect(
+                "GET",
+                "/api/users/page_owner/repos?page=2",
+                serde_json::Value::Null,
+                StatusCode::OK,
+            )
+            .await;
+        assert_eq!(response.as_array().unwrap().len(), tail);
+    }
+    let (status, html) = bob.page("/page_owner").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(html.contains("repo_page=2"));
+    assert!(!html.contains("/page_owner/secret"));
+    f.finish().await;
+}
+#[tokio::test]
+async fn sqlite_home_profile_and_api_repository_pages_are_bounded() {
+    bounded_repository_pages(false).await;
+}
+#[tokio::test]
+async fn postgres_home_profile_and_api_repository_pages_are_bounded() {
+    bounded_repository_pages(true).await;
+}
+
 #[tokio::test]
 async fn sqlite_dashboard_repository_sections() {
     contract(false).await;

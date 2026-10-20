@@ -9,6 +9,8 @@ use serde::Deserialize;
 pub struct CreateIssueRequest {
     pub title: String,
     pub body: Option<String>,
+    #[serde(default)]
+    pub repository_id: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -42,6 +44,13 @@ pub async fn create_issue(
         })?;
 
     super::require_read(pool, &user, &repository).await?;
+    if req.repository_id.is_some_and(|id| id != repository.id) {
+        return Err(OperationError::Conflict {
+            code: "conflict",
+            message: "The repository changed. Review your draft before submitting it again."
+                .to_owned(),
+        });
+    }
 
     let checked = super::validate_title(&req.title)
         .and_then(|_| super::validate_body(req.body.as_deref().unwrap_or(""), false));

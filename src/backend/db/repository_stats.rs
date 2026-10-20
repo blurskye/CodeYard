@@ -7,6 +7,7 @@ native_operation!(crate::backend::db::postgres::repository_stats::upsert_repo_la
     fn upsert_repo_languages(
     pool: &DbPool,
     repo_id: i64,
+    expected_branch: &str,
     languages: &[(String, i64, f32, String)],
 ) -> Result<()>);
 

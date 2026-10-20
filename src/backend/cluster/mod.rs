@@ -14,6 +14,7 @@ mod tls;
 mod transport;
 pub(crate) mod worker;
 pub use context::NodeContext;
+pub(crate) use transport::DIAL_TIMEOUT;
 pub use worker::{worker_context, CorePeer};
 
 pub use identity::{load_existing, load_or_create, parse_public_key, NodeKey};

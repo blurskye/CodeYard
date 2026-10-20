@@ -234,21 +234,37 @@ async fn notification_list(
         if page.is_empty() {
             break;
         }
+        let mut authorized = Vec::new();
+        let mut more = false;
         for candidate in page {
-            if !scope_readable(scopes, candidate.1) {
-                cursor = Some(candidate);
-                continue;
-            }
-            if notifications.len() == limit {
-                return Ok((notifications, last_visible));
-            }
-            if let Some(notification) = sqlx::query_as::<_, Notification>(
-                "SELECT * FROM notifications WHERE id=?1 AND user_id=?2 AND scope_repository_id = ?3",
-            ).bind(candidate.0).bind(user_id).bind(candidate.1).fetch_optional(&mut *connection).await? {
-                last_visible = Some(NotificationCursor { created_at: candidate.2.clone(), id: candidate.0 });
-                notifications.push(notification);
+            if scope_readable(scopes, candidate.1) {
+                if notifications.len() + authorized.len() == limit {
+                    more = true;
+                    break;
+                }
+                authorized.push(candidate.clone());
             }
             cursor = Some(candidate);
+        }
+        let ids: Vec<i64> = authorized.iter().map(|c| c.0).collect();
+        if !ids.is_empty() {
+            let rows: Vec<Notification> = sqlx::query_as(
+                "SELECT * FROM notifications WHERE user_id=?1 AND id IN (SELECT value FROM json_each(?2))",
+            ).bind(user_id).bind(serde_json::to_string(&ids)?).fetch_all(&mut *connection).await?;
+            let mut rows: std::collections::BTreeMap<_, _> =
+                rows.into_iter().map(|n| (n.id, n)).collect();
+            for candidate in authorized {
+                if let Some(notification) = rows.remove(&candidate.0) {
+                    last_visible = Some(NotificationCursor {
+                        created_at: candidate.2,
+                        id: candidate.0,
+                    });
+                    notifications.push(notification);
+                }
+            }
+        }
+        if more && notifications.len() == limit {
+            return Ok((notifications, last_visible));
         }
     }
     Ok((notifications, None))
@@ -386,19 +402,20 @@ pub async fn count_unread_notifications(pool: &SqlitePool, user_id: i64) -> Resu
     Ok(count)
 }
 
-/// The unread count the page header shows: unread inbox notifications the recipient can read.
-/// It reads what the notification list reads, without the list's high-water mark, which only
-/// paging needs. It only reads, so a deferred transaction keeps the writer lock free.
+/// The header count authorizes only scopes that still have unread inbox notifications.
 pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64> {
-    let mut tx = pool.begin().await?;
-    let count = if notification_recipient(&mut tx, user_id).await? {
-        let scopes = notification_scopes(&mut tx, user_id).await?;
-        notification_unread_count(&mut tx, user_id, &scopes).await?
-    } else {
-        0
-    };
-    tx.commit().await?;
-    Ok(count)
+    let readable = scope_readable_condition();
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM notifications
+         WHERE user_id=?1 AND read_at IS NULL AND done_at IS NULL
+           AND EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)
+           AND (scope_repository_id=0 OR scope_repository_id IN (
+               SELECT r.id FROM repositories r JOIN users u ON u.id=?1
+               WHERE r.id IN (SELECT scope_repository_id FROM notifications
+                              WHERE user_id=?1 AND read_at IS NULL AND done_at IS NULL
+                                AND scope_repository_id>0)
+                 AND {readable}))"
+    )).bind(user_id).fetch_one(pool).await?)
 }
 
 pub async fn notification_delivery(

@@ -447,7 +447,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                             }
                         }
                     } else if model.tab == "two-factor" {
-                        {two_factor_section(&model.two_factor, token)}
+                        {two_factor_section(&model.two_factor, model.password_supported, token)}
                     } else if model.tab == "access" && model.manage_access {
                         section { class: "identity-settings-section identity-access-section", {access_forms(&model.requests, token, values, "/settings/access")} }
                     }
@@ -482,7 +482,7 @@ pub fn settings_tab(raw: Option<&str>) -> &'static str {
 
 /// Two-factor sign-in: the state, the one-time recovery codes, and the forms that change it. Each
 /// change asks for the current password; setup also asks for a code.
-fn two_factor_section(two_factor: &TwoFactor, token: &str) -> Element {
+fn two_factor_section(two_factor: &TwoFactor, password_supported: bool, token: &str) -> Element {
     rsx! {
         section { class: "identity-settings-section", aria_labelledby: "settings-two-factor-title",
             header { class: "identity-section-header",
@@ -502,7 +502,9 @@ fn two_factor_section(two_factor: &TwoFactor, token: &str) -> Element {
                     }
                 }
             }
-            if two_factor.enabled {
+            if !password_supported {
+                p { "Two-factor enrollment requires an account password. Manage sign-in security with your identity provider." }
+            } else if two_factor.enabled {
                 p { class: "identity-status identity-status-success", "On. Sign-in asks for a code from your app." }
                 form { method: "post", action: "/settings/two-factor/recovery-codes", class: "identity-form",
                     {csrf(token)}
@@ -537,6 +539,7 @@ fn two_factor_section(two_factor: &TwoFactor, token: &str) -> Element {
                 form { method: "post", action: "/settings/two-factor/setup", class: "identity-form",
                     {csrf(token)}
                     p { "You need an authenticator app, such as one that supports TOTP codes." }
+                    {password_field("current_password", "Current password", false)}
                     div { class: "identity-form-actions",
                         button { r#type: "submit", class: SUBMIT, "Set up two-factor authentication" }
                     }

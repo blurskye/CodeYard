@@ -5,13 +5,17 @@ use sqlx::SqlitePool;
 pub async fn upsert_repo_languages(
     pool: &SqlitePool,
     repo_id: i64,
+    expected_branch: &str,
     languages: &[(String, i64, f32, String)],
 ) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    sqlx::query("SELECT id FROM repositories WHERE id=?1")
+    let branch: String = sqlx::query_scalar("SELECT default_branch FROM repositories WHERE id=?1")
         .bind(repo_id)
         .fetch_one(&mut *tx)
         .await?;
+    if branch != expected_branch {
+        return Ok(());
+    }
     sqlx::query("DELETE FROM repo_languages WHERE repo_id=?1")
         .bind(repo_id)
         .execute(&mut *tx)

@@ -211,6 +211,27 @@ async fn postgres_simultaneous_startups_use_the_saved_host_key() {
 }
 
 #[tokio::test]
+async fn host_key_inspection_errors_leave_the_database_empty() {
+    use std::os::unix::fs::symlink;
+    let fixture = NativeDatabase::new().await;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("loop");
+    symlink("loop", &path).unwrap(); // ELOOP is an inspection error, not a missing file.
+    let result = SshServer::new(
+        fixture.pool.clone(),
+        Some(path.to_str().unwrap()),
+        ci_service(&fixture.pool),
+    )
+    .await;
+    assert!(result.is_err());
+    assert!(db::node_config::get_cluster_ssh_host_key(&fixture.pool)
+        .await
+        .unwrap()
+        .is_none());
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn startup_returns_configured_host_key_file_errors() {
     let fixture = NativeDatabase::new().await;
     let key = host_key(6);

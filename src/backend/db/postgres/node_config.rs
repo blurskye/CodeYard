@@ -61,12 +61,18 @@ pub async fn insert_cluster_ssh_host_key(pool: &PgPool, private_key_pem: &str) -
 }
 
 /// Returns false when the node is not set up yet, so there is no row to change.
-pub async fn set_ai_crawlers(pool: &PgPool, value: &str) -> Result<bool> {
+pub async fn set_ai_crawlers(pool: &PgPool, actor: i64, value: &str) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    if !super::users::transitions::active_admin(&mut tx, actor).await? {
+        return Ok(false);
+    }
     let result = sqlx::query(
         "UPDATE node_configuration SET ai_crawlers = $1, updated_at = NOW() WHERE id = 1",
     )
     .bind(value)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }

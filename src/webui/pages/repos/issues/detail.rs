@@ -1078,6 +1078,11 @@ pub fn detail(
                                     {discussion_entry(repo, &url, page, &item.author, entry, references, kind)}
                                 }
                             }
+                            if let Some(next) = comments.events_next {
+                                nav { class: "repo-pagination", aria_label: "Timeline changes",
+                                    NavLink { class: "btn btn-secondary".to_owned(), href: format!("{url}?page={page}&event_page={next}"), "More changes" }
+                                }
+                            }
                             if page > 1 || has_more {
                                 nav { class: "repo-pagination", aria_label: "Discussion pages",
                                     if page > 1 { NavLink { class: "btn btn-secondary".to_owned(), href: format!("{url}?page={}", page - 1), "Previous" } }

@@ -335,7 +335,7 @@ pub async fn set_replicas(pool: &SqlitePool, value: &str) -> Result<bool> {
 pub async fn bump_write_version(
     pool: &SqlitePool,
     repo_id: i64,
-    node_id: Option<i64>,
+    node_id: Option<Option<i64>>,
 ) -> Result<bool> {
     // BEGIN IMMEDIATE: the read and the bump see the state a promotion sees, as in
     // `promote_repository`.
@@ -348,7 +348,7 @@ pub async fn bump_write_version(
     let Some(held_by) = held_by else {
         bail!("repository {repo_id} not found");
     };
-    if node_id.is_some_and(|node| held_by != Some(node)) {
+    if node_id.is_some_and(|expected| held_by != expected) {
         return Ok(false);
     }
     // A repository that no storage node holds has no replicas, so its changes are not counted.

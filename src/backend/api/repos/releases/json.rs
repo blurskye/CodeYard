@@ -8,7 +8,7 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::models::{ReleaseAsset, ReleaseRow};
 use crate::backend::repositories::releases::{
-    self as releases, ReleaseError, ReleaseFields, ReleaseInput,
+    self as releases, ReleaseChanges, ReleaseError, ReleaseFields, ReleaseInput,
 };
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -115,6 +115,7 @@ fn release_response(
         crate::webui::encode_component(name)
     );
     let tag = crate::webui::encode_component(&release.tag_name);
+    let revision = crate::webui::encode_component(&format!("refs/tags/{}", release.tag_name));
     ReleaseResponse {
         id: release.id,
         tag_name: release.tag_name.clone(),
@@ -130,8 +131,8 @@ fn release_response(
         created_at: release.created_at.to_rfc3339(),
         published_at: release.published_at.map(|date| date.to_rfc3339()),
         html_url: format!("{origin}{base}/releases/tag/{tag}"),
-        tarball_url: format!("{origin}{base}/archive/{tag}.tar.gz"),
-        zipball_url: format!("{origin}{base}/archive/{tag}.zip"),
+        tarball_url: format!("{origin}{base}/archive/{revision}.tar.gz"),
+        zipball_url: format!("{origin}{base}/archive/{revision}.zip"),
         assets: assets
             .iter()
             .map(|asset| asset_response(origin, &base, &release.tag_name, asset))
@@ -141,15 +142,6 @@ fn release_response(
 
 const DEFAULT_PER_PAGE: i64 = 30;
 const MAX_PER_PAGE: i64 = 100;
-
-async fn release_with_assets(
-    state: &AppState,
-    row: &ReleaseRow,
-) -> Result<Vec<ReleaseAsset>, Failure> {
-    db::releases::list_release_assets(&state.pool, row.release.id)
-        .await
-        .map_err(|_| json_error(ReleaseError::Unavailable))
-}
 
 pub(super) async fn list(
     State(state): State<Arc<AppState>>,
@@ -169,9 +161,17 @@ pub(super) async fn list(
         .await
         .map_err(json_error)?;
     let origin = public_origin();
+    let ids: Vec<i64> = listing.releases.iter().map(|row| row.release.id).collect();
+    let assets = db::releases::list_releases_assets(&state.pool, &ids)
+        .await
+        .map_err(|_| json_error(ReleaseError::Unavailable))?;
+    let mut grouped = std::collections::HashMap::<i64, Vec<ReleaseAsset>>::new();
+    for asset in assets {
+        grouped.entry(asset.release_id).or_default().push(asset);
+    }
     let mut responses = Vec::with_capacity(listing.releases.len());
     for row in &listing.releases {
-        let assets = release_with_assets(&state, row).await?;
+        let assets = grouped.remove(&row.release.id).unwrap_or_default();
         responses.push(release_response(&origin, (&owner, &name), row, &assets));
     }
     Ok(Json(responses))
@@ -275,22 +275,16 @@ pub(super) async fn update(
     Json(request): Json<ReleaseRequest>,
 ) -> Result<Json<ReleaseResponse>, Failure> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let current = releases::edit_detail(&state.pool, actor.id, &owner, &name, id)
-        .await
-        .map_err(json_error)?;
-    let kept = &current.release.release;
-    let fields = ReleaseFields {
-        name: request.name.clone().map_or_else(
-            || kept.name.clone(),
-            |name| Some(name).filter(|name| !name.is_empty()),
-        ),
-        body: request.body.clone().map_or_else(
-            || kept.body.clone(),
-            |body| Some(body).filter(|body| !body.is_empty()),
-        ),
-        is_draft: request.draft.unwrap_or(kept.is_draft),
-        is_prerelease: request.prerelease.unwrap_or(kept.is_prerelease),
-        make_latest: request.make_latest.unwrap_or(kept.is_latest),
+    let fields = ReleaseChanges {
+        name: request
+            .name
+            .map(|name| Some(name).filter(|name| !name.is_empty())),
+        body: request
+            .body
+            .map(|body| Some(body).filter(|body| !body.is_empty())),
+        is_draft: request.draft,
+        is_prerelease: request.prerelease,
+        make_latest: request.make_latest,
     };
     let release = releases::update(
         &state.pool,

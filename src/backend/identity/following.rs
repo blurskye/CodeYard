@@ -80,7 +80,7 @@ pub async fn change(
         if created {
             let title = format!("{} started following you", current.username);
             let link = format!("/{}", current.username);
-            if create_and_broadcast_notification(
+            if let Err(error) = create_and_broadcast_notification(
                 pool,
                 broadcaster,
                 NotificationRequest {
@@ -95,8 +95,15 @@ pub async fn change(
                 },
             )
             .await
-            .is_err()
             {
+                if matches!(
+                    error,
+                    crate::backend::notifications::create::CreateError::Suppressed
+                ) {
+                    return status(pool, target.id, Some(actor))
+                        .await
+                        .map_err(|_| FollowError::CountsUnavailableAfterSave);
+                }
                 tracing::warn!(
                     actor_id = actor,
                     target_id = target.id,

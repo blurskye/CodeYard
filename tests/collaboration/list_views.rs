@@ -262,6 +262,95 @@ async fn issue_list_contract(pg: bool) {
     assert_eq!(listed(&alice, "q=no:milestone").await, [3]);
     assert_eq!(listed(&alice, "q=state:all+no:milestone").await, [4, 3]);
     assert_eq!(listed(&alice, "q=milestone:none").await, [2]);
+
+    let large = db::milestones::create_milestone(
+        pool,
+        alice_id,
+        repo,
+        "Large milestone",
+        Some(&"\u{1}".repeat(65_536)),
+        None,
+    )
+    .await
+    .unwrap();
+    for index in 0..101 {
+        let issue = db::issues::create_issue(pool, repo, alice_id, &format!("Paged {index}"), "")
+            .await
+            .unwrap();
+        db::milestones::set_issue_milestone(pool, alice_id, repo, issue.id, Some(large.number))
+            .await
+            .unwrap();
+    }
+    f.execute(
+        "UPDATE issues SET created_at='2026-01-01T00:00:00Z' WHERE repo_id=$1",
+        &[repo],
+    )
+    .await;
+    let (status, model) = alice.model("/alice/proj/issues?state=all").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(serde_json::to_vec(&model).unwrap().len() < 1024 * 1024);
+    let Page::Collaboration(page) = model else {
+        panic!("not collaboration")
+    };
+    let issues::Page::List { items, filters, .. } = *page else {
+        panic!("not list")
+    };
+    assert_eq!(items.len(), 100);
+    assert_eq!(items[0].number, 105);
+    assert_eq!(filters.page, 1);
+    assert!(filters.has_more);
+    assert!(filters
+        .milestones
+        .iter()
+        .all(|milestone| milestone.description.is_none()));
+    assert!(items
+        .iter()
+        .filter_map(|item| item.milestone.as_ref())
+        .all(|milestone| milestone.description.is_none()));
+    assert_eq!(listed(&alice, "state=all&page=2").await, [5, 4, 3, 2, 1]);
+    let (_, html) = alice.page("/alice/proj/issues?state=all&page=2").await;
+    assert!(html.contains("Previous"));
+    assert!(!html.contains(">Next<"));
+    let api_first = alice
+        .expect(
+            "GET",
+            "/api/repos/alice/proj/issues?per_page=100",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    let api_second = alice
+        .expect(
+            "GET",
+            "/api/repos/alice/proj/issues?per_page=100&page=2",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(api_first.as_array().unwrap().len(), 100);
+    assert_eq!(api_second.as_array().unwrap().len(), 5);
+    assert!(api_first.as_array().unwrap().iter().all(|a| api_second
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|b| a["id"] != b["id"])));
+    for query in ["page=0", "page=1001"] {
+        assert_eq!(
+            alice
+                .api(
+                    "GET",
+                    &format!("/api/repos/alice/proj/issues?{query}"),
+                    Value::Null
+                )
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            alice.page(&format!("/alice/proj/issues?{query}")).await.0,
+            StatusCode::BAD_REQUEST
+        );
+    }
     f.finish().await;
 }
 

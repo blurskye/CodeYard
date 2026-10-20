@@ -40,7 +40,7 @@ async fn ensure_unique_title(
     except: Option<i32>,
 ) -> Result<()> {
     let taken: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM milestones WHERE repo_id = $1 AND LOWER(title) = LOWER($2::TEXT) AND ($3::INTEGER IS NULL OR number <> $3)",
+        r#"SELECT id FROM milestones WHERE repo_id = $1 AND LOWER(title COLLATE "C") = LOWER($2::TEXT COLLATE "C") AND ($3::INTEGER IS NULL OR number <> $3)"#,
     )
     .bind(repo_id)
     .bind(title)
@@ -207,6 +207,13 @@ pub async fn list_repo_milestones(
     .bind(state)
     .fetch_all(pool)
     .await?)
+}
+
+/// Picker rows need no discussion counts.
+pub async fn list_milestone_choices(pool: &PgPool, repo_id: i64) -> Result<Vec<Milestone>> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {MILESTONE_COLUMNS} FROM milestones WHERE repo_id=$1 ORDER BY due_date IS NULL, due_date, number"
+    )).bind(repo_id).fetch_all(pool).await?)
 }
 
 pub async fn set_issue_milestone(

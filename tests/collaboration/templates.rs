@@ -19,7 +19,7 @@ use std::sync::Arc;
 const BUG_TEMPLATE: &str = "---\nname: Bug report\nabout: Something is broken\ntitle: \"Bug report:\"\n---\n\n## Steps to reproduce\n";
 
 /// `alice/proj` is public and bob can read it. Alice owns it.
-async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
+pub(super) async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     bundle::install();
     let database = Database::new(pg).await;
     database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
@@ -51,7 +51,13 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
 }
 
 /// Saves a file with the given text on `branch` and returns the new tip.
-async fn put(client: &Client, branch: &str, path: &str, text: &str, tip: &str) -> String {
+pub(super) async fn put(
+    client: &Client,
+    branch: &str,
+    path: &str,
+    text: &str,
+    tip: &str,
+) -> String {
     let content = base64::engine::general_purpose::STANDARD.encode(text);
     let saved = client
         .expect(
@@ -77,7 +83,7 @@ fn plain(page: &str) -> String {
 }
 
 /// The value of the first form field called `name` in the page.
-fn hidden_value(html: &str, name: &str) -> String {
+pub(super) fn hidden_value(html: &str, name: &str) -> String {
     let at = html
         .find(&format!("name=\"{name}\""))
         .unwrap_or_else(|| panic!("no {name} field: {html}"));

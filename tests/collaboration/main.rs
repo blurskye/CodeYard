@@ -10,6 +10,7 @@ mod notification_views;
 mod reactions;
 mod references;
 mod sidebar;
+mod submission_regressions;
 #[path = "../support/mod.rs"]
 mod support;
 mod templates;

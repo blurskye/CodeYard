@@ -260,6 +260,39 @@ async fn contract(pg: bool) {
             .is_none()
     );
 
+    // Revoked cookies are expired on refusal, but a live session with a bad token is not.
+    let (stale, old_csrf) = session_with_csrf(fixture.pool(), Some(admin.id)).await;
+    fixture
+        .execute("DELETE FROM sessions WHERE user_id=$1", &[admin.id])
+        .await;
+    for path in ["/api/auth/session", "/api/auth/login"] {
+        let (status, headers, _) = post(
+            &router,
+            path,
+            &stale,
+            Some(&old_csrf),
+            "http://forge.example.test",
+            json!({"username": "private-user", "password": "current-password"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(headers[header::SET_COOKIE]
+            .to_str()
+            .unwrap()
+            .contains("Max-Age=0"));
+    }
+    let (live, _) = session_with_csrf(fixture.pool(), Some(admin.id)).await;
+    let (status, headers, _) = post(
+        &router,
+        "/api/auth/session",
+        &live,
+        Some(&native::token()),
+        "http://forge.example.test",
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(!headers.contains_key(header::SET_COOKIE));
     fixture.finish().await;
 }
 

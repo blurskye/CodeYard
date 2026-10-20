@@ -147,7 +147,12 @@ pub async fn disable_two_factor(
         .await?
         .rows_affected()
         == 1;
+    if let FactorAuthority::Administrator { user_id: actor, .. } = authority {
+        sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'user.two_factor_reset','user',?2,?3)")
+            .bind(actor).bind(user_id).bind(serde_json::json!({"outcome":if removed {"applied"} else {"not_enabled"}}).to_string()).execute(&mut *tx).await?;
+    }
     if !removed {
+        tx.commit().await?;
         return Ok(false);
     }
     sqlx::query("DELETE FROM two_factor_recovery_codes WHERE user_id = ?1")

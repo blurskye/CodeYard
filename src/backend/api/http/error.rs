@@ -163,6 +163,11 @@ pub(crate) fn discussion_write_error(error: anyhow::Error) -> (StatusCode, Json<
             "forbidden",
             "This discussion operation is not permitted",
         ),
+        Some(DiscussionWriteRefusal::Locked) => (
+            StatusCode::FORBIDDEN,
+            "conversation_locked",
+            "This conversation is locked.",
+        ),
         Some(DiscussionWriteRefusal::InvalidReview) => (
             StatusCode::CONFLICT,
             "conflict",

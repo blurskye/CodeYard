@@ -233,6 +233,7 @@ impl CiRuns {
                 manual: true,
             },
             true,
+            db::models::AccessLevel::Owner,
         )
         .await
     }
@@ -280,13 +281,24 @@ impl CiRuns {
         &self,
         request: CiRunRequest,
     ) -> Result<db::models::CiRun, AdmissionError> {
-        self.enqueue_run(request, false).await
+        self.trigger_run_with_access(request, db::models::AccessLevel::Owner)
+            .await
+    }
+
+    /// A receive credential may grant less than its account (notably a deploy key).
+    pub(crate) async fn trigger_run_with_access(
+        &self,
+        request: CiRunRequest,
+        access: db::models::AccessLevel,
+    ) -> Result<db::models::CiRun, AdmissionError> {
+        self.enqueue_run(request, false, access).await
     }
 
     async fn enqueue_run(
         &self,
         request: CiRunRequest,
         rerun: bool,
+        access: db::models::AccessLevel,
     ) -> Result<db::models::CiRun, AdmissionError> {
         let revision = admission::resolve(
             &self.pool,
@@ -297,6 +309,10 @@ impl CiRuns {
         )
         .await?;
         let request = revision.request;
+        // YAML environments and configured workflow names can promote CI to deployment.
+        if request.pipeline.includes_cd() && !access.can_admin() {
+            return Err(AdmissionError::Denied("CI deployment permission denied"));
+        }
         let head_sha = request
             .head_sha
             .as_deref()

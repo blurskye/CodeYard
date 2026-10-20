@@ -37,6 +37,15 @@ pub(crate) fn milestone_view(summary: MilestoneSummary) -> view::Milestone {
     }
 }
 
+/// Picker choices do not show progress counts.
+pub(crate) fn milestone_choice_view(milestone: db::models::Milestone) -> view::Milestone {
+    milestone_view(MilestoneSummary {
+        milestone,
+        open_items: 0,
+        closed_items: 0,
+    })
+}
+
 fn draft_of(milestone: &view::Milestone) -> MilestoneDraft {
     MilestoneDraft {
         title: milestone.title.clone(),

@@ -187,13 +187,17 @@ pub(crate) async fn lock_issue_contribution(
         .await?;
     let repo = repo.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
-    let present: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+    let locked: Option<bool> =
+        sqlx::query_scalar("SELECT locked FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
             .bind(issue_id)
             .bind(repo)
             .fetch_optional(&mut **tx)
             .await?;
-    anyhow::ensure!(present.is_some(), AUTHORITY_DENIED);
+    anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
+    anyhow::ensure!(
+        locked == Some(false),
+        crate::backend::db::discussions::DiscussionWriteRefusal::Locked
+    );
     Ok(())
 }
 

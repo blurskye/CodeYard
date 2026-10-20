@@ -41,7 +41,10 @@ pub use local::{begin_ref_change, RefChange};
 /// The store for a repository row. Cheap to create and to clone.
 pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore {
     match repo.storage_node_id {
-        None => RepoStore::from_disk_path(&repo.disk_path),
+        None => RepoStore(Backend::Local(local::LocalStore::new(
+            &repo.disk_path,
+            Some(None),
+        ))),
         Some(id) if context.is_some_and(|context| context.node_id == id) => {
             let context = context.expect("this node owns the repository");
             match rpc::repository_uuid(&repo.disk_path) {
@@ -445,6 +448,9 @@ pub struct GitSession {
     pub git_protocol: Option<String>,
     pub credential: Option<crate::backend::repositories::git_sessions::ReceiveCredential>,
     pub owner: String,
+    /// Set only after a storage-side CI claim check; never accepted from the wire.
+    #[serde(skip)]
+    pub allow_unreachable: bool,
 }
 
 impl GitSession {
@@ -455,6 +461,7 @@ impl GitSession {
             git_protocol: None,
             credential: None,
             owner: String::new(),
+            allow_unreachable: false,
         }
     }
 }
@@ -622,7 +629,7 @@ impl RepoStore {
     pub(crate) fn on_node(disk_path: &str, node_id: i64) -> RepoStore {
         RepoStore(Backend::Local(local::LocalStore::new(
             disk_path,
-            Some(node_id),
+            Some(Some(node_id)),
         )))
     }
 
@@ -931,8 +938,7 @@ impl RepoStore {
             .await
     }
 
-    /// `commits`, where a local walk stops at `deadline`. A replica walks with its own limit, and
-    /// a caller that stops waiting leaves that walk to finish.
+    /// `commits`, with the same remaining walk budget on local and remote storage.
     pub async fn commits_until(
         &self,
         git_ref: &str,
@@ -951,11 +957,18 @@ impl RepoStore {
                     .await
             }
             Backend::Remote(remote) => {
+                let walk_millis = Some(
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .as_millis()
+                        .min(u64::MAX as u128) as u64,
+                );
                 let operation = if offset == 0 {
                     Operation::Commits {
                         git_ref: git_ref.into(),
                         limit,
                         filter: filter.clone(),
+                        walk_millis,
                     }
                 } else {
                     Operation::CommitPage {
@@ -963,6 +976,7 @@ impl RepoStore {
                         offset,
                         limit,
                         filter: filter.clone(),
+                        walk_millis,
                     }
                 };
                 remote.call(operation, b"").await

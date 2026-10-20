@@ -123,6 +123,408 @@ async fn authority(fixture: &Fixture) -> Authority {
     }
 }
 
+#[tokio::test]
+async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissible() {
+    let f = fixture().await;
+    let a = authority(&f).await;
+    let db::DbPool::Sqlite(native) = &a.pool else {
+        unreachable!()
+    };
+    sqlx::query("UPDATE repositories SET updated_at='2000-01-01T00:00:00Z' WHERE id=?")
+        .bind(a.repo_id)
+        .execute(native)
+        .await
+        .unwrap();
+    let workflow = b"on: push\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps: []\n";
+    let saved = f
+        .store
+        .save_file_as(
+            &a.pool,
+            a.repo_id,
+            a.actor,
+            &FileWrite {
+                branch: "main".into(),
+                path: ".github/workflows/ci.yml".into(),
+                message: "web workflow".into(),
+                expected_revision: f.second.to_string(),
+                creating: true,
+                deleting: false,
+            },
+            workflow,
+            "Tester",
+            "tester@example.invalid",
+        )
+        .await
+        .unwrap();
+    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(row.size_bytes > 0);
+    assert_eq!(row.size_bytes as u64, f.store.size_bytes().await.unwrap());
+    assert!(row.updated_at > chrono::DateTime::parse_from_rfc3339("2000-01-01T00:00:00Z").unwrap());
+    let snapshots: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM repo_storage_history WHERE repo_id=?")
+            .bind(a.repo_id)
+            .fetch_one(native)
+            .await
+            .unwrap();
+    assert!(snapshots > 0);
+    f.store
+        .create_branch_as(&a.pool, a.repo_id, a.actor, "feature", &saved.sha)
+        .await
+        .unwrap();
+    let saved = f
+        .store
+        .save_file_as(
+            &a.pool,
+            a.repo_id,
+            a.actor,
+            &FileWrite {
+                branch: "feature".into(),
+                path: "feature.txt".into(),
+                message: "web feature".into(),
+                expected_revision: saved.sha,
+                creating: true,
+                deleting: false,
+            },
+            b"feature",
+            "Tester",
+            "tester@example.invalid",
+        )
+        .await
+        .unwrap();
+    f.store
+        .delete_branch_as(&a.pool, a.repo_id, a.actor, "feature")
+        .await
+        .unwrap();
+    assert!(db::ci::has_ci_accepted_push(
+        &a.pool,
+        a.repo_id,
+        a.actor,
+        "refs/heads/feature",
+        &saved.sha
+    )
+    .await
+    .unwrap());
+    let ci = crate::backend::ci::CiRuns::new(
+        a.pool.clone(),
+        std::sync::Arc::new(crate::backend::ci::CiConfig {
+            trusted_actor_ids: [a.actor].into(),
+            ..Default::default()
+        }),
+        std::sync::Arc::new(tokio::sync::Notify::new()),
+        None,
+        std::sync::Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+            &a.pool,
+        )),
+    );
+    let run = ci
+        .trigger_run(crate::backend::ci::CiRunRequest {
+            repo_id: a.repo_id,
+            repo_owner: "store_actor".into(),
+            repo_name: row.name,
+            branch: "feature".into(),
+            head_sha: Some(saved.sha.clone()),
+            event: "push".into(),
+            pull_request_id: None,
+            pipeline: crate::backend::ci::CiPipelineKind::Ci,
+            workflow_paths: vec![".github/workflows/ci.yml".into()],
+            environment: None,
+            inputs: None,
+            triggered_by_id: a.actor,
+            manual: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(run.head_sha.as_deref(), Some(saved.sha.as_str()));
+}
+
+#[tokio::test]
+async fn failed_head_change_restores_the_previous_database_default() {
+    let f = fixture().await;
+    let a = authority(&f).await;
+    f.repo
+        .reference("refs/heads/topic", f.second, false, "topic")
+        .unwrap();
+    std::fs::write(f.repo.path().join("HEAD.lock"), b"held").unwrap();
+    assert!(f
+        .store
+        .set_default_branch_as(&a.pool, a.repo_id, a.actor, "topic")
+        .await
+        .is_err());
+    assert_eq!(
+        f.repo.find_reference("HEAD").unwrap().symbolic_target(),
+        Some("refs/heads/main")
+    );
+    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.default_branch, "main");
+    assert!(
+        !db::repositories::records::restore_repository_default_branch(
+            &a.pool, a.repo_id, "topic", "other"
+        )
+        .await
+        .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn a_store_opened_before_adoption_cannot_publish_after_placement() {
+    let f = fixture().await;
+    let a = authority(&f).await;
+    let row = db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let opened = repo_store(&row, None);
+    let prepared = opened
+        .prepare_file(
+            &FileWrite {
+                branch: "main".into(),
+                path: "late.txt".into(),
+                message: "late".into(),
+                expected_revision: f.second.to_string(),
+                creating: true,
+                deleting: false,
+            },
+            b"late",
+            "Tester",
+            "tester@example.invalid",
+        )
+        .await
+        .unwrap();
+    let old = storage_node(&a.pool, "adopt-old").await;
+    let new = storage_node(&a.pool, "adopt-new").await;
+    assert!(db::cluster::place_repository(&a.pool, a.repo_id, old)
+        .await
+        .unwrap());
+    assert!(db::cluster::insert_replica(&a.pool, a.repo_id, new, old)
+        .await
+        .unwrap());
+    assert!(
+        db::cluster::set_applied_version(&a.pool, a.repo_id, new, old, 0)
+            .await
+            .unwrap()
+    );
+    assert!(matches!(
+        db::cluster::promote_repository(&a.pool, a.repo_id, old, new, false)
+            .await
+            .unwrap(),
+        db::cluster::PromoteOutcome::Promoted { .. }
+    ));
+    assert_write_denied(
+        opened
+            .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
+            .await,
+    );
+    assert_write_denied(
+        opened
+            .create_branch_as(&a.pool, a.repo_id, a.actor, "late", &prepared.commit.sha)
+            .await,
+    );
+    assert!(
+        !db::cluster::bump_write_version(&a.pool, a.repo_id, Some(None))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        f.repo.find_reference("refs/heads/main").unwrap().target(),
+        Some(f.second)
+    );
+}
+
+#[tokio::test]
+async fn push_path_comparisons_use_endpoints_after_a_restack() {
+    let f = fixture().await;
+    let old = commit(&f.repo, "layer", Some(f.second), "one.txt", "one", "layer");
+    let trunk = commit(&f.repo, "main", Some(f.second), "main.txt", "main", "trunk");
+    let restacked = commit(
+        &f.repo,
+        "restacked",
+        Some(trunk),
+        "one.txt",
+        "one",
+        "replay",
+    );
+    assert_eq!(
+        f.store
+            .push_changed_paths(&old.to_string(), &restacked.to_string())
+            .await
+            .unwrap(),
+        ["main.txt"]
+    );
+    assert_eq!(
+        f.store
+            .changed_paths(&old.to_string(), &restacked.to_string())
+            .await
+            .unwrap(),
+        ["main.txt", "one.txt"]
+    );
+}
+
+#[tokio::test]
+async fn tag_creation_refuses_aggregate_metadata_that_the_reader_cannot_return() {
+    let f = fixture().await;
+    let a = authority(&f).await;
+    let message = "x".repeat(git::MAX_TAG_MESSAGE_BYTES);
+    for index in 0..4 {
+        f.store
+            .create_tag_as(
+                &a.pool,
+                a.repo_id,
+                a.actor,
+                &format!("large-{index}"),
+                &f.second.to_string(),
+                Some(&message),
+                "Tester",
+                "tester@example.invalid",
+            )
+            .await
+            .unwrap();
+    }
+    let error = f
+        .store
+        .create_tag_as(
+            &a.pool,
+            a.repo_id,
+            a.actor,
+            "too-many",
+            &f.second.to_string(),
+            Some(&message),
+            "Tester",
+            "tester@example.invalid",
+        )
+        .await
+        .unwrap_err();
+    assert!(error.is_response_too_large(), "{error}");
+    assert_eq!(f.store.tags().await.unwrap().len(), 4);
+    assert!(f.repo.find_reference("refs/tags/too-many").is_err());
+}
+
+#[tokio::test]
+async fn editor_publications_and_new_branch_saves_schedule_primary_packing() {
+    for new_branch in [false, true] {
+        let f = fixture().await;
+        let a = authority(&f).await;
+        let mut count = 0;
+        let mut sample = 0;
+        while count <= 6_700 || sample <= 40 {
+            let oid = f
+                .repo
+                .blob(format!("loose object {count}").as_bytes())
+                .unwrap();
+            sample += usize::from(oid.as_bytes()[0] == 0x17);
+            count += 1;
+        }
+        let prepared = f
+            .store
+            .prepare_file(
+                &FileWrite {
+                    branch: "main".into(),
+                    path: "packed.txt".into(),
+                    message: "web save".into(),
+                    expected_revision: f.second.to_string(),
+                    creating: true,
+                    deleting: false,
+                },
+                b"packed",
+                "Tester",
+                "tester@example.invalid",
+            )
+            .await
+            .unwrap();
+        if new_branch {
+            f.store
+                .create_branch_as(
+                    &a.pool,
+                    a.repo_id,
+                    a.actor,
+                    "editor-branch",
+                    &prepared.commit.sha,
+                )
+                .await
+                .unwrap();
+        } else {
+            f.store
+                .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                if !f.repo.path().join("gc.pid").exists()
+                    && std::fs::read_dir(f.repo.path().join("objects/pack"))
+                        .unwrap()
+                        .any(|entry| {
+                            entry
+                                .unwrap()
+                                .path()
+                                .extension()
+                                .is_some_and(|ext| ext == "pack")
+                        })
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("editor objects were never packed");
+    }
+}
+
+#[test]
+fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (release, wait) = std::sync::mpsc::channel();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let blocker = tokio::task::spawn_blocking(move || {
+            started.send(()).unwrap();
+            wait.recv().unwrap();
+        });
+        ready.await.unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("checkout");
+        let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = slots.clone().acquire_owned().await.unwrap();
+        let lock = crate::backend::git::locks::lock(&destination).await;
+        let pack = tempfile::NamedTempFile::new().unwrap();
+        let (entered, queued) = tokio::sync::oneshot::channel();
+        let path = destination.clone();
+        let task = tokio::spawn(async move {
+            entered.send(()).unwrap();
+            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), pack, permit, lock)
+                .await
+        });
+        queued.await.unwrap();
+        task.abort();
+        let _ = task.await;
+        assert_eq!(slots.available_permits(), 0);
+        assert!(tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            crate::backend::git::locks::lock(&destination)
+        )
+        .await
+        .is_err());
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        let _permit = tokio::time::timeout(std::time::Duration::from_secs(5), slots.acquire())
+            .await
+            .unwrap()
+            .unwrap();
+        let _lock = crate::backend::git::locks::lock(&destination).await;
+        assert!(!destination.exists());
+    });
+}
+
 async fn fixture() -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let store = RepoStore::create(root.path(), "main", None).await.unwrap();
@@ -638,7 +1040,7 @@ async fn reads_return_owned_values_that_survive_json() {
     );
     assert_eq!(
         f.store
-            .changed_paths("0000000000000000000000000000000000000000", &first)
+            .push_changed_paths("0000000000000000000000000000000000000000", &first)
             .await
             .unwrap(),
         ["README.md"]
@@ -2553,7 +2955,7 @@ async fn a_counted_ref_change_blocks_promotion_and_the_replica_listing() {
         pool,
         repo_id,
         std::path::Path::new(f.store.location()),
-        Some(old),
+        Some(Some(old)),
     )
     .await
     .unwrap();
@@ -2595,7 +2997,7 @@ async fn a_refused_ref_change_is_not_counted() {
         pool,
         repo_id,
         std::path::Path::new(f.store.location()),
-        Some(other),
+        Some(Some(other)),
     )
     .await;
     assert!(matches!(&refused, Err(error) if error.is_write_denied()));

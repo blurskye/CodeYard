@@ -428,9 +428,16 @@ pub async fn delete(
     let deleted = db::repositories::records::delete_repository(pool, actor, repo_id)
         .await
         .map_err(storage_error)?;
-    if let Err(error) = repo_store(&deleted, cluster).remove().await {
+    remove_deleted_repository(cluster, &deleted).await
+}
+
+pub(crate) async fn remove_deleted_repository(
+    cluster: Option<&NodeContext>,
+    deleted: &Repository,
+) -> Result<(), StorageError> {
+    if let Err(error) = repo_store(deleted, cluster).remove().await {
         tracing::error!(
-            repo_id,
+            repo_id = deleted.id,
             storage_node_id = ?deleted.storage_node_id,
             disk_path = %deleted.disk_path,
             %error,

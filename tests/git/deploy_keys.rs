@@ -29,6 +29,105 @@ async fn keypair(root: &Path, name: &str) -> (PathBuf, String) {
     (path, public)
 }
 
+async fn multiplexed_slot_wait_keeps_the_active_channel_readable(
+    root: &Path,
+    database: &native::PostgresDatabase,
+    owner: i64,
+    key: &Path,
+) {
+    use tokio::io::AsyncReadExt;
+    let server = Server::start_with_session_limit(
+        &root.join("limited"),
+        database,
+        "deploy-limited",
+        "web,ssh",
+        owner,
+        Some(1),
+    )
+    .await;
+    let socket = root.join("ssh-control");
+    let ssh = || {
+        let mut command = Command::new(tool("ssh"));
+        command
+            .args([
+                "-F",
+                "/dev/null",
+                "-oBatchMode=yes",
+                "-oIdentitiesOnly=yes",
+                "-oIdentityAgent=none",
+                "-oStrictHostKeyChecking=no",
+                "-oUserKnownHostsFile=/dev/null",
+            ])
+            .arg("-S")
+            .arg(&socket)
+            .arg("-p")
+            .arg(server.ssh_port.to_string())
+            .arg("-i")
+            .arg(key)
+            .kill_on_drop(true);
+        command
+    };
+    let mut master = ssh()
+        .args(["-M", "-N", "git@127.0.0.1"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !socket.exists() {
+            assert!(master.try_wait().unwrap().is_none(), "SSH master exited");
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let command = "git-upload-pack 'deploy_owner/project.git'";
+    let mut first = ssh()
+        .args(["-oProxyCommand=false", "git@127.0.0.1", command])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        first.stdout.as_mut().unwrap().read_exact(&mut [0; 4]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let second = ssh()
+        .args(["-oProxyCommand=false", "git@127.0.0.1", command])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The second exec is waiting for the first channel's slot on this same SSH connection.
+    // EOF must still reach the first channel, so it can finish and release that slot.
+    drop(first.stdin.take());
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        second.wait_with_output(),
+    )
+    .await
+    .expect("waiting exec blocked the active channel's EOF")
+    .unwrap();
+    assert!(
+        !output.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), first.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    master.kill().await.unwrap();
+    master.wait().await.unwrap();
+}
+
 #[tokio::test]
 async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     bundle::install();
@@ -148,6 +247,51 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         .await,
     );
 
+    // Multi-key clients do not accumulate bans, and pre-exec requests cannot deadlock exec.
+    let (unknown_key, _) = keypair(root.path(), "unknown").await;
+    for _ in 0..6 {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            Command::new(tool("ssh"))
+                .args([
+                    "-F",
+                    "/dev/null",
+                    "-oBatchMode=yes",
+                    "-oIdentitiesOnly=yes",
+                    "-oIdentityAgent=none",
+                    "-oStrictHostKeyChecking=no",
+                    "-oUserKnownHostsFile=/dev/null",
+                    "-oSetEnv=LANG=C GIT_PROTOCOL=version=2",
+                    "-p",
+                    &web.ssh_port.to_string(),
+                    "-i",
+                ])
+                .arg(&unknown_key)
+                .arg("-i")
+                .arg(&read_key)
+                .arg("git@127.0.0.1")
+                .arg("git-upload-pack 'deploy_owner/project.git'")
+                .stdin(Stdio::null())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("environment requests deadlocked exec")
+        .unwrap();
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("refs/heads/main"),
+            "{output:?}"
+        );
+    }
+
+    multiplexed_slot_wait_keeps_the_active_channel_readable(
+        root.path(),
+        &database,
+        owner.id,
+        &read_key,
+    )
+    .await;
+
     // The read-only key clones and fetches, and its use is recorded.
     success(
         git(
@@ -224,6 +368,49 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     )
     .await;
     assert!(!guarded.status.success());
+
+    // An owner-created write key cannot acquire deployment rights through YAML promotion.
+    std::fs::create_dir_all(reader.join(".github/workflows")).unwrap();
+    std::fs::write(reader.join(".github/workflows/ci.yml"),
+        "on: push\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: production\n    steps: []\n").unwrap();
+    success(git(&reader, &["add", ".github"], None, &write_key).await);
+    success(
+        git(
+            &reader,
+            &["commit", "-q", "-m", "deploy workflow"],
+            None,
+            &write_key,
+        )
+        .await,
+    );
+    let deployment_sha = success(git(&reader, &["rev-parse", "HEAD"], None, &write_key).await);
+    let _ = git(
+        &reader,
+        &["push", "origin", "HEAD:refs/heads/deploy-env"],
+        None,
+        &write_key,
+    )
+    .await;
+    let listed = success(
+        git(
+            &reader,
+            &["ls-remote", "origin", "refs/heads/deploy-env"],
+            None,
+            &read_key,
+        )
+        .await,
+    );
+    assert!(
+        listed.starts_with(&deployment_sha),
+        "the Git write itself was accepted"
+    );
+    assert!(
+        db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
+            .await
+            .unwrap()
+            .iter()
+            .all(|run| run.head_sha.as_deref() != Some(deployment_sha.as_str()))
+    );
 
     // A deleted key stops working at once.
     let deleted = client

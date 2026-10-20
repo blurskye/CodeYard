@@ -1108,7 +1108,7 @@ async fn a_copy_waits_while_a_ref_change_is_counted() {
         pool,
         repo.id(),
         &primary_path(&primary, uuid),
-        Some(primary.context.node_id),
+        Some(Some(primary.context.node_id)),
     )
     .await
     .unwrap();
@@ -1177,7 +1177,7 @@ async fn check_ref_change_counting(pool: &DbPool) {
             .unwrap()
     );
     assert!(
-        !db::cluster::bump_write_version(pool, repo, Some(other))
+        !db::cluster::bump_write_version(pool, repo, Some(Some(other)))
             .await
             .unwrap(),
         "another node does not count the change"
@@ -1186,9 +1186,11 @@ async fn check_ref_change_counting(pool: &DbPool) {
         db::cluster::get_write_version(pool, repo).await.unwrap(),
         Some(0)
     );
-    assert!(db::cluster::bump_write_version(pool, repo, Some(holder))
-        .await
-        .unwrap());
+    assert!(
+        db::cluster::bump_write_version(pool, repo, Some(Some(holder)))
+            .await
+            .unwrap()
+    );
     assert_eq!(
         db::cluster::get_write_version(pool, repo).await.unwrap(),
         Some(1)

@@ -83,7 +83,17 @@ pub(crate) async fn setup_post(
         Err(response) => return response,
     };
     let setup = match encryptor(&ctx) {
-        Ok(key) => two_factor::begin_setup(&ctx.state.pool, key, &user).await,
+        Ok(key) => {
+            two_factor::begin_setup(
+                &ctx.state.pool,
+                key,
+                &user,
+                &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                    .unwrap_or_default(),
+                field(&form, "current_password"),
+            )
+            .await
+        }
         Err(error) => Err(error),
     };
     match setup {
@@ -159,7 +169,14 @@ pub(crate) async fn enable_post(
         // A wrong code keeps the same secret on the page, so the app can be tried again.
         Err(TwoFactorError::InvalidCode) => {
             let reopened = match encryptor(&ctx) {
-                Ok(key) => two_factor::open_setup(key, &user, token, two_factor::now_unix()),
+                Ok(key) => two_factor::open_setup(
+                    key,
+                    &user,
+                    &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                        .unwrap_or_default(),
+                    token,
+                    two_factor::now_unix(),
+                ),
                 Err(error) => Err(error),
             };
             match reopened {

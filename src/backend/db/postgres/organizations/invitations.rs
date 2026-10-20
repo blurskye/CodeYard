@@ -125,7 +125,7 @@ pub async fn accept_organization_invitation(
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let Some(role) = sqlx::query_scalar::<_, String>(
-        "SELECT role FROM organization_invitations WHERE org_id=$1 AND user_id=$2",
+        "SELECT role FROM organization_invitations WHERE org_id=$1 AND user_id=$2 FOR UPDATE",
     )
     .bind(org)
     .bind(actor)

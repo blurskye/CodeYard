@@ -37,7 +37,9 @@ pub async fn list_events(
     after: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<TimelineEvent>> {
+    anyhow::ensure!(limit >= 0 && offset >= 0, "Invalid timeline page");
     // Stored times are fixed-width UTC text, so the bounds are written the same way.
     let after = after.map(crate::backend::db::sqlite::time::encode);
     let before = before.map(crate::backend::db::sqlite::time::encode);
@@ -47,7 +49,7 @@ pub async fn list_events(
         FROM timeline_events e LEFT JOIN users u ON u.id = e.actor_id
         WHERE e.subject_kind = ?1 AND e.subject_id = ?2
           AND (?3 IS NULL OR e.created_at >= ?3) AND (?4 IS NULL OR e.created_at < ?4)
-        ORDER BY e.created_at, e.id LIMIT ?5
+        ORDER BY e.created_at, e.id LIMIT ?5 OFFSET ?6
         "#,
     )
     .bind(subject)
@@ -55,6 +57,7 @@ pub async fn list_events(
     .bind(after)
     .bind(before)
     .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await?)
 }

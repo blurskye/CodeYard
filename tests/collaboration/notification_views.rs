@@ -112,6 +112,136 @@ async fn listed(client: &Client, path: &str) -> Vec<i64> {
         .collect()
 }
 
+async fn bounded_previews_and_current_targets(pg: bool) {
+    let mut w = setup(pg).await;
+    let body = "preview words ".repeat(4000);
+    let mut ids = Vec::new();
+    for actor in [w.alice_id, w.bob_id] {
+        let notification = db::notifications::records::create_notification(
+            w.database.pool(),
+            db::notifications::NewNotification {
+                user_id: w.alice_id,
+                actor_id: Some(actor),
+                repo_id: Some(w.proj),
+                kind: "mention",
+                title: "Discussion mention",
+                body: Some(&body),
+                link: Some("/alice/proj/issues/7?page=3#comment-9"),
+                metadata: &json!({}),
+            },
+        )
+        .await
+        .unwrap();
+        ids.push(notification.id);
+    }
+    db::repositories::records::rename_repository(w.database.pool(), w.alice_id, w.proj, "renamed")
+        .await
+        .unwrap();
+    let json = w
+        .alice
+        .expect("GET", "/api/notifications", json!(null), StatusCode::OK)
+        .await;
+    for item in json["notifications"].as_array().unwrap() {
+        assert_eq!(item["body"], body);
+        assert_eq!(item["link"], "/alice/renamed/issues/7?page=3#comment-9");
+    }
+    use db::organizations::{self, NewOrganization, OrganizationOutcome, OrganizationProfile};
+    assert!(matches!(
+        organizations::create_organization(
+            w.database.pool(),
+            w.alice_id,
+            &NewOrganization::new("moved_org", OrganizationProfile::new(None, None).unwrap())
+                .unwrap()
+        )
+        .await
+        .unwrap(),
+        OrganizationOutcome::Applied(_)
+    ));
+    codeyard::backend::repositories::lifecycle::transfer(
+        w.database.pool(),
+        w.alice_id,
+        w.proj,
+        "moved_org",
+    )
+    .await
+    .unwrap();
+    let page = notifications_model(&w.alice, "/notifications").await;
+    let items = page["notifications"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert!(items.iter().any(|item| item["actor"] == "alice"));
+    assert!(items.iter().any(|item| item["actor"] == "bob"));
+    for item in items {
+        assert!(item["body"].as_str().unwrap().chars().count() <= 160);
+        assert_eq!(item["link"], "/moved_org/renamed/issues/7?page=3#comment-9");
+    }
+    use codeyard::backend::notifications::{current_event, NotificationEvent};
+    let hint = NotificationEvent::Created {
+        user_id: w.alice_id,
+        notification_id: ids[0],
+        kind: "mention".into(),
+        title: String::new(),
+        body: None,
+        link: None,
+        created_at: 0,
+        unread_count: 0,
+    };
+    let event = current_event(w.database.pool(), &w.alice.session, w.alice_id, &hint)
+        .await
+        .unwrap()
+        .unwrap();
+    let event = serde_json::to_value(event).unwrap();
+    assert_eq!(
+        event["link"],
+        "/moved_org/renamed/issues/7?page=3#comment-9"
+    );
+    let json = w
+        .alice
+        .expect("GET", "/api/notifications", json!(null), StatusCode::OK)
+        .await;
+    assert_eq!(json["notifications"][0]["link"], event["link"]);
+    w.database.finish().await;
+}
+#[tokio::test]
+async fn sqlite_notification_previews_actors_and_renamed_targets() {
+    bounded_previews_and_current_targets(false).await;
+}
+#[tokio::test]
+async fn postgres_notification_previews_actors_and_renamed_targets() {
+    bounded_previews_and_current_targets(true).await;
+}
+
+#[tokio::test]
+async fn idle_notification_socket_closes_without_a_pong() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut w = setup(false).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let router = w.alice.router.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
+    socket.write_all(format!("GET /api/notifications/ws HTTP/1.1\r\nHost: {address}\r\nOrigin: http://{address}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nCookie: session_id={}\r\n\r\n",w.alice.session).as_bytes()).await.unwrap();
+    let mut handshake = Vec::new();
+    while !handshake.ends_with(b"\r\n\r\n") {
+        handshake.push(socket.read_u8().await.unwrap());
+    }
+    assert!(handshake.starts_with(b"HTTP/1.1 101"));
+    tokio::time::timeout(std::time::Duration::from_secs(38), async {
+        assert_eq!(socket.read_u8().await.unwrap(), 0x89);
+        let length = socket.read_u8().await.unwrap();
+        let mut payload = vec![0; length as usize];
+        socket.read_exact(&mut payload).await.unwrap();
+        assert_eq!(payload, b"heartbeat");
+        // A browser answers this ping; a disappeared client does not.
+        assert!(socket.read_u8().await.is_err());
+    })
+    .await
+    .unwrap();
+    drop(socket);
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+    w.database.finish().await;
+}
+
 async fn saved_and_done_marks(pg: bool) {
     let mut w = setup(pg).await;
     let mention = notify(

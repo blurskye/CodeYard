@@ -41,7 +41,15 @@ pub(crate) async fn native_toggle_task(
     let text = match comment_id {
         None => value.body.clone(),
         Some(id) => {
-            comment_body(&ctx, kind, id, actor_id, &field(&form, "comment_revision")).await?
+            comment_body(
+                &ctx,
+                kind,
+                (repo.record.id, number),
+                id,
+                actor_id,
+                &field(&form, "comment_revision"),
+            )
+            .await?
         }
     };
     let Some(updated) = toggle_task(&text, index) else {
@@ -100,22 +108,44 @@ pub(crate) async fn native_toggle_task(
 async fn comment_body(
     ctx: &PageContext,
     kind: Kind,
+    (repo_id, number): (i64, i32),
     id: i64,
     actor_id: i64,
     expected: &str,
 ) -> ResultPage<String> {
     let body = match kind {
-        Kind::Issue => db::issues::get_issue_comment(&ctx.state.pool, id)
-            .await
-            .map(|comment| comment.map(|comment| comment.body)),
+        Kind::Issue => {
+            let issue = db::issues::get_issue(&ctx.state.pool, repo_id, number)
+                .await
+                .map_err(|_| unavailable(ctx))?
+                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+            db::issues::get_issue_comment(&ctx.state.pool, id)
+                .await
+                .map(|comment| {
+                    comment
+                        .filter(|comment| {
+                            comment.issue_id == issue.id && comment.author_id == actor_id
+                        })
+                        .map(|comment| comment.body)
+                })
+        }
         // Only the author can edit a comment, so another account's comment, pending ones
         // included, is not found here.
         Kind::Pull => {
+            let pull =
+                db::pull_requests::records::get_pull_request(&ctx.state.pool, repo_id, number)
+                    .await
+                    .map_err(|_| unavailable(ctx))?
+                    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
             db::pull_requests::reviews::get_pull_request_comment_by_id(&ctx.state.pool, id)
                 .await
                 .map(|comment| {
                     comment
-                        .filter(|comment| comment.author_id == actor_id)
+                        .filter(|comment| {
+                            comment.author_id == actor_id
+                                && comment.pull_request_id == pull.id
+                                && comment.review_id.is_none()
+                        })
                         .map(|comment| comment.body)
                 })
         }

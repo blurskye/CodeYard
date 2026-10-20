@@ -39,7 +39,7 @@ pub async fn admin_set_ai_crawlers(
     headers: HeaderMap,
     Json(body): Json<AiCrawlersSetting>,
 ) -> Result<Json<AiCrawlersSetting>, (StatusCode, Json<ApiError>)> {
-    require_admin_user(&state, &headers).await?;
+    let actor = require_admin_user(&state, &headers).await?;
     let value = crawlers::setting_value(&body.ai_crawlers).ok_or((
         StatusCode::BAD_REQUEST,
         Json(ApiError::new(
@@ -47,7 +47,7 @@ pub async fn admin_set_ai_crawlers(
             "ai_crawlers must be allow or block.",
         )),
     ))?;
-    let updated = db::node_config::set_ai_crawlers(&state.pool, value)
+    let updated = db::node_config::set_ai_crawlers(&state.pool, actor.id, value)
         .await
         .map_err(|_| database_failure())?;
     if !updated {
@@ -88,7 +88,13 @@ pub(crate) async fn ai_crawlers_post(
         )
         .await;
     };
-    match db::node_config::set_ai_crawlers(&ctx.state.pool, value).await {
+    match db::node_config::set_ai_crawlers(
+        &ctx.state.pool,
+        ctx.user.as_ref().expect("admin guard").id,
+        value,
+    )
+    .await
+    {
         Ok(true) => ctx.redirect("/admin?saved=crawlers"),
         Ok(false) => {
             admin_response(

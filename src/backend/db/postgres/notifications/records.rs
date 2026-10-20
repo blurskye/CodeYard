@@ -248,21 +248,40 @@ async fn notification_list(
         if page.is_empty() {
             break;
         }
+        let mut authorized = Vec::new();
+        let mut more = false;
         for candidate in page {
-            if !scope_readable(connection, user_id, scopes, candidate.1).await? {
-                cursor = Some(candidate);
-                continue;
-            }
-            if notifications.len() == limit {
-                return Ok((notifications, last_visible));
-            }
-            if let Some(notification) = sqlx::query_as::<_, Notification>(
-                "SELECT * FROM notifications WHERE id=$1 AND user_id=$2 AND scope_repository_id = $3",
-            ).bind(candidate.0).bind(user_id).bind(candidate.1).fetch_optional(&mut *connection).await? {
-                last_visible = Some(NotificationCursor { created_at: candidate.2.to_rfc3339(), id: candidate.0 });
-                notifications.push(notification);
+            if scope_readable(connection, user_id, scopes, candidate.1).await? {
+                if notifications.len() + authorized.len() == limit {
+                    more = true;
+                    break;
+                }
+                authorized.push(candidate);
             }
             cursor = Some(candidate);
+        }
+        let ids: Vec<i64> = authorized.iter().map(|c| c.0).collect();
+        if !ids.is_empty() {
+            let rows: Vec<Notification> =
+                sqlx::query_as("SELECT * FROM notifications WHERE user_id=$1 AND id=ANY($2)")
+                    .bind(user_id)
+                    .bind(&ids)
+                    .fetch_all(&mut *connection)
+                    .await?;
+            let mut rows: std::collections::BTreeMap<_, _> =
+                rows.into_iter().map(|n| (n.id, n)).collect();
+            for candidate in authorized {
+                if let Some(notification) = rows.remove(&candidate.0) {
+                    last_visible = Some(NotificationCursor {
+                        created_at: candidate.2.to_rfc3339(),
+                        id: candidate.0,
+                    });
+                    notifications.push(notification);
+                }
+            }
+        }
+        if more && notifications.len() == limit {
+            return Ok((notifications, last_visible));
         }
     }
     Ok((notifications, None))
@@ -651,6 +670,28 @@ async fn notification_done_all(
 }
 
 pub async fn notification_inbox(
+    pool: &PgPool,
+    session_id: &str,
+    user_id: i64,
+    action: NotificationInboxAction,
+) -> Result<Option<NotificationInbox>> {
+    for attempt in 0..3 {
+        let result = notification_inbox_once(pool, session_id, user_id, action.clone()).await;
+        let deadlock = result
+            .as_ref()
+            .err()
+            .and_then(|e| e.downcast_ref::<sqlx::Error>())
+            .and_then(sqlx::Error::as_database_error)
+            .is_some_and(|e| e.code().as_deref() == Some("40P01"));
+        if !deadlock || attempt == 2 {
+            return result;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10 << attempt)).await;
+    }
+    unreachable!()
+}
+
+async fn notification_inbox_once(
     pool: &PgPool,
     session_id: &str,
     user_id: i64,

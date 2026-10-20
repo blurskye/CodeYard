@@ -159,6 +159,11 @@ pub(crate) fn two_factor_failure(error: TwoFactorError) -> Failure {
             "invalid_password",
             "Current password is incorrect",
         ),
+        TwoFactorError::PasswordRequired => failure(
+            StatusCode::FORBIDDEN,
+            "password_required",
+            "Two-factor enrollment requires an account password",
+        ),
         TwoFactorError::InvalidCode => failure(
             StatusCode::BAD_REQUEST,
             "invalid_two_factor_code",

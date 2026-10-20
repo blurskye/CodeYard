@@ -226,10 +226,11 @@ async fn repository_pages(pg: bool) {
         .await
         .unwrap();
     }
-    let (_, count, first) = codeyard::backend::identity::profiles::repositories_on_profile(
+    let (_, first, count) = codeyard::backend::identity::profiles::repositories_on_profile(
         f.pool(),
         "alice",
         Some(bob),
+        "",
         1,
     )
     .await
@@ -237,10 +238,11 @@ async fn repository_pages(pg: bool) {
     assert_eq!(count, 35);
     assert_eq!(first.len(), 30);
     assert!(first.iter().all(|repo| !repo.is_private));
-    let (_, _, second) = codeyard::backend::identity::profiles::repositories_on_profile(
+    let (_, second, _) = codeyard::backend::identity::profiles::repositories_on_profile(
         f.pool(),
         "alice",
         Some(bob),
+        "",
         2,
     )
     .await
@@ -249,10 +251,11 @@ async fn repository_pages(pg: bool) {
     assert!(first
         .iter()
         .all(|repo| second.iter().all(|other| repo.id != other.id)));
-    let (_, own_count, own) = codeyard::backend::identity::profiles::repositories_on_profile(
+    let (_, own, own_count) = codeyard::backend::identity::profiles::repositories_on_profile(
         f.pool(),
         "alice",
         Some(alice),
+        "",
         1,
     )
     .await

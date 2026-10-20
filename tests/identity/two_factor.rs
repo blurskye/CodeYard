@@ -102,7 +102,18 @@ async fn account_session(database: &Database, user_id: i64) -> String {
 
 /// Turns two-factor on for the user and returns the raw secret and the recovery codes.
 async fn enable(database: &Database, key: &SecretEncryptor, user: &User) -> (Vec<u8>, Vec<String>) {
-    let setup = two_factor::begin_setup(database.pool(), key, user)
+    let session = token();
+    db::users::sessions::create_session(
+        database.pool(),
+        &session,
+        user.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let setup = two_factor::begin_setup(database.pool(), key, user, &session, PASSWORD)
         .await
         .unwrap();
     let secret = secret_bytes(&setup.secret);
@@ -110,7 +121,7 @@ async fn enable(database: &Database, key: &SecretEncryptor, user: &User) -> (Vec
         database.pool(),
         key,
         user,
-        &account_session(database, user.id).await,
+        &session,
         PASSWORD,
         &setup.token,
         &code_at(&secret, step()),
@@ -385,13 +396,36 @@ async fn settings_forms(pg: bool) {
     ));
     let client = Client::login(&router, database.pool(), alice.id).await;
     let form = |fields: &str| format!("csrf_token={}&{fields}", client.csrf).into_bytes();
+    let refused = client
+        .exchange(
+            "POST",
+            "/settings/two-factor/setup",
+            "application/x-www-form-urlencoded",
+            form(""),
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    let passwordless = db::users::accounts::create_user(database.pool(), "oauth_only", None)
+        .await
+        .unwrap();
+    let oauth = Client::login(&router, database.pool(), passwordless.id).await;
+    let (status, html) = oauth.page("/settings?tab=two-factor").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!html.contains("Set up two-factor authentication"));
+    let (status, _) = oauth
+        .form(
+            "/settings/two-factor/setup",
+            &[("current_password", PASSWORD)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 
     let setup = client
         .exchange(
             "POST",
             "/settings/two-factor/setup",
             "application/x-www-form-urlencoded",
-            form(""),
+            form(&format!("current_password={PASSWORD}")),
         )
         .await;
     assert_eq!(setup.status, StatusCode::OK);
@@ -911,4 +945,156 @@ async fn postgres_two_factor_settings_forms() {
 #[tokio::test]
 async fn sqlite_two_factor_settings_forms() {
     settings_forms(false).await;
+}
+
+async fn enrollment_authority(pg: bool) {
+    let _work = PASSWORD_WORK.lock().await;
+    let mut database = fixture(pg).await;
+    let key = encryptor();
+    let user = new_user(&database, "enroller", false).await;
+    let session = token();
+    db::users::sessions::create_session(
+        database.pool(),
+        &session,
+        user.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        two_factor::begin_setup(database.pool(), &key, &user, &session, "wrong")
+            .await
+            .err(),
+        Some(TwoFactorError::InvalidPassword)
+    );
+    let setup = two_factor::begin_setup(database.pool(), &key, &user, &session, PASSWORD)
+        .await
+        .unwrap();
+    assert_eq!(
+        two_factor::open_setup(
+            &key,
+            &user,
+            "another session",
+            &setup.token,
+            two_factor::now_unix()
+        )
+        .err(),
+        Some(TwoFactorError::SetupExpired)
+    );
+    let mut changed = user.clone();
+    changed.password_hash = Some("changed".into());
+    assert_eq!(
+        two_factor::open_setup(
+            &key,
+            &changed,
+            &session,
+            &setup.token,
+            two_factor::now_unix()
+        )
+        .err(),
+        Some(TwoFactorError::SetupExpired)
+    );
+    changed.password_hash = None;
+    assert_eq!(
+        two_factor::begin_setup(database.pool(), &key, &changed, &session, PASSWORD)
+            .await
+            .err(),
+        Some(TwoFactorError::PasswordRequired)
+    );
+    let code = code_at(&secret_bytes(&setup.secret), step());
+    assert_eq!(
+        two_factor::confirm_setup(
+            database.pool(),
+            &key,
+            &changed,
+            &session,
+            PASSWORD,
+            &setup.token,
+            &code
+        )
+        .await
+        .err(),
+        Some(TwoFactorError::PasswordRequired)
+    );
+    db::users::sessions::delete_session(database.pool(), &session)
+        .await
+        .unwrap();
+    assert!(two_factor::confirm_setup(
+        database.pool(),
+        &key,
+        &user,
+        &session,
+        PASSWORD,
+        &setup.token,
+        &code
+    )
+    .await
+    .is_err());
+    assert!(!two_factor::is_enabled(database.pool(), user.id)
+        .await
+        .unwrap());
+
+    enable(&database, &key, &user).await;
+    let retired = db::users::two_factor::get_two_factor(database.pool(), user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    two_factor::disable(
+        database.pool(),
+        &user,
+        &account_session(&database, user.id).await,
+        PASSWORD,
+    )
+    .await
+    .unwrap();
+    enable(&database, &key, &user).await;
+    assert!(!db::users::two_factor::use_totp_step(
+        database.pool(),
+        user.id,
+        &retired.nonce,
+        step() as i64 + 1
+    )
+    .await
+    .unwrap());
+
+    let admin = new_user(&database, "resetter", true).await;
+    let admin_session = token();
+    db::users::sessions::create_session(
+        database.pool(),
+        &admin_session,
+        admin.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    database
+        .execute("UPDATE users SET is_admin=FALSE WHERE id=$1", &[admin.id])
+        .await;
+    assert!(db::users::two_factor::disable_two_factor(
+        database.pool(),
+        user.id,
+        db::users::two_factor::FactorAuthority::Administrator {
+            user_id: admin.id,
+            session: &admin_session,
+        },
+    )
+    .await
+    .is_err());
+    assert!(two_factor::is_enabled(database.pool(), user.id)
+        .await
+        .unwrap());
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_enrollment_and_factor_replacement_authority() {
+    enrollment_authority(false).await;
+}
+#[tokio::test]
+async fn postgres_enrollment_and_factor_replacement_authority() {
+    enrollment_authority(true).await;
 }

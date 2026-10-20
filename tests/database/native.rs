@@ -2416,6 +2416,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     db::repository_stats::upsert_repo_languages(
         pool,
         repo.id,
+        &repo.default_branch,
         &[
             ("Rust".into(), 900, 90.25, "#123456".into()),
             ("Other".into(), 100, 9.75, "#654321".into()),

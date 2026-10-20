@@ -44,14 +44,6 @@ async fn lock_discussion_authority(
     tx: &mut Transaction<'_, Sqlite>,
     actor_id: i64,
     repo_id: i64,
-) -> Result<Option<DiscussionAuthority>> {
-    lock_discussion_authority_with_archived(tx, actor_id, repo_id, false).await
-}
-
-async fn lock_discussion_authority_with_archived(
-    tx: &mut Transaction<'_, Sqlite>,
-    actor_id: i64,
-    repo_id: i64,
     include_archived: bool,
 ) -> Result<Option<DiscussionAuthority>> {
     let actor: Option<(bool, bool, bool)> =
@@ -107,7 +99,7 @@ pub(crate) async fn lock_write_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id)
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, false)
         .await?
         .is_some_and(|a| a.access.can_write() || a.personal_override))
 }
@@ -118,7 +110,7 @@ pub(crate) async fn lock_maintain_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id)
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, false)
         .await?
         .is_some_and(|a| a.access.can_maintain() || a.personal_override))
 }
@@ -129,22 +121,20 @@ pub(crate) async fn lock_admin_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id)
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, false)
         .await?
         .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override))
 }
 
-/// Archival changes must also permit administrators to unarchive a repository.
+/// Administration of archival state must also work when the repository is already archived.
 pub(crate) async fn lock_archive_authority(
     tx: &mut Transaction<'_, Sqlite>,
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(
-        lock_discussion_authority_with_archived(tx, actor_id, repo_id, true)
-            .await?
-            .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override),
-    )
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, true)
+        .await?
+        .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override))
 }
 
 /// Whether the actor may still take part in the repository (read access is enough).
@@ -153,7 +143,7 @@ pub(crate) async fn lock_contribution_authority(
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id)
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, false)
         .await?
         .is_some_and(|a| a.access.can_read() || a.personal_override))
 }
@@ -181,13 +171,17 @@ pub(crate) async fn lock_issue_contribution(
         .await?;
     let repo = repo.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
-    let present: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM issues WHERE id=?1 AND repo_id=?2")
+    let locked: Option<bool> =
+        sqlx::query_scalar("SELECT locked FROM issues WHERE id=?1 AND repo_id=?2")
             .bind(issue_id)
             .bind(repo)
             .fetch_optional(&mut **tx)
             .await?;
-    anyhow::ensure!(present.is_some(), AUTHORITY_DENIED);
+    anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
+    anyhow::ensure!(
+        locked == Some(false),
+        crate::backend::db::discussions::DiscussionWriteRefusal::Locked
+    );
     Ok(())
 }
 
@@ -257,7 +251,7 @@ pub(crate) async fn lock_comment_resolution_authority(
             .await?;
     let (repo, author) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
-        lock_discussion_authority(tx, actor_id, repo)
+        lock_discussion_authority(tx, actor_id, repo, false)
             .await?
             .is_some_and(|a| a.access.can_write()
                 || a.personal_override
@@ -276,7 +270,7 @@ pub(crate) async fn lock_review_dismissal_authority(
         .bind(review_id).fetch_optional(&mut **tx).await?;
     let (pr, repo) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
-        lock_discussion_authority(tx, actor_id, repo)
+        lock_discussion_authority(tx, actor_id, repo, false)
             .await?
             .is_some_and(|a| if a.organization {
                 a.access.can_admin()

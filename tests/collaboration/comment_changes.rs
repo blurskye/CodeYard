@@ -222,6 +222,34 @@ async fn edit_and_delete_rules(pg: bool) {
         "This conversation is locked.",
     )
     .await;
+    refused(
+        bob,
+        &format!("{issue}/comments"),
+        &[("body", "After lock")],
+        "This conversation is locked.",
+    )
+    .await;
+    let (status, body) = bob
+        .api(
+            "POST",
+            "/api/repos/alice/proj/issues/1/comments",
+            json!({"body": "After lock"}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "conversation_locked");
+    let stored = db::issues::get_issue_comment(database.pool(), locked)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(db::issues::add_issue_comment(
+        database.pool(),
+        stored.issue_id,
+        stored.author_id,
+        "After lock"
+    )
+    .await
+    .is_err());
     database
         .execute("UPDATE issues SET locked=FALSE WHERE number=1", &[])
         .await;

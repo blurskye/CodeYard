@@ -30,7 +30,12 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
         )
         .merge(
             Router::new()
-                .route("/avatars/:name", get(avatar::avatar_get))
+                .merge(
+                    Router::new()
+                        .route("/avatars/:name", get(avatar::avatar_get))
+                        .route_layer(from_fn(middleware::require_node_access))
+                        .layer(from_fn(middleware::private_api_response)),
+                )
                 .route("/:username", get(profile::profile_get))
                 .route(
                     "/:username/_forms/follow",

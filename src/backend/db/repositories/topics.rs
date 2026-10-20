@@ -29,11 +29,11 @@ pub fn parse_topics<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<Vec<
             return Err(RepositorySettingsRefusal::InvalidTopics.into());
         }
         if !topics.contains(&topic) {
+            if topics.len() == MAX_TOPICS {
+                return Err(RepositorySettingsRefusal::InvalidTopics.into());
+            }
             topics.push(topic);
         }
-    }
-    if topics.len() > MAX_TOPICS {
-        return Err(RepositorySettingsRefusal::InvalidTopics.into());
     }
     Ok(topics)
 }
@@ -52,6 +52,30 @@ pub fn parse_website(text: &str) -> Result<Option<String>> {
         return Err(RepositorySettingsRefusal::InvalidWebsite.into());
     }
     Ok(Some(website.to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn topic_limit_stops_at_the_twenty_first_distinct_name() {
+        let names: Vec<String> = (0..=MAX_TOPICS).map(|n| format!("topic-{n}")).collect();
+        let consumed = std::cell::Cell::new(0);
+        let input = names
+            .iter()
+            .map(String::as_str)
+            .inspect(|_| consumed.set(consumed.get() + 1))
+            .chain(std::iter::once_with(|| {
+                panic!("must not consume the rest of an oversized submission")
+            }));
+        assert!(parse_topics(input).is_err());
+        assert_eq!(consumed.get(), MAX_TOPICS + 1);
+        assert_eq!(
+            parse_topics(std::iter::repeat_n("repeat", 100_000)).unwrap(),
+            ["repeat"]
+        );
+    }
 }
 
 native_operation!(crate::backend::db::postgres::repositories::topics::update_about,

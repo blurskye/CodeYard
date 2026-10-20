@@ -1,5 +1,5 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, User};
+use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
@@ -103,6 +103,13 @@ native_operation!(crate::backend::db::postgres::users::accounts::update_user_pro
     location: Option<&str>,
     website: Option<&str>,
 ) -> Result<User>);
+
+native_operation!(crate::backend::db::postgres::users::accounts::count_matching_users,
+    crate::backend::db::sqlite::users::accounts::count_matching_users,
+    fn count_matching_users(pool: &DbPool, text: &str) -> Result<i64>);
+native_operation!(crate::backend::db::postgres::users::accounts::list_admin_users,
+    crate::backend::db::sqlite::users::accounts::list_admin_users,
+    fn list_admin_users(pool: &DbPool, text: &str, limit: i64, offset: i64) -> Result<Vec<AdminUser>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::list_admin_account_summaries,
     crate::backend::db::sqlite::users::accounts::list_admin_account_summaries,

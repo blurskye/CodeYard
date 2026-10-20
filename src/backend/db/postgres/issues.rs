@@ -74,7 +74,7 @@ pub async fn list_repo_issues(
             AND ($10::TEXT[] IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name COLLATE "C")) FROM issue_labels il JOIN labels l ON l.id=il.label_id
                 WHERE il.issue_id = i.id AND LOWER(l.name COLLATE "C") = ANY(SELECT LOWER(n COLLATE "C") FROM unnest($10::TEXT[]) AS n))
                 = (SELECT COUNT(DISTINCT LOWER(n COLLATE "C")) FROM unnest($10::TEXT[]) AS n))
-        ORDER BY {order} LIMIT $4"#
+        ORDER BY {order}, i.id DESC LIMIT $4 OFFSET $11"#
     ))
     .bind(repo_id)
     .bind(filter.state)
@@ -86,6 +86,7 @@ pub async fn list_repo_issues(
     .bind(milestone_mode)
     .bind(milestone_id)
     .bind(labels)
+    .bind(filter.offset)
     .fetch_all(pool)
     .await?;
 

@@ -187,9 +187,14 @@ async fn languages_contract(pool: &db::DbPool) {
     assert_eq!(body, expected, "stored languages are served without Git");
 
     // Without stored rows the reader has to compute them, and Git is unavailable.
-    db::repository_stats::upsert_repo_languages(pool, repository.id, &[])
-        .await
-        .unwrap();
+    db::repository_stats::upsert_repo_languages(
+        pool,
+        repository.id,
+        &repository.default_branch,
+        &[],
+    )
+    .await
+    .unwrap();
     let (status, body) = get_json(&router, Some(&session)).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(body.to_string().contains("git_error"), "{body}");
@@ -234,9 +239,10 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
     let tx = fixture.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     let pool = fixture.pool.clone();
     let store = codeyard::backend::repositories::store::repo_store(&record, None);
+    let repository_id = record.id;
     let task = tokio::spawn(async move {
         codeyard::backend::repositories::languages::compute_and_store(
-            &pool, &store, record.id, "main",
+            &pool, &store, &record, "main",
         )
         .await
         .unwrap()
@@ -250,7 +256,7 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
     tx.commit().await.unwrap();
     let languages = task.await.unwrap();
     assert_eq!(languages[0].language, "Python");
-    let stored = db::repository_stats::get_repo_languages(&fixture.pool, record.id)
+    let stored = db::repository_stats::get_repo_languages(&fixture.pool, repository_id)
         .await
         .unwrap();
     assert_eq!(stored[0].language, "Python");
@@ -459,9 +465,14 @@ async fn push_contract(pool: &db::DbPool, database_url: &str) {
     );
 
     // A push to another branch stores nothing, even with no stored languages to replace.
-    db::repository_stats::upsert_repo_languages(pool, repository.id, &[])
-        .await
-        .unwrap();
+    db::repository_stats::upsert_repo_languages(
+        pool,
+        repository.id,
+        &repository.default_branch,
+        &[],
+    )
+    .await
+    .unwrap();
     commit_and_push(
         root.path(),
         &source,

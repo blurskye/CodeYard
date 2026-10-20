@@ -925,17 +925,23 @@ struct Workspace {
 
 impl Drop for Workspace {
     fn drop(&mut self) {
+        let checkout = self.checkout();
         let temp = self.temp.take().unwrap();
         let cleaned = self.cleaned.take();
         let mut cleanups = self.cleanups.lock().unwrap_or_else(|e| e.into_inner());
         while cleanups.try_join_next().is_some() {}
-        cleanups.spawn_blocking(move || {
-            if let Err(error) = temp.close() {
-                warn!(%error, "could not remove CI workspace");
-            }
-            if let Some(cleaned) = cleaned {
-                let _ = cleaned.send(());
-            }
+        cleanups.spawn(async move {
+            // A cancelled checkout may still be importing its pack on a blocking thread.
+            let _lock = crate::backend::git::locks::lock(&checkout).await;
+            let _ = tokio::task::spawn_blocking(move || {
+                if let Err(error) = temp.close() {
+                    warn!(%error, "could not remove CI workspace");
+                }
+                if let Some(cleaned) = cleaned {
+                    let _ = cleaned.send(());
+                }
+            })
+            .await;
         });
     }
 }
@@ -1130,6 +1136,32 @@ mod tests {
             cleanups: Arc::new(Mutex::new(JoinSet::new())),
             cleaned: None,
         }
+    }
+
+    #[tokio::test]
+    async fn workspace_cleanup_waits_for_an_in_progress_pack_import() {
+        let mut workspace = secret_workspace();
+        let root = workspace.root().to_owned();
+        let lock = crate::backend::git::locks::lock(&workspace.checkout()).await;
+        let (cleaned, mut cleanup) = oneshot::channel();
+        workspace.cleaned = Some(cleaned);
+        let cleanups = workspace.cleanups.clone();
+        drop(workspace);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut cleanup)
+                .await
+                .is_err()
+        );
+        assert!(root.exists());
+        drop(lock);
+        tokio::time::timeout(Duration::from_secs(5), cleanup)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!root.exists());
+        // Retain and drain the same owner used by the worker.
+        let mut tasks = std::mem::take(&mut *cleanups.lock().unwrap());
+        while tasks.join_next().await.is_some() {}
     }
 
     fn complex_secret_value() -> String {

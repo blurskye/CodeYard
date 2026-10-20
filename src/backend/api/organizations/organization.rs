@@ -598,18 +598,24 @@ async fn delete_with_repositories(
     org: i64,
 ) -> Result<OrganizationOutcome<()>, Response> {
     let pool = &ctx.state.pool;
-    loop {
-        match organizations::next_organization_repository(pool, actor, org).await {
-            Ok(Applied(Some(repository))) => {
-                if let Err(error) =
-                    lifecycle::delete(pool, ctx.state.cluster.as_ref(), actor, repository).await
-                {
-                    return Err(ctx.error(StatusCode::CONFLICT, error.message));
-                }
-            }
-            Ok(Applied(None)) => break,
+    let repositories =
+        match organizations::list_organization_deletion_repositories(pool, actor, org).await {
+            Ok(Applied(repositories)) => repositories,
             Ok(other) => return Ok(unit(other)),
             Err(_) => return Err(unavailable(ctx)),
+        };
+    for repository in repositories {
+        let deleted =
+            match organizations::delete_organization_repository(pool, actor, org, repository).await
+            {
+                Ok(Applied(deleted)) => deleted,
+                Ok(other) => return Ok(unit(other)),
+                Err(_) => return Err(unavailable(ctx)),
+            };
+        if let Err(error) =
+            lifecycle::remove_deleted_repository(ctx.state.cluster.as_ref(), &deleted).await
+        {
+            return Err(ctx.error(StatusCode::CONFLICT, error.message));
         }
     }
     organizations::delete_organization(pool, actor, org)

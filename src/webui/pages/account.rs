@@ -62,7 +62,8 @@ pub enum Page {
         profile: Profile,
         repositories: Vec<Repository>,
         repository_count: usize,
-        repository_next: Option<usize>,
+        repositories_newer: Option<String>,
+        repositories_older: Option<String>,
         csrf_token: String,
         own: bool,
         authenticated: bool,
@@ -137,7 +138,8 @@ pub fn render(page: Page) -> Element {
             profile,
             repositories,
             repository_count,
-            repository_next,
+            repositories_newer,
+            repositories_older,
             csrf_token,
             own,
             authenticated,
@@ -160,7 +162,8 @@ pub fn render(page: Page) -> Element {
             followers,
             follows,
             message.as_deref(),
-            repository_next,
+            repositories_newer,
+            repositories_older,
         ),
     }
 }
@@ -313,7 +316,7 @@ mod tests {
             Page::AdminUsers {
                 model: AdminUsers {
                     current_user_id: 1,
-                    accounts: vec![Account {
+                    accounts: vec![crate::webui::pages::admin::AccountMetadata {
                         two_factor: false,
                         id: 2,
                         username: "bob".into(),
@@ -321,11 +324,6 @@ mod tests {
                         admin: false,
                         banned: true,
                         must_change_password: true,
-                        files: 3,
-                        bytes: 1024,
-                        commits: 4,
-                        pushes: 2,
-                        contributions: 6,
                         created: "2026-10-02".into(),
                     }],
                     search: "bo".into(),
@@ -353,7 +351,8 @@ mod tests {
                     updated: "2026-10-02".into(),
                 }],
                 repository_count: 1,
-                repository_next: None,
+                repositories_newer: None,
+                repositories_older: None,
                 csrf_token: "csrf-marker".into(),
                 own: false,
                 authenticated: true,

@@ -34,15 +34,26 @@ pub async fn handle_socket(
 ) {
     let (mut sender, mut receiver) = socket.split();
     let mut rx = broadcaster.subscribe();
-    let mut heartbeat = tokio::time::interval(Duration::from_secs(15));
+    let mut heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + Duration::from_secs(15),
+        Duration::from_secs(15),
+    );
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut awaiting_pong = false;
     info!(user_id, "Notification WebSocket client connected");
     loop {
         tokio::select! {
             message = receiver.next() => {
-                if !matches!(message, Some(Ok(Message::Ping(_) | Message::Pong(_)))) { break; }
+                match message {
+                    Some(Ok(Message::Pong(payload))) if payload.as_slice() == b"heartbeat" => awaiting_pong = false,
+                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => {},
+                    _ => break,
+                }
             }
             _ = heartbeat.tick() => {
+                if awaiting_pong { break; }
+                if !matches!(tokio::time::timeout(Duration::from_secs(5), sender.send(Message::Ping(b"heartbeat".to_vec()))).await, Ok(Ok(()))) { break; }
+                awaiting_pong = true;
                 let identity = tokio::time::timeout(Duration::from_secs(5), db::users::sessions::get_session_user(&pool, &session_id)).await;
                 if !matches!(identity, Ok(Ok(Some(user))) if user.id == user_id) { break; }
             }

@@ -40,8 +40,9 @@ pub(super) struct LocalStore {
     disk_path: String,
     /// The storage node this store was opened for. A write is refused once the repository
     /// row names another node, so a store opened before a promotion cannot publish on the
-    /// old primary afterwards. `None` for a standalone repository or a bare path.
-    node_id: Option<i64>,
+    /// old primary afterwards. `Some(None)` expects an unplaced repository;
+    /// `None` is reserved for internal stores opened from a bare path.
+    node_id: Option<Option<i64>>,
 }
 
 fn unavailable(message: &'static str) -> RepoError {
@@ -85,9 +86,9 @@ fn normalize_blob_range(range: BlobRange, size: u64) -> Result<(u64, usize), Rep
 fn repository_matches_path(
     repository: &db::models::Repository,
     path: &Path,
-    node_id: Option<i64>,
+    node_id: Option<Option<i64>>,
 ) -> bool {
-    if node_id.is_some() && repository.storage_node_id != node_id {
+    if node_id.is_some_and(|expected| repository.storage_node_id != expected) {
         return false;
     }
     if repository.storage_node_id.is_none() {
@@ -105,7 +106,7 @@ async fn live_read(
     repo_id: i64,
     actor: i64,
     path: &Path,
-    node_id: Option<i64>,
+    node_id: Option<Option<i64>>,
 ) -> Result<(), RepoError> {
     let user = db::users::accounts::get_user_by_id(pool, actor)
         .await
@@ -139,7 +140,7 @@ async fn live_write(
     branch: Option<&BranchWrite<'_>>,
     history: &History<'_>,
     path: &Path,
-    node_id: Option<i64>,
+    node_id: Option<Option<i64>>,
 ) -> Result<db::models::Repository, RepoError> {
     let (repository, user) = access::check_write(pool, repo_id, actor)
         .await
@@ -177,7 +178,6 @@ async fn record_branch_update(
 ) {
     languages::refresh_default_branch(pool.clone(), repo_id, path.to_owned(), branch.to_owned());
     let reference = format!("refs/heads/{branch}");
-    emit_ref_move(pool, repo_id, actor, path, &reference, old, Some(new)).await;
     let count = match git::count_pushed_commits(path, old, new, &reference).await {
         Ok(count) => i32::try_from(count).unwrap_or(i32::MAX),
         Err(error) => {
@@ -194,33 +194,6 @@ async fn record_branch_update(
             repo_id,
             "gave up recording a branch update on a busy database"
         ),
-    }
-}
-
-async fn emit_ref_move(
-    pool: &db::DbPool,
-    repo_id: i64,
-    actor: i64,
-    path: &Path,
-    reference: &str,
-    old: Option<&str>,
-    new: Option<&str>,
-) {
-    if let Ok(Some(repository)) =
-        db::repositories::records::get_repository_by_id(pool, repo_id).await
-    {
-        let zero = "0".repeat(40);
-        crate::backend::webhooks::ref_changes::emit_ref_moves(
-            pool,
-            &repository,
-            actor,
-            path,
-            &[(
-                reference.to_owned(),
-                old.unwrap_or(&zero).to_owned(),
-                new.unwrap_or(&zero).to_owned(),
-            )],
-        );
     }
 }
 
@@ -263,7 +236,8 @@ impl Drop for RefChange {
 
 /// Starts a ref change on the repository at `path`, before Git makes it. The change is counted
 /// in this process, then the database counts it, but only while `node_id` holds the repository;
-/// `None` skips that check, as for a store made from a bare path. A promotion that reads the
+/// `Some(None)` expects no placement; `None` skips the check for an internal bare path.
+/// A promotion that reads the
 /// version after this sees the new version and refuses a copy that is behind it. A copy that
 /// asks for its pack while the change is counted is refused, so it never claims a version whose
 /// change it lacks. If the change is refused, nothing is counted.
@@ -271,7 +245,7 @@ pub async fn begin_ref_change(
     pool: &db::DbPool,
     repo_id: i64,
     path: &Path,
-    node_id: Option<i64>,
+    node_id: Option<Option<i64>>,
 ) -> Result<RefChange, RepoError> {
     let key = counting_key(path).await;
     let change = {
@@ -345,7 +319,7 @@ fn ensure_pull_head_room(held: git::RefsInUse, reference: &str) -> Result<(), Re
 }
 
 impl LocalStore {
-    pub(super) fn new(disk_path: &str, node_id: Option<i64>) -> Self {
+    pub(super) fn new(disk_path: &str, node_id: Option<Option<i64>>) -> Self {
         Self {
             disk_path: disk_path.to_owned(),
             node_id,
@@ -365,11 +339,19 @@ impl LocalStore {
         &self,
         work: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
     ) -> Result<T, RepoError> {
+        self.blocking_until(Instant::now() + process::RPC_TIMEOUT, work)
+            .await
+    }
+
+    async fn blocking_until<T: Send + 'static>(
+        &self,
+        deadline: Instant,
+        work: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
+    ) -> Result<T, RepoError> {
         let path: PathBuf = self.path().to_owned();
-        let permit =
-            git::repository::process::operation_slot(git::repository::process::RPC_TIMEOUT)
-                .await
-                .map_err(|_| unavailable("Git operation timed out"))?;
+        let permit = process::operation_slot(deadline.saturating_duration_since(Instant::now()))
+            .await
+            .map_err(|_| unavailable("Git operation timed out"))?;
         match tokio::task::spawn_blocking(move || {
             let _permit = permit;
             work(&path)
@@ -640,7 +622,7 @@ impl LocalStore {
         deadline: Instant,
     ) -> Result<Vec<CommitInfo>, RepoError> {
         let (git_ref, filter) = (git_ref.to_owned(), filter.clone());
-        self.blocking(move |repo| {
+        self.blocking_until(deadline, move |repo| {
             git::list_commits(repo, &git_ref, offset, limit, &filter, deadline)
         })
         .await
@@ -833,10 +815,13 @@ impl LocalStore {
         destination: &Path,
         sha: &str,
         mut pack: tempfile::NamedTempFile,
+        permit: tokio::sync::OwnedSemaphorePermit,
+        lock: tokio::sync::OwnedMutexGuard<()>,
     ) -> Result<(), RepoError> {
         let destination = destination.to_owned();
         let sha = sha.to_owned();
         tokio::task::spawn_blocking(move || {
+            let (_permit, _lock) = (permit, lock);
             use std::io::{Read, Seek};
             pack.as_file_mut()
                 .rewind()
@@ -1008,18 +993,13 @@ impl LocalStore {
         git::publish_ref_create(self.path(), &reference, &target)
             .await
             .map_err(RepoError::from)?;
-        emit_ref_move(
+        self.after_ref_change(
             pool,
             repo_id,
             actor,
-            self.path(),
-            &reference,
-            None,
-            Some(&target),
+            &[(reference, editor::ZERO.to_owned(), target.clone())],
         )
-        .await;
-        let defaults = self.synchronize_default_branch(pool, repo_id).await;
-        defaults?;
+        .await?;
         Ok(target)
     }
 
@@ -1067,17 +1047,13 @@ impl LocalStore {
         git::publish_ref_delete(self.path(), &reference, &old)
             .await
             .map_err(RepoError::from)?;
-        emit_ref_move(
+        self.after_ref_change(
             pool,
             repo_id,
             actor,
-            self.path(),
-            &reference,
-            Some(&old),
-            None,
+            &[(reference, old, editor::ZERO.to_owned())],
         )
-        .await;
-        Ok(())
+        .await
     }
 
     #[expect(
@@ -1129,20 +1105,20 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        let replacement = (reference.clone(), tag.sha.clone());
+        self.blocking(move |path| git::check_tag_budget(path, None, &[replacement]))
+            .await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_ref_create(self.path(), &reference, &tag.sha)
             .await
             .map_err(RepoError::from)?;
-        emit_ref_move(
+        self.after_ref_change(
             pool,
             repo_id,
             actor,
-            self.path(),
-            &reference,
-            None,
-            Some(&tag.sha),
+            &[(reference, editor::ZERO.to_owned(), tag.sha.clone())],
         )
-        .await;
+        .await?;
         Ok(tag)
     }
 
@@ -1173,17 +1149,13 @@ impl LocalStore {
         git::publish_ref_delete(self.path(), &reference, &old)
             .await
             .map_err(RepoError::from)?;
-        emit_ref_move(
+        self.after_ref_change(
             pool,
             repo_id,
             actor,
-            self.path(),
-            &reference,
-            Some(&old),
-            None,
+            &[(reference, old, editor::ZERO.to_owned())],
         )
-        .await;
-        Ok(())
+        .await
     }
 
     pub(super) async fn prepare_file(
@@ -1238,6 +1210,21 @@ impl LocalStore {
         .await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         let commit = editor::publish(self.path(), prepared).await?;
+        let followup = self
+            .after_ref_change(
+                pool,
+                repo_id,
+                actor,
+                &[(
+                    prepared.reference.clone(),
+                    prepared
+                        .expected
+                        .clone()
+                        .unwrap_or_else(|| editor::ZERO.to_owned()),
+                    commit.sha.clone(),
+                )],
+            )
+            .await;
         record_branch_update(
             pool,
             repo_id,
@@ -1248,9 +1235,52 @@ impl LocalStore {
             &prepared.commit.sha,
         )
         .await;
-        let defaults = self.synchronize_default_branch(pool, repo_id).await;
-        defaults?;
+        followup?;
         Ok(commit)
+    }
+
+    /// Follow-ups run on the owning store, including when the caller reached it over RPC.
+    async fn after_ref_change(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        actor: i64,
+        moves: &[crate::backend::webhooks::ref_changes::RefMove],
+    ) -> Result<(), RepoError> {
+        let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
+            .await
+            .map_err(|_| RepoError::applied_followup_failed())?
+            .ok_or_else(RepoError::applied_followup_failed)?;
+        let accepted = async {
+            for (reference, _, new) in moves.iter().filter(|(_, _, new)| new != editor::ZERO) {
+                match self.commit(new).await {
+                    Ok(commit) => db::ci::record_ci_accepted_push(
+                        pool,
+                        repo_id,
+                        actor,
+                        reference,
+                        &commit.sha,
+                    )
+                    .await
+                    .map_err(|_| RepoError::applied_followup_failed())?,
+                    // Tags may point at trees or blobs; those never produce a CI run.
+                    Err(_) if reference.starts_with("refs/tags/") => {}
+                    Err(_) => return Err(RepoError::applied_followup_failed()),
+                }
+            }
+            Ok(())
+        }
+        .await;
+        crate::backend::webhooks::ref_changes::emit_ref_moves(
+            pool,
+            &repository,
+            actor,
+            self.path(),
+            moves,
+        );
+        let metadata = self.synchronize_default_branch(pool, repo_id).await;
+        git::maintenance::after_push(repo_id, self.path().to_owned());
+        accepted.and(metadata)
     }
 
     /// Git has already published the branch. A metadata failure must not imply rollback.
@@ -1266,14 +1296,14 @@ impl LocalStore {
                 let repository = db::repositories::records::get_repository_by_id(pool, repo_id)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("Repository disappeared after publication"))?;
-                if repository.default_branch != branch {
-                    db::repositories::records::update_repo_default_branch_and_size(
-                        pool,
-                        repo_id,
-                        &branch,
-                        repository.size_bytes,
-                    )
-                    .await?;
+                let size = self.size_bytes().await?.min(i64::MAX as u64) as i64;
+                db::repositories::records::update_repo_default_branch_and_size(
+                    pool, repo_id, &branch, size,
+                )
+                .await?;
+                if repository.size_bytes != size {
+                    db::repositories::records::insert_repo_storage_snapshot(pool, repo_id, size)
+                        .await?;
                 }
             }
             Ok(())
@@ -1390,6 +1420,18 @@ impl LocalStore {
         git::publish_merge(self.path(), heads, base_branch, base, result)
             .await
             .map_err(RepoError::from)?;
+        let followup = self
+            .after_ref_change(
+                pool,
+                repo_id,
+                actor,
+                &[(
+                    format!("refs/heads/{base_branch}"),
+                    base.to_owned(),
+                    result.to_owned(),
+                )],
+            )
+            .await;
         record_branch_update(
             pool,
             repo_id,
@@ -1400,7 +1442,7 @@ impl LocalStore {
             result,
         )
         .await;
-        Ok(())
+        followup
     }
 
     /// Replays the commits of `from..head` onto `onto`, for a restack. No branch moves.
@@ -1480,6 +1522,17 @@ impl LocalStore {
         git::publish_restack(self.path(), base_branch, base, &ref_moves)
             .await
             .map_err(RepoError::from)?;
+        let updates = moves
+            .iter()
+            .map(|restack| {
+                (
+                    format!("refs/heads/{}", restack.branch),
+                    restack.old.clone(),
+                    restack.new.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let followup = self.after_ref_change(pool, repo_id, actor, &updates).await;
         for restack in moves {
             record_branch_update(
                 pool,
@@ -1492,7 +1545,7 @@ impl LocalStore {
             )
             .await;
         }
-        Ok(())
+        followup
     }
 
     // ----- Git sessions -----
@@ -1688,11 +1741,11 @@ impl LocalStore {
             ));
         }
         // An archived repository refuses the change, so it is not counted as a write.
-        let archived = db::repositories::records::get_repository_by_id(pool, repo_id)
+        let previous = db::repositories::records::get_repository_by_id(pool, repo_id)
             .await
             .map_err(|_| unavailable("Repository storage is unavailable"))?
-            .is_some_and(|repository| repository.is_archived);
-        if archived {
+            .ok_or_else(RepoError::write_denied)?;
+        if previous.is_archived {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
                 "This repository is archived and read-only.",
@@ -1719,7 +1772,20 @@ impl LocalStore {
                 RepoError::write_denied()
             });
         }
-        self.set_head_target(&reference).await?;
+        if let Err(error) = self.set_head_target(&reference).await {
+            let restored = db::repositories::records::restore_repository_default_branch(
+                pool,
+                repo_id,
+                name,
+                &previous.default_branch,
+            )
+            .await;
+            return Err(if matches!(restored, Ok(true)) {
+                error
+            } else {
+                unavailable("Git could not set HEAD and the database default could not be restored; repository reconciliation is required")
+            });
+        }
         // The stored languages describe the default branch, so store the new one's.
         languages::refresh_default_branch(
             pool.clone(),
@@ -1773,6 +1839,9 @@ impl LocalStore {
             return result;
         }
         let mut command = process::git_command()?;
+        if session.allow_unreachable {
+            command.args(["-c", "uploadpack.allowAnySHA1InWant=true"]);
+        }
         command.arg("upload-pack");
         if session.stateless {
             command.arg("--stateless-rpc");

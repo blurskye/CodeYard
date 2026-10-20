@@ -26,6 +26,7 @@ const PULL_REQUEST_TEMPLATE_PATHS: [&str; 4] = [
 pub struct IssueTemplate {
     /// The file's path in the repository. The chooser names a template by it.
     pub path: String,
+    pub revision: String,
     pub name: String,
     pub about: String,
     pub title: String,
@@ -90,22 +91,24 @@ pub async fn issue_templates(store: &RepoStore, branch: &str) -> Result<IssueTem
     )
     .await?
     {
-        Some(config) => blank_issues_allowed(&config),
+        Some((_, config)) => blank_issues_allowed(&config),
         None => true,
     };
     if paths.is_empty() {
-        if let Some(text) = read_text(store, branch, ISSUE_TEMPLATE_FILE).await? {
-            paths.push((ISSUE_TEMPLATE_FILE.to_owned(), text));
+        if let Some((revision, text)) = read_text(store, branch, ISSUE_TEMPLATE_FILE).await? {
+            paths.push((ISSUE_TEMPLATE_FILE.to_owned(), revision, text));
         }
     }
     let templates = paths
         .into_iter()
-        .filter_map(|(path, text)| {
-            if path.ends_with(".yml") || path.ends_with(".yaml") {
-                parse_form_template(&path, &text)
+        .filter_map(|(path, revision, text)| {
+            let mut template = if path.ends_with(".yml") || path.ends_with(".yaml") {
+                parse_form_template(&path, &text)?
             } else {
-                Some(parse_template(&path, &text))
-            }
+                parse_template(&path, &text)
+            };
+            template.revision = revision;
+            Some(template)
         })
         .collect();
     Ok(IssueTemplates {
@@ -120,7 +123,7 @@ pub async fn pull_request_template(
     branch: &str,
 ) -> Result<Option<String>, RepoError> {
     for path in PULL_REQUEST_TEMPLATE_PATHS {
-        if let Some(text) = read_text(store, branch, path).await? {
+        if let Some((_, text)) = read_text(store, branch, path).await? {
             return Ok(Some(text));
         }
     }
@@ -138,7 +141,7 @@ fn is_template_name(name: &str) -> bool {
 async fn template_files(
     store: &RepoStore,
     branch: &str,
-) -> Result<Vec<(String, String)>, RepoError> {
+) -> Result<Vec<(String, String, String)>, RepoError> {
     let entries = match store.tree_metadata(branch, ISSUE_TEMPLATE_DIRECTORY).await {
         Ok(entries) => entries,
         Err(error) if is_missing(&error) => return Ok(Vec::new()),
@@ -146,8 +149,8 @@ async fn template_files(
     };
     let mut files = Vec::new();
     for path in template_paths(entries) {
-        if let Some(text) = read_text(store, branch, &path).await? {
-            files.push((path, text));
+        if let Some((revision, text)) = read_text(store, branch, &path).await? {
+            files.push((path, revision, text));
         }
     }
     Ok(files)
@@ -170,7 +173,7 @@ async fn read_text(
     store: &RepoStore,
     branch: &str,
     path: &str,
-) -> Result<Option<String>, RepoError> {
+) -> Result<Option<(String, String)>, RepoError> {
     let window = BlobRange::Window {
         offset: 0,
         length: MAX_TEMPLATE_BYTES + 1,
@@ -183,7 +186,9 @@ async fn read_text(
     if blob.is_binary || blob.size > MAX_TEMPLATE_BYTES {
         return Ok(None);
     }
-    Ok(String::from_utf8(blob.bytes).ok())
+    Ok(String::from_utf8(blob.bytes)
+        .ok()
+        .map(|text| (blob.id, text)))
 }
 
 fn is_missing(error: &RepoError) -> bool {
@@ -224,6 +229,7 @@ fn parse_template(path: &str, text: &str) -> IssueTemplate {
     let name = field("name");
     IssueTemplate {
         path: path.to_owned(),
+        revision: String::new(),
         name: if name.is_empty() {
             stem.to_owned()
         } else {
@@ -274,6 +280,7 @@ fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
     let name = text_of(document.get("name"));
     Some(IssueTemplate {
         path: path.to_owned(),
+        revision: String::new(),
         name: if name.is_empty() {
             stem.to_owned()
         } else {

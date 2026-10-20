@@ -20,8 +20,9 @@ static SESSION_WAIT: LazyLock<Duration> = LazyLock::new(|| {
         .and_then(|value| value.parse::<u64>().ok());
     Duration::from_secs(seconds.unwrap_or(30))
 });
+static SESSION_CAPACITY: LazyLock<usize> = LazyLock::new(session_limit);
 static RPC_SESSIONS: LazyLock<Arc<Semaphore>> =
-    LazyLock::new(|| Arc::new(Semaphore::new(session_limit())));
+    LazyLock::new(|| Arc::new(Semaphore::new(session_capacity())));
 static GIT_OPERATIONS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(16)));
 
 /// Git sessions at once on this node: `GIT_SESSION_LIMIT`, or four per CPU core and at least 16.
@@ -32,6 +33,14 @@ fn session_limit() -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|limit| *limit > 0)
         .unwrap_or((cores * 4).max(16))
+}
+
+pub(crate) fn session_capacity() -> usize {
+    *SESSION_CAPACITY
+}
+
+pub(crate) fn session_wait() -> Duration {
+    *SESSION_WAIT
 }
 
 pub(crate) fn session_slots() -> Arc<Semaphore> {
@@ -48,7 +57,10 @@ pub(crate) async fn session_permit() -> Result<OwnedSemaphorePermit> {
     wait_for_slot(RPC_SESSIONS.clone(), *SESSION_WAIT).await
 }
 
-async fn wait_for_slot(slots: Arc<Semaphore>, wait: Duration) -> Result<OwnedSemaphorePermit> {
+pub(crate) async fn wait_for_slot(
+    slots: Arc<Semaphore>,
+    wait: Duration,
+) -> Result<OwnedSemaphorePermit> {
     match tokio::time::timeout(wait, slots.acquire_owned()).await {
         Ok(Ok(permit)) => Ok(permit),
         _ => Err(SessionsBusy.into()),

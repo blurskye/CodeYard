@@ -115,6 +115,37 @@ async fn read_only_tokens_hide_private_repositories(
             assert_eq!(response.text().await.unwrap(), "Token is read-only");
         }
     }
+    // The same account gains the canonical personal-repository site-admin override.
+    update(
+        pool,
+        "UPDATE users SET is_admin=TRUE WHERE id=$1",
+        outsider.id,
+    )
+    .await;
+    let write_value = native::token();
+    tokens::create_token(
+        pool,
+        outsider.id,
+        &session,
+        "admin-writer",
+        &hash(&write_value),
+        "write",
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    for service in ["git-upload-pack", "git-receive-pack"] {
+        let response = client
+            .get(format!(
+                "{base}/http_owner/closed.git/info/refs?service={service}"
+            ))
+            .basic_auth("ignored", Some(&write_value))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{service}");
+    }
 }
 
 async fn primary_packs_after_http_push(root: &Path, disk_path: &str, url: &str, token: &str) {

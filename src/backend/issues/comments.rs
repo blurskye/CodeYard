@@ -103,6 +103,9 @@ pub async fn create_issue_comment(
 ) -> Result<db::models::IssueComment, OperationError> {
     let user = super::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
+    if let Some(refusal) = refuse_change(&repository, &issue) {
+        return Err(refusal);
+    }
 
     if let Err(message) = super::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
@@ -250,9 +253,15 @@ pub async fn edit_issue_comment(
     )
     .await
     .map_err(super::write_error)?
-    .ok_or_else(|| OperationError::Denied {
-        code: "comment_forbidden",
-        message: "You cannot edit this comment.".to_owned(),
+    .ok_or_else(|| match expected_body {
+        Some(_) => OperationError::Conflict {
+            code: "conflict",
+            message: "This comment changed; reload before ticking a task.".to_owned(),
+        },
+        None => OperationError::Denied {
+            code: "comment_forbidden",
+            message: "You cannot edit this comment.".to_owned(),
+        },
     })?;
 
     // Only the names the edit adds notify; the others were notified when first written. The

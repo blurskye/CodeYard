@@ -64,6 +64,75 @@ async fn repo_id(database: &Database) -> i64 {
         .id
 }
 
+async fn stale_admin_native_mutations(pg: bool) {
+    let (mut database, _root, _alice, bob_client) = setup(pg).await;
+    let repo = repo_id(&database).await;
+    let bob = db::users::accounts::get_user_by_username(database.pool(), "bob")
+        .await
+        .unwrap()
+        .unwrap();
+    db::repositories::access::grant_repo_access(
+        database.pool(),
+        bob.id,
+        repo,
+        db::models::AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
+    let parsed = ssh_key::PublicKey::from_openssh(ED25519).unwrap();
+    let key = db::deploy_keys::NewDeployKey {
+        repo_id: repo,
+        title: "ci".into(),
+        fingerprint: parsed.fingerprint(ssh_key::HashAlg::Sha256).to_string(),
+        public_key: ED25519.into(),
+        can_write: true,
+        created_by_id: bob.id,
+    };
+    let created = db::deploy_keys::insert_deploy_key(database.pool(), &key, &bob_client.session)
+        .await
+        .unwrap();
+    db::repositories::access::grant_repo_access(
+        database.pool(),
+        bob.id,
+        repo,
+        db::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    assert!(db::deploy_keys::delete_deploy_key(
+        database.pool(),
+        repo,
+        created.id,
+        bob.id,
+        &bob_client.session
+    )
+    .await
+    .is_err());
+    let mut next = key;
+    next.fingerprint = "unused-fingerprint".into();
+    assert!(
+        db::deploy_keys::insert_deploy_key(database.pool(), &next, &bob_client.session)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        db::deploy_keys::list_deploy_keys(database.pool(), repo)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    database.finish().await;
+}
+#[tokio::test]
+async fn sqlite_deploy_key_mutations_recheck_administration() {
+    stale_admin_native_mutations(false).await;
+}
+#[tokio::test]
+async fn postgres_deploy_key_mutations_recheck_administration() {
+    stale_admin_native_mutations(true).await;
+}
+
 async fn keys_api_and_forms(pg: bool) {
     let (database, _root, alice, bob) = setup(pg).await;
     let repo = repo_id(&database).await;

@@ -7,4 +7,4 @@ mod tests;
 mod users;
 
 pub use page::{admin_page, normalize_days, Account, Activity, Admin, Signup};
-pub use users::{admin_users_page, AdminUsers};
+pub use users::{admin_users_page, AccountMetadata, AdminUsers};

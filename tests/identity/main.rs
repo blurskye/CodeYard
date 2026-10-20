@@ -1,5 +1,6 @@
 mod account_management;
 mod admin_accounts;
+mod authority_regressions;
 mod avatars;
 mod cli_identity;
 mod csrf;

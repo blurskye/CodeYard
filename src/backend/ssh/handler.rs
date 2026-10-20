@@ -12,15 +12,27 @@ use anyhow::Result;
 use bytes::Bytes;
 use russh::keys::PublicKey;
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session};
-use russh::{Channel, ChannelId};
+use russh::{Channel, ChannelId, ChannelMsg, ChannelWriteHalf};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
+#[derive(Default)]
 struct ChannelState {
-    channel: Option<Channel<Msg>>,
+    channel: Option<ChannelWriteHalf<Msg>>,
+    input: Option<tokio::io::DuplexStream>,
+    reader: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl Drop for ChannelState {
+    fn drop(&mut self) {
+        if let Some(reader) = self.reader.take() {
+            reader.abort();
+        }
+    }
 }
 
 const MAX_ACTIVE_GIT_CHANNELS: usize = 8;
@@ -34,10 +46,8 @@ pub struct GitSshHandler {
     // Channel IDs are local to this connection, not server-global. Own the map
     // directly: an Arc here would permit cross-connection state sharing.
     channels: HashMap<u32, ChannelState>,
-    rate_limiter: RateLimiter,
+    pub(super) rate_limiter: RateLimiter,
     client_ip: Option<IpAddr>,
-    // Set by the first rejected key; one connection adds at most one failure.
-    failure_recorded: bool,
     // Sent once the client authenticates, which ends the server's login deadline.
     authenticated: Option<oneshot::Sender<()>>,
     id: usize,
@@ -55,7 +65,6 @@ impl GitSshHandler {
             channels: HashMap::new(),
             rate_limiter,
             client_ip: None,
-            failure_recorded: false,
             authenticated: None,
             id: 0,
             ci_service,
@@ -88,17 +97,8 @@ impl GitSshHandler {
         let _ = session.close(channel);
     }
 
-    /// Rejects one attempt so the client can offer its next key. A connection adds at
-    /// most one failure, however many attempts it makes.
+    /// An intermediate refusal is not a failed connection: the agent may offer another key.
     async fn reject_key(&mut self) -> Result<Auth, anyhow::Error> {
-        if !self.failure_recorded {
-            self.failure_recorded = true;
-            if let Some(ip) = self.client_ip {
-                if self.rate_limiter.record_failure(ip).await {
-                    warn!("IP {} banned after too many failed attempts", ip);
-                }
-            }
-        }
         Ok(Auth::reject())
     }
 
@@ -327,10 +327,32 @@ impl russh::server::Handler for GitSshHandler {
                 .await;
             return Ok(());
         }
+        let id = u32::from(channel.id());
+        let (mut incoming, outgoing) = channel.split();
+        let (input, mut writer) = tokio::io::duplex(64 * 1024);
+        let reader = tokio::spawn(async move {
+            let mut executing = false;
+            while let Some(message) = incoming.wait().await {
+                match message {
+                    ChannelMsg::Exec { .. } => executing = true,
+                    ChannelMsg::Data { data } if executing => {
+                        if writer.write_all(&data).await.is_err() {
+                            break;
+                        }
+                    }
+                    ChannelMsg::Data { .. } | ChannelMsg::Eof | ChannelMsg::Close => break,
+                    // Environment and other pre-exec requests must be drained before
+                    // russh can invoke the exec callback. Their callbacks decide acceptance.
+                    _ => {}
+                }
+            }
+        });
         self.channels.insert(
-            u32::from(channel.id()),
+            id,
             ChannelState {
-                channel: Some(channel),
+                channel: Some(outgoing),
+                input: Some(input),
+                reader: Some(reader),
             },
         );
         reply.accept().await;
@@ -405,35 +427,29 @@ impl russh::server::Handler for GitSshHandler {
             return Ok(());
         }
 
-        let permit = match git_process::session_permit().await {
-            Ok(permit) => permit,
-            Err(_) => {
-                self.refuse_channel(channel, session, "Git sessions busy");
-                return Ok(());
-            }
+        let credential = if let Some(id) = self.deploy_key {
+            ReceiveCredential::DeployKey(id)
+        } else {
+            ReceiveCredential::SshKey(
+                self.key_id
+                    .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?,
+            )
         };
-        let Some(credential) = self
-            .git_credential(channel, session, &repo, git_cmd.write)
-            .await?
-        else {
-            return Ok(());
-        };
-        if let ReceiveCredential::DeployKey(key_id) = credential {
-            deploy_keys::record_use(&self.pool, key_id).await;
-        }
         info!(
             "Access granted: {:?} for {}/{}",
             credential, git_cmd.owner, git_cmd.repo
         );
-        let mut ssh = self
-            .channels
-            .get_mut(&u32::from(channel))
-            .and_then(|state| state.channel.take())
-            .expect("open channel");
+        let mut io = std::mem::take(
+            self.channels
+                .get_mut(&u32::from(channel))
+                .expect("open channel"),
+        );
+        let ssh = io.channel.as_ref().expect("open channel");
         let mut output = ssh.make_writer();
         let mut errors = ssh.make_writer_ext(Some(1));
         let handle = session.handle();
-        let store = repo_store(&repo, self.ci_service.cluster.as_ref());
+        let pool = self.pool.clone();
+        let cluster = self.ci_service.cluster.clone();
         let mut options = GitSession::new(
             if git_cmd.write {
                 GitService::ReceivePack
@@ -448,23 +464,30 @@ impl russh::server::Handler for GitSshHandler {
             .write
             .then(|| (self.pool.clone(), self.ci_service.clone()));
         if !self.git_tasks.spawn(async move {
-            let _permit = permit;
-            let result = store
-                .git_session(
-                    options,
-                    receive,
-                    GitStreams {
-                        input: &mut ssh.make_reader(),
-                        output: &mut output,
-                        errors: &mut errors,
+            // Waiting in russh's serial callback would stop the active channel from
+            // receiving the data and window adjustments it needs to release its slot.
+            let result = async {
+                let _permit = git_process::session_permit().await?;
+                let repo = crate::backend::db::repositories::records::get_repository_by_id(&pool, repo.id)
+                    .await?.ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
+                credential.authorize(&pool, &repo, git_cmd.write).await?;
+                if let ReceiveCredential::DeployKey(id) = credential {
+                    deploy_keys::record_use(&pool, id).await;
+                }
+                repo_store(&repo, cluster.as_ref()).git_session(
+                    options, receive, GitStreams {
+                        input: io.input.as_mut().expect("open input"),
+                        output: &mut output, errors: &mut errors,
                     },
-                )
-                .await;
+                ).await
+            }.await;
             let status = match result {
                 Ok(status) => status.code().unwrap_or(1).clamp(0, 255) as u32,
                 Err(error) => {
                     warn!("Git channel failed or was denied");
-                    let message = if error
+                    let message = if error.is::<git_process::SessionsBusy>() {
+                        "Git sessions busy\n"
+                    } else if error
                         .is::<crate::backend::repositories::git_sessions::PostReceiveFailed>(
                     ) {
                         "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
@@ -633,7 +656,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_keys_do_not_end_the_connection_and_add_one_failure_per_connection() {
+    async fn rejected_keys_do_not_end_or_charge_a_successful_connection() {
         use russh::keys::{ssh_key::private::Ed25519Keypair, PrivateKey};
         use russh::server::Handler;
         let native = sqlx::sqlite::SqlitePoolOptions::new()
@@ -683,10 +706,8 @@ mod tests {
             Auth::Accept
         ));
 
-        // The first connection counted one failure. The ban threshold is five
-        // failures (rate_limit.rs), so three more connections leave the address
-        // unbanned and a fourth bans it.
-        for _ in 0..3 {
+        // Successful connections must never retain charges for intermediate keys.
+        for _ in 0..6 {
             let mut failed = GitSshHandler::new(pool.clone(), limiter.clone(), ci.clone());
             failed.set_client_ip(ip);
             assert!(matches!(
@@ -695,12 +716,10 @@ mod tests {
             ));
         }
         assert!(!limiter.is_blocked(ip).await);
-        let mut failed = GitSshHandler::new(pool.clone(), limiter.clone(), ci.clone());
-        failed.set_client_ip(ip);
-        assert!(matches!(
-            failed.auth_publickey("git", &unknown).await.unwrap(),
-            Auth::Reject { .. }
-        ));
+        // The connection owner accounts for failed connections when they end.
+        for attempt in 0..5 {
+            assert_eq!(limiter.record_failure(ip).await, attempt == 4);
+        }
         assert!(limiter.is_blocked(ip).await);
         pool.close().await;
     }
@@ -725,7 +744,7 @@ mod tests {
         let mut server = GitSshHandler::new(pool, RateLimiter::new(), ci_service);
         server.user = Some(user());
         server.key_id = Some(1);
-        server.channels.insert(0, ChannelState { channel: None });
+        server.channels.insert(0, ChannelState::default());
         let mut first = server.new_client(Some("127.0.0.1:1234".parse().unwrap()));
         let mut second = server.new_client(Some("127.0.0.2:1234".parse().unwrap()));
         assert!(first.user.is_none());
@@ -737,8 +756,8 @@ mod tests {
         assert_ne!(first.id, second.id);
         assert_ne!(first.client_ip, second.client_ip);
         first.user = Some(user());
-        first.channels.insert(0, ChannelState { channel: None });
-        second.channels.insert(0, ChannelState { channel: None });
+        first.channels.insert(0, ChannelState::default());
+        second.channels.insert(0, ChannelState::default());
         first.channels.remove(&0);
         assert!(second.channels.contains_key(&0));
         assert!(server.channels.contains_key(&0));

@@ -42,9 +42,15 @@ pub async fn register_password(
     let hash = passwords::hash_password(input.password)
         .await
         .map_err(RegistrationError::Password)?;
-    let user = match transitions::register_password(pool, input.username, input.email, &hash, None)
-        .await
-        .map_err(|_| RegistrationError::AccountUnavailable)?
+    let user = match transitions::register_password(
+        pool,
+        input.username,
+        input.email.filter(|email| !email.trim().is_empty()),
+        &hash,
+        None,
+    )
+    .await
+    .map_err(|_| RegistrationError::AccountUnavailable)?
     {
         AccountAdmission::User(user) => *user,
         AccountAdmission::Requested => return Ok(RegistrationOutcome::Requested),

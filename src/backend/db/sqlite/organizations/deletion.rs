@@ -29,7 +29,8 @@ pub async fn delete_organization(
         .execute(&mut *tx)
         .await?;
     if let Some(avatar) = avatar {
-        crate::backend::db::sqlite::files::delete_replaced_picture(&mut tx, avatar).await?;
+        crate::backend::db::sqlite::files::delete_unreferenced_file_in_transaction(&mut tx, avatar)
+            .await?;
     }
     tx.commit().await?;
     Ok(Applied(()))
@@ -49,24 +50,44 @@ pub async fn count_organization_repositories(
     Ok(Applied(count))
 }
 
-/// One repository the organization still owns, for the deletion loop. `None` when none remain.
-pub async fn next_organization_repository(
+/// Capture the initial repository set so concurrent creations survive the deletion.
+pub async fn list_organization_deletion_repositories(
     pool: &SqlitePool,
     actor: i64,
     org: i64,
-) -> Result<OrganizationOutcome<Option<i64>>> {
+) -> Result<OrganizationOutcome<Vec<i64>>> {
     let mut tx = begin_read(pool).await?;
     if require_read_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let repository = sqlx::query_scalar(
-        "SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 ORDER BY id LIMIT 1",
+        "SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 ORDER BY id",
     )
     .bind(org)
-    .fetch_optional(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(Applied(repository))
+}
+
+/// An owner may delete even archived repositories, but only while they belong to this organization.
+pub async fn delete_organization_repository(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    repo: i64,
+) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if require_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
+    let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL RETURNING *")
+        .bind(repo).bind(org).fetch_optional(&mut *tx).await?;
+    let Some(deleted) = deleted else {
+        return Ok(Conflict);
+    };
+    tx.commit().await?;
+    Ok(Applied(deleted))
 }
 
 async fn repository_count(connection: &mut SqliteConnection, org: i64) -> Result<i64> {

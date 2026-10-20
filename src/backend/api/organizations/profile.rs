@@ -96,8 +96,8 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
                 Ok(rows) => rows,
                 Err(_) => return unavailable(ctx),
             };
-            let more = rows.len() as i64 == TAB_PAGE_LIMIT;
             let after = after + rows.len() as i64;
+            let more = after < repository_count;
             repositories = rows.into_iter().map(profile_repository).collect();
             (Vec::new(), Vec::new(), more, after)
         }

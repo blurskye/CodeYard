@@ -207,7 +207,8 @@ pub(crate) async fn count_pushed_commits(
             new,
             "--not",
             exclude.as_str(),
-            "--all",
+            // Unlike --all, this does not add HEAD, which may name the new branch itself.
+            "--glob=refs/*",
         ]);
     }
     command.current_dir(path);
@@ -1739,6 +1740,58 @@ pub struct TagInfo {
     /// When the tag was made: the tagger's time for an annotated tag, else its commit's time.
     #[serde(default)]
     pub date: Option<i64>,
+}
+
+/// Check the same aggregate metadata budget as the tag reader before publishing replacements.
+/// A receive may read its new objects from quarantine without exposing them to other readers.
+pub(crate) fn check_tag_budget(
+    repo_path: &Path,
+    quarantine: Option<&Path>,
+    replacements: &[(String, String)],
+) -> Result<()> {
+    let repo = Repository::open_bare(repo_path)?;
+    let odb = repo.odb()?;
+    if let Some(quarantine) = quarantine {
+        odb.add_disk_alternate(
+            quarantine
+                .to_str()
+                .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
+        )?;
+    }
+    let mut tags = std::collections::HashMap::new();
+    repo.tag_foreach(|oid, name| {
+        tags.insert(String::from_utf8_lossy(name).into_owned(), oid);
+        tags.len() <= MAX_REPOSITORY_REFS
+    })?;
+    for (reference, new) in replacements {
+        if new.bytes().all(|b| b == b'0') {
+            tags.remove(reference);
+        } else {
+            tags.insert(reference.clone(), git2::Oid::from_str(new)?);
+        }
+    }
+    if tags.len() > MAX_REPOSITORY_REFS {
+        return Err(ObjectTooLarge.into());
+    }
+    let mut bytes = 0usize;
+    for (name, oid) in tags {
+        if name.len() > MAX_REF_NAME_BYTES {
+            return Err(ObjectTooLarge.into());
+        }
+        let (size, kind) = odb.read_header(oid)?;
+        if kind == ObjectType::Tag && size > MAX_TAG_OBJECT_BYTES {
+            return Err(ObjectTooLarge.into());
+        }
+        bytes = bytes
+            .checked_add(
+                name.trim_start_matches("refs/tags/").len()
+                    + 40
+                    + if kind == ObjectType::Tag { size } else { 0 },
+            )
+            .filter(|total| *total <= MAX_TAG_RESPONSE_BYTES)
+            .ok_or(ObjectTooLarge)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {

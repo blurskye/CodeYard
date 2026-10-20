@@ -253,10 +253,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         &config.state_dir,
     );
     let started = async {
-        workers.startup().await?;
+        // Claims need this node's published storage address, including for unplaced repositories.
         if let Some(member) = &member {
             member.publish().await?;
         }
+        workers.startup().await?;
         Ok::<_, anyhow::Error>(())
     }
     .await;
@@ -276,8 +277,6 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             expiry_stop,
         ))
     });
-    // Published only after the services above are set up. The listeners start next; if
-    // one fails, the node shuts down and withdraws.
     // Storage nodes keep the replica copies of their repositories current.
     let (stop_replicas, replica_stop) = tokio::sync::watch::channel(false);
     let replicas = member

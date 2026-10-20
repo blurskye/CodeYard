@@ -265,6 +265,10 @@ pub struct ListFilters {
     pub authors: Vec<String>,
     pub author: String,
     pub sort: String,
+    #[serde(default)]
+    pub page: usize,
+    #[serde(default)]
+    pub has_more: bool,
 }
 /// The stack a pull request page shows: its layers from the bottom up.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -374,6 +378,9 @@ pub struct CommentPage {
     /// The changes (state, title, labels, assignees, milestone) that fall in this page's span.
     #[serde(default)]
     pub events: Vec<Event>,
+    /// Continuation within this comment page's event span.
+    #[serde(default)]
+    pub events_next: Option<usize>,
 }
 
 /// One change to an issue or pull request, shown between its comments.

@@ -65,8 +65,10 @@ fn created_refs(updates: &[RefUpdate]) -> Vec<&str> {
 fn reserved_by_others(
     operations: &HashMap<String, Arc<Operation>>,
     operation: &Arc<Operation>,
+    repository: &git2::Repository,
 ) -> Result<RefsInUse> {
     let mut reserved = RefsInUse { count: 0, bytes: 0 };
+    let mut names = std::collections::HashSet::new();
     for other in operations.values() {
         if other.repo_id != operation.repo_id || Arc::ptr_eq(other, operation) {
             continue;
@@ -76,6 +78,14 @@ fn reserved_by_others(
             .lock()
             .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
         for name in created_refs(state.proposed.as_deref().unwrap_or(&[])) {
+            if !names.insert(name.to_owned()) {
+                continue;
+            }
+            match repository.find_reference(name) {
+                Ok(_) => continue, // Already included in the on-disk count.
+                Err(error) if error.code() == git2::ErrorCode::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
             reserved.count += 1;
             reserved.bytes += ref_listing_bytes(name);
         }
@@ -99,7 +109,8 @@ fn admit_updates(
     let created = created_refs(updates);
     if !created.is_empty() {
         let held = branches_and_tags_in_use(path)?;
-        let reserved = reserved_by_others(&operations, operation)?;
+        let reserved =
+            reserved_by_others(&operations, operation, &git2::Repository::open_bare(path)?)?;
         ensure_ref_room(
             RefsInUse {
                 count: held.count + reserved.count,
@@ -131,16 +142,23 @@ impl Gateway {
         validation::validate_updates(updates)?;
         #[cfg(test)]
         super::broker::policy_tests::before_authorize(operation, post).await;
+        // All transports and server-side ref mutations use this same repository lock.
+        let publication = if post {
+            None
+        } else {
+            Some(crate::backend::git::locks::lock(&operation.path).await)
+        };
         let repo = db::repositories::records::get_repository_by_id(&self.pool, operation.repo_id)
             .await?
             .context("repository unavailable")?;
         let path = self.bare_path(&repo).await?;
         ensure!(path == operation.path, "repository location changed");
-        let (identity, _) = operation
+        let authorized = operation
             .credential
             .authorize(&self.pool, &repo, true)
-            .await?;
+            .await;
         if !post {
+            let (identity, _) = authorized?;
             let quarantine = match quarantine {
                 Some(claimed) => quarantine_directory(&path, claimed).await,
                 None => None,
@@ -210,6 +228,18 @@ impl Gateway {
             let (admitted, admitted_path, admitted_updates) =
                 (operation.clone(), path.clone(), updates.to_vec());
             tokio::task::spawn_blocking(move || {
+                let tags: Vec<_> = admitted_updates
+                    .iter()
+                    .filter(|update| update.reference.starts_with("refs/tags/"))
+                    .map(|update| (update.reference.clone(), update.new.clone()))
+                    .collect();
+                if !tags.is_empty() {
+                    crate::backend::git::check_tag_budget(
+                        &admitted_path,
+                        quarantine.as_deref(),
+                        &tags,
+                    )?;
+                }
                 admit_updates(
                     &gateway.operations,
                     &admitted,
@@ -218,22 +248,12 @@ impl Gateway {
                 )
             })
             .await??;
-            return Ok(());
-        }
-        {
-            let mut state = operation
+            operation
                 .state
                 .lock()
-                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
-            let proposed = state
-                .proposed
-                .as_ref()
-                .context("missing successful pre-receive hook")?;
-            ensure!(
-                !state.post_started && updates.iter().all(|update| proposed.contains(update)),
-                "post-receive updates do not match admission"
-            );
-            state.post_started = true; // No replay or duplicate CI admission.
+                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+                .publication = publication;
+            return Ok(());
         }
         // This control request runs in the persistent backend. Disconnecting a
         // helper does not move scheduled CI into a short-lived CLI runtime.
@@ -246,6 +266,8 @@ impl Gateway {
             failed = true;
         }
         crate::backend::git::maintenance::after_push(repo.id, path.clone());
+        // Metadata describes accepted refs even if the credential has since been revoked.
+        let (identity, _) = authorized?;
         // Webhooks follow the refs Git has just accepted. They never fail the push.
         let moves: Vec<RefMove> = updates
             .iter()
@@ -386,58 +408,33 @@ impl Gateway {
                     continue;
                 }
             };
-            let needs_paths = !update.reference.starts_with("refs/tags/")
-                && workflows.iter().any(|workflow| {
-                    workflow.triggers.push.as_ref().is_some_and(|filter| {
-                        !filter.paths.is_empty() || !filter.paths_ignore.is_empty()
-                    })
-                });
-            let changed = if needs_paths {
-                match crate::backend::git::changed_paths(&path, &update.old, &commit_sha, true)
-                    .await
-                {
-                    Ok(paths) => paths,
-                    Err(error) => {
-                        tracing::warn!(
-                            repo_id = repo.id,
-                            %error,
-                            "push changed paths unavailable; workflows skipped"
-                        );
-                        failed = true;
-                        continue;
-                    }
-                }
-            } else {
-                Vec::new()
-            };
             let message = ci::commit_message_for_ref(
                 &repo_store(&repo, self.ci.cluster.as_ref()),
                 &commit_sha,
             )
             .await;
-            for workflow in workflows {
-                let matches = workflow.matches_event_with_context_and_budget(
-                    "push",
-                    &update.reference,
-                    &changed,
-                    message.as_deref(),
-                    &mut match_budget,
-                );
-                let matches = match matches {
-                    Ok(matches) => matches,
-                    Err(error) => {
-                        tracing::warn!(
-                            repo_id = repo.id,
-                            %error,
-                            "push workflow matching stopped at its work limit"
-                        );
-                        failed = true;
-                        break 'updates;
-                    }
-                };
-                if !matches {
-                    continue;
+            let matched = ci::push::matching_push_workflows(
+                &repo_store(&repo, self.ci.cluster.as_ref()),
+                &ci::RefUpdate {
+                    reference: update.reference.clone(),
+                    old: (update.old != ZERO_SHA).then(|| update.old.clone()),
+                    new: commit_sha.clone(),
+                    changed_paths: None,
+                },
+                workflows,
+                message.as_deref(),
+                &mut match_budget,
+            )
+            .await;
+            let matched = match matched {
+                Ok(matched) => matched,
+                Err(error) => {
+                    tracing::warn!(repo_id = repo.id, %error, "push workflow matching failed");
+                    failed = true;
+                    break 'updates;
                 }
+            };
+            for workflow in matched {
                 let pipeline = ci::infer_pipeline_from_workflow_path(&workflow.path);
                 // Recheck live identity/access for each dispatch, in particular
                 // CD/full. Neither event=push nor the prior pre-hook is a bypass.
@@ -470,21 +467,24 @@ impl Gateway {
                 .await?;
                 let result = self
                     .ci
-                    .trigger_run(CiRunRequest {
-                        repo_id: repo.id,
-                        repo_owner: operation.owner.clone(),
-                        repo_name: fresh_repo.name.clone(),
-                        branch: update.reference.clone(),
-                        head_sha: Some(commit_sha.clone()),
-                        event: "push".to_owned(),
-                        pull_request_id: None,
-                        pipeline,
-                        workflow_paths: vec![workflow.path],
-                        environment: None,
-                        inputs: None,
-                        triggered_by_id: fresh_identity.id,
-                        manual: false,
-                    })
+                    .trigger_run_with_access(
+                        CiRunRequest {
+                            repo_id: repo.id,
+                            repo_owner: operation.owner.clone(),
+                            repo_name: fresh_repo.name.clone(),
+                            branch: update.reference.clone(),
+                            head_sha: Some(commit_sha.clone()),
+                            event: "push".to_owned(),
+                            pull_request_id: None,
+                            pipeline,
+                            workflow_paths: vec![workflow.path],
+                            environment: None,
+                            inputs: None,
+                            triggered_by_id: fresh_identity.id,
+                            manual: false,
+                        },
+                        access,
+                    )
                     .await;
                 if result.is_err() {
                     failed = true;
@@ -572,6 +572,37 @@ mod tests {
             hooks: tempfile::tempdir().unwrap(),
             state: Mutex::new(HookState::default()),
         })
+    }
+
+    #[test]
+    fn published_creations_are_not_counted_again_as_reservations() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(root.path()).unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        let author = git2::Signature::now("Tester", "tester@example.invalid").unwrap();
+        let commit = repo
+            .commit(None, &author, &author, "root", &tree, &[])
+            .unwrap();
+        let first = operation(7);
+        first.state.lock().unwrap().proposed = Some(creates("first", 1));
+        let second = operation(7);
+        let operations = [("first".into(), first), ("second".into(), second.clone())].into();
+        assert_eq!(
+            reserved_by_others(&operations, &second, &repo)
+                .unwrap()
+                .count,
+            1
+        );
+        repo.reference("refs/heads/first-0", commit, false, "published")
+            .unwrap();
+        assert_eq!(
+            reserved_by_others(&operations, &second, &repo)
+                .unwrap()
+                .count,
+            0
+        );
     }
 
     /// Pushes that are admitted at the same time share the ref limit. The second push is refused

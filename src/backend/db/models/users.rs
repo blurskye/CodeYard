@@ -33,8 +33,24 @@ impl User {
     /// The email that commits made for this account carry: its own, or the no-reply address
     /// when it has none.
     pub fn commit_email(&self) -> String {
-        self.email.clone().unwrap_or_else(|| self.noreply_email())
+        self.email
+            .as_ref()
+            .filter(|email| !email.trim().is_empty())
+            .cloned()
+            .unwrap_or_else(|| self.noreply_email())
     }
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AdminUser {
+    pub id: i64,
+    pub username: String,
+    pub email: Option<String>,
+    pub is_admin: bool,
+    pub is_banned: bool,
+    pub must_change_password: bool,
+    pub two_factor_enabled: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -49,6 +65,7 @@ pub struct AdminAccountSummary {
     pub created_at: DateTime<Utc>,
     pub total_files: i64,
     pub total_bytes: i64,
+    /// Commits in recorded pushes attributed to this account.
     pub commits_total: i64,
     pub pushes_total: i64,
     pub contributions_total: i64,

@@ -1,6 +1,5 @@
 //! Administrator account management: the users page, creating accounts, bans and roles.
 //! Every handler rechecks administrator authority in its identity call.
-use crate::backend::api::admin::accounts::account_row;
 use crate::backend::api::auth::errors;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
@@ -17,7 +16,7 @@ use crate::backend::identity::credentials::PasswordAccount;
 use crate::webui::app::Page;
 use crate::webui::pages::{
     account,
-    admin::{Account, AdminUsers},
+    admin::{AccountMetadata, AdminUsers},
     fields::preserved_values,
 };
 use axum::extract::{Form, Path, State};
@@ -110,34 +109,41 @@ async fn load_users(
     submitted: Option<&Fields>,
 ) -> Result<AdminUsers, Response> {
     let admin = require_account(ctx, true)?;
-    let needle = search.trim().to_lowercase();
-    let matching: Vec<_> = db::users::accounts::list_admin_account_summaries(&ctx.state.pool)
+    let total = db::users::accounts::count_matching_users(&ctx.state.pool, search)
         .await
         .map_err(|_| {
             ctx.error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Unable to load the accounts.",
             )
-        })?
-        .into_iter()
-        .filter(|account| {
-            needle.is_empty()
-                || account.username.to_lowercase().contains(&needle)
-                || account
-                    .email
-                    .as_deref()
-                    .is_some_and(|email| email.to_lowercase().contains(&needle))
-        })
-        .collect();
-    let total = matching.len();
+        })? as usize;
     let pages = total.div_ceil(USERS_PER_PAGE).max(1);
     let page = page.clamp(1, pages);
-    let accounts: Vec<Account> = matching
-        .into_iter()
-        .skip((page - 1) * USERS_PER_PAGE)
-        .take(USERS_PER_PAGE)
-        .map(account_row)
-        .collect();
+    let accounts: Vec<AccountMetadata> = db::users::accounts::list_admin_users(
+        &ctx.state.pool,
+        search,
+        USERS_PER_PAGE as i64,
+        ((page - 1) * USERS_PER_PAGE) as i64,
+    )
+    .await
+    .map_err(|_| {
+        ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unable to load the accounts.",
+        )
+    })?
+    .into_iter()
+    .map(|user| AccountMetadata {
+        id: user.id,
+        username: user.username,
+        email: user.email.unwrap_or_default(),
+        admin: user.is_admin,
+        banned: user.is_banned,
+        must_change_password: user.must_change_password,
+        two_factor: user.two_factor_enabled,
+        created: user.created_at.format("%b %e, %Y").to_string(),
+    })
+    .collect();
     Ok(AdminUsers {
         current_user_id: admin.id,
         accounts,

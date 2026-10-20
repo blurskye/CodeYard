@@ -22,8 +22,8 @@ const HITS_PER_REPOSITORY: usize = 5;
 const STEP: i64 = 50;
 /// Repository searches a request runs at once. Results are kept in walk order.
 const CONCURRENCY: usize = 4;
-/// Wall-clock time one request may spend searching.
-const TIME_BUDGET: Duration = Duration::from_secs(5);
+/// Allow the primary and one replica their full transport admission budgets, plus search time.
+const TIME_BUDGET: Duration = crate::backend::cluster::DIAL_TIMEOUT.saturating_mul(7);
 /// Repository bytes one request may search, summed from the stored sizes. The first repository
 /// is always searched, so one larger than the budget can still be found.
 const BYTE_BUDGET: i64 = 512 * 1024 * 1024;
@@ -302,6 +302,7 @@ async fn walk(
             batch.push((owner, repo));
         }
         let mut searches = stream::iter(batch)
+            .take_while(|_| std::future::ready(Instant::now() < deadline))
             .map(|(owner, repo)| async move {
                 let store = repo_store(&repo, state.cluster.as_ref());
                 let full_name = format!("{owner}/{}", repo.name);
@@ -324,7 +325,8 @@ async fn walk(
         while let Some((full_name, repo_id, outcome)) = searches.next().await {
             let Ok(outcome) = outcome else {
                 stopped = true;
-                break 'walk;
+                content.unsearched += 1;
+                continue;
             };
             searched += 1;
             let mut hits = match outcome {
@@ -354,7 +356,7 @@ async fn walk(
                 position += 1;
             }
         }
-        if over_budget {
+        if over_budget || stopped || Instant::now() >= deadline {
             stopped = true;
             break;
         }

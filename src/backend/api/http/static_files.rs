@@ -15,6 +15,7 @@ struct RuntimeBundle {
     module: String,
 }
 static RUNTIME: OnceLock<RuntimeBundle> = OnceLock::new();
+static DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 
 fn runtime() -> Result<&'static RuntimeBundle, ()> {
     if let Some(runtime) = RUNTIME.get() {
@@ -173,10 +174,29 @@ async fn serve_runtime(root: &Path, uri: &Uri, headers: &HeaderMap) -> Response 
     if not_modified(headers, &etag) {
         return asset_response(Body::empty(), mime, &etag, headers);
     }
-    match tokio::fs::read(&file).await {
-        Ok(bytes) => asset_response(Body::from(bytes), mime, &etag, headers),
-        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
-    }
+    let Ok(permit) = DOWNLOADS.try_acquire() else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let file = match tokio::fs::File::open(&file).await {
+        Ok(file) => file,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let stream = tokio_util::io::ReaderStream::with_capacity(file, 64 * 1024);
+    let stream =
+        futures_util::stream::try_unfold((stream, permit), |(mut stream, permit)| async move {
+            use futures_util::StreamExt;
+            stream
+                .next()
+                .await
+                .transpose()
+                .map(|chunk| chunk.map(|chunk| (chunk, (stream, permit))))
+        });
+    asset_response(
+        super::middleware::download_body(stream),
+        mime,
+        &etag,
+        headers,
+    )
 }
 
 fn not_modified(headers: &HeaderMap, etag: &str) -> bool {
@@ -476,6 +496,25 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn runtime_downloads_stream_large_files() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("wasm")).unwrap();
+        std::fs::write(temp.path().join("wasm/test.wasm"), vec![0; 2 * 1024 * 1024]).unwrap();
+        let uri = "/wasm/test.wasm".parse().unwrap();
+        let response = serve_runtime(temp.path(), &uri, &HeaderMap::new()).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        use axum::body::HttpBody;
+        assert_eq!(response.body().size_hint().lower(), 0);
+        assert_eq!(
+            to_bytes(response.into_body(), 3 * 1024 * 1024)
+                .await
+                .unwrap()
+                .len(),
+            2 * 1024 * 1024
+        );
     }
 
     #[test]

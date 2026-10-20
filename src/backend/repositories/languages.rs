@@ -36,19 +36,28 @@ pub async fn stored(pool: &DbPool, repo_id: i64) -> Result<Vec<LanguageStat>> {
 pub async fn compute_and_store(
     pool: &DbPool,
     store: &RepoStore,
-    repo_id: i64,
+    repository: &db::models::Repository,
     branch: &str,
 ) -> Result<Vec<LanguageStat>, RepoError> {
     if let Some(path) = store.local_dir() {
-        return tokio::time::timeout(REFRESH_TIMEOUT, compute_local(pool, repo_id, path, branch))
-            .await
-            .map_err(|_| {
-                RepoError::new(
-                    crate::backend::repositories::store::ErrorKind::Unavailable,
-                    "Language computation timed out",
-                )
-            })?
-            .map_err(RepoError::from);
+        return tokio::time::timeout(
+            REFRESH_TIMEOUT,
+            compute_local(
+                pool,
+                repository.id,
+                path,
+                branch,
+                &repository.default_branch,
+            ),
+        )
+        .await
+        .map_err(|_| {
+            RepoError::new(
+                crate::backend::repositories::store::ErrorKind::Unavailable,
+                "Language computation timed out",
+            )
+        })?
+        .map_err(RepoError::from);
     }
     store.languages(&format!("refs/heads/{branch}")).await
 }
@@ -81,7 +90,7 @@ async fn refresh(
     if repository.default_branch != branch {
         return Ok(Vec::new());
     }
-    compute_local(pool, repo_id, path, branch).await
+    compute_local(pool, repo_id, path, branch, &repository.default_branch).await
 }
 
 async fn compute_local(
@@ -89,6 +98,7 @@ async fn compute_local(
     repo_id: i64,
     path: &Path,
     branch: &str,
+    expected_branch: &str,
 ) -> Result<Vec<LanguageStat>> {
     let mut branch = branch.to_owned();
     loop {
@@ -100,7 +110,7 @@ async fn compute_local(
             .clone()
             .unwrap_or_else(|| format!("refs/heads/{branch}"));
         let languages = git::compute_language_stats(path, &revision).await?;
-        if let Err(error) = store_rows(pool, repo_id, &languages).await {
+        if let Err(error) = store_rows(pool, repo_id, expected_branch, &languages).await {
             tracing::warn!(repo_id, %error, "could not store repository languages");
             return Ok(languages);
         }
@@ -113,7 +123,12 @@ async fn compute_local(
 }
 
 /// Replaces the stored languages of `repo_id` with `languages`.
-async fn store_rows(pool: &DbPool, repo_id: i64, languages: &[LanguageStat]) -> Result<()> {
+async fn store_rows(
+    pool: &DbPool,
+    repo_id: i64,
+    branch: &str,
+    languages: &[LanguageStat],
+) -> Result<()> {
     let rows: Vec<(String, i64, f32, String)> = languages
         .iter()
         .map(|language| {
@@ -125,5 +140,5 @@ async fn store_rows(pool: &DbPool, repo_id: i64, languages: &[LanguageStat]) -> 
             )
         })
         .collect();
-    db::repository_stats::upsert_repo_languages(pool, repo_id, &rows).await
+    db::repository_stats::upsert_repo_languages(pool, repo_id, branch, &rows).await
 }

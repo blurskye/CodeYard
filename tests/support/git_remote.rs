@@ -33,6 +33,17 @@ impl Server {
         roles: &str,
         trusted_actor: i64,
     ) -> Self {
+        Self::start_with_session_limit(root, database, name, roles, trusted_actor, None).await
+    }
+
+    pub async fn start_with_session_limit(
+        root: &Path,
+        database: &native::PostgresDatabase,
+        name: &str,
+        roles: &str,
+        trusted_actor: i64,
+        session_limit: Option<usize>,
+    ) -> Self {
         std::fs::create_dir_all(root).unwrap();
         let http = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = http.local_addr().unwrap();
@@ -54,6 +65,12 @@ impl Server {
             .env("REPOS_PATH", root.join("repos"))
             .env("PUBLIC_URL", format!("http://{address}"))
             .env("CI_TRUSTED_ACTOR_IDS", trusted_actor.to_string())
+            .env(
+                "GIT_SESSION_LIMIT",
+                session_limit
+                    .map(|limit| limit.to_string())
+                    .unwrap_or_default(),
+            )
             .env("NODE_NAME", name)
             .env("NODE_KEY", key.secret_hex())
             .env("IROH_BIND", "127.0.0.1:0")

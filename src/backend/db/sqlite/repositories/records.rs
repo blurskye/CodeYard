@@ -163,21 +163,76 @@ pub async fn list_public_repositories(
     Ok(repos)
 }
 
-/// The repositories another user shares with `user_id`: collaborator access on a repository the
-/// user does not own, with the user's level on it.
+fn shared_repository_condition() -> String {
+    format!("NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", super::access::USER_REPO_ACCESS_SQL)
+}
+
+/// Repositories shared directly or through organization and team authority.
 pub async fn list_shared_repositories(
     pool: &SqlitePool,
     user_id: i64,
 ) -> Result<Vec<SharedRepository>> {
     Ok(sqlx::query_as::<_, SharedRepository>(
-        r#"SELECT r.*, a.access_level FROM repo_access a JOIN repositories r ON r.id = a.repo_id
-        WHERE a.user_id = ?1 AND a.access_level >= 1
-            AND NOT (r.owner_kind = 'user' AND r.owner_user_id = ?1)
-        ORDER BY r.name, r.id"#,
+        &format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {} ORDER BY r.name,r.id", super::access::USER_REPO_ACCESS_SQL, shared_repository_condition()),
     )
     .bind(user_id)
     .fetch_all(pool)
     .await?)
+}
+
+pub async fn list_user_repository_page(
+    pool: &SqlitePool,
+    user: i64,
+    include_private: bool,
+    text: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<Repository>, i64)> {
+    let condition = "owner_kind='user' AND owner_user_id=?1 AND (?2 OR NOT is_private) AND (instr(lower(name),?3)>0 OR instr(lower(COALESCE(description,'')),?3)>0)";
+    let needle = text.trim().to_lowercase();
+    let count = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM repositories WHERE {condition}"
+    ))
+    .bind(user)
+    .bind(include_private)
+    .bind(&needle)
+    .fetch_one(pool)
+    .await?;
+    let rows = sqlx::query_as(&format!(
+        "SELECT * FROM repositories WHERE {condition} ORDER BY name,id LIMIT ?4 OFFSET ?5"
+    ))
+    .bind(user)
+    .bind(include_private)
+    .bind(&needle)
+    .bind(limit.clamp(1, 100))
+    .bind(offset.max(0))
+    .fetch_all(pool)
+    .await?;
+    Ok((rows, count))
+}
+
+pub async fn list_shared_repository_page(
+    pool: &SqlitePool,
+    user: i64,
+    text: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<SharedRepository>, i64)> {
+    let condition = format!(
+        "{} AND (instr(lower(r.name),?2)>0 OR instr(lower(COALESCE(r.description,'')),?2)>0)",
+        shared_repository_condition()
+    );
+    let needle = text.trim().to_lowercase();
+    let count = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=?1 WHERE {condition}"
+    ))
+    .bind(user)
+    .bind(&needle)
+    .fetch_one(pool)
+    .await?;
+    let rows = sqlx::query_as(&format!("SELECT r.*, ({}) AS access_level FROM repositories r JOIN users u ON u.id=?1 WHERE {condition} ORDER BY r.name,r.id LIMIT ?3 OFFSET ?4", super::access::USER_REPO_ACCESS_SQL))
+        .bind(user).bind(&needle).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?;
+    Ok((rows, count))
 }
 
 /// The public repositories whose name or description contains `text`, ignoring case, that pass
@@ -431,6 +486,12 @@ pub async fn transfer_repository(
         RepositoryCreationOwner { actor_id, target },
     )
     .await?;
+    let previous: (String, Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT owner_kind,owner_user_id,owner_org_id FROM repositories WHERE id=?1",
+    )
+    .bind(repo_id)
+    .fetch_one(&mut *tx)
+    .await?;
     let (kind, user, org) = match target {
         RepositoryTarget::Personal(id) => ("user", Some(id), None),
         RepositoryTarget::Organization(id) => ("org", None, Some(id)),
@@ -446,6 +507,20 @@ pub async fn transfer_repository(
     .await
     .map_err(name_conflict_error)?
     .ok_or_else(|| anyhow::anyhow!(Refusal::Denied))?;
+    // Direct personal grants cannot be managed in an organization. Drop them when ownership
+    // changes, and stop work admitted under the former owner's authority.
+    let changed = previous != (kind.to_owned(), user, org);
+    if changed && org.is_some() {
+        sqlx::query("DELETE FROM repo_access WHERE repo_id=?1")
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    if changed {
+        let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE repo_id=?1 AND status IN ('queued','running') ORDER BY id")
+            .bind(repo_id).fetch_all(&mut *tx).await?;
+        super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
+    }
     tx.commit().await?;
     Ok(result)
 }
@@ -481,6 +556,25 @@ pub(crate) async fn repository_owner_names(
     }
     query.push(")");
     Ok(query.build_query_as().fetch_all(pool).await?)
+}
+
+/// Undo a default change whose HEAD publication failed, without overwriting a later setting.
+pub async fn restore_repository_default_branch(
+    pool: &SqlitePool,
+    repo_id: i64,
+    expected: &str,
+    previous: &str,
+) -> Result<bool> {
+    Ok(sqlx::query(
+        "UPDATE repositories SET default_branch = ?1 WHERE id = ?2 AND default_branch = ?3",
+    )
+    .bind(previous)
+    .bind(repo_id)
+    .bind(expected)
+    .execute(pool)
+    .await?
+    .rows_affected()
+        == 1)
 }
 
 /// Archives or unarchives under current administrator authority, including archived rows.

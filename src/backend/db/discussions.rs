@@ -18,6 +18,8 @@ native_operation!(crate::backend::db::postgres::discussions::list_repo_authors,
 pub enum DiscussionWriteRefusal {
     #[error("discussion_authority_denied")]
     Denied,
+    #[error("conversation_locked")]
+    Locked,
     #[error("discussion_review_invalid")]
     InvalidReview,
     #[error("discussion_review_full")]
@@ -177,4 +179,5 @@ pub struct ListFilter<'a> {
     pub milestone: Pick,
     pub labels: &'a [String],
     pub sort: ListSort,
+    pub offset: i64,
 }

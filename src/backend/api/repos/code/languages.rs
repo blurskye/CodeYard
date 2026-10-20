@@ -60,7 +60,7 @@ pub async fn get_repo_languages(
         languages = repo_languages::compute_and_store(
             &state.pool,
             &repo_store(&repository, state.cluster.as_ref()),
-            repository.id,
+            &repository,
             &default_branch,
         )
         .await

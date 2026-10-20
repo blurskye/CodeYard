@@ -68,7 +68,19 @@ fn overview_links_to_the_users_page_instead_of_listing_every_action() {
 fn users_model(accounts: Vec<Account>, search: &str, page: usize, pages: usize) -> AdminUsers {
     AdminUsers {
         current_user_id: 1,
-        accounts,
+        accounts: accounts
+            .into_iter()
+            .map(|account| AccountMetadata {
+                id: account.id,
+                username: account.username,
+                email: account.email,
+                admin: account.admin,
+                banned: account.banned,
+                must_change_password: account.must_change_password,
+                two_factor: account.two_factor,
+                created: account.created,
+            })
+            .collect(),
         search: search.into(),
         page,
         pages,

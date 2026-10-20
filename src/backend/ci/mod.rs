@@ -4,7 +4,7 @@ mod config;
 pub mod dispatch_inputs;
 pub mod logs;
 mod process;
-mod push;
+pub(crate) mod push;
 pub mod queue;
 mod runner_labels;
 pub mod runs;

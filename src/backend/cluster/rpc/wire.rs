@@ -72,6 +72,8 @@ pub enum Operation {
         limit: usize,
         #[serde(default, skip_serializing_if = "CommitFilter::is_empty")]
         filter: CommitFilter,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        walk_millis: Option<u64>,
     },
     CommitPage {
         git_ref: String,
@@ -79,6 +81,8 @@ pub enum Operation {
         limit: usize,
         #[serde(default, skip_serializing_if = "CommitFilter::is_empty")]
         filter: CommitFilter,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        walk_millis: Option<u64>,
     },
     /// Lines of the files at `git_ref` that contain `text`, as `RepoStore::search_code` finds them.
     SearchCode {
@@ -472,6 +476,7 @@ mod tests {
                 git_ref: "main".into(),
                 limit: 30,
                 filter: Default::default(),
+                walk_millis: None,
             })
             .unwrap(),
             serde_json::json!({"Commits": {"git_ref": "main", "limit": 30}})
@@ -482,6 +487,7 @@ mod tests {
                 offset: 30,
                 limit: 30,
                 filter: Default::default(),
+                walk_millis: None,
             })
             .unwrap(),
             serde_json::json!({

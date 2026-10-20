@@ -95,7 +95,8 @@ pub async fn set_organization_avatar(
         .execute(&mut *tx)
         .await?;
     if let Some(old) = previous.filter(|old| Some(*old) != file) {
-        crate::backend::db::sqlite::files::delete_replaced_picture(&mut tx, old).await?;
+        crate::backend::db::sqlite::files::delete_unreferenced_file_in_transaction(&mut tx, old)
+            .await?;
     }
     tx.commit().await?;
     Ok(Applied(previous))

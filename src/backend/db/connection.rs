@@ -27,20 +27,54 @@ impl From<sqlx::SqlitePool> for DbPool {
     }
 }
 
-#[cfg(unix)]
-fn sqlite_file_path(
-    database_url: &str,
-    options: &SqliteConnectOptions,
-) -> Option<std::path::PathBuf> {
+// SQLx warns with both the name and value of unknown PostgreSQL options. Validate before
+// calling its parser so a misspelled password option cannot reach the logger.
+fn postgres_options(database_url: &str) -> Result<PgConnectOptions> {
+    let url = url::Url::parse(database_url)?;
+    for (name, _) in url.query_pairs() {
+        let supported = matches!(
+            name.as_ref(),
+            "sslmode"
+                | "ssl-mode"
+                | "sslrootcert"
+                | "ssl-root-cert"
+                | "ssl-ca"
+                | "sslcert"
+                | "ssl-cert"
+                | "sslkey"
+                | "ssl-key"
+                | "statement-cache-capacity"
+                | "host"
+                | "hostaddr"
+                | "port"
+                | "dbname"
+                | "user"
+                | "password"
+                | "application_name"
+                | "options"
+        ) || (name.starts_with("options[") && name.ends_with(']'));
+        anyhow::ensure!(supported, "Unsupported PostgreSQL connection parameter");
+    }
+    Ok(PgConnectOptions::from_str(database_url)?)
+}
+
+fn sqlite_memory(database_url: &str) -> bool {
     let sqlite_url = database_url
         .strip_prefix("sqlite://")
         .or_else(|| database_url.strip_prefix("sqlite:"))
         .unwrap_or(database_url);
     let (database, query) = sqlite_url.split_once('?').unwrap_or((sqlite_url, ""));
-    let memory_mode = database == ":memory:"
+    database == ":memory:"
         || url::form_urlencoded::parse(query.as_bytes())
-            .any(|(name, value)| name == "mode" && value == "memory");
-    (!memory_mode).then(|| options.get_filename().to_owned())
+            .any(|(name, value)| name == "mode" && value == "memory")
+}
+
+#[cfg(unix)]
+fn sqlite_file_path(
+    database_url: &str,
+    options: &SqliteConnectOptions,
+) -> Option<std::path::PathBuf> {
+    (!sqlite_memory(database_url)).then(|| options.get_filename().to_owned())
 }
 
 #[cfg(unix)]
@@ -139,7 +173,7 @@ pub async fn init_db(database_url: &str) -> Result<DbPool> {
     // Never trace credential-bearing URLs or connection options.
     if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
         info!("Connecting to PostgreSQL");
-        let options = PgConnectOptions::from_str(database_url)?;
+        let options = postgres_options(database_url)?;
         // A request that cannot get a connection in 5 seconds fails instead of hanging
         // for the 30-second default while the database is down.
         return Ok(PgPoolOptions::new()
@@ -167,11 +201,7 @@ pub async fn init_db(database_url: &str) -> Result<DbPool> {
             secure_sqlite_files(path, true)?;
         }
         // Each in-memory connection is its own database, so keep just one.
-        let maximum = if database_url.contains(":memory:") {
-            1
-        } else {
-            8
-        };
+        let maximum = if sqlite_memory(database_url) { 1 } else { 8 };
         let pool_options = SqlitePoolOptions::new().max_connections(maximum);
         #[cfg(unix)]
         let pool_options = if let Some(path) = sqlite_path.clone() {
@@ -196,7 +226,7 @@ pub async fn init_db(database_url: &str) -> Result<DbPool> {
 /// file and leaves the file's journal mode and permissions alone.
 pub async fn open_source(database_url: &str) -> Result<DbPool> {
     if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
-        let options = PgConnectOptions::from_str(database_url)?;
+        let options = postgres_options(database_url)?;
         return Ok(PgPoolOptions::new()
             .max_connections(1)
             .connect_with(options)
@@ -234,6 +264,51 @@ mod safe_logging_tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn unknown_postgres_options_are_rejected_without_logging_values() {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = Capture(output.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            for name in ["sslpassword", "Password", "pass%77ord_typo"] {
+                let url =
+                    format!("postgres://fixture@localhost/unused?{name}=private-key-password");
+                for result in [
+                    futures::executor::block_on(init_db(&url)),
+                    futures::executor::block_on(open_source(&url)),
+                ] {
+                    let error = result.err().expect("reject before connecting").to_string();
+                    assert_eq!(error, "Unsupported PostgreSQL connection parameter");
+                }
+            }
+        });
+        let logged = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        assert!(!logged.contains("private-key-password"));
+        assert!(!logged.contains("unrecognized connect parameter"));
+    }
+
+    #[tokio::test]
+    async fn named_private_memory_database_uses_one_connection() {
+        let pool = init_db("sqlite://scratch?mode=memory&cache=private")
+            .await
+            .unwrap();
+        let DbPool::Sqlite(raw) = &pool else {
+            unreachable!()
+        };
+        assert_eq!(raw.options().get_max_connections(), 1);
+        crate::backend::db::run_migrations(&pool).await.unwrap();
+        let (a, b) = tokio::join!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users").fetch_one(raw),
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users").fetch_one(raw),
+        );
+        assert_eq!(a.unwrap(), b.unwrap());
+        pool.close().await;
     }
 
     #[test]

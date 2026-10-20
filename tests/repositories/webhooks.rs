@@ -744,6 +744,134 @@ async fn pull_request_head_synchronize_hook(pg: bool, url: &str) {
     database.finish().await;
 }
 
+async fn server_ref_events(pg: bool, url: &str) {
+    use codeyard::backend::repositories::store::{
+        repo_store, FileWrite, MergeMethod, MergeRequest,
+    };
+    let (database, _root, alice, _) = setup(pg).await;
+    let repository = db::repositories::records::get_repository(database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = repository.owner_user_id.unwrap();
+    alice
+        .form_reply(
+            "/alice/proj/_forms/webhook-save",
+            &save_pairs(
+                &repository.id.to_string(),
+                url,
+                &["push", "create", "delete"],
+            ),
+        )
+        .await;
+    let hook = hook_id(&database).await;
+    let store = repo_store(&repository, None);
+    let first = store
+        .save_file_as(
+            database.pool(),
+            repository.id,
+            actor,
+            &FileWrite {
+                branch: "main".into(),
+                path: "README".into(),
+                message: "first".into(),
+                expected_revision: "unborn".into(),
+                creating: true,
+                deleting: false,
+            },
+            b"first",
+            "Alice",
+            "alice@example.invalid",
+        )
+        .await
+        .unwrap();
+    store
+        .create_branch_as(database.pool(), repository.id, actor, "topic", &first.sha)
+        .await
+        .unwrap();
+    let head = store
+        .save_file_as(
+            database.pool(),
+            repository.id,
+            actor,
+            &FileWrite {
+                branch: "topic".into(),
+                path: "topic.txt".into(),
+                message: "topic".into(),
+                expected_revision: first.sha.clone(),
+                creating: true,
+                deleting: false,
+            },
+            b"topic",
+            "Alice",
+            "alice@example.invalid",
+        )
+        .await
+        .unwrap();
+    let merged = store
+        .prepare_merge(&MergeRequest {
+            head_branch: "topic".into(),
+            base_branch: "main".into(),
+            head: head.sha.clone(),
+            base: first.sha.clone(),
+            message: "merge".into(),
+            name: "Alice".into(),
+            email: "alice@example.invalid".into(),
+            method: MergeMethod::Merge,
+            author_name: None,
+            author_email: None,
+        })
+        .await
+        .unwrap();
+    store
+        .publish_merge_as(
+            database.pool(),
+            repository.id,
+            actor,
+            "topic",
+            "main",
+            &head.sha,
+            &first.sha,
+            &merged,
+            MergeMethod::Merge,
+        )
+        .await
+        .unwrap();
+    store
+        .create_tag_as(
+            database.pool(),
+            repository.id,
+            actor,
+            "v1",
+            &merged,
+            Some("release"),
+            "Alice",
+            "alice@example.invalid",
+        )
+        .await
+        .unwrap();
+    store
+        .delete_tag_as(database.pool(), repository.id, actor, "v1")
+        .await
+        .unwrap();
+    store
+        .delete_branch_as(database.pool(), repository.id, actor, "topic")
+        .await
+        .unwrap();
+    let rows = deliveries(&database, hook, 13).await;
+    assert_eq!(rows.iter().filter(|d| d.event == "push").count(), 7);
+    assert_eq!(rows.iter().filter(|d| d.event == "create").count(), 3);
+    assert_eq!(rows.iter().filter(|d| d.event == "delete").count(), 2);
+    let pushed = rows
+        .iter()
+        .filter(|d| d.event == "push")
+        .map(|d| serde_json::from_str::<Value>(&d.request_body).unwrap())
+        .collect::<Vec<_>>();
+    assert!(pushed
+        .iter()
+        .any(|body| body["ref"] == "refs/heads/main" && body["after"] == merged));
+}
+
 /// One test runs both engines, because the receiver needs `WEBHOOKS_ALLOW_PRIVATE` for the
 /// whole process and the refusal checks need it unset.
 #[tokio::test]
@@ -760,6 +888,7 @@ async fn webhooks_on_sqlite_and_postgres() {
         pull_request_head_synchronize_hook(pg, &url).await;
         stale_hooks_and_binary_responses(pg).await;
         api_ref_hooks_and_release_authors(pg, &url).await;
+        server_ref_events(pg, &url).await;
     }
 }
 

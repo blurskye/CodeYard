@@ -332,7 +332,11 @@ pub async fn set_replicas(pool: &PgPool, value: &str) -> Result<bool> {
     )
 }
 
-pub async fn bump_write_version(pool: &PgPool, repo_id: i64, node_id: Option<i64>) -> Result<bool> {
+pub async fn bump_write_version(
+    pool: &PgPool,
+    repo_id: i64,
+    node_id: Option<Option<i64>>,
+) -> Result<bool> {
     let mut tx = pool.begin().await?;
     // The row lock orders this against `promote_repository`, which locks the same row.
     let held_by: Option<Option<i64>> =
@@ -343,7 +347,7 @@ pub async fn bump_write_version(pool: &PgPool, repo_id: i64, node_id: Option<i64
     let Some(held_by) = held_by else {
         bail!("repository {repo_id} not found");
     };
-    if node_id.is_some_and(|node| held_by != Some(node)) {
+    if node_id.is_some_and(|expected| held_by != expected) {
         return Ok(false);
     }
     // A repository that no storage node holds has no replicas, so its changes are not counted.
@@ -610,6 +614,15 @@ pub async fn promote_fork_family(
             .fetch_all(&mut *tx)
             .await?;
     if members.is_empty() || members.iter().any(|(_, primary, _)| *primary != Some(from)) {
+        return Ok(FamilyOutcome::Refused);
+    }
+    // A fork may have committed while the locking statement waited for its source. Read
+    // membership again with a fresh snapshot before moving any of the locked rows.
+    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repo_id)
+        .fetch_all(&mut *tx)
+        .await?;
+    if current.iter().map(|r| r.0).ne(members.iter().map(|r| r.0)) {
         return Ok(FamilyOutcome::Refused);
     }
     let primary = node_at_db_time(&mut tx, from).await?;

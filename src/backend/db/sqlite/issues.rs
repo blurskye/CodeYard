@@ -77,7 +77,7 @@ pub async fn list_repo_issues(
             AND (?10 IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name)) FROM issue_labels il JOIN labels l ON l.id=il.label_id
                 WHERE il.issue_id = i.id AND LOWER(l.name) IN (SELECT LOWER(value) FROM json_each(?10)))
                 = (SELECT COUNT(DISTINCT LOWER(value)) FROM json_each(?10)))
-        ORDER BY {order} LIMIT ?4"
+        ORDER BY {order}, i.id DESC LIMIT ?4 OFFSET ?11"
     ))
     .bind(repo_id)
     .bind(filter.state)
@@ -89,6 +89,7 @@ pub async fn list_repo_issues(
     .bind(milestone_mode)
     .bind(milestone_id)
     .bind(labels)
+    .bind(filter.offset)
     .fetch_all(pool)
     .await?;
 

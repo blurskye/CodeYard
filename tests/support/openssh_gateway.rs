@@ -1,9 +1,9 @@
 //! Gateway tests on throwaway databases and real Git repositories.
 //! GITSERV_TEST_OPENSSH_HELPER must point at the built codeyard binary.
 use super::*;
+use crate::backend::db::models::AccessLevel;
 use crate::backend::{
     ci::{queue::RunQueue, CiWorkers},
-    db::models::AccessLevel,
     notifications::NotificationBroadcaster,
 };
 use base64::Engine;
@@ -15,6 +15,7 @@ use tokio::time::{sleep, Duration};
 #[path = "openssh_daemon.rs"]
 mod daemon;
 
+const MAX_SESSIONS: usize = 16;
 const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
 
 struct Database {
@@ -477,7 +478,19 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
         !broker.keys(&key(7), "git").await.stdout.is_empty(),
         "keys are not gated by Git concurrency"
     );
-    drop(slots);
+    // Saturated host OpenSSH sessions wait for the same configured admission as other transports.
+    let (waited, ()) = tokio::join!(
+        broker.serve(owner_key.id, "git-upload-pack 'alice/private.git'"),
+        async {
+            sleep(Duration::from_millis(50)).await;
+            drop(slots);
+        }
+    );
+    assert!(
+        !waited.stdout.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&waited.stderr)
+    );
 
     let source_path = broker.directory.path().join("source");
     options.bare(false);
@@ -1406,7 +1419,6 @@ async fn concurrent_first_pushes(pool: DbPool) {
     let fixture = PushFixture::new(pool.clone()).await;
     let (address, stop, running) = fixture.start(false).await;
     let path = std::fs::canonicalize(&fixture.repo.disk_path).unwrap();
-    let lock = crate::backend::git::locks::lock(&path).await;
     let (first_reached, first_release) = policy_tests::hold_next_hook(path.clone(), true);
     let mut first = fixture.http_push(address, "trunk").await;
     timeout(Duration::from_secs(15), first_reached)
@@ -1419,6 +1431,8 @@ async fn concurrent_first_pushes(pool: DbPool) {
         .await
         .unwrap()
         .unwrap();
+    // Pre-receive now also uses this lock; hold it after both refs are published.
+    let lock = crate::backend::git::locks::lock(&path).await;
     first_release.send(()).unwrap();
     let mut reply = Vec::new();
     assert!(

@@ -316,7 +316,7 @@ async fn about_languages(
         .await
         .unwrap_or_default();
     let languages = if stored.is_empty() {
-        match repo_languages::compute_and_store(&state.pool, store, loaded.repository.id, branch)
+        match repo_languages::compute_and_store(&state.pool, store, &loaded.repository, branch)
             .await
         {
             Ok(languages) => languages,

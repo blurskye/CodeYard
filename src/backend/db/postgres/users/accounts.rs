@@ -1,4 +1,4 @@
-use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, User};
+use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -244,7 +244,8 @@ pub async fn set_user_avatar(
         .execute(&mut *tx)
         .await?;
     if let Some(old) = previous.filter(|old| Some(*old) != avatar_file_id) {
-        crate::backend::db::postgres::files::delete_replaced_picture(&mut tx, old).await?;
+        crate::backend::db::postgres::files::delete_unreferenced_file_in_transaction(&mut tx, old)
+            .await?;
     }
     tx.commit().await?;
     Ok(UserAvatarOutcome::Applied(previous))
@@ -279,6 +280,21 @@ pub async fn update_user_profile(
     .await?;
 
     Ok(result)
+}
+
+pub async fn count_matching_users(pool: &PgPool, text: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0")
+        .bind(text.trim().to_lowercase()).fetch_one(pool).await?)
+}
+
+pub async fn list_admin_users(
+    pool: &PgPool,
+    text: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AdminUser>> {
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0 ORDER BY username,id LIMIT $2 OFFSET $3")
+        .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
 }
 
 pub async fn list_admin_account_summaries(pool: &PgPool) -> Result<Vec<AdminAccountSummary>> {

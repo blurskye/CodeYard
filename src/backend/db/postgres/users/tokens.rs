@@ -21,9 +21,13 @@ pub async fn create_token(
     }
     // Its own statement, on purpose: under READ COMMITTED it sees any password change
     // that committed while this call waited for the lock above.
-    let session_live = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp())")
-        .bind(session_id).bind(user_id).fetch_one(&mut *tx).await?;
-    if !session_live {
+    let expiry: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE")
+            .bind(session_id)
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if !expiry.is_some_and(|expiry| expiry > Utc::now()) {
         return Ok(None);
     }
     let token = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope,expires_at) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")

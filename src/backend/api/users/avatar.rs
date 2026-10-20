@@ -15,7 +15,7 @@ const COLORS: [&str; 8] = [
     "#0969da", "#1a7f37", "#9a6700", "#bc4c00", "#cf222e", "#8250df", "#bf3989", "#57606a",
 ];
 
-const CACHE: &str = "public, max-age=30";
+const CACHE: &str = "private, no-store";
 
 /// The generated picture for `name`: the same colour and letter every time.
 pub(crate) fn default_picture(name: &str) -> String {

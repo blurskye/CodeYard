@@ -51,6 +51,13 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_shar
     crate::backend::db::sqlite::repositories::records::list_shared_repositories,
     fn list_shared_repositories(pool: &DbPool, user_id: i64) -> Result<Vec<SharedRepository>>);
 
+native_operation!(crate::backend::db::postgres::repositories::records::list_user_repository_page,
+    crate::backend::db::sqlite::repositories::records::list_user_repository_page,
+    fn list_user_repository_page(pool: &DbPool, user: i64, include_private: bool, text: &str, limit: i64, offset: i64) -> Result<(Vec<Repository>, i64)>);
+native_operation!(crate::backend::db::postgres::repositories::records::list_shared_repository_page,
+    crate::backend::db::sqlite::repositories::records::list_shared_repository_page,
+    fn list_shared_repository_page(pool: &DbPool, user: i64, text: &str, limit: i64, offset: i64) -> Result<(Vec<SharedRepository>, i64)>);
+
 /// Order of a public repository list. The limit applies after this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepositorySort {
@@ -183,6 +190,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_merge
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()>);
+
+native_operation!(crate::backend::db::postgres::repositories::records::restore_repository_default_branch,
+    crate::backend::db::sqlite::repositories::records::restore_repository_default_branch,
+    fn restore_repository_default_branch(pool: &DbPool, repo_id: i64, expected: &str, previous: &str) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_default_branch,
     crate::backend::db::sqlite::repositories::records::set_repository_default_branch,

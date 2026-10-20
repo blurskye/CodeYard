@@ -93,7 +93,10 @@ fn configured_ssh_base(
     let Some(selected) = selected else {
         return value_or(value, DEFAULT_SSH_CLONE_BASE);
     };
-    if selected.setup_required || selected.mode == SshMode::Disabled {
+    if selected.mode == SshMode::Disabled {
+        return value_or(value, "");
+    }
+    if selected.setup_required {
         return String::new();
     }
     let fallback = match selected.mode {
@@ -186,6 +189,11 @@ mod tests {
         selected.setup_required = false;
         selected.mode = SshMode::Disabled;
         assert_eq!(configured_ssh_base(None, Some(&selected)), "");
+        assert_eq!(configured_ssh_base(Some("  ".into()), Some(&selected)), "");
+        assert_eq!(
+            configured_ssh_base(Some("ssh://git@external:22".into()), Some(&selected)),
+            "ssh://git@external:22"
+        );
         selected.mode = SshMode::Builtin;
         assert_eq!(
             configured_ssh_base(None, Some(&selected)),

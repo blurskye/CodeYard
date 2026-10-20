@@ -264,6 +264,8 @@ pub async fn change_ban(
         crate::backend::db::sqlite::ci::stop_actor_ci_runs(&mut tx, target).await?;
         stop_ownerless_organization_ci(&mut tx, &organizations).await?;
     }
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'user.ban','user',?2,?3)")
+        .bind(actor.user_id).bind(target).bind(serde_json::json!({"banned":banned,"outcome":"applied"}).to_string()).execute(&mut *tx).await?;
     tx.commit().await?;
     // Repository rows, objects and disk contents are preserved on suspension.
     Ok(BanChange::Updated(Box::new(user)))
@@ -329,6 +331,8 @@ pub async fn change_admin_role(
     let Some(user) = user else {
         return Ok(RoleChange::Missing);
     };
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'user.admin_role','user',?2,?3)")
+        .bind(actor.user_id).bind(target).bind(serde_json::json!({"is_admin":admin,"outcome":"applied"}).to_string()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(RoleChange::Updated(Box::new(user)))
 }

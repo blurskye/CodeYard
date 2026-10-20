@@ -21,7 +21,6 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
 
-const MAX_SESSIONS: usize = 16;
 const MAX_HEADERS: usize = 32;
 const MAX_CONTROLS: usize = 64;
 
@@ -54,6 +53,8 @@ pub(super) struct HookState {
     pub(super) proposed: Option<Vec<RefUpdate>>,
     pub(super) post_started: bool,
     pub(super) dispatch_failed: bool,
+    // Held from admission until Git reports publication (or the receive ends).
+    pub(super) publication: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 struct ActiveOperation {
@@ -201,6 +202,9 @@ fn hook_executable(uid: u32) -> Result<PathBuf> {
 /// The text a refused hook gives the pusher. Only a deliberate refusal, a `RepoError` of kind
 /// `Invalid`, has one. Other failures can name paths or driver errors, so they stay private.
 fn refusal_message(error: &anyhow::Error) -> Option<Vec<u8>> {
+    if error.is::<git_process::SessionsBusy>() {
+        return Some(b"Git sessions busy\n".to_vec());
+    }
     error
         .downcast_ref::<RepoError>()
         .filter(|error| error.kind == ErrorKind::Invalid)
@@ -216,9 +220,10 @@ async fn listen(
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let headers = Arc::new(Semaphore::new(MAX_HEADERS));
-    let connections = Arc::new(Semaphore::new(
-        MAX_SESSIONS + MAX_CONTROLS + MAX_HEADERS + 16,
-    ));
+    // A live Serve connection stays open while its hook makes a second connection.
+    let connections = Arc::new(Semaphore::new(connection_budget(
+        git_process::session_capacity(),
+    )));
     let mut tasks = JoinSet::new();
     let mut draining = false;
     // Connection tasks read the stop flag through their own receiver, because the select
@@ -282,6 +287,31 @@ async fn listen(
     Ok(())
 }
 
+fn connection_budget(sessions: usize) -> usize {
+    2 * sessions + MAX_CONTROLS + MAX_HEADERS + 16
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    #[test]
+    fn connection_capacity_includes_active_receives_their_hooks_and_controls() {
+        for sessions in [16, 128, 512] {
+            assert!(connection_budget(sessions) >= sessions * 2 + MAX_CONTROLS + MAX_HEADERS);
+        }
+    }
+
+    #[test]
+    fn busy_session_refusals_keep_the_public_reason() {
+        assert_eq!(
+            refusal_message(&anyhow::Error::new(git_process::SessionsBusy)),
+            Some(b"Git sessions busy\n".to_vec())
+        );
+        assert!(refusal_message(&anyhow::anyhow!("private driver detail")).is_none());
+    }
+}
+
 impl Gateway {
     async fn handle(self: &Arc<Self>, stream: &mut UnixStream, request: Request) -> Result<()> {
         match request {
@@ -292,11 +322,9 @@ impl Gateway {
             } => {
                 // Separate budgets for Git sessions and for key/hook requests, so
                 // busy Git sessions can't block the hooks they are waiting on.
-                let slot = self
-                    .sessions
-                    .clone()
-                    .try_acquire_owned()
-                    .context("Git sessions busy")?;
+                let slot =
+                    git_process::wait_for_slot(self.sessions.clone(), git_process::session_wait())
+                        .await?;
                 // The session runs in its own task so a disconnecting client
                 // can't abort a push halfway through its hooks.
                 let (relay, mut owned_stream) = UnixStream::pair()?;
@@ -359,9 +387,8 @@ impl Gateway {
                 base64_key,
                 serve_command,
             } => {
-                let _slot = self
-                    .controls
-                    .try_acquire()
+                let _slot = timeout(protocol::CONTROL_TIMEOUT, self.controls.acquire())
+                    .await?
                     .context("control requests busy")?;
                 let line = timeout(
                     protocol::CONTROL_TIMEOUT,
@@ -381,10 +408,6 @@ impl Gateway {
                 updates,
                 quarantine,
             } => {
-                let _slot = self
-                    .controls
-                    .try_acquire()
-                    .context("control requests busy")?;
                 let operation = self
                     .operations
                     .lock()
@@ -396,17 +419,42 @@ impl Gateway {
                     key_id == operation.credential.id() && repo_id == operation.repo_id,
                     "hook identity mismatch"
                 );
+                if post {
+                    validation::validate_updates(&updates)?;
+                    let mut state = operation
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+                    let proposed = state
+                        .proposed
+                        .as_ref()
+                        .context("missing successful pre-receive hook")?;
+                    ensure!(
+                        !state.post_started
+                            && updates.iter().all(|update| proposed.contains(update)),
+                        "post-receive updates do not match admission"
+                    );
+                    state.post_started = true;
+                    state.proposed = None;
+                    state.dispatch_failed = true;
+                    // Release before waiting for control capacity: other pre-hooks may
+                    // occupy it while waiting for this publication's repository lock.
+                    state.publication.take();
+                }
+                let _slot = timeout(protocol::CONTROL_TIMEOUT, self.controls.acquire())
+                    .await?
+                    .context("control requests busy")?;
                 let result = timeout(
                     protocol::CONTROL_TIMEOUT,
                     self.hook(&operation, post, &updates, quarantine.as_deref()),
                 )
                 .await;
-                if post && !matches!(&result, Ok(Ok(()))) {
+                if post {
                     operation
                         .state
                         .lock()
                         .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
-                        .dispatch_failed = true;
+                        .dispatch_failed = !matches!(&result, Ok(Ok(())));
                 }
                 result??;
                 protocol::finish(stream, 0).await?;
@@ -511,6 +559,7 @@ impl Gateway {
             git_protocol: git_protocol.map(str::to_owned),
             credential: Some(ReceiveCredential::SshKey(key_id)),
             owner: command.owner,
+            allow_unreachable: false,
         };
         let session = async move {
             self.session(
@@ -576,8 +625,13 @@ impl Gateway {
         // before receive-pack starts. All transports, host OpenSSH included, end up here.
         let _change = if write {
             Some(
-                begin_ref_change(&self.pool, repo.id, &operation.path, repo.storage_node_id)
-                    .await?,
+                begin_ref_change(
+                    &self.pool,
+                    repo.id,
+                    &operation.path,
+                    Some(repo.storage_node_id),
+                )
+                .await?,
             )
         } else {
             None

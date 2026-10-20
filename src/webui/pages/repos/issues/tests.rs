@@ -264,6 +264,7 @@ fn page_modes() -> Vec<Page> {
             kind,
             item: entry,
             comments: CommentPage {
+                events_next: None,
                 comments: vec![Comment {
                     id: 23,
                     author: "alice".into(),
@@ -736,6 +737,7 @@ fn editor_preserves_text_and_has_native_csrf_forms() {
 fn discussion_pages_link_to_the_neighbouring_pages() {
     let render = |page, has_more| {
         let comments = CommentPage {
+            events_next: None,
             comments: vec![Comment {
                 id: 1,
                 author: "alice".into(),
@@ -907,6 +909,7 @@ fn stack_card_marks_the_current_layer_and_puts_base_on_its_own_line() {
 fn timeline_rail_marks_only_discussion_entries() {
     crate::webui::tests::in_scope(|| {
         let comments = CommentPage {
+            events_next: None,
             comments: vec![comment_at(1, "2026-10-02T12:00:00+00:00")],
             reviews: vec![review(5, "approved", "2026-10-02T13:00:00+00:00")],
             page: 1,
@@ -1833,7 +1836,7 @@ fn empty_lists_have_truthful_state_copy_and_native_filters_without_limit_jargon(
 }
 
 #[test]
-fn dense_rows_show_loaded_items_not_invented_totals_and_notice_only_at_cap() {
+fn dense_rows_show_loaded_items_and_issue_pagination_uses_has_more() {
     crate::webui::tests::in_scope(|| {
         let repo = repository();
         let mut issue = item();
@@ -1856,16 +1859,46 @@ fn dense_rows_show_loaded_items_not_invented_totals_and_notice_only_at_cap() {
         assert!(content.contains("title=\"Oct 2, 2026\""));
         assert!(!content.contains("collaboration-state-open"));
         assert!(!content.contains("latest 100"));
-        let capped = dioxus_ssr::render_element(list(
+        let capped = dioxus_ssr::render_element(super::list(
             &repo,
             Kind::Issue,
             "all",
             "",
             ListCounts::default(),
+            &vec![issue.clone(); 100],
+            &ListFilters {
+                page: 1,
+                has_more: true,
+                ..Default::default()
+            },
+        ));
+        assert!(capped.contains("aria-label=\"Issue pages\""));
+        assert!(capped.contains("page=2"));
+        assert!(!capped.contains("Showing the latest 100 matching issues."));
+        let last = dioxus_ssr::render_element(super::list(
+            &repo,
+            Kind::Issue,
+            "all",
+            "",
+            ListCounts::default(),
+            &vec![issue.clone(); 5],
+            &ListFilters {
+                page: 2,
+                has_more: false,
+                ..Default::default()
+            },
+        ));
+        assert!(last.contains("page=1"));
+        assert!(!last.contains("page=3"));
+        let capped_pulls = dioxus_ssr::render_element(list(
+            &repo,
+            Kind::Pull,
+            "all",
+            "",
+            ListCounts::default(),
             &vec![issue; 100],
         ));
-        assert!(capped.contains("Showing the latest 100 matching issues."));
-        assert!(!capped.contains("older-page"));
+        assert!(capped_pulls.contains("Showing the latest 100 matching pull requests."));
     });
 }
 
@@ -2149,6 +2182,7 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
     moderated.can_delete = true;
     let other = comment_at(33, "today");
     let comments = CommentPage {
+        events_next: None,
         comments: vec![mine, moderated, other],
         reviews: Vec::new(),
         page: 1,
@@ -2178,6 +2212,10 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
     );
     assert!(
         html.contains("action=\"/alice/repo/issues/7/comments/32/delete\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("name=\"comment_revision\" value=\"Text\""),
         "{html}"
     );
     assert!(!html.contains("comments/32/edit"), "{html}");
@@ -2245,6 +2283,7 @@ fn discussion_merges_reviews_by_time_and_marks_stale_and_dismissed_reviews() {
         let mut dismissed = review(6, "dismissed", "2026-10-02T13:30:00+00:00");
         dismissed.dismissed_reason = Some("Superseded".into());
         let comments = CommentPage {
+            events_next: None,
             comments: vec![
                 comment_at(1, "2026-10-02T12:00:00+00:00"),
                 comment_at(2, "2026-10-02T14:00:00+00:00"),
@@ -3246,6 +3285,7 @@ fn timeline_events_show_a_badge_for_their_kind_and_threads_link_to_the_files_tab
             commit: "abc".into(),
         });
         let comments = CommentPage {
+            events_next: None,
             comments: vec![thread],
             reviews: Vec::new(),
             page: 1,
@@ -3410,6 +3450,7 @@ fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
             edit: None,
         };
         let comments = CommentPage {
+            events_next: None,
             comments: vec![
                 comment(1, "bob"),
                 comment(2, "Deleted user"),
@@ -3620,6 +3661,7 @@ fn list_filters_are_native_menus_and_tabs_keep_them() {
             authors: vec!["alice".into()],
             author: "alice".into(),
             sort: "oldest".into(),
+            ..Default::default()
         };
         let html = dioxus_ssr::render_element(super::list(
             &repository(),

@@ -25,6 +25,43 @@ native_operation!(crate::backend::db::postgres::notifications::records::create_n
     input: NewNotification<'_>,
 ) -> Result<Notification>);
 
+/// Refresh repository item URLs from the stable repository ID after a rename or transfer.
+pub async fn refresh_links(pool: &DbPool, notifications: &mut [Notification]) -> Result<()> {
+    use crate::backend::db::repositories::records;
+    let ids: Vec<_> = notifications
+        .iter()
+        .filter_map(|n| n.repo_id)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let repositories = records::get_repositories_by_ids(pool, &ids).await?;
+    let owners = records::repository_owner_names(pool, &ids).await?;
+    for notification in notifications {
+        let Some(repo) = repositories
+            .iter()
+            .find(|repo| Some(repo.id) == notification.repo_id)
+        else {
+            continue;
+        };
+        let Some(owner) = owners.get(&repo.id) else {
+            continue;
+        };
+        if let Some(link) = notification.link.as_mut() {
+            if let Some(suffix) = link.strip_prefix('/').and_then(|s| s.splitn(3, '/').nth(2)) {
+                if suffix.starts_with("issues/") || suffix.starts_with("pulls/") {
+                    *link = format!(
+                        "/{}/{}/{}",
+                        crate::webui::encode_component(owner),
+                        crate::webui::encode_component(&repo.name),
+                        suffix
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Current original-session delivery projection. Broadcasts are only hints;
 /// payload/count are reloaded under the same native recipient/scope authority.
 /// None means session invalid/revoked/restricted; errors mean unavailable.
@@ -155,6 +192,7 @@ pub struct NotificationCounts {
 /// session is invalid, revoked, expired or its recipient is restricted. Valid
 /// actions may return no rows; SQL errors propagate. All result fields share one
 /// native transaction, including final expiry verification before commit.
+#[derive(Clone)]
 pub enum NotificationInboxAction {
     List {
         filter: NotificationFilter,

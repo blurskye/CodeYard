@@ -20,6 +20,10 @@ use dioxus::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct NewDraft {
+    #[serde(default)]
+    pub repository_id: String,
+    #[serde(default)]
+    pub template_revision: String,
     pub head_repo: String,
     pub title: String,
     pub body: String,
@@ -159,6 +163,7 @@ pub fn new(
                     div { class: "collaboration-new-main",
                         form { id: NEW_FORM, method: "post", action: url, class: "collaboration-panel collaboration-editor",
                             {csrf(&repo.csrf)}
+                            if kind == Kind::Issue { input { r#type: "hidden", name: "repository_id", value: draft.repository_id.clone() } }
                             if kind == Kind::Pull {
                                 div { class: "collaboration-comparison-controls",
                                     div { class: "collaboration-compare-row",
@@ -187,6 +192,7 @@ pub fn new(
                                     }
                                 } else {
                                     input { r#type: "hidden", name: "template", value: draft.template.clone() }
+                                    input { r#type: "hidden", name: "template_revision", value: draft.template_revision.clone() }
                                     for (index, field) in draft.form.iter().enumerate() {
                                         {form_field(index, field)}
                                     }

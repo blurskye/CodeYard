@@ -206,6 +206,16 @@ pub async fn list_repo_milestones(
     .await?)
 }
 
+/// Picker rows need no discussion counts.
+pub async fn list_milestone_choices(pool: &SqlitePool, repo_id: i64) -> Result<Vec<Milestone>> {
+    Ok(sqlx::query_as(
+        "SELECT * FROM milestones WHERE repo_id=?1 ORDER BY due_date IS NULL, due_date, number",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await?)
+}
+
 pub async fn set_issue_milestone(
     pool: &SqlitePool,
     actor_id: i64,

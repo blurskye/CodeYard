@@ -1,12 +1,12 @@
 //! `push` runs for refs the server moves itself: web editor and file API saves,
-//! merges, and new branches and tags. An SSH push queues its runs from the receive
-//! hook instead.
+//! merges, and new branches and tags. Receive hooks share the same filtering policy.
 use super::{
     infer_pipeline_from_workflow_path, list_workflows_for_ref, workflows::WorkflowMatchBudget,
     CiRunRequest, CiRuns, WorkflowDefinition,
 };
 use crate::backend::db::models::Repository;
-use crate::backend::repositories::store::repo_store;
+use crate::backend::repositories::store::{repo_store, RepoStore};
+use anyhow::Result;
 
 /// A branch or tag the server has just created or moved.
 pub struct RefUpdate {
@@ -65,50 +65,22 @@ impl CiRuns {
                 return;
             }
         };
-        let workflows: Vec<_> = workflows
-            .into_iter()
-            .filter(|workflow| workflow.triggers.push.is_some())
-            .collect();
-        if workflows.is_empty() {
-            return;
-        }
-        let changed = match update.changed_paths {
-            Some(paths) => paths,
-            None if !update.reference.starts_with("refs/tags/")
-                && workflows.iter().any(filters_paths) =>
-            {
-                let old = update
-                    .old
-                    .as_deref()
-                    .unwrap_or("0000000000000000000000000000000000000000");
-                match store.push_changed_paths(old, &commit.sha).await {
-                    Ok(paths) => paths,
-                    Err(error) => {
-                        tracing::warn!(repo_id = repo.id, %error, "push runs skipped: changed paths unavailable");
-                        return;
-                    }
-                }
-            }
-            None => Vec::new(),
-        };
         let mut budget = WorkflowMatchBudget::new();
-        let mut matched = Vec::new();
-        for workflow in workflows {
-            match workflow.matches_event_with_context_and_budget(
-                "push",
-                &update.reference,
-                &changed,
-                Some(&commit.message),
-                &mut budget,
-            ) {
-                Ok(true) => matched.push(workflow),
-                Ok(false) => {}
-                Err(error) => {
-                    tracing::warn!(repo_id = repo.id, %error, "push runs skipped: workflow matching exceeded its work limit");
-                    return;
-                }
+        let matched = match matching_push_workflows(
+            &store,
+            &update,
+            workflows,
+            Some(&commit.message),
+            &mut budget,
+        )
+        .await
+        {
+            Ok(matched) => matched,
+            Err(error) => {
+                tracing::warn!(repo_id = repo.id, %error, "push workflow matching failed");
+                return;
             }
-        }
+        };
         for workflow in matched {
             let pipeline = infer_pipeline_from_workflow_path(&workflow.path);
             let result = self
@@ -134,6 +106,61 @@ impl CiRuns {
         }
     }
 }
+
+/// Ref filters run first. Missing path information skips only workflows that require it.
+pub(crate) async fn matching_push_workflows(
+    store: &RepoStore,
+    update: &RefUpdate,
+    workflows: Vec<WorkflowDefinition>,
+    message: Option<&str>,
+    budget: &mut WorkflowMatchBudget,
+) -> Result<Vec<WorkflowDefinition>> {
+    let mut candidates = Vec::new();
+    for workflow in workflows {
+        if workflow.matches_event_with_budget("push", &update.reference, budget)? {
+            candidates.push(workflow);
+        }
+    }
+    let needs_paths =
+        !update.reference.starts_with("refs/tags/") && candidates.iter().any(filters_paths);
+    let changed = if !needs_paths {
+        Some(Vec::new())
+    } else if update.old.is_some() && update.changed_paths.is_some() {
+        update.changed_paths.clone()
+    } else {
+        let old = update
+            .old
+            .as_deref()
+            .unwrap_or("0000000000000000000000000000000000000000");
+        match store.push_changed_paths(old, &update.new).await {
+            Ok(paths) => Some(paths),
+            Err(error) => {
+                tracing::warn!(%error, "push changed paths unavailable; path-filtered workflows skipped");
+                None
+            }
+        }
+    };
+    let mut matched = Vec::new();
+    for workflow in candidates {
+        if changed.is_none() && filters_paths(&workflow) {
+            continue;
+        }
+        if workflow.matches_event_with_context_and_budget(
+            "push",
+            &update.reference,
+            changed.as_deref().unwrap_or(&[]),
+            message,
+            budget,
+        )? {
+            matched.push(workflow);
+        }
+    }
+    Ok(matched)
+}
+
+#[cfg(test)]
+#[path = "push_tests.rs"]
+mod tests;
 
 fn filters_paths(workflow: &WorkflowDefinition) -> bool {
     workflow

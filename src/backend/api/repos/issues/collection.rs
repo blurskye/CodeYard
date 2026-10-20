@@ -3,8 +3,9 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::chrome;
 use crate::backend::api::repos::issues::assignees::user_id;
-use crate::backend::api::repos::milestones::milestone_view;
+use crate::backend::api::repos::milestones::{milestone_choice_view, milestone_view};
 use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::api::repos::refs::compare::comparison;
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
@@ -72,6 +73,8 @@ pub struct IssueQuery {
     pub labels: Option<String>,
     /// One label name, matched as typed, as the HTML list takes it.
     pub label: Option<String>,
+    pub page: Option<u32>,
+    pub per_page: Option<u32>,
 }
 
 /// The most label names one list may filter by.
@@ -148,15 +151,17 @@ pub async fn list_issues(
             )
         })?;
 
+    let (offset, limit) = chrome::json_page(query.page, Some(query.per_page.unwrap_or(100)))?;
     let issues = db::issues::list_repo_issues(
         &state.pool,
         repository.id,
         &db::discussions::ListFilter {
             state: issue_state,
             labels: &labels,
+            offset: offset as i64,
             ..Default::default()
         },
-        100,
+        limit as i64,
     )
     .await
     .map_err(|_| {
@@ -265,7 +270,14 @@ async fn query_narrowing(
         milestone,
         labels: &[],
         sort,
+        offset: 0,
     })
+}
+
+fn list_milestone(summary: db::models::MilestoneSummary) -> view::Milestone {
+    let mut milestone = milestone_view(summary);
+    milestone.description = None;
+    milestone
 }
 
 /// The choices of the list filters, and the values the query selected.
@@ -288,13 +300,14 @@ async fn list_filters(
             .await
             .map_err(|_| unavailable(ctx))?,
         assignee: query_value(ctx, "assignee"),
-        milestones: milestones.into_iter().map(milestone_view).collect(),
+        milestones: milestones.into_iter().map(list_milestone).collect(),
         milestone: query_value(ctx, "milestone"),
         authors: db::discussions::list_repo_authors(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?,
         author: query_value(ctx, "author"),
         sort: query_value(ctx, "sort"),
+        ..Default::default()
     })
 }
 
@@ -356,7 +369,15 @@ pub(crate) async fn native_index(
             .chain(search_labels.iter().map(String::as_str)),
     )
     .map_err(|message| ctx.error(StatusCode::BAD_REQUEST, message))?;
+    let page_number = if kind == Kind::Issue {
+        chrome::number(&ctx, "page", 1, chrome::MAX_PAGE)?
+    } else {
+        1
+    };
+    let (offset, _) = chrome::page_window(page_number, 100)
+        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid issue page."))?;
     let list = ListFilter {
+        offset: offset as i64,
         state,
         search,
         labels: &labels,
@@ -364,9 +385,10 @@ pub(crate) async fn native_index(
     };
     let named_milestones: HashMap<i64, view::Milestone> = milestones
         .iter()
-        .map(|summary| (summary.milestone.id, milestone_view(summary.clone())))
+        .map(|summary| (summary.milestone.id, list_milestone(summary.clone())))
         .collect();
-    let filters = list_filters(&ctx, &repo, milestones, labels.clone()).await?;
+    let mut filters = list_filters(&ctx, &repo, milestones, labels.clone()).await?;
+    filters.page = page_number;
     let mut items = Vec::new();
     let totals;
     match kind {
@@ -374,9 +396,13 @@ pub(crate) async fn native_index(
             totals = db::issues::count_repo_issues(&ctx.state.pool, repo.record.id, search)
                 .await
                 .map_err(|_| unavailable(&ctx))?;
-            let entries = db::issues::list_repo_issues(&ctx.state.pool, repo.record.id, &list, 100)
-                .await
-                .map_err(|_| unavailable(&ctx))?;
+            let mut entries =
+                db::issues::list_repo_issues(&ctx.state.pool, repo.record.id, &list, 101)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?;
+            filters.has_more =
+                chrome::has_next_page(page_number, entries.len(), 100, chrome::MAX_PAGE);
+            entries.truncate(100);
             let ids = entries
                 .iter()
                 .map(|entry| entry.issue.id)
@@ -588,11 +614,11 @@ async fn issue_choices(
     } else {
         Vec::new()
     };
-    let milestones = db::milestones::list_repo_milestones(&ctx.state.pool, repo.record.id, None)
+    let milestones = db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
         .await
         .map_err(|_| unavailable(ctx))?
         .into_iter()
-        .map(milestone_view)
+        .map(milestone_choice_view)
         .collect();
     Ok(view::IssueChoices {
         assignable,
@@ -671,6 +697,10 @@ async fn apply_issue_choices(
     Ok(())
 }
 
+fn issue_choices_warning(draft: &view::NewDraft) -> String {
+    format!("Issue created, but some details could not be applied. Check the sidebar and retry these selections: assignees [{}], label IDs [{}], milestone [{}].", draft.assignees.join(", "), draft.labels.join(", "), draft.milestone)
+}
+
 /// The repository's issue templates on its default branch.
 async fn repository_issue_templates(
     ctx: &PageContext,
@@ -744,6 +774,7 @@ fn apply_issue_template(
     }
     if !template.form.is_empty() {
         draft.template = template.path.clone();
+        draft.template_revision = template.revision.clone();
         draft.form = form_fields(&template.form, &[]);
     }
     if draft.assignees.is_empty() {
@@ -783,6 +814,7 @@ pub(crate) async fn native_new_page(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let mut draft = submitted_new(&ctx.query);
+    draft.repository_id = repo.record.id.to_string();
     let choices = issue_choices(&ctx, &repo, kind).await?;
     if kind == Kind::Issue {
         let found = repository_issue_templates(&ctx, &repo).await?;
@@ -887,12 +919,19 @@ pub(crate) async fn native_create(
     // The pairs keep repeated fields, such as the assignees and labels checked on a new issue.
     Form(pairs): Form<Vec<(String, String)>>,
 ) -> ResultPage<Response> {
-    let ctx = PageContext::load(state, headers, &uri).await?;
+    let mut ctx = PageContext::load(state, headers, &uri).await?;
     let form: HashMap<String, String> = pairs.iter().cloned().collect();
     authorize_post(&ctx, &form)?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let mut draft = submitted_new(&form);
+    let mut submission_error = if kind == Kind::Issue
+        && draft.repository_id != repo.record.id.to_string()
+    {
+        Some("The repository changed. Your draft has not been published; review its destination before trying again.".to_owned())
+    } else {
+        None
+    };
     draft.assignees = repeated(&pairs, "assignees");
     draft.labels = repeated(&pairs, "labels");
     draft.milestone = field(&form, "milestone");
@@ -902,11 +941,11 @@ pub(crate) async fn native_create(
     let form_path = field(&form, "template");
     if kind == Kind::Issue && !form_path.is_empty() {
         let found = repository_issue_templates(&ctx, &repo).await?;
-        if let Some(template) = found
-            .templates
-            .iter()
-            .find(|template| template.path == form_path && !template.form.is_empty())
-        {
+        if let Some(template) = found.templates.iter().find(|template| {
+            template.path == form_path
+                && !template.form.is_empty()
+                && template.revision == draft.template_revision
+        }) {
             let answers: Vec<Vec<String>> = (0..template.form.len())
                 .map(|index| repeated(&pairs, &format!("form_{index}")))
                 .collect();
@@ -914,6 +953,16 @@ pub(crate) async fn native_create(
             draft.body = compose_form_body(&template.form, &answers);
             draft.form = form_fields(&template.form, &answers);
             draft.template = form_path;
+        } else {
+            draft.body = pairs
+                .iter()
+                .filter(|(name, _)| name.starts_with("form_"))
+                .map(|(name, value)| format!("{name}: {value}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            submission_error = Some("The issue template changed or was removed. Your answers are preserved below; review them before creating the issue.".to_owned());
+            draft.template.clear();
+            draft.template_revision.clear();
         }
     }
     let references = body_references(&ctx, &repo, &draft.body).await;
@@ -952,6 +1001,10 @@ pub(crate) async fn native_create(
         }
     })
     .map_err(str::to_owned)
+    .and_then(|()| match &submission_error {
+        Some(message) => Err(message.clone()),
+        None => Ok(()),
+    })
     .and_then(|()| match &missing_answer {
         Some(label) if intent == "create" => Err(format!("{label} is required.")),
         _ => Ok(()),
@@ -1061,6 +1114,7 @@ pub(crate) async fn native_create(
                 crate::backend::issues::mutations::CreateIssueRequest {
                     title: draft.title.clone(),
                     body: Some(draft.body.clone()),
+                    repository_id: Some(repo.record.id),
                 },
             )
             .await
@@ -1089,6 +1143,20 @@ pub(crate) async fn native_create(
                 .await
                 {
                     tracing::warn!(number = issue.number, %error, "a new issue lost its assignees, labels or milestone");
+                    let warning = issue_choices_warning(&draft);
+                    ctx.location = link.clone();
+                    ctx.path = link;
+                    let value = item(&ctx, &repo, kind, issue.number).await?;
+                    return render_detail(
+                        &ctx,
+                        &repo,
+                        kind,
+                        &value,
+                        &view::DetailDraft::default(),
+                        Some(&warning),
+                        StatusCode::OK,
+                    )
+                    .await;
                 }
             }
             created.map(|value| value.number)
@@ -1140,7 +1208,27 @@ pub(crate) async fn native_create(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_state, review_state};
+    use super::{check_state, issue_choices_warning, review_state};
+
+    #[test]
+    fn partial_creation_warning_keeps_the_selections_for_retry() {
+        let draft = crate::webui::pages::repos::issues::NewDraft {
+            assignees: vec!["alice".into(), "bob".into()],
+            labels: vec!["10".into(), "20".into()],
+            milestone: "3".into(),
+            ..Default::default()
+        };
+        let warning = issue_choices_warning(&draft);
+        for text in [
+            "Issue created",
+            "could not be applied",
+            "alice, bob",
+            "10, 20",
+            "milestone [3]",
+        ] {
+            assert!(warning.contains(text));
+        }
+    }
 
     #[test]
     fn a_change_request_counts_on_any_commit_and_an_approval_only_on_the_head() {

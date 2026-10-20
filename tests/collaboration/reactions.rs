@@ -477,6 +477,60 @@ async fn timeline_shows_changes(pg: bool) {
 
 /// Each discussion page loads the changes in its own span, with its own limit. Changes after the
 /// first page's limit still show on the page they fall in.
+async fn commentless_timeline_has_event_continuation(pg: bool) {
+    let (mut database, _root, alice, _bob) = setup(pg).await;
+    let issue = alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/issues",
+            json!({"title": "Long history", "body": ""}),
+            StatusCode::CREATED,
+        )
+        .await;
+    let issue_id = issue["id"].as_i64().unwrap();
+    let repo = db::repositories::records::get_repository(database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = db::users::accounts::get_user_by_username(database.pool(), "alice")
+        .await
+        .unwrap()
+        .unwrap();
+    for index in 0..201 {
+        db::timeline::record_event(
+            database.pool(),
+            repo.id,
+            "issue",
+            issue_id,
+            actor.id,
+            "labeled",
+            &format!("change-{index:03}"),
+            "",
+        )
+        .await
+        .unwrap();
+    }
+    let (_, first) = alice.page("/alice/proj/issues/1").await;
+    assert!(first.contains("change-000"));
+    assert!(!first.contains("change-200"));
+    assert!(first.contains("More changes"));
+    assert!(first.contains("event_page=2"));
+    let (_, second) = alice.page("/alice/proj/issues/1?page=1&event_page=2").await;
+    assert!(second.contains("change-200"));
+    assert!(!second.contains("change-000"));
+    assert!(!second.contains("More changes"));
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_commentless_timeline_continues_past_its_cap() {
+    commentless_timeline_has_event_continuation(false).await;
+}
+#[tokio::test]
+async fn postgres_commentless_timeline_continues_past_its_cap() {
+    commentless_timeline_has_event_continuation(true).await;
+}
+
 async fn timeline_events_load_for_each_page(pg: bool) {
     let (mut database, _root, alice, _bob) = setup(pg).await;
     let issue = alice
@@ -699,12 +753,20 @@ async fn proj_id(pool: &db::DbPool) -> i64 {
 
 /// The number of `unassigned` lines in the timeline of an issue.
 async fn unassigned_lines(pool: &db::DbPool, issue: i64) -> usize {
-    db::timeline::list_events(pool, "issue", issue, None, None, db::timeline::EVENT_LIMIT)
-        .await
-        .unwrap()
-        .iter()
-        .filter(|event| event.kind == "unassigned")
-        .count()
+    db::timeline::list_events(
+        pool,
+        "issue",
+        issue,
+        None,
+        None,
+        db::timeline::EVENT_LIMIT,
+        0,
+    )
+    .await
+    .unwrap()
+    .iter()
+    .filter(|event| event.kind == "unassigned")
+    .count()
 }
 
 /// The reactions of `viewer` on an issue, summed over every reaction.

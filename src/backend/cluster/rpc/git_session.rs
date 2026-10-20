@@ -43,12 +43,13 @@ impl NodeContext {
                 if copy == self.node_id {
                     // Admission comes first, so a copy this node cannot serve leaves the
                     // streams untouched for the next one.
-                    if let Ok(Ok(store)) =
+                    if let Ok(Ok((store, checkout))) =
                         tokio::time::timeout_at(deadline, self.own_copy(&request)).await
                     {
-                        let Operation::GitSession(session) = request.operation else {
+                        let Operation::GitSession(mut session) = request.operation else {
                             return Err(unavailable().into());
                         };
+                        session.allow_unreachable = checkout;
                         // Boxed: the store's remote variant leads back to this function.
                         let status = Box::pin(store.git_session(session, None, streams)).await?;
                         return Ok((Value::Null, status));
@@ -120,12 +121,16 @@ impl NodeContext {
 
     /// The store of the copy this node holds. A node cannot dial itself, so the handler's
     /// own checks run in process. The caller already holds a session permit.
-    async fn own_copy(&self, request: &Request) -> Result<RepoStore, RepoError> {
-        let (store, _) = RpcHandler::new(self.clone())
+    async fn own_copy(&self, request: &Request) -> Result<(RepoStore, bool), RepoError> {
+        let handler = RpcHandler::new(self.clone());
+        let (store, repo_id) = handler
             .authorize_request(request, self.key.public_key())
             .await?;
         readable(&store).await?;
-        Ok(store)
+        let checkout = handler
+            .checkout_access(request, repo_id, self.key.public_key())
+            .await?;
+        Ok((store, checkout))
     }
 
     /// Connects to `node_id`, sends the request and reads the first reply. `Err` means the
@@ -186,8 +191,9 @@ impl RpcHandler {
                 .map_err(RepoError::from)?;
             // The wait for the slot can outlast the membership or copy this request was
             // admitted on, so the same check runs again now.
-            let (store, _) = self.authorize_request(&request, caller).await?;
+            let (store, repo_id) = self.authorize_request(&request, caller).await?;
             readable(&store).await?;
+            let checkout = self.checkout_access(&request, repo_id, caller).await?;
             let (admission, targets) = match &request.operation {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.
@@ -215,10 +221,10 @@ impl RpcHandler {
             } else {
                 None
             };
-            Ok::<_, RepoError>((store, admission, targets, receive, permit))
+            Ok::<_, RepoError>((store, admission, targets, receive, permit, checkout))
         })
         .await.unwrap_or_else(|_| Err(unavailable()));
-        let (store, admission, targets, receive, _permit) = match prepared {
+        let (store, admission, targets, receive, _permit, checkout) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
                 super::refuse(&mut link, error).await?;
@@ -248,7 +254,8 @@ impl RpcHandler {
                 errors: &mut errors,
             };
             let status = match request.operation {
-                Operation::GitSession(session) => {
+                Operation::GitSession(mut session) => {
+                    session.allow_unreachable = checkout;
                     store.git_session(session, receive, streams).await
                 }
                 Operation::ReplicaPack { have } => {

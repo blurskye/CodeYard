@@ -184,7 +184,7 @@ native_operation!(crate::backend::db::postgres::cluster::bump_write_version,
     /// (`None` accepts any holder). Call it before Git makes the change. Returns `false`
     /// when another node holds the repository. A repository that no storage node holds has
     /// no replicas and counts nothing.
-    fn bump_write_version(pool: &DbPool, repo_id: i64, node_id: Option<i64>) -> Result<bool>);
+    fn bump_write_version(pool: &DbPool, repo_id: i64, node_id: Option<Option<i64>>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::cluster::get_write_version,
     crate::backend::db::sqlite::cluster::get_write_version,

@@ -37,7 +37,9 @@ pub async fn list_events(
     after: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<TimelineEvent>> {
+    anyhow::ensure!(limit >= 0 && offset >= 0, "Invalid timeline page");
     Ok(sqlx::query_as(
         r#"
         SELECT u.username::text AS actor, e.kind::text AS kind, e.detail::text AS detail,
@@ -46,7 +48,7 @@ pub async fn list_events(
         WHERE e.subject_kind = $1 AND e.subject_id = $2
           AND ($3::timestamptz IS NULL OR e.created_at >= $3)
           AND ($4::timestamptz IS NULL OR e.created_at < $4)
-        ORDER BY e.created_at, e.id LIMIT $5
+        ORDER BY e.created_at, e.id LIMIT $5 OFFSET $6
         "#,
     )
     .bind(subject)
@@ -54,6 +56,7 @@ pub async fn list_events(
     .bind(after)
     .bind(before)
     .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await?)
 }

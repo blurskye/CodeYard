@@ -411,20 +411,28 @@ pub(crate) async fn notification_list(
         ..
     } = inbox;
     let counts = counts.unwrap_or_default();
+    let mut notifications = notifications;
+    if db::notifications::records::refresh_links(&ctx.state.pool, &mut notifications)
+        .await
+        .is_err()
+    {
+        return unavailable(&ctx);
+    }
     let names: BTreeMap<i64, String> = counts.repositories.iter().cloned().collect();
-    // A page names each distinct actor once, so its picture needs one account lookup per actor.
-    let mut actors: HashMap<i64, String> = HashMap::new();
-    for actor_id in notifications
+    let actor_ids: Vec<_> = notifications
         .iter()
         .filter_map(|item| item.actor_id)
         .collect::<HashSet<_>>()
-    {
-        if let Ok(Some(actor)) =
-            db::users::accounts::get_user_by_id(&ctx.state.pool, actor_id).await
-        {
-            actors.insert(actor_id, actor.username);
-        }
-    }
+        .into_iter()
+        .collect();
+    let actors: HashMap<i64, String> =
+        match db::users::accounts::get_users_by_ids(&ctx.state.pool, &actor_ids).await {
+            Ok(actors) => actors
+                .into_iter()
+                .map(|actor| (actor.id, actor.username))
+                .collect(),
+            Err(_) => return unavailable(&ctx),
+        };
     let mut repositories: Vec<view::RepositoryOption> = counts
         .repositories
         .into_iter()
@@ -454,7 +462,7 @@ pub(crate) async fn notification_list(
                     .map(str::to_owned),
                 reason: reasons::label_for_kind(&item.kind).map(str::to_owned),
                 title: item.title,
-                body: item.body,
+                body: item.body.as_deref().map(view::body_preview),
                 link: item.link.filter(|link| view::safe_notification_link(link)),
                 read: item.read_at.is_some(),
                 saved: item.saved_at.is_some(),

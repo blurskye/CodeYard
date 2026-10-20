@@ -36,13 +36,18 @@ pub async fn upsert_node_configuration(
 }
 
 /// Returns false when the node is not set up yet, so there is no row to change.
-pub async fn set_ai_crawlers(pool: &SqlitePool, value: &str) -> Result<bool> {
+pub async fn set_ai_crawlers(pool: &SqlitePool, actor: i64, value: &str) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::users::transitions::active_admin(&mut tx, actor).await? {
+        return Ok(false);
+    }
     let result = sqlx::query(
         "UPDATE node_configuration SET ai_crawlers = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = 1",
     )
     .bind(value)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }
 

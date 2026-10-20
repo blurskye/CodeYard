@@ -4,6 +4,7 @@ use crate::webui::{
         compact_date, count_label, languages::LanguageShare, submit_form, Avatar, DraftCheckbox,
         DraftSelect, FieldError, SelectOption,
     },
+    encode_component,
     navigation::NavLink,
     pages::repos::issues::{item_icon, state_class, Kind},
     pages::users::{profile_icon, ProfileIcon},
@@ -112,6 +113,14 @@ pub struct HomeModel {
     /// The text the repository lists are narrowed to; empty for none.
     #[serde(default)]
     pub find: String,
+    #[serde(default)]
+    pub page: usize,
+    #[serde(default)]
+    pub repository_count: i64,
+    #[serde(default)]
+    pub shared_count: i64,
+    #[serde(default)]
+    pub has_older: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -468,7 +477,7 @@ pub fn home(model: HomeModel) -> Element {
                 header { class: "discovery-dashboard-header",
                     h1 { id: "dashboard-repositories-title",
                         "Your repositories"
-                        span { class: "discovery-repository-count", aria_label: count_label(model.repositories.len(), "repository", "repositories"), "{model.repositories.len()}" }
+                        span { class: "discovery-repository-count", aria_label: count_label(model.repository_count.max(model.repositories.len() as i64) as usize, "repository", "repositories"), "{model.repository_count.max(model.repositories.len() as i64)}" }
                     }
                     NavLink { href: "/new", class: "focus-ring discovery-new-repository", "New repository" }
                 }
@@ -519,7 +528,7 @@ pub fn home(model: HomeModel) -> Element {
                         header { class: "discovery-dashboard-header",
                             h2 { id: "dashboard-shared-title",
                                 "Shared with you"
-                                span { class: "discovery-repository-count", aria_label: "{model.shared.len()} shared repositories", "{model.shared.len()}" }
+                                span { class: "discovery-repository-count", aria_label: "{model.shared_count.max(model.shared.len() as i64)} shared repositories", "{model.shared_count.max(model.shared.len() as i64)}" }
                             }
                         }
                         ul { class: "discovery-repositories",
@@ -546,6 +555,10 @@ pub fn home(model: HomeModel) -> Element {
                     }
                 }
             }
+            {page_links(
+                (model.page > 1).then(|| format!("/?q={}&page={}", encode_component(&model.find), model.page - 1)),
+                model.has_older.then(|| format!("/?q={}&page={}", encode_component(&model.find), model.page.max(1).saturating_add(1))),
+                "Dashboard repository pages")}
             if !solo {
                 aside { class: "discovery-dashboard-trending", aria_labelledby: "dashboard-trending-title",
                     header { class: "discovery-trending-header",
@@ -738,6 +751,9 @@ fn count_badge(count: usize) -> String {
 /// The number shown beside a result type. Code and commits show the page they list, marked as
 /// more when an older page has results, and only while their tab is open.
 fn search_tab_count(model: &SearchModel, tab: &str) -> Option<String> {
+    if matches!(model.tab.as_str(), "code" | "commits") && !matches!(tab, "code" | "commits") {
+        return None;
+    }
     match tab {
         "repos" => Some(count_badge(model.counts.repositories)),
         "issues" => Some(count_badge(model.counts.issues)),

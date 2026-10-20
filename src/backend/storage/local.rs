@@ -24,9 +24,9 @@ impl LocalStore {
         tokio::fs::create_dir_all(root)
             .await
             .with_context(|| format!("create object directory {}", root.display()))?;
-        Ok(Self {
-            root: root.to_owned(),
-        })
+        let root = tokio::fs::canonicalize(root).await?;
+        sync_parents(&root).await?;
+        Ok(Self { root })
     }
 
     fn path(&self, key: &str) -> Result<PathBuf, StorageError> {
@@ -85,10 +85,12 @@ impl LocalStore {
         {
             return Err(StorageError::Rejected);
         }
+        output.flush().await?;
         output.sync_all().await?;
         temporary
             .persist(&path)
             .map_err(|_| StorageError::Unavailable)?;
+        sync_parents(parent).await?;
         Ok(())
     }
 
@@ -127,6 +129,14 @@ impl LocalStore {
         let staging = self.root.join(STAGING_DIR);
         remove_stale_temporaries(&staging, STALE_AFTER).await
     }
+}
+
+/// Persist the rename and any parent directories that were just created.
+async fn sync_parents(path: &Path) -> std::io::Result<()> {
+    for directory in path.ancestors() {
+        tokio::fs::File::open(directory).await?.sync_all().await?;
+    }
+    Ok(())
 }
 
 /// Removes files in `dir` whose names start with `TEMP_PREFIX` and that nothing has written
@@ -209,6 +219,67 @@ mod tests {
         store.delete(key).await.unwrap();
         store.delete(key).await.unwrap();
         assert!(store.open_file(key).await.is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn final_write_errors_do_not_publish_truncated_objects() {
+        const CHILD: &str = "CODEYARD_UPLOAD_WRITE_ERROR_TEST";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "backend::storage::local::tests::final_write_errors_do_not_publish_truncated_objects", "--nocapture"])
+                .env(CHILD, "1").output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let store = LocalStore::open(root.path()).await.unwrap();
+            let png = b"\x89PNG\r\n\x1a\nrest";
+            let sha = hex::encode(Sha256::digest(png));
+            // Isolated child: force the final asynchronous file write to fail.
+            unsafe {
+                libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
+                let limit = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limit), 0);
+            }
+            assert!(store
+                .put(&upload("uploads/full", png, &sha), &png[..])
+                .await
+                .is_err());
+            assert!(!root.path().join("uploads/full").exists());
+        });
+    }
+
+    #[tokio::test]
+    async fn published_uploads_are_complete_when_parent_directories_are_new() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(&root.path().join("new/objects"))
+            .await
+            .unwrap();
+        let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+        png.extend(vec![b'x'; 256 * 1024]);
+        let sha = hex::encode(Sha256::digest(&png));
+        store
+            .put(&upload("uploads/new", &png, &sha), png.as_slice())
+            .await
+            .unwrap();
+        let (mut file, size) = store.open_file("uploads/new").await.unwrap();
+        assert_eq!(size, png.len() as u64);
+        let mut read = Vec::new();
+        file.read_to_end(&mut read).await.unwrap();
+        assert_eq!(read, png);
     }
 
     #[tokio::test]

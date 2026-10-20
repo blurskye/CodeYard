@@ -7,7 +7,12 @@ use crate::backend::git::repository::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet, future::Future, path::Path, pin::Pin, process::ExitStatus, time::Duration,
+    collections::{BTreeMap, HashSet},
+    future::Future,
+    path::Path,
+    pin::Pin,
+    process::ExitStatus,
+    time::Duration,
 };
 
 /// The largest file `save_file` accepts.
@@ -18,7 +23,7 @@ pub const MAX_UPLOAD_FILE_BYTES: usize = 25 * 1024 * 1024;
 pub const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 const MAX_OUTPUT: usize = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(60);
-const ZERO: &str = "0000000000000000000000000000000000000000";
+pub(super) const ZERO: &str = "0000000000000000000000000000000000000000";
 
 /// One file change to commit. The file's bytes are passed separately.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -212,13 +217,11 @@ impl Repo<'_> {
             _ => Err(unavailable()),
         }
     }
-    /// Sets the file at `parts` under `tree` to `file` (blob and mode), or removes it when `file`
-    /// is `None`. A directory left empty is removed too. The result is `None` when nothing is left.
+    /// Apply all changes under one directory, reading and writing each affected tree once.
     fn edit_tree<'a>(
         &'a self,
         tree: Option<String>,
-        parts: &'a [&'a str],
-        file: Option<(&'a str, &'a str)>,
+        changes: &'a [Change<'a>],
         remaining: &'a mut usize,
     ) -> Pin<Box<dyn Future<Output = Result<Option<String>, RepoError>> + Send + 'a>> {
         Box::pin(async move {
@@ -238,39 +241,74 @@ impl Repo<'_> {
             } else {
                 Vec::new()
             };
-            let mut existing = None;
-            for (index, record) in records.iter().enumerate() {
-                let entry = split_entry(record)?;
-                if entry.name == parts[0].as_bytes() {
-                    if existing.is_some() {
-                        return Err(unavailable());
-                    }
-                    existing = Some((index, entry));
-                }
+            let mut groups: BTreeMap<&str, Vec<Change<'_>>> = BTreeMap::new();
+            for change in changes {
+                let (name, tail) = change.path.split_once('/').unwrap_or((change.path, ""));
+                groups.entry(name).or_default().push(Change {
+                    path: tail,
+                    content: change.content,
+                    existing: change.existing,
+                });
             }
-            let new_entry = if parts.len() == 1 {
-                if let Some((_, entry)) = &existing {
-                    if entry.kind != "blob" || !matches!(entry.mode, "100644" | "100755") {
-                        return Err(invalid("Only regular files can be edited."));
+            for (name, group) in groups {
+                let mut existing = None;
+                for (index, record) in records.iter().enumerate() {
+                    let entry = split_entry(record)?;
+                    if entry.name == name.as_bytes() {
+                        if existing.is_some() {
+                            return Err(unavailable());
+                        }
+                        existing = Some((index, entry));
                     }
                 }
-                file.map(|(blob, mode)| format!("{mode} blob {blob}\t{}", parts[0]).into_bytes())
-            } else {
-                let subtree = match &existing {
-                    Some((_, entry)) if entry.mode == "040000" && entry.kind == "tree" => {
-                        Some(entry.object.to_owned())
+                let new_entry = if group.iter().any(|change| change.path.is_empty()) {
+                    if group.len() != 1 {
+                        return Err(invalid("A parent path is not a directory."));
                     }
-                    Some(_) => return Err(invalid("A parent path is not a directory.")),
-                    None => None,
+                    let change = &group[0];
+                    let mode = match (&existing, change.existing) {
+                        (Some(_), Existing::Forbid) => {
+                            return Err(invalid("This path already exists. Use the file editor."))
+                        }
+                        (None, Existing::Require) => {
+                            return Err(invalid("The file to edit does not exist."))
+                        }
+                        (Some((_, entry)), _) => {
+                            if entry.kind != "blob" || !matches!(entry.mode, "100644" | "100755") {
+                                return Err(invalid("Only regular files can be edited."));
+                            }
+                            entry.mode.to_owned()
+                        }
+                        (None, _) => "100644".to_owned(),
+                    };
+                    if let Some(content) = change.content {
+                        let blob = oid(&self
+                            .checked(&["hash-object", "-w", "--stdin"], content, None)
+                            .await?)?;
+                        Some(format!("{mode} blob {blob}\t{name}").into_bytes())
+                    } else {
+                        if existing.is_none() {
+                            return Err(invalid("The file to delete does not exist."));
+                        }
+                        None
+                    }
+                } else {
+                    let subtree = match &existing {
+                        Some((_, entry)) if entry.mode == "040000" && entry.kind == "tree" => {
+                            Some(entry.object.to_owned())
+                        }
+                        Some(_) => return Err(invalid("A parent path is not a directory.")),
+                        None => None,
+                    };
+                    self.edit_tree(subtree, &group, remaining)
+                        .await?
+                        .map(|subtree| format!("040000 tree {subtree}\t{name}").into_bytes())
                 };
-                self.edit_tree(subtree, &parts[1..], file, remaining)
-                    .await?
-                    .map(|subtree| format!("040000 tree {subtree}\t{}", parts[0]).into_bytes())
-            };
-            if let Some((index, _)) = existing {
-                records.remove(index);
+                if let Some((index, _)) = existing {
+                    records.remove(index);
+                }
+                records.extend(new_entry);
             }
-            records.extend(new_entry);
             if records.is_empty() {
                 return Ok(None);
             }
@@ -313,47 +351,6 @@ enum Existing {
     Either,
 }
 
-/// The entry at `parts` under `tree` as (kind, mode), or `None` when nothing is there. A parent
-/// that is not a directory is refused.
-async fn entry_at(
-    storage: &Repo<'_>,
-    tree: Option<String>,
-    parts: &[&str],
-    budget: &mut usize,
-) -> Result<Option<(String, String)>, RepoError> {
-    let mut selected = tree;
-    for (depth, part) in parts.iter().enumerate() {
-        let Some(current) = selected.take() else {
-            return Ok(None);
-        };
-        let bytes = storage
-            .checked(&["ls-tree", "-z", "--full-tree", &current], b"", None)
-            .await?;
-        *budget = budget.checked_sub(bytes.len()).ok_or_else(unavailable)?;
-        let mut found = None;
-        for record in bytes.split(|byte| *byte == 0).filter(|b| !b.is_empty()) {
-            let entry = split_entry(record)?;
-            if entry.name == part.as_bytes() {
-                if found.is_some() {
-                    return Err(unavailable());
-                }
-                found = Some(entry);
-            }
-        }
-        let Some(entry) = found else {
-            return Ok(None);
-        };
-        if depth + 1 == parts.len() {
-            return Ok(Some((entry.kind.to_owned(), entry.mode.to_owned())));
-        }
-        if entry.mode != "040000" || entry.kind != "tree" {
-            return Err(invalid("A parent path is not a directory."));
-        }
-        selected = Some(entry.object.to_owned());
-    }
-    Ok(None)
-}
-
 /// Builds one commit on `branch` that sets every change on top of the branch's tip. The branch
 /// does not move here; `publish` moves it.
 async fn prepare_commit(
@@ -393,7 +390,7 @@ async fn prepare_commit(
         }
         return Err(conflict());
     }
-    let mut tree = match &current {
+    let tree = match &current {
         Some(parent) => Some(oid(&storage
             .checked(
                 &["rev-parse", "--verify", &format!("{parent}^{{tree}}")],
@@ -403,53 +400,8 @@ async fn prepare_commit(
             .await?)?),
         None => None,
     };
-    for change in changes {
-        // Resolve each component exactly, never interpret editor paths as a pathspec.
-        let parts = change.path.split('/').collect::<Vec<_>>();
-        let mut budget = MAX_OUTPUT;
-        let existing = entry_at(&storage, tree.clone(), &parts, &mut budget).await?;
-        let file = match change.content {
-            Some(content) => {
-                let mode = match (change.existing, existing) {
-                    (Existing::Forbid, Some(_)) => {
-                        return Err(invalid("This path already exists. Use the file editor."))
-                    }
-                    (Existing::Require, None) => {
-                        return Err(invalid("The file to edit does not exist."))
-                    }
-                    (_, Some((kind, mode))) => {
-                        if kind != "blob" || !matches!(mode.as_str(), "100644" | "100755") {
-                            return Err(invalid("Only regular files can be edited."));
-                        }
-                        mode
-                    }
-                    (_, None) => "100644".to_owned(),
-                };
-                let blob = oid(&storage
-                    .checked(&["hash-object", "-w", "--stdin"], content, None)
-                    .await?)?;
-                Some((blob, mode))
-            }
-            None => match existing {
-                None => return Err(invalid("The file to delete does not exist.")),
-                Some((kind, mode))
-                    if kind != "blob" || !matches!(mode.as_str(), "100644" | "100755") =>
-                {
-                    return Err(invalid("Only regular files can be deleted."));
-                }
-                Some(_) => None,
-            },
-        };
-        tree = storage
-            .edit_tree(
-                tree,
-                &parts,
-                file.as_ref()
-                    .map(|(blob, mode)| (blob.as_str(), mode.as_str())),
-                &mut budget,
-            )
-            .await?;
-    }
+    let mut budget = MAX_OUTPUT;
+    let tree = storage.edit_tree(tree, changes, &mut budget).await?;
     // Deleting the last file leaves no tree at all, which the commit records as the empty tree.
     let new_tree = match tree {
         Some(tree) => tree,
@@ -720,6 +672,63 @@ mod tests {
             before_publish();
             publish(path, &prepared).await.map(|commit| commit.sha)
         })
+    }
+
+    #[tokio::test]
+    async fn maximum_upload_shares_deep_directory_trees_and_preserves_neighbors() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(root.path()).unwrap();
+        let prefix = (0..63)
+            .map(|i| format!("d{i}"))
+            .collect::<Vec<_>>()
+            .join("/");
+        let initial = input(&format!("{prefix}/keep"));
+        let first = prepare(
+            root.path(),
+            &initial,
+            b"keep",
+            "Tester",
+            "tester@example.invalid",
+        )
+        .await
+        .unwrap();
+        publish(root.path(), &first).await.unwrap();
+        let write = UploadWrite {
+            branch: "main".into(),
+            message: "upload".into(),
+            expected_revision: first.commit.sha,
+            files: (0..MAX_UPLOAD_FILES)
+                .map(|i| UploadFile {
+                    path: format!("{prefix}/file-{i}"),
+                    size: 1,
+                })
+                .collect(),
+        };
+        let bytes = vec![b'x'; MAX_UPLOAD_FILES];
+        let prepared = tokio::time::timeout(
+            Duration::from_secs(30),
+            prepare_upload(
+                root.path(),
+                &write,
+                &bytes,
+                "Tester",
+                "tester@example.invalid",
+            ),
+        )
+        .await
+        .expect("shared directories should not be rebuilt for every file")
+        .unwrap();
+        let tree = repo
+            .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
+            .unwrap()
+            .tree()
+            .unwrap();
+        for file in &write.files {
+            let entry = tree.get_path(Path::new(&file.path)).unwrap();
+            assert_eq!(repo.find_blob(entry.id()).unwrap().content(), b"x");
+        }
+        let keep = tree.get_path(Path::new(&format!("{prefix}/keep"))).unwrap();
+        assert_eq!(repo.find_blob(keep.id()).unwrap().content(), b"keep");
     }
 
     #[test]

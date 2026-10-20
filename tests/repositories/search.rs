@@ -860,6 +860,82 @@ async fn postgres_repo_scope_pages_through_every_hit() {
     repository_scope_paging_contract(true).await;
 }
 
+async fn one_file_and_unrelated_tables_contract(pg: bool) {
+    bundle::install();
+    let mut f = Database::new(pg).await;
+    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    let contributions_before = db::users::accounts::list_admin_activity_points(f.pool(), 7)
+        .await
+        .unwrap()
+        .last()
+        .unwrap()
+        .daily_contributions;
+    let owner = f.actor("one_file").await;
+    let root = tempfile::tempdir().unwrap();
+    repository(
+        &f,
+        root.path(),
+        RepositoryCreationOwner::personal(owner),
+        "many",
+        false,
+        &"line-token\n".repeat(40),
+    )
+    .await;
+    // Web/store writes record commits without any contributor-cache population.
+    let totals = db::users::accounts::list_admin_account_summaries(f.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        totals
+            .iter()
+            .find(|user| user.id == owner)
+            .unwrap()
+            .commits_total,
+        1
+    );
+    let activity = db::users::accounts::list_admin_activity_points(f.pool(), 7)
+        .await
+        .unwrap();
+    // The repository and its first commit both contribute.
+    assert_eq!(
+        activity.last().unwrap().daily_contributions,
+        contributions_before + 2
+    );
+    // Explicit content search must not query discussion tables for unrelated tab counts.
+    f.execute("ALTER TABLE issues RENAME TO hidden_issues", &[])
+        .await;
+    f.execute("ALTER TABLE pull_requests RENAME TO hidden_pulls", &[])
+        .await;
+    let router = router(&f, root.path()).await;
+    let client = http::Client::anonymous(&router);
+    for (page, count) in [(1, 30), (2, 10)] {
+        let (status, html) = client
+            .page(&format!(
+                "/search?q=line-token%20repo:one_file/many&type=code&page={page}"
+            ))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{html}");
+        assert_eq!(
+            html.matches("/one_file/many/blob/main/notes.txt#L").count(),
+            count
+        );
+    }
+    let (status, html) = client
+        .page("/search?q=Add%20repo:one_file/many&type=commits")
+        .await;
+    assert_eq!(status, StatusCode::OK, "{html}");
+    assert!(html.contains("Add notes.txt"));
+    f.finish().await;
+}
+#[tokio::test]
+async fn sqlite_one_file_pages_and_content_search_skips_other_counts() {
+    one_file_and_unrelated_tables_contract(false).await;
+}
+#[tokio::test]
+async fn postgres_one_file_pages_and_content_search_skips_other_counts() {
+    one_file_and_unrelated_tables_contract(true).await;
+}
+
 /// A repository with more matches than a walk shows contributes five hits and a note that names it.
 async fn truncation_contract(pg: bool) {
     bundle::install();

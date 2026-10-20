@@ -273,6 +273,32 @@ impl Client {
     pub async fn form_reply(&self, path: &str, pairs: &[(&str, &str)]) -> Reply {
         let mut body = url::form_urlencoded::Serializer::new(String::new());
         body.append_pair("csrf_token", &self.csrf);
+        // New-issue forms carry the repository identity and the rendered template revision.
+        if path.ends_with("/issues/new") {
+            let template = pairs
+                .iter()
+                .find(|(name, _)| *name == "template")
+                .map_or("", |(_, value)| *value);
+            let (_, page) = self
+                .page(&format!(
+                    "{path}?template={}",
+                    codeyard::webui::encode_component(template)
+                ))
+                .await;
+            for name in ["repository_id", "template_revision"] {
+                if !pairs.iter().any(|(key, _)| *key == name) {
+                    if let Some(tail) = page.split_once(&format!("name=\"{name}\"")) {
+                        if let Some(value) = tail
+                            .1
+                            .split_once("value=\"")
+                            .and_then(|(_, tail)| tail.split('"').next())
+                        {
+                            body.append_pair(name, value);
+                        }
+                    }
+                }
+            }
+        }
         for (name, value) in pairs {
             body.append_pair(name, value);
         }

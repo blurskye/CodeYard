@@ -479,7 +479,11 @@ pub async fn teams(f: &Fixture) {
             f.form(
                 &f.owner,
                 &path,
-                &[("action", "team-delete"), ("team_id", id)]
+                &[
+                    ("action", "team-delete"),
+                    ("team_id", id),
+                    ("confirmation", id)
+                ]
             )
             .await
             .status,
@@ -675,6 +679,27 @@ pub async fn teams(f: &Fixture) {
     for key in ["org_id", "created_at", "billing_email", "disk_path"] {
         assert!(safe.get(key).is_none());
     }
+    let refused = f
+        .form(
+            &f.owner,
+            &path,
+            &[
+                ("action", "team-delete"),
+                ("team_id", &team_id),
+                ("confirmation", &secret.to_string()),
+            ],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        f.database
+            .count_rows(
+                "SELECT COUNT(*) FROM teams WHERE id=$1",
+                team_id.parse().unwrap()
+            )
+            .await,
+        1
+    );
     f.form(
         &f.owner,
         &path,

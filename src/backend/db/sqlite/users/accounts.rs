@@ -1,4 +1,4 @@
-use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, User};
+use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -188,7 +188,8 @@ pub async fn set_user_avatar(
         .execute(&mut *tx)
         .await?;
     if let Some(old) = previous.filter(|old| Some(*old) != avatar_file_id) {
-        crate::backend::db::sqlite::files::delete_replaced_picture(&mut tx, old).await?;
+        crate::backend::db::sqlite::files::delete_unreferenced_file_in_transaction(&mut tx, old)
+            .await?;
     }
     tx.commit().await?;
     Ok(UserAvatarOutcome::Applied(previous))
@@ -204,6 +205,21 @@ pub async fn update_user_profile(
 ) -> Result<User> {
     Ok(sqlx::query_as("UPDATE users SET display_name=COALESCE(?2,display_name),bio=COALESCE(?3,bio),location=COALESCE(?4,location),website=COALESCE(?5,website),updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *")
         .bind(user_id).bind(display_name).bind(bio).bind(location).bind(website).fetch_one(pool).await?)
+}
+
+pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE instr(lower(username),?1)>0 OR instr(lower(COALESCE(email,'')),?1)>0")
+        .bind(text.trim().to_lowercase()).fetch_one(pool).await?)
+}
+
+pub async fn list_admin_users(
+    pool: &SqlitePool,
+    text: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AdminUser>> {
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE instr(lower(username),?1)>0 OR instr(lower(COALESCE(email,'')),?1)>0 ORDER BY username,id LIMIT ?2 OFFSET ?3")
+        .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
 }
 
 pub async fn list_admin_account_summaries(pool: &SqlitePool) -> Result<Vec<AdminAccountSummary>> {

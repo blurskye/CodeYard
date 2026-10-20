@@ -82,12 +82,20 @@ impl RemoteStore {
         operation: Operation,
         body: &[u8],
     ) -> Result<T, RepoError> {
-        let (reply, _) = self.exchange(operation, body).await?;
+        let raw_json = matches!(
+            &operation,
+            Operation::FilePaths { .. } | Operation::CommitsBetween { .. }
+        );
+        let (reply, body) = self.exchange(operation, body).await?;
         let value = reply.result.map_err(|failure| match failure {
             Failure::Repository(error) => error,
             Failure::Merge(_) => rpc::wire::invalid("unexpected merge failure"),
         })?;
-        serde_json::from_value(value).map_err(|_| rpc::unavailable())
+        if raw_json {
+            serde_json::from_slice(&body).map_err(|_| rpc::unavailable())
+        } else {
+            serde_json::from_value(value).map_err(|_| rpc::unavailable())
+        }
     }
 
     pub(super) async fn call_as<T: DeserializeOwned>(
@@ -295,7 +303,7 @@ impl RemoteStore {
             git2::Oid::from_str(sha).map_err(|_| rpc::wire::invalid("invalid checkout commit"))?;
         // A checkout is a session like any other, also when this node serves it from its own
         // copy, which takes no permit of its own.
-        let _permit = crate::backend::git::repository::process::session_permit()
+        let permit = crate::backend::git::repository::process::session_permit()
             .await
             .map_err(RepoError::from)?;
         let want = format!("want {oid}\n");
@@ -326,6 +334,7 @@ impl RemoteStore {
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         drop(output);
-        LocalStore::checkout_pack(destination, sha, pack).await
+        let lock = crate::backend::git::locks::lock(destination).await;
+        LocalStore::checkout_pack(destination, sha, pack, permit, lock).await
     }
 }

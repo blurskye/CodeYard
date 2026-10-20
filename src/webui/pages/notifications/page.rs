@@ -28,6 +28,7 @@ pub struct Notification {
     /// The label of the reason the notification was sent for, such as "Comments".
     #[serde(default)]
     pub reason: Option<String>,
+    /// Bounded plain-text preview prepared by the server.
     pub body: Option<String>,
     pub link: Option<String>,
     pub read: bool,
@@ -439,7 +440,7 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                                     NavLink { href: link.clone(), class: "notification-link", "{headline(notification)}" }
                                 } else { "{headline(notification)}" }
                             }
-                            if let Some(preview) = notification.body.as_deref().map(body_preview).filter(|preview| !preview.is_empty()) {
+                            if let Some(preview) = notification.body.as_deref().filter(|preview| !preview.is_empty()) {
                                 p { class: "notification-preview", "{preview}" }
                             }
                             p { class: "notification-meta",

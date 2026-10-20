@@ -169,7 +169,7 @@ async fn delete_if_unselected(
     file: &File,
 ) -> Result<bool, sqlx::Error> {
     let selected: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE avatar_file_id=$1 UNION ALL SELECT 1 FROM organizations WHERE avatar_file_id=$1)",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE avatar_file_id=$1 UNION ALL SELECT 1 FROM organizations WHERE avatar_file_id=$1 UNION ALL SELECT 1 FROM release_assets WHERE file_id=$1)",
     )
     .bind(file.id)
     .fetch_one(&mut **tx)
@@ -185,9 +185,9 @@ async fn delete_if_unselected(
     Ok(true)
 }
 
-/// Removes a picture that an account has just replaced, inside that account's
-/// transaction, unless another account still selects it.
-pub(crate) async fn delete_replaced_picture(
+/// Removes an upload inside its former holder's transaction, unless another holder still
+/// references it. The file lock also excludes new asset links while it is being removed.
+pub(crate) async fn delete_unreferenced_file_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
     file_id: Uuid,
 ) -> Result<(), sqlx::Error> {

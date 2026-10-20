@@ -3,7 +3,7 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::check_repo_read_access;
 use crate::backend::api::repos::chrome;
-use crate::backend::api::repos::milestones::milestone_view;
+use crate::backend::api::repos::milestones::{milestone_choice_view, milestone_view};
 use crate::backend::api::repos::pulls::review_forms;
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
@@ -311,6 +311,8 @@ pub(crate) fn field(form: &HashMap<String, String>, name: &str) -> String {
 }
 pub(crate) fn submitted_new(form: &HashMap<String, String>) -> NewDraft {
     NewDraft {
+        repository_id: field(form, "repository_id"),
+        template_revision: field(form, "template_revision"),
         head_repo: field(form, "head_repo"),
         title: field(form, "title"),
         body: field(form, "body"),
@@ -510,6 +512,7 @@ pub(crate) async fn listed_head(
         .await
         .map_err(|_| unavailable(ctx))?
     else {
+        cache.insert(id, HeadRepository::Deleted);
         return Ok(HeadRepository::Deleted);
     };
     let shown = if can_view_head(ctx, &record).await? {
@@ -722,11 +725,7 @@ pub(crate) async fn item(
                 .map_err(|_| unavailable(ctx))?
                 .first()
                 .map_or(0, |(_, count)| *count);
-            let can_tick = repo.view.can_write
-                || ctx
-                    .user
-                    .as_ref()
-                    .is_some_and(|user| user.id == value.author_id);
+            let can_tick = repo.view.can_write;
             let mut shown = issue_item(value, author, labels);
             shown.can_tick = can_tick;
             shown.assignees = assignees;
@@ -1041,31 +1040,42 @@ pub(crate) async fn discussion(
             reviews = review_forms::page_reviews(ctx, repo, &pull, page_reviews).await?;
         }
     }
-    let events = db::timeline::list_events(
+    let event_page = chrome::number(ctx, "event_page", 1, MAX_COMMENT_PAGE)?;
+    if event_page == 0 {
+        return Err(ctx.error(StatusCode::BAD_REQUEST, "Page numbers start at 1."));
+    }
+    let event_offset = (event_page as i64 - 1) * db::timeline::EVENT_LIMIT;
+    let mut event_rows = db::timeline::list_events(
         &ctx.state.pool,
         subject.0.name(),
         subject.1,
         span.0,
         span.1,
-        db::timeline::EVENT_LIMIT,
+        db::timeline::EVENT_LIMIT + 1,
+        event_offset,
     )
     .await
-    .map_err(|_| unavailable(ctx))?
-    .into_iter()
-    .map(|event| view::Event {
-        actor: event.actor.unwrap_or_else(|| "Deleted user".to_owned()),
-        kind: event.kind,
-        detail: event.detail,
-        previous: event.previous,
-        created: event.created_at.to_rfc3339(),
-    })
-    .collect();
+    .map_err(|_| unavailable(ctx))?;
+    let events_next =
+        (event_rows.len() > db::timeline::EVENT_LIMIT as usize).then_some(event_page + 1);
+    event_rows.truncate(db::timeline::EVENT_LIMIT as usize);
+    let events = event_rows
+        .into_iter()
+        .map(|event| view::Event {
+            actor: event.actor.unwrap_or_else(|| "Deleted user".to_owned()),
+            kind: event.kind,
+            detail: event.detail,
+            previous: event.previous,
+            created: event.created_at.to_rfc3339(),
+        })
+        .collect();
     Ok(view::CommentPage {
         comments,
         reviews,
         page,
         has_more,
         events,
+        events_next,
     })
 }
 pub(crate) async fn render_detail(
@@ -1178,13 +1188,12 @@ pub(crate) async fn render_detail(
         } else {
             Vec::new()
         };
-        let milestones =
-            db::milestones::list_repo_milestones(&ctx.state.pool, repo.record.id, None)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .into_iter()
-                .map(milestone_view)
-                .collect();
+        let milestones = db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(milestone_choice_view)
+            .collect();
         (assignable, milestones)
     } else {
         (Vec::new(), Vec::new())
@@ -1455,5 +1464,103 @@ pub(crate) fn expected(
         Err("This entry changed after the form was opened. Review the current entry and your preserved submission before retrying.")
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn listed_heads_reuse_the_base_and_each_distinct_visibility_check() {
+        let pool = db::init_db("sqlite::memory:").await.unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        let db::DbPool::Sqlite(sqlite) = &pool else {
+            unreachable!()
+        };
+        sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();
+        let owner = db::users::accounts::create_user(&pool, "alice", None)
+            .await
+            .unwrap();
+        let root = tempfile::tempdir().unwrap();
+        for (name, private) in [("proj", false), ("vault", true)] {
+            crate::backend::repositories::lifecycle::provision(
+                (&pool, None),
+                root.path(),
+                db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+                name,
+                None,
+                private,
+                None,
+            )
+            .await
+            .unwrap();
+        }
+        let state = Arc::new(AppState::new(
+            pool.clone(),
+            root.path().into(),
+            Arc::new(
+                crate::backend::storage::ObjectStore::open(root.path(), None)
+                    .await
+                    .unwrap(),
+            ),
+            None,
+            crate::backend::ci::CiConfig::default(),
+            None,
+        ));
+        let ctx = PageContext::load(
+            state,
+            HeaderMap::new(),
+            &"/alice/proj/pulls".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+        let repo = repository(&ctx, "alice", "proj").await.unwrap();
+        let private = db::repositories::records::get_repository(&pool, "alice", "vault")
+            .await
+            .unwrap()
+            .unwrap();
+        let display = |id, name: &str| db::pull_requests::records::PullRequestHeadDisplay {
+            id,
+            name: name.into(),
+            owner_name: Some("alice".into()),
+        };
+        let mut cache = HashMap::new();
+        assert!(matches!(
+            listed_head(
+                &ctx,
+                repo.record.id,
+                &mut cache,
+                Some(display(private.id, "vault"))
+            )
+            .await
+            .unwrap(),
+            HeadRepository::Unreadable
+        ));
+        pool.close().await;
+        for _ in 0..100 {
+            assert!(matches!(
+                listed_head(
+                    &ctx,
+                    repo.record.id,
+                    &mut cache,
+                    Some(display(repo.record.id, "proj"))
+                )
+                .await
+                .unwrap(),
+                HeadRepository::Deleted
+            ));
+            assert!(matches!(
+                listed_head(
+                    &ctx,
+                    repo.record.id,
+                    &mut cache,
+                    Some(display(private.id, "vault"))
+                )
+                .await
+                .unwrap(),
+                HeadRepository::Unreadable
+            ));
+        }
     }
 }

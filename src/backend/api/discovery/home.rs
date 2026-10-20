@@ -33,16 +33,40 @@ pub(super) async fn home(
         .map(|text| text.trim().chars().take(100).collect::<String>())
         .unwrap_or_default();
     // This scope comes from the verified session, never from a query/form owner.
-    let own =
-        match db::repositories::records::list_user_repositories(&ctx.state.pool, user.id).await {
-            Ok(repos) => repos,
-            Err(_) => return unavailable(&ctx, "home_repositories"),
-        };
-    let shared =
-        match db::repositories::records::list_shared_repositories(&ctx.state.pool, user.id).await {
-            Ok(rows) => rows,
-            Err(_) => return unavailable(&ctx, "home_shared_repositories"),
-        };
+    const PAGE_SIZE: i64 = 30;
+    let page = ctx
+        .query
+        .get("page")
+        .and_then(|page| page.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let offset = i64::try_from(page.saturating_sub(1).saturating_mul(PAGE_SIZE as usize))
+        .unwrap_or(i64::MAX);
+    let (own, repository_count) = match db::repositories::records::list_user_repository_page(
+        &ctx.state.pool,
+        user.id,
+        true,
+        &find,
+        PAGE_SIZE,
+        offset,
+    )
+    .await
+    {
+        Ok(repos) => repos,
+        Err(_) => return unavailable(&ctx, "home_repositories"),
+    };
+    let (shared, shared_count) = match db::repositories::records::list_shared_repository_page(
+        &ctx.state.pool,
+        user.id,
+        &find,
+        PAGE_SIZE,
+        offset,
+    )
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => return unavailable(&ctx, "home_shared_repositories"),
+    };
     let public = match db::repositories::records::list_public_repositories(
         &ctx.state.pool,
         RepositorySort::Recent,
@@ -54,7 +78,6 @@ pub(super) async fn home(
         Err(_) => return unavailable(&ctx, "home_trending"),
     };
     // Trending is for other people's repositories, so the viewer's own are left out.
-    let own_ids: std::collections::HashSet<i64> = own.iter().map(|repo| repo.id).collect();
     // The filter narrows every repository list on the dashboard, Trending included.
     let needle = find.to_lowercase();
     let matches = |repo: &db::models::Repository| {
@@ -66,16 +89,14 @@ pub(super) async fn home(
     };
     let public: Vec<_> = public
         .into_iter()
-        .filter(|repo| !own_ids.contains(&repo.id) && matches(repo))
+        .filter(|repo| !repo.is_personal_owner(user.id) && matches(repo))
         .collect();
-    let own: Vec<_> = own.into_iter().filter(|repo| matches(repo)).collect();
     let repositories = match dashboard_cards(&ctx.state, own).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_repository_owners"),
     };
     let (shared_repos, levels): (Vec<_>, Vec<_>) = shared
         .into_iter()
-        .filter(|row| matches(&row.repository))
         .map(|row| (row.repository, row.access_level))
         .unzip();
     let shared = match dashboard_cards(&ctx.state, shared_repos).await {
@@ -129,6 +150,10 @@ pub(super) async fn home(
             shared,
             trending,
             find,
+            page,
+            repository_count,
+            shared_count,
+            has_older: offset.saturating_add(PAGE_SIZE) < repository_count.max(shared_count),
         })),
     )
 }

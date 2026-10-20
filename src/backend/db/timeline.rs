@@ -47,6 +47,7 @@ native_operation!(crate::backend::db::postgres::timeline::list_events,
     after: Option<DateTime<Utc>>,
     before: Option<DateTime<Utc>>,
     limit: i64,
+    offset: i64,
 ) -> Result<Vec<TimelineEvent>>);
 
 /// Records an event on an issue or pull request named by its `AssignedItem`.

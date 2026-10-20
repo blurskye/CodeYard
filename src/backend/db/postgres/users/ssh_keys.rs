@@ -64,9 +64,17 @@ async fn insert_ssh_key(
     anyhow::ensure!(!used, SshKeyWriteRefusal::AlreadyUsed);
     if let Some(session_id) = session_id {
         // A separate statement sees revocation committed while the account lock waited.
-        let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=$1 AND user_id=$2 AND expires_at>clock_timestamp())")
-            .bind(session_id).bind(user_id).fetch_one(&mut *tx).await?;
-        anyhow::ensure!(live, SshKeyWriteRefusal::InvalidSession);
+        let expiry: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE",
+        )
+        .bind(session_id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        anyhow::ensure!(
+            expiry.is_some_and(|expiry| expiry > Utc::now()),
+            SshKeyWriteRefusal::InvalidSession
+        );
     }
     let result = sqlx::query_as::<_, SshKey>(
         r#"

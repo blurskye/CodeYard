@@ -1,6 +1,7 @@
 mod authority;
 mod contribution_authority;
 mod discovery_owner;
+mod identity_regressions;
 mod namespace_authority;
 mod owner_authorization;
 mod pages;

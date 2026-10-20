@@ -65,6 +65,37 @@ fn ours(profile: &OrganizationProfile) -> Vec<&str> {
         .collect()
 }
 
+// Follow every repository page while retaining the profile's metadata for visibility checks.
+async fn all_repositories(f: &Fixture, actor: Option<&Actor>) -> OrganizationProfile {
+    let mut path = "/native_org".to_owned();
+    let mut result: Option<OrganizationProfile> = None;
+    loop {
+        let reply = match actor {
+            Some(actor) => f.get(actor, &path).await,
+            None => anonymous_get(f, &path).await,
+        };
+        let page = public_profile(&reply);
+        assert!(page.repositories.len() <= 30);
+        let more = page.more;
+        let after = page.after;
+        match &mut result {
+            Some(result) => {
+                assert!(after > result.after);
+                assert_eq!(page.repository_count, result.repository_count);
+                result.repositories.extend(page.repositories);
+                result.after = after;
+            }
+            None => result = Some(page),
+        }
+        if !more {
+            let result = result.unwrap();
+            assert_eq!(result.repositories.len() as i64, result.repository_count);
+            return result;
+        }
+        path = format!("/native_org?after={after}");
+    }
+}
+
 pub async fn contracts(f: &Fixture) {
     f.database
         .organization_repository(f.org, "open-tools", false)
@@ -73,7 +104,7 @@ pub async fn contracts(f: &Fixture) {
         .organization_repository(f.org, "closed-tools", true)
         .await;
 
-    let anonymous = public_profile(&anonymous_get(f, "/native_org").await);
+    let anonymous = all_repositories(f, None).await;
     assert_eq!(anonymous.organization.name, "native_org");
     assert_eq!(ours(&anonymous), ["open-tools"]);
     assert!(!anonymous.manage);
@@ -220,7 +251,11 @@ pub async fn tabs(f: &Fixture) {
         assert_eq!(visitor.tab, "repositories");
         assert!(visitor.people.is_empty() && visitor.teams.is_empty());
         assert_eq!(visitor.member_count, None);
-        assert!(!visitor.more);
+        assert!(visitor.repositories.len() <= 30);
+        assert_eq!(
+            visitor.more,
+            visitor.repository_count > visitor.repositories.len() as i64
+        );
     }
     // A site administrator who is not a member is a visitor here too.
     let outsider = public_profile(&f.get(&f.outsider, "/native_org?tab=people").await);

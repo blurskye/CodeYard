@@ -718,9 +718,15 @@ pub async fn edit_pull_request_comment(
     )
     .await
     .map_err(super::write_error)?
-    .ok_or_else(|| OperationError::Denied {
-        code: "comment_forbidden",
-        message: "You cannot edit this comment.".to_owned(),
+    .ok_or_else(|| match expected_body {
+        Some(_) => OperationError::Conflict {
+            code: "conflict",
+            message: "This comment changed; reload before ticking a task.".to_owned(),
+        },
+        None => OperationError::Denied {
+            code: "comment_forbidden",
+            message: "You cannot edit this comment.".to_owned(),
+        },
     })?;
 
     // Only the names the edit adds notify; the others were notified when first written. The

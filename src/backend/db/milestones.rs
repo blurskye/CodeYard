@@ -59,6 +59,11 @@ native_operation!(crate::backend::db::postgres::milestones::list_repo_milestones
     crate::backend::db::sqlite::milestones::list_repo_milestones,
     fn list_repo_milestones(pool: &DbPool, repo_id: i64, state: Option<&str>) -> Result<Vec<MilestoneSummary>>);
 
+// Milestones for pickers, without counting linked issues or pull requests.
+native_operation!(crate::backend::db::postgres::milestones::list_milestone_choices,
+    crate::backend::db::sqlite::milestones::list_milestone_choices,
+    fn list_milestone_choices(pool: &DbPool, repo_id: i64) -> Result<Vec<Milestone>>);
+
 // Sets or clears (`None`) the milestone of an issue. The milestone is found by its number in
 // the same repository.
 native_operation!(crate::backend::db::postgres::milestones::set_issue_milestone,

@@ -23,7 +23,7 @@ use anyhow::Error;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-pub use crate::backend::db::releases::{ReleaseFields, ReleaseRefusal};
+pub use crate::backend::db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
 
 pub const MAX_ASSET_BYTES: usize = 100 * 1024 * 1024;
 
@@ -449,10 +449,14 @@ pub async fn update(
     owner: &str,
     name: &str,
     release_id: i64,
-    fields: &ReleaseFields,
+    fields: &ReleaseChanges,
 ) -> Result<Release, ReleaseError> {
     let (repository, user) = writable(pool, actor, owner, name).await?;
-    validate_fields(fields)?;
+    validate_fields(&ReleaseFields {
+        name: fields.name.clone().flatten(),
+        body: fields.body.clone().flatten(),
+        ..Default::default()
+    })?;
     let before = db::releases::get_release(pool, repository.id, release_id)
         .await
         .map_err(unavailable)?

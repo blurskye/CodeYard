@@ -1,15 +1,26 @@
 //! Administrator users page: search, the account list with its actions, and account creation.
 use crate::webui::components::{compact_date, confirm_dialog, count_label};
 use crate::webui::navigation::NavLink;
-use crate::webui::pages::admin::Account;
 use crate::webui::pages::fields::{csrf, managed_account_form, notice, FormValues};
 use dioxus::prelude::*;
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct AccountMetadata {
+    pub id: i64,
+    pub username: String,
+    pub email: String,
+    pub admin: bool,
+    pub banned: bool,
+    pub must_change_password: bool,
+    pub two_factor: bool,
+    pub created: String,
+}
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AdminUsers {
     pub current_user_id: i64,
     /// The rows on this page.
-    pub accounts: Vec<Account>,
+    pub accounts: Vec<AccountMetadata>,
     /// The search text, trimmed. Empty lists every account.
     pub search: String,
     pub page: usize,
@@ -47,7 +58,7 @@ fn listing_fields(search: &str, page: usize) -> Element {
 /// The per-row menu. Each choice is a link to a confirmation dialog, or a form that needs
 /// no confirmation, so the menu works before scripts load.
 #[component]
-fn AccountActions(account: Account, token: String, search: String, page: usize) -> Element {
+fn AccountActions(account: AccountMetadata, token: String, search: String, page: usize) -> Element {
     let id = account.id;
     let menu_label = format!("Actions for {}", account.username);
     let ban_id = format!("ban-account-{id}");

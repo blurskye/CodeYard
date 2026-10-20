@@ -394,30 +394,33 @@ async fn load_search(
         return Ok(model);
     }
     let unavailable = |_| DiscoveryReadError::Unavailable;
-    // The tab badges count each bucket's matches up to SEARCH_COUNT_CAP. A page learns whether an
-    // older page has results from one row past its own, so counting never scans past the cap.
+    // Explicit content searches do not scan unrelated tables for tab badges.
     let cap = SEARCH_COUNT_CAP as i64;
-    let counts = SearchCounts {
-        repositories: count_as_usize(
-            db::repositories::discovery::count_repositories(&state.pool, viewer, &query, cap)
-                .await
-                .map_err(unavailable)?,
-        ),
-        issues: count_as_usize(
-            db::repositories::discovery::count_issues(&state.pool, viewer, &query, cap)
-                .await
-                .map_err(unavailable)?,
-        ),
-        pulls: count_as_usize(
-            db::repositories::discovery::count_pull_requests(&state.pool, viewer, &query, cap)
-                .await
-                .map_err(unavailable)?,
-        ),
-        users: count_as_usize(
-            db::repositories::discovery::count_users(&state.pool, &query, cap)
-                .await
-                .map_err(unavailable)?,
-        ),
+    let counts = if matches!(tab.as_deref(), Some("code" | "commits")) {
+        SearchCounts::default()
+    } else {
+        SearchCounts {
+            repositories: count_as_usize(
+                db::repositories::discovery::count_repositories(&state.pool, viewer, &query, cap)
+                    .await
+                    .map_err(unavailable)?,
+            ),
+            issues: count_as_usize(
+                db::repositories::discovery::count_issues(&state.pool, viewer, &query, cap)
+                    .await
+                    .map_err(unavailable)?,
+            ),
+            pulls: count_as_usize(
+                db::repositories::discovery::count_pull_requests(&state.pool, viewer, &query, cap)
+                    .await
+                    .map_err(unavailable)?,
+            ),
+            users: count_as_usize(
+                db::repositories::discovery::count_users(&state.pool, &query, cap)
+                    .await
+                    .map_err(unavailable)?,
+            ),
+        }
     };
     model.tab = tab.unwrap_or_else(|| first_search_tab_with_results(&counts).into());
     let offset =

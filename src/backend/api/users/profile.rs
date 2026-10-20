@@ -95,12 +95,13 @@ pub(crate) async fn profile_response(
     // repositories and the activity feed.
     let stars_tab = ctx.query.get("tab").map(String::as_str) == Some("stars");
     let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
-    let repository_page = ctx
+    let repositories_page = ctx
         .query
         .get("repo_page")
-        .and_then(|page| page.parse::<i64>().ok())
+        .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(1)
         .clamp(1, 10_000);
+    let repository_query = ctx.query.get("q").map(String::as_str).unwrap_or("");
     let listing = if stars_tab {
         crate::backend::identity::profiles::repository_count_on_profile(
             &ctx.state.pool,
@@ -114,9 +115,11 @@ pub(crate) async fn profile_response(
             &ctx.state.pool,
             username,
             viewer,
-            repository_page,
+            repository_query,
+            repositories_page,
         )
         .await
+        .map(|(target, repositories, count)| (target, count, repositories))
     };
     let (target, repository_count, repositories) = match listing {
         Ok(value) => value,
@@ -200,6 +203,18 @@ pub(crate) async fn profile_response(
         Ok(stars) => stars,
         Err(response) => return response,
     };
+    let repository_href = |page: usize| {
+        format!(
+            "/{}?repo_page={page}&q={}",
+            crate::webui::encode_component(&target.username),
+            crate::webui::encode_component(repository_query)
+        )
+    };
+    let repositories_newer =
+        (!stars_tab && repositories_page > 1).then(|| repository_href(repositories_page - 1));
+    let repositories_older = (!stars_tab
+        && repositories_page.saturating_mul(30) < repository_count)
+        .then(|| repository_href(repositories_page.saturating_add(1)));
     let title = format!("{}'s profile", target.username);
     ctx.page_model_status(
         status,
@@ -208,8 +223,8 @@ pub(crate) async fn profile_response(
             profile: profile_model(&target),
             repositories,
             repository_count,
-            repository_next: (!stars_tab && (repository_page as usize) * 30 < repository_count)
-                .then_some(repository_page as usize + 1),
+            repositories_newer,
+            repositories_older,
             csrf_token: ctx.csrf_token.clone(),
             own,
             authenticated: ctx.user.is_some(),

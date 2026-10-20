@@ -41,6 +41,7 @@ pub enum TwoFactorError {
     Admission(AdmissionError),
     Password(PasswordError),
     InvalidPassword,
+    PasswordRequired,
     InvalidCode,
     AlreadyEnabled,
     NotEnabled,
@@ -245,7 +246,13 @@ pub async fn begin_setup(
     pool: &DbPool,
     encryptor: &SecretEncryptor,
     user: &User,
+    session_id: &str,
+    password: &str,
 ) -> Result<Setup, TwoFactorError> {
+    if user.password_hash.is_none() {
+        return Err(TwoFactorError::PasswordRequired);
+    }
+    verify_current_password(pool, user, password).await?;
     if db::users::two_factor::get_two_factor(pool, user.id)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
@@ -258,9 +265,10 @@ pub async fn begin_setup(
     let token = seal(
         encryptor,
         &format!(
-            "setup|{}|{}|{encoded}|{}",
+            "setup|{}|{}|{encoded}|{}|{}",
             now_unix() + SETUP_SECONDS,
             user.id,
+            client_digest(Some(session_id)),
             password_digest(user.password_hash.as_deref())
         ),
     )?;
@@ -276,12 +284,17 @@ pub async fn begin_setup(
 pub fn open_setup(
     encryptor: &SecretEncryptor,
     user: &User,
+    session_id: &str,
     token: &str,
     now: u64,
 ) -> Result<Setup, TwoFactorError> {
     let fields = open_fields(encryptor, token, "setup", now).ok_or(TwoFactorError::SetupExpired)?;
+    if user.password_hash.is_none() {
+        return Err(TwoFactorError::PasswordRequired);
+    }
     if fields[2] != user.id.to_string()
-        || fields.get(4) != Some(&password_digest(user.password_hash.as_deref()))
+        || fields.get(4) != Some(&client_digest(Some(session_id)))
+        || fields.get(5) != Some(&password_digest(user.password_hash.as_deref()))
     {
         return Err(TwoFactorError::SetupExpired);
     }
@@ -304,9 +317,12 @@ pub async fn confirm_setup(
     token: &str,
     code: &str,
 ) -> Result<Vec<String>, TwoFactorError> {
+    if user.password_hash.is_none() {
+        return Err(TwoFactorError::PasswordRequired);
+    }
     verify_current_password(pool, user, password).await?;
     let now = now_unix();
-    let setup = open_setup(encryptor, user, token, now)?;
+    let setup = open_setup(encryptor, user, session, token, now)?;
     let secret = BASE32_NOPAD
         .decode(setup.secret.as_bytes())
         .map_err(|_| TwoFactorError::SetupExpired)?;

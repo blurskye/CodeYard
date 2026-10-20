@@ -183,6 +183,32 @@ impl RpcHandler {
         Err(invalid(NOT_STORED))
     }
 
+    /// CI may request its pinned objects after a force-push made them unreachable.
+    /// Public Git sessions keep ordinary upload-pack reachability checks.
+    pub(super) async fn checkout_access(
+        &self,
+        request: &Request,
+        repo_id: Option<i64>,
+        caller: iroh::PublicKey,
+    ) -> Result<bool, RepoError> {
+        let (Some(repo_id), Some(run)) = (repo_id, request.ci_run.as_ref()) else {
+            return Ok(false);
+        };
+        if !matches!(&request.operation, Operation::GitSession(session) if session.service == GitService::UploadPack)
+        {
+            return Ok(false);
+        }
+        db::ci::ci_run_allows_repository_read(
+            self.context.database()?,
+            run.id,
+            repo_id,
+            &run.worker,
+            &caller.to_string(),
+        )
+        .await
+        .map_err(|_| unavailable())
+    }
+
     pub(super) async fn authorize_request(
         &self,
         request: &Request,
@@ -331,6 +357,7 @@ impl RpcHandler {
         body: Vec<u8>,
         caller: iroh::PublicKey,
     ) -> Result<(Value, Vec<u8>), Failure> {
+        let received = std::time::Instant::now();
         let (store, repo_id) = self.authorize_request(&request, caller).await?;
         let pool = self.context.database()?;
         let actor = request.actor;
@@ -450,13 +477,27 @@ impl RpcHandler {
                 git_ref,
                 limit,
                 filter,
-            } => json!(store.commits(&git_ref, 0, limit, &filter)),
+                walk_millis,
+            } => {
+                let budget = walk_millis
+                    .map(std::time::Duration::from_millis)
+                    .unwrap_or(crate::backend::git::COMMIT_WALK_TIMEOUT)
+                    .min(crate::backend::git::COMMIT_WALK_TIMEOUT);
+                json!(store.commits_until(&git_ref, 0, limit, &filter, received + budget))
+            }
             Operation::CommitPage {
                 git_ref,
                 offset,
                 limit,
                 filter,
-            } => json!(store.commits(&git_ref, offset, limit, &filter)),
+                walk_millis,
+            } => {
+                let budget = walk_millis
+                    .map(std::time::Duration::from_millis)
+                    .unwrap_or(crate::backend::git::COMMIT_WALK_TIMEOUT)
+                    .min(crate::backend::git::COMMIT_WALK_TIMEOUT);
+                json!(store.commits_until(&git_ref, offset, limit, &filter, received + budget))
+            }
             Operation::SearchCode {
                 git_ref,
                 text,
@@ -479,7 +520,12 @@ impl RpcHandler {
                 base_ref,
                 head_ref,
                 limit,
-            } => json!(store.commits_between(&base_ref, &head_ref, limit)),
+            } => {
+                output =
+                    serde_json::to_vec(&store.commits_between(&base_ref, &head_ref, limit).await?)
+                        .map_err(|_| Failure::Repository(unavailable()))?;
+                Value::Null
+            }
             Operation::DiffFile {
                 base_ref,
                 head_ref,
@@ -515,7 +561,11 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Languages { git_ref } => json!(store.languages(&git_ref)),
-            Operation::FilePaths { git_ref, limit } => json!(store.file_paths(&git_ref, limit)),
+            Operation::FilePaths { git_ref, limit } => {
+                output = serde_json::to_vec(&store.file_paths(&git_ref, limit).await?)
+                    .map_err(|_| Failure::Repository(unavailable()))?;
+                Value::Null
+            }
             Operation::Blame { git_ref, path } => json!(store.blame(&git_ref, &path)),
             Operation::Contributors => json!(store.contributors()),
             Operation::IsAncestor {

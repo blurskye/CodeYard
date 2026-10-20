@@ -34,6 +34,122 @@ use tracing::instrument::WithSubscriber;
 use tracing_subscriber::prelude::*;
 use uuid::Uuid;
 
+#[tokio::test]
+async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories() {
+    let database = native::PostgresDatabase::new().await;
+    let root = tempfile::tempdir().unwrap();
+    let repos = root.path().join("repos");
+    std::fs::create_dir(&repos).unwrap();
+    let owner = db::users::accounts::create_user(&database.pool, "startup_owner", None)
+        .await
+        .unwrap();
+    let path = repos.join(format!("{}.git", Uuid::new_v4()));
+    let bare = git2::Repository::init_bare(&path).unwrap();
+    let workflow = b"on: push\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps: []\n";
+    let blob = bare.blob(workflow).unwrap();
+    let mut workflows = bare.treebuilder(None).unwrap();
+    workflows.insert("ci.yml", blob, 0o100644).unwrap();
+    let mut github = bare.treebuilder(None).unwrap();
+    github
+        .insert("workflows", workflows.write().unwrap(), 0o040000)
+        .unwrap();
+    let mut tree = bare.treebuilder(None).unwrap();
+    tree.insert(".github", github.write().unwrap(), 0o040000)
+        .unwrap();
+    let tree = bare.find_tree(tree.write().unwrap()).unwrap();
+    let signature = git2::Signature::now("Tester", "tester@example.invalid").unwrap();
+    let sha = bare
+        .commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            "queued",
+            &tree,
+            &[],
+        )
+        .unwrap();
+    bare.set_head("refs/heads/main").unwrap();
+    let repo = db::repositories::records::create_repository(
+        &database.pool,
+        owner.id,
+        "queued",
+        None,
+        false,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    assert!(repo.storage_node_id.is_none());
+    let queued = enqueue(
+        &database.pool,
+        repo.id,
+        owner.id,
+        &sha.to_string(),
+        &blob.to_string(),
+    )
+    .await;
+    let act = root.path().join("act");
+    std::fs::write(&act, "#!/usr/bin/env bash\nexit 0\n").unwrap();
+    std::fs::set_permissions(&act, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let log = root.path().join("server.log");
+    let output = std::fs::File::create(&log).unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap())
+        .env("HOME", root.path())
+        .env("DATABASE_URL", database.connection_url())
+        .env("GITSERV_STATE_DIR", root.path().join("state"))
+        .env("REPOS_PATH", &repos)
+        .env("NODE_NAME", "startup-node")
+        .env("IROH_BIND", "127.0.0.1:0")
+        .env("CI_EXECUTION_MODE", "local")
+        .env("CI_ACT_BINARY", &act)
+        .env("CI_MAX_ACTIVE_RUNS", "1")
+        .env("CI_TRUSTED_ACTOR_IDS", owner.id.to_string())
+        .args([
+            "serve",
+            "--roles",
+            "storage,actions-worker",
+            "--ssh-mode",
+            "disabled",
+        ])
+        .current_dir(root.path())
+        .stdin(std::process::Stdio::null())
+        .stdout(output.try_clone().unwrap())
+        .stderr(output)
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let run = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "{}",
+                std::fs::read_to_string(&log).unwrap()
+            );
+            let run = db::ci::get_ci_run_by_run_id(&database.pool, queued.run_id)
+                .await
+                .unwrap()
+                .unwrap();
+            if matches!(run.status.as_str(), "success" | "failed" | "cancelled") {
+                break run;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("preexisting run was never executed");
+    child.kill().await.unwrap();
+    child.wait().await.unwrap();
+    assert_eq!(
+        run.status,
+        "success",
+        "{:?}\n{}",
+        run.error_message,
+        std::fs::read_to_string(&log).unwrap()
+    );
+}
+
 fn line(text: &str) -> LogLine {
     LogLine {
         stage: "ci.yml".into(),
@@ -444,6 +560,38 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         std::fs::read(checkout.join(".github/workflows/ci.yml")).unwrap(),
         workflow
     );
+    // The admitted commit remains checkoutable after an unrelated force-push.
+    {
+        let bare = git2::Repository::open_bare(&path).unwrap();
+        let tree = bare
+            .find_tree(bare.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        let signature = git2::Signature::now("Tester", "tester@example.invalid").unwrap();
+        let unrelated = bare
+            .commit(None, &signature, &signature, "unrelated", &tree, &[])
+            .unwrap();
+        bare.reference("refs/heads/main", unrelated, true, "force push")
+            .unwrap();
+        worker_store
+            .checkout(&root.path().join("abandoned-checkout"), &revision.sha)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read(
+                root.path()
+                    .join("abandoned-checkout/.github/workflows/ci.yml")
+            )
+            .unwrap(),
+            workflow
+        );
+        bare.reference(
+            "refs/heads/main",
+            git2::Oid::from_str(&revision.sha).unwrap(),
+            true,
+            "restore fixture",
+        )
+        .unwrap();
+    }
     for (operation, worker_read) in rpc_operations::operations(&revision.sha) {
         if worker_read {
             repository_refused(&other_connection, uuid, operation, "running CI claim").await;

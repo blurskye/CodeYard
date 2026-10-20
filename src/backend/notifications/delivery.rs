@@ -28,11 +28,16 @@ pub async fn current_event(
         } => Some(*notification_id),
         NotificationEvent::ReadAll { .. } | NotificationEvent::UnreadCount { .. } => None,
     };
-    let projection =
+    let mut projection =
         db::notifications::records::notification_delivery(pool, session_id, user_id, id)
             .await
             .map_err(|_| DeliveryError::Unavailable)?
             .ok_or(DeliveryError::Denied)?;
+    if let Some(notification) = projection.notification.as_mut() {
+        db::notifications::records::refresh_links(pool, std::slice::from_mut(notification))
+            .await
+            .map_err(|_| DeliveryError::Unavailable)?;
+    }
     let unread_count = projection.unread_count;
     Ok(match event {
         NotificationEvent::Created { .. } => {

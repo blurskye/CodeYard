@@ -851,6 +851,63 @@ async fn contract(pg: bool) {
         "the existing upload grace period may delay cleanup, but the work must be queued"
     );
 
+    // Deletion removes an unselected picture, but preserves a picture still selected elsewhere.
+    let deleted_org = organization(f.pool(), ids[2], "deleted_picture").await;
+    let other_org = organization(f.pool(), ids[2], "retained_picture").await;
+    let picture = upload(&carol, "org_avatar", PNG, true).await;
+    for org_id in [deleted_org, other_org] {
+        assert!(matches!(
+            organizations::set_organization_avatar(f.pool(), ids[2], org_id, Some(uuid(&picture)))
+                .await
+                .unwrap(),
+            OrganizationOutcome::Applied(_)
+        ));
+    }
+    assert!(matches!(
+        organizations::delete_organization(f.pool(), ids[2], deleted_org)
+            .await
+            .unwrap(),
+        OrganizationOutcome::Applied(())
+    ));
+    assert_eq!(download(&nobody, &picture).await, StatusCode::OK);
+    assert!(matches!(
+        organizations::delete_organization(f.pool(), ids[2], other_org)
+            .await
+            .unwrap(),
+        OrganizationOutcome::Applied(())
+    ));
+    assert_eq!(download(&nobody, &picture).await, StatusCode::NOT_FOUND);
+
+    // Account-backed avatar lookups are not an anonymous enumeration API on private nodes.
+    f.execute(
+        "UPDATE node_configuration SET node_mode='private' WHERE id=1",
+        &[],
+    )
+    .await;
+    for name in ["alice", "acme", "unknown_account"] {
+        let response = nobody
+            .exchange("GET", &format!("/avatars/{name}"), "text/html", Vec::new())
+            .await;
+        assert_eq!(response.status, StatusCode::NOT_FOUND);
+        assert!(response.location.is_none());
+    }
+    use tower::ServiceExt;
+    let response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/avatars/acme")
+                .header("cookie", format!("session_id={}", carol.session))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(response.headers()["cache-control"]
+        .to_str()
+        .unwrap()
+        .contains("no-store"));
+
     // Picture types are recognized by their bytes.
     assert_eq!(avatars::picture_type(PNG), Some("image/png"));
     assert_eq!(
