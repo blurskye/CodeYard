@@ -33,8 +33,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/explore", get(explore::explore_page))
         .route("/search", get(search::search_page))
         .route("/stars", get(stars::stars_page))
-        .route("/demo", get(home::demo))
-        .route("/demo/no-nav", get(home::demo_no_nav))
         .layer(DefaultBodyLimit::max(16 * 1024));
     api.merge(pages)
 }

@@ -77,9 +77,6 @@ pub fn team_page(page: TeamPage) -> Element {
     );
     let current = |active: bool| active.then(|| "page".to_owned());
     rsx! {
-        // Trusted static CSS: the header and cards reuse the organization and profile styles.
-        style { dangerous_inner_html: include_str!("../account.css") }
-        style { dangerous_inner_html: include_str!("organization.css") }
         div { class: "org-page identity-profile-content",
             header { class: "org-page-header",
                 NavLink { href: org_path.clone(), {avatar::picture(&org, "org-avatar", 64)} }

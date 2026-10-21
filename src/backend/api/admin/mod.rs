@@ -1,8 +1,10 @@
 //! Site administration routes; endpoint operations retain their current authority.
 pub(crate) mod accounts;
-pub(crate) mod activity_chart;
 pub(crate) mod ai_crawlers;
+pub(crate) mod audit;
+pub(crate) mod email;
 pub(crate) mod nodes;
+pub(crate) mod overview;
 pub(crate) mod signup_requests;
 pub(crate) mod storage;
 pub(crate) mod users;
@@ -29,10 +31,6 @@ pub fn router() -> Router<Arc<AppState>> {
             get(accounts::admin_list_accounts),
         )
         .route(
-            "/api/auth/admin/activity-chart",
-            get(activity_chart::admin_activity_chart),
-        )
-        .route(
             "/api/auth/admin/accounts/:user_id/ban",
             patch(accounts::admin_set_user_ban),
         )
@@ -51,19 +49,19 @@ pub fn router() -> Router<Arc<AppState>> {
         .route_layer(from_fn(csrf::auth_submission))
         .layer(from_fn(middleware::private_api_response));
     let pages = Router::new()
-        .route("/admin", get(accounts::admin_get))
-        .route("/admin/users", get(users::users_get))
-        .route("/admin/access/users", post(users::managed_user_post))
-        .route("/admin/ai-crawlers", post(ai_crawlers::ai_crawlers_post))
+        .route("/admin", get(overview::admin_get))
         .route(
-            "/admin/access/requests/:request_id/resolve",
-            post(signup_requests::signup_post),
+            "/admin/users",
+            get(users::users_get).post(users::managed_user_post),
         )
-        // The Account access tab in Settings posts to the same handlers.
-        .route("/settings/access/users", post(users::managed_user_post))
         .route(
-            "/settings/access/requests/:request_id/resolve",
-            post(signup_requests::signup_post),
+            "/admin/users/requests/:request_id/resolve",
+            post(users::signup_post),
+        )
+        .route("/admin/audit", get(audit::audit_get))
+        .route(
+            "/admin/settings",
+            get(ai_crawlers::settings_get).post(ai_crawlers::settings_post),
         )
         .route("/admin/accounts/:user_id/ban", post(users::ban_post))
         .route("/admin/accounts/:user_id/role", post(users::role_post))
@@ -73,6 +71,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .layer(DefaultBodyLimit::max(16 * 1024));
     api.merge(pages)
+        .merge(email::router())
         .merge(nodes::router())
         .merge(storage::router())
 }

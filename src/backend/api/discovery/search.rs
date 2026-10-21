@@ -34,10 +34,10 @@ pub(super) const RESULTS_PER_PAGE: usize = 30;
 
 static SEARCHES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 
-fn admit_search() -> Result<tokio::sync::SemaphorePermit<'static>, DiscoveryReadError> {
-    SEARCHES
-        .try_acquire()
-        .map_err(|_| DiscoveryReadError::Unavailable)
+async fn admit_search() -> Result<tokio::sync::SemaphorePermit<'static>, DiscoveryReadError> {
+    crate::backend::api::http::middleware::wait_for_static_slot(&SEARCHES)
+        .await
+        .ok_or(DiscoveryReadError::Unavailable)
 }
 
 fn badge_count(
@@ -120,7 +120,7 @@ pub async fn search(
         }));
     }
 
-    let _permit = admit_search().map_err(|_| {
+    let _permit = admit_search().await.map_err(|_| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(ApiError::new(
@@ -405,7 +405,7 @@ async fn load_search(
     viewer: Option<i64>,
     filters: SearchFilters,
 ) -> Result<SearchModel, DiscoveryReadError> {
-    let _permit = admit_search()?;
+    let _permit = admit_search().await?;
     let SearchFilters {
         text,
         tab,
@@ -696,12 +696,12 @@ mod tests {
         assert_eq!(item_sort("stars"), ItemSort::Updated);
     }
 
-    #[test]
-    fn search_admission_fails_without_waiting() {
+    #[tokio::test(start_paused = true)]
+    async fn search_admission_waits_briefly_then_fails() {
         let permits = SEARCHES.try_acquire_many(4).unwrap();
-        assert!(admit_search().is_err());
+        assert!(admit_search().await.is_err());
         drop(permits);
-        assert!(admit_search().is_ok());
+        assert!(admit_search().await.is_ok());
     }
 
     #[test]

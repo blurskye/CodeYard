@@ -175,7 +175,26 @@ async fn raw_repository_clone_toolbar_keeps_wrapped_actions_right_aligned() {
     assert!(html.contains("repo-add-menu"));
     assert!(html.contains("repo-code-menu"));
     assert!(html.contains("HTTPS clone URL"));
-    let mobile = html
+    let sheet = html
+        .split("href=\"/assets/repository.css?v=")
+        .nth(1)
+        .and_then(|rest| rest.split_once('"'))
+        .map(|(version, _)| format!("/assets/repository.css?v={version}"))
+        .expect("the page links the repository stylesheet");
+    let css = fixture
+        .request(
+            &fixture.owner,
+            "GET",
+            &sheet,
+            String::new(),
+            "application/x-www-form-urlencoded",
+            (false, false),
+        )
+        .await;
+    assert_eq!(css.status, axum::http::StatusCode::OK);
+    assert!(!html.contains("<style"));
+    let mobile = css
+        .body
         .split_once("@media (max-width: 639px)")
         .unwrap()
         .1

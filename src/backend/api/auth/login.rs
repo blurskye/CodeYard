@@ -125,6 +125,8 @@ pub(crate) async fn auth_get(
     }
     let message = if ctx.query.get("signup").map(String::as_str) == Some("requested") {
         Some("Your signup request was submitted for administrator review. Sign in once it has been approved.")
+    } else if ctx.query.get("reset").map(String::as_str) == Some("done") {
+        Some("Your password was changed. Sign in with the new password.")
     } else {
         None
     };
@@ -141,23 +143,6 @@ pub(crate) async fn auth_get(
             message: message.map(str::to_owned),
             is_error: false,
         }),
-    )
-}
-
-/// The page behind "Forgot password?". It says how a password is recovered and changes nothing.
-pub(crate) async fn password_help_get(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
-    let redirect = safe_redirect(ctx.query.get("redirect").map(String::as_str));
-    ctx.page_model(
-        "Forgot your password?",
-        crate::webui::app::Page::Identity(account::Page::PasswordHelp { redirect }),
     )
 }
 

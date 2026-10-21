@@ -1561,13 +1561,19 @@ impl LocalStore {
     }
 
     /// Moves each branch in `moves` after checking, under the repository lock, the actor's write
-    /// access and each branch's protection rules. A restack force-updates a head branch, which
-    /// the rules that block force pushes refuse.
+    /// access, each branch's protection rules and the stack's versions. A restack force-updates a
+    /// head branch, which the rules that block force pushes refuse.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Restack publication carries explicit authority, stack and CAS inputs."
+    )]
     pub(super) async fn publish_restack(
         &self,
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        stack_id: i64,
+        versions: &[(i64, i64)],
         base_branch: &str,
         base: &str,
         moves: &[RestackMove],
@@ -1613,6 +1619,14 @@ impl LocalStore {
                 )
             })
             .collect();
+        // Retargeting, closing, unstacking and joining change only the database, so the stack is
+        // compared here, after the lock wait and the checks, right before the refs move.
+        let current = db::pull_requests::records::list_stack_versions(pool, repo_id, stack_id)
+            .await
+            .map_err(|_| unavailable("Repository storage is unavailable."))?;
+        if current != versions {
+            return Err(RepoError::stack_changed());
+        }
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::publish_restack(self.path(), base_branch, base, &ref_moves)
             .await

@@ -129,24 +129,8 @@ impl PageContext {
         ))
     }
 
-    /// A redirect after a form post means the text was saved, so it acknowledges the
-    /// browser's matching draft submission.
     pub fn redirect(&self, path: &str) -> Response {
-        let mut response = self.with_cookie(redirect_response(path));
-        if let Some(token) = self
-            .headers
-            .get("x-codeyard-draft-submission")
-            .and_then(|value| value.to_str().ok())
-            .filter(|token| super::middleware::valid_submission_token(token))
-        {
-            response.headers_mut().append(
-                header::SET_COOKIE,
-                format!("codeyard-draft-accepted={token}; Path=/; SameSite=Lax; Max-Age=120")
-                    .parse()
-                    .expect("validated submission token"),
-            );
-        }
-        response
+        self.with_cookie(redirect_response(path))
     }
 }
 

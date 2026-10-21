@@ -30,6 +30,8 @@ pub enum PasswordError {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Verification {
     pub valid: bool,
+    /// The password is right but its stored hash was made at a different cost than the current one.
+    pub outdated: bool,
 }
 
 fn engine() -> Argon2<'static> {
@@ -68,6 +70,14 @@ fn accepted_phc(stored: &str) -> Option<PasswordHash<'_>> {
         return None;
     }
     Some(hash)
+}
+
+fn is_current_cost(hash: &PasswordHash<'_>) -> bool {
+    Params::try_from(hash).is_ok_and(|params| {
+        params.m_cost() == MEMORY_KIB
+            && params.t_cost() == ITERATIONS
+            && params.p_cost() == PARALLELISM
+    })
 }
 
 async fn blocking<T: Send + 'static>(
@@ -122,15 +132,20 @@ pub async fn verify_password(
     let stored = stored.filter(|value| value.len() <= 255).map(str::to_owned);
     blocking(move || {
         if let Some(hash) = stored.as_deref().and_then(accepted_phc) {
+            let valid = engine().verify_password(&password, &hash).is_ok();
             return Ok(Verification {
-                valid: engine().verify_password(&password, &hash).is_ok(),
+                valid,
+                outdated: valid && !is_current_cost(&hash),
             });
         }
         // Missing, OAuth-only and malformed hashes pay one normal KDF cost, so response time does
         // not show which accounts have a usable password.
         let dummy = PasswordHash::new(DUMMY).map_err(|_| PasswordError::Failed)?;
         let _ = engine().verify_password(&password, &dummy);
-        Ok(Verification { valid: false })
+        Ok(Verification {
+            valid: false,
+            outdated: false,
+        })
     })
     .await
 }
@@ -159,6 +174,9 @@ mod tests {
         assert!(accepted_phc(&a.replace("argon2id", "argon2i")).is_none());
         assert!(accepted_phc(&a.replace("m=19456", "keyid=1234")).is_none());
         assert!(accepted_phc(DUMMY).is_some());
+        assert!(is_current_cost(&accepted_phc(&a).unwrap()));
+        let older = a.replace("t=2", "t=3");
+        assert!(!is_current_cost(&accepted_phc(&older).unwrap()));
         assert!(!verify_password("wrong", None).await.unwrap().valid);
         assert!(
             !verify_password("wrong", Some("malformed"))

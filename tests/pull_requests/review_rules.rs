@@ -1206,8 +1206,20 @@ async fn reviews_share_the_conversation_pages(pg: bool) {
 
     assert_eq!(
         notification_links(&world, world.alice_id, "pull_request_review").await,
-        vec![location.clone()]
+        vec![format!("{page}?review={review_id}#review-{review_id}")]
     );
+    // Following the notice finds the review's page.
+    let followed = world
+        .alice
+        .exchange(
+            "GET",
+            &format!("{page}?review={review_id}"),
+            "text/html",
+            Vec::new(),
+        )
+        .await;
+    assert!(followed.status.is_redirection(), "{}", followed.text());
+    assert_eq!(followed.location.unwrap(), location);
 
     // Alice's reply joins the submitted review, so Bob's notice names that review's page.
     let reply = world

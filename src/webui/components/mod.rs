@@ -22,8 +22,7 @@ pub use avatar::Avatar;
 pub use confirm::confirm_dialog;
 pub use copy::CopyButton;
 pub use forms::{
-    draft_text, submit_form, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, FieldError,
-    SelectOption,
+    submit_form, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, FieldError, SelectOption,
 };
 pub use markdown::{
     document_html, escape_html, markdown_tab_class, outline_of_html, parse_markdown, LinkBase,

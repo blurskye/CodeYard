@@ -200,21 +200,11 @@ pub fn blank_issues_allowed(config: &str) -> bool {
 }
 
 fn parse_template(path: &str, text: &str) -> IssueTemplate {
-    let (fields, body) = split_front_matter(text);
-    let field = |key: &str| {
-        fields
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| unquote(value).to_owned())
-            .unwrap_or_default()
-    };
-    let list = |key: &str| {
-        fields
-            .iter()
-            .find(|(name, _)| name == key)
-            .map(|(_, value)| list_items(value))
-            .unwrap_or_default()
-    };
+    let (front, body) = split_front_matter(text);
+    // Front matter that is not valid YAML gives no fields. The block still stays out of the body.
+    let document = front.and_then(|block| parse_yaml(block).ok());
+    let field = |key: &str| text_of(document.as_ref().and_then(|map| map.get(key)));
+    let list = |key: &str| names(document.as_ref().and_then(|map| map.get(key)));
     let stem = path
         .rsplit('/')
         .next()
@@ -238,21 +228,25 @@ fn parse_template(path: &str, text: &str) -> IssueTemplate {
     }
 }
 
-/// An issue form. A file that is not valid YAML, or has no fields to fill in, is left out, as
-/// GitHub leaves it out of its chooser.
-fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
-    let document = crate::backend::ci::workflows::parse_yaml_with_limit(
+fn parse_yaml(text: &str) -> anyhow::Result<serde_yaml::Value> {
+    crate::backend::ci::workflows::parse_yaml_with_limit(
         text.as_bytes(),
         4 * MAX_TEMPLATE_BYTES as usize,
     )
-    .ok()?;
-    let text_of = |value: Option<&serde_yaml::Value>| match value {
+}
+
+fn text_of(value: Option<&serde_yaml::Value>) -> String {
+    match value {
         Some(serde_yaml::Value::String(text)) => text.trim_end_matches('\n').to_owned(),
         Some(serde_yaml::Value::Number(number)) => number.to_string(),
         Some(serde_yaml::Value::Bool(flag)) => flag.to_string(),
         _ => String::new(),
-    };
-    let names = |value: Option<&serde_yaml::Value>| match value {
+    }
+}
+
+/// A list of names, written as a YAML list or as `a, b` text.
+fn names(value: Option<&serde_yaml::Value>) -> Vec<String> {
+    match value {
         Some(serde_yaml::Value::Sequence(items)) => items
             .iter()
             .map(|item| text_of(Some(item)))
@@ -260,15 +254,18 @@ fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
             .collect(),
         Some(serde_yaml::Value::String(text)) => list_items(text),
         _ => Vec::new(),
-    };
+    }
+}
+
+/// An issue form. A file that is not valid YAML, or has no fields to fill in, is left out, as
+/// GitHub leaves it out of its chooser.
+fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
+    let document = parse_yaml(text).ok()?;
     let elements = document.get("body")?.as_sequence()?;
     if elements.len() > 50 {
         return None;
     }
-    let form: Vec<FormElement> = elements
-        .iter()
-        .filter_map(|element| form_element(element, &text_of))
-        .collect();
+    let form: Vec<FormElement> = elements.iter().filter_map(form_element).collect();
     if !form
         .iter()
         .any(|element| element.kind != FormKind::Markdown)
@@ -295,10 +292,7 @@ fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
     })
 }
 
-fn form_element(
-    element: &serde_yaml::Value,
-    text_of: &impl Fn(Option<&serde_yaml::Value>) -> String,
-) -> Option<FormElement> {
+fn form_element(element: &serde_yaml::Value) -> Option<FormElement> {
     let kind = match element.get("type")?.as_str()? {
         "markdown" => FormKind::Markdown,
         "input" => FormKind::Input,
@@ -444,29 +438,24 @@ pub fn first_missing_answer<'a>(
     })
 }
 
-/// Splits the `key: value` lines of a leading `---` block from the text after it. Text without
-/// the block is all body.
-fn split_front_matter(text: &str) -> (Vec<(String, String)>, &str) {
+/// Splits the YAML of a leading `---` block from the text after it. Text without a closed block
+/// is all body.
+fn split_front_matter(text: &str) -> (Option<&str>, &str) {
     let Some(rest) = text
         .strip_prefix("---\n")
         .or_else(|| text.strip_prefix("---\r\n"))
     else {
-        return (Vec::new(), text);
+        return (None, text);
     };
-    let mut fields = Vec::new();
     let mut offset = 0;
     for line in rest.split_inclusive('\n') {
-        let content = line.trim_end_matches(['\r', '\n']);
-        if content == "---" {
-            return (fields, &rest[offset + line.len()..]);
-        }
-        if let Some((key, value)) = content.split_once(':') {
-            fields.push((key.trim().to_owned(), value.trim().to_owned()));
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            return (Some(&rest[..offset]), &rest[offset + line.len()..]);
         }
         offset += line.len();
     }
     // No closing line: the block never ended, so the whole text is body.
-    (Vec::new(), text)
+    (None, text)
 }
 
 fn unquote(value: &str) -> &str {
@@ -517,6 +506,15 @@ mod tests {
         assert_eq!(template.assignees, vec!["alice", "bob"]);
         assert_eq!(template.body, "## Steps\n");
         assert_eq!(template.title, "");
+    }
+
+    #[test]
+    fn front_matter_reads_yaml_block_lists_and_folded_text() {
+        let text = "---\nname: Bug\nabout: >\n  Something\n  breaks\nlabels:\n  - bug\n  - triage\n---\nBody\n";
+        let template = parse_template(".github/ISSUE_TEMPLATE/bug.md", text);
+        assert_eq!(template.about, "Something breaks");
+        assert_eq!(template.labels, vec!["bug", "triage"]);
+        assert_eq!(template.body, "Body\n");
     }
 
     #[test]

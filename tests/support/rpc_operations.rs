@@ -349,6 +349,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::PublishRestack {
+                stack_id: 1,
+                versions: vec![(1, 1)],
                 base_branch: "main".into(),
                 base: sha.into(),
                 moves: vec![RestackMove {

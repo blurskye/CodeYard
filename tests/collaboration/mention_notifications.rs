@@ -552,7 +552,10 @@ async fn pull_request_mentions(pg: bool) {
         mentions(&world, world.dave_id).await,
         [(
             "bob mentioned you in alice/proj#1".to_owned(),
-            Some(format!("/alice/proj/pulls/1#review-{}", review["id"]))
+            Some(format!(
+                "/alice/proj/pulls/1?review={0}#review-{0}",
+                review["id"]
+            ))
         )]
     );
 

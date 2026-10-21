@@ -308,7 +308,15 @@ fn HeaderContext(
     if first.is_empty()
         || matches!(
             first,
-            "login" | "register" | "enter" | "logout" | "setup" | "forgot-password" | "demo"
+            "login"
+                | "register"
+                | "enter"
+                | "logout"
+                | "setup"
+                | "forgot-password"
+                | "reset-password"
+                | "verify-email"
+                | "demo"
         )
     {
         return rsx! {};
@@ -924,7 +932,7 @@ mod shell_tests {
         assert!(team.contains("href=\"/orgs/acme/teams/core\""), "{team}");
         assert!(!team.contains("href=\"/orgs\""), "{team}");
         assert!(crumb("/ci").contains("<span class=\"site-context\">Actions</span>"));
-        for path in ["/forgot-password", "/setup", "/demo", "/orgs/acme"] {
+        for path in ["/forgot-password", "/setup", "/orgs/acme"] {
             let html = crumb(path);
             assert!(!html.contains("aria-label=\"Current location\""), "{html}");
             assert!(!html.contains("class=\"site-context\""), "{html}");

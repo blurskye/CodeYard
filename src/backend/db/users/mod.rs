@@ -36,10 +36,12 @@ const RESERVED_NAMES: &[&str] = &[
     "pulls",
     "ready",
     "register",
+    "reset-password",
     "search",
     "settings",
     "setup",
     "stars",
+    "verify-email",
     "wasm",
 ];
 
@@ -63,6 +65,8 @@ mod tests {
             "help",
             "HELP",
             "forgot-password",
+            "reset-password",
+            "verify-email",
         ] {
             assert!(is_reserved_name(name), "{name}");
         }

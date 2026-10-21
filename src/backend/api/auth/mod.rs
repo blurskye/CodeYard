@@ -1,6 +1,7 @@
 //! Authentication endpoints and their browser aliases. Administration has its own router.
 
 pub mod change_password;
+pub mod email_links;
 pub(crate) mod errors;
 pub mod login;
 pub mod logout;
@@ -51,8 +52,28 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                 )
                 .route("/register", get(login::auth_get).post(login::auth_post))
                 .route("/setup", get(login::auth_get).post(login::auth_post))
-                .route("/forgot-password", get(login::password_help_get))
+                .route(
+                    "/forgot-password",
+                    get(email_links::forgot_get).post(email_links::forgot_post),
+                )
                 .route("/logout", get(logout::logout_get).post(logout::logout_post))
+                .merge(
+                    // These addresses carry a token, so no cache keeps them.
+                    Router::new()
+                        .route(
+                            "/reset-password",
+                            get(email_links::reset_get).post(email_links::reset_post),
+                        )
+                        .route(
+                            "/reset-password/code",
+                            get(email_links::reset_code_get).post(email_links::reset_code_post),
+                        )
+                        .route(
+                            "/verify-email",
+                            get(email_links::verify_get).post(email_links::verify_post),
+                        )
+                        .layer(from_fn(middleware::private_sensitive_response)),
+                )
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
 }

@@ -1,9 +1,9 @@
-//! Administrator account management: the users page, creating accounts, bans and roles.
-//! Every handler rechecks administrator authority in its identity call.
+//! Administrator account management: the users page, signup requests, creating accounts, bans
+//! and roles. Every handler rechecks administrator authority in its identity call.
+use super::signup_requests::{load_requests, signup_decision};
 use crate::backend::api::auth::errors;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::{ApiError, ApiFailure};
-use crate::backend::api::user::profile::settings_result;
 use crate::backend::api::user::responses::{
     field, mutation_guard, optional_field, public_api_message, require_account, within_bounds,
     Fields,
@@ -160,6 +160,11 @@ async fn load_users(
             )
         })?
         .is_some_and(|config| config.is_private());
+    let (requests, requests_count, requests_page) = if managed_accounts {
+        load_requests(ctx).await?
+    } else {
+        (Vec::new(), 0, 1)
+    };
     Ok(AdminUsers {
         managed_accounts,
         current_user_id: admin.id,
@@ -169,6 +174,9 @@ async fn load_users(
         pages,
         total,
         values: submitted.map(preserved_values).unwrap_or_default(),
+        requests,
+        requests_count,
+        requests_page,
     })
 }
 
@@ -220,6 +228,7 @@ pub(crate) async fn users_get(
         Some("role") => Some("Administrator role updated."),
         Some("two-factor-reset") => Some("Two-factor authentication is off for the account."),
         Some("account") => Some("Managed account created. Share the temporary password securely."),
+        Some("request") => Some("Signup request decision recorded."),
         _ => None,
     };
     users_response(
@@ -273,12 +282,48 @@ pub(crate) async fn managed_user_post(
         .map(|_| ())
         .map_err(auth::errors::managed_account_failure)
     };
-    if !uri.path().starts_with("/admin/") {
-        return settings_result(&ctx, "access", &form, result, "account").await;
-    }
     let listing = listing_from_form(&form);
     match result {
         Ok(()) => ctx.redirect(&users_path(&listing, "account")),
+        Err(error) => {
+            users_response(
+                &ctx,
+                listing,
+                Some(&form),
+                error.0,
+                Some(public_api_message(&error.1 .0)),
+            )
+            .await
+        }
+    }
+}
+
+pub(crate) async fn signup_post(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(id): Path<i64>,
+    Form(form): Form<Fields>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = mutation_guard(&ctx, &form, true) {
+        return response;
+    }
+    let listing = listing_from_form(&form);
+    let session_id = session::extract_session_id(&ctx.headers);
+    let result = identity::accounts::review_signup(
+        &ctx.state.pool,
+        session_id.as_deref(),
+        id,
+        signup_decision(field(&form, "action")),
+    )
+    .await
+    .map_err(auth::errors::signup_review_failure);
+    match result {
+        Ok(_) => ctx.redirect(&users_path(&listing, "request")),
         Err(error) => {
             users_response(
                 &ctx,

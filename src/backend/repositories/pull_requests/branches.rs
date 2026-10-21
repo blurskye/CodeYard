@@ -141,19 +141,6 @@ async fn move_head(
             vec![author_id, actor_id],
             move |owner, people| {
                 let (author, sender) = (people.get(author_id), people.get(actor_id));
-                // The pull request row does not keep change counts, so read them from its diff.
-                let diff = tokio::runtime::Handle::current()
-                    .block_on(store.diff(&current.base_sha, &current.head_sha));
-                match diff {
-                    Ok(diff) => {
-                        current.additions = diff.additions;
-                        current.deletions = diff.deletions;
-                        current.changed_files = diff.changed_files;
-                    }
-                    Err(error) => {
-                        tracing::warn!(pull_id, %error, "could not count pull request changes")
-                    }
-                }
                 let mut payload = payloads::pull_request(
                     "synchronize",
                     &current,
@@ -164,6 +151,20 @@ async fn move_head(
                         sender: &sender,
                     },
                 );
+                // The pull request row does not keep change counts, so read them from its diff.
+                let diff = tokio::runtime::Handle::current()
+                    .block_on(store.diff(&current.base_sha, &current.head_sha));
+                match diff {
+                    Ok(diff) => {
+                        let pull = &mut payload["pull_request"];
+                        pull["additions"] = diff.additions.into();
+                        pull["deletions"] = diff.deletions.into();
+                        pull["changed_files"] = diff.changed_files.into();
+                    }
+                    Err(error) => {
+                        tracing::warn!(pull_id, %error, "could not count pull request changes")
+                    }
+                }
                 payload["before"] = serde_json::json!(before);
                 payload["after"] = serde_json::json!(current.head_sha);
                 payload

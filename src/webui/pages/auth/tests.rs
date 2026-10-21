@@ -3,7 +3,7 @@ use super::page::password_strength;
 use super::*;
 use crate::webui::pages::account::Page;
 use crate::webui::pages::fields::{preserved_values, FormValues};
-use crate::webui::pages::settings::{settings_page, Settings};
+use crate::webui::pages::settings::{settings_page, EmailVerification, Settings};
 use crate::webui::pages::users::Profile;
 use dioxus::prelude::Element;
 use std::collections::HashMap;
@@ -301,7 +301,7 @@ fn provider_model_carries_only_provider_ids_and_defaults_missing_list_to_hidden(
 }
 
 #[test]
-fn auth_prerender_uses_exact_trusted_static_css_without_raw_user_markup() {
+fn auth_prerender_has_no_inline_css_and_no_raw_user_markup() {
     let mut renderer = dioxus_ssr::Renderer::new();
     renderer.pre_render = true;
     let output = renderer.render_element(auth_page(
@@ -319,18 +319,7 @@ fn auth_prerender_uses_exact_trusted_static_css_without_raw_user_markup() {
         Some("</style><b>Real validation error</b>"),
         true,
     ));
-    let css = output
-        .split_once("<style")
-        .unwrap()
-        .1
-        .split_once('>')
-        .unwrap()
-        .1
-        .split_once("</style>")
-        .unwrap()
-        .0;
-    assert_eq!(css, include_str!("../account.css"));
-    assert!(!css.contains("<!--"));
+    assert!(!output.contains("<style"));
     assert!(!output.contains("<script>"));
     assert!(!output.contains("<img src=x>"));
     assert!(!output.contains("<b>Real validation error</b>"));
@@ -383,11 +372,9 @@ fn oauth_only_accounts_have_no_password_mutation_form() {
                 sessions: vec![],
                 new_token: None,
                 password_supported: false,
+                email_notifications: true,
+                email_verification: EmailVerification::Verified,
                 must_change_password: false,
-                manage_access: false,
-                requests: vec![],
-                requests_count: 0,
-                requests_page: 1,
                 values: FormValues::default(),
             },
             "token",
@@ -411,7 +398,7 @@ fn password_components_render_masked_native_inputs_and_derive_strength_only() {
 }
 
 #[test]
-fn sign_in_links_forgotten_passwords_to_a_help_page_that_changes_nothing() {
+fn sign_in_links_forgotten_passwords_to_the_reset_request_page() {
     let output = html(auth_page(
         AuthMode::Login,
         "/login",
@@ -441,9 +428,108 @@ fn sign_in_links_forgotten_passwords_to_a_help_page_that_changes_nothing() {
     ));
     assert!(!signup.contains("Forgot password?"));
 
-    let help = html(password_help_page("/alice/project"));
+    let help = html(password_help_page(
+        "/alice/project",
+        "help-csrf",
+        false,
+        None,
+        false,
+    ));
     assert!(help.contains("Forgot your password?"));
-    assert!(help.contains("Codeyard does not email password resets"));
+    assert!(help.contains("cannot send email"));
     assert!(help.contains("href=\"/login?redirect=%2Falice%2Fproject\""));
     assert!(!help.contains("<form"));
+}
+
+#[test]
+fn the_reset_request_page_asks_for_an_address_when_mail_is_set_up() {
+    let page = html(password_help_page(
+        "/alice/project",
+        "help-csrf",
+        true,
+        Some("A code is on its way."),
+        false,
+    ));
+    assert!(page.contains("action=\"/forgot-password\""));
+    assert!(page.contains("name=\"email\""));
+    assert!(page.contains("value=\"help-csrf\""));
+    assert!(page.contains("value=\"/alice/project\""));
+    assert!(page.contains("Send reset code"));
+    assert!(page.contains("A code is on its way."));
+    assert!(!page.contains("cannot send email"));
+}
+
+#[test]
+fn the_code_step_takes_the_address_code_and_new_password_in_one_form() {
+    let page = html(reset_code_page(
+        "code-csrf",
+        "kate@example.test",
+        Some("Check your inbox."),
+        false,
+    ));
+    assert!(page.contains("Check your email"));
+    assert!(page.contains("method=\"post\""));
+    assert!(page.contains("action=\"/reset-password/code\""));
+    assert!(page.contains("value=\"code-csrf\""));
+    assert!(page.contains("value=\"kate@example.test\""));
+    assert!(page.contains("name=\"code\""));
+    assert!(page.contains("autocomplete=\"one-time-code\""));
+    assert!(page.contains("name=\"new_password\""));
+    assert!(page.contains("name=\"confirm_password\""));
+    assert!(page.contains("Check your inbox."));
+    assert!(page.contains("href=\"/forgot-password\""));
+}
+
+#[test]
+fn the_reset_page_shows_its_form_only_for_a_working_link() {
+    let page = html(reset_password_page(
+        "reset-csrf",
+        "tok123",
+        true,
+        None,
+        false,
+    ));
+    assert!(page.contains("action=\"/reset-password\""));
+    assert!(page.contains("value=\"tok123\""));
+    assert!(page.contains("name=\"new_password\""));
+    assert!(page.contains("name=\"confirm_password\""));
+    assert!(page.contains("value=\"reset-csrf\""));
+
+    let dead = html(reset_password_page(
+        "reset-csrf",
+        "tok123",
+        false,
+        Some("This link is invalid."),
+        true,
+    ));
+    assert!(!dead.contains("<form"));
+    assert!(!dead.contains("tok123"));
+    assert!(dead.contains("This link is invalid."));
+    assert!(dead.contains("href=\"/forgot-password\""));
+}
+
+#[test]
+fn the_verify_page_confirms_only_when_its_form_is_sent() {
+    let page = html(verify_email_page(
+        "verify-csrf",
+        "tok456",
+        true,
+        None,
+        false,
+    ));
+    assert!(page.contains("method=\"post\""));
+    assert!(page.contains("action=\"/verify-email\""));
+    assert!(page.contains("value=\"tok456\""));
+    assert!(page.contains("value=\"verify-csrf\""));
+    assert!(page.contains("Confirm email address"));
+
+    let done = html(verify_email_page(
+        "verify-csrf",
+        "tok456",
+        false,
+        Some("Your email address is confirmed."),
+        false,
+    ));
+    assert!(!done.contains("<form"));
+    assert!(done.contains("Your email address is confirmed."));
 }

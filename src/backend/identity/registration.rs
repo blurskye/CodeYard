@@ -58,6 +58,8 @@ pub async fn register_password(
         AccountAdmission::Conflict => return Err(RegistrationError::Conflict),
         _ => return Err(RegistrationError::Denied),
     };
+    // Without a mail server this sends nothing, and the account is usable either way.
+    let _ = crate::backend::email::links::send_verification(pool, &user).await;
     // The account is committed before issuance. A failed session never reopens
     // registration or changes a private-node request into an authenticated account.
     let session_id =

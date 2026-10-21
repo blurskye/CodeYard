@@ -773,7 +773,6 @@ fn preview_card_sits_above_the_commit_box() {
         ..Default::default()
     };
     let html = dioxus_ssr::render_element(super::editor::editor(&repo, &editor));
-    // The page's stylesheet comes first in the markup, so search for the elements themselves.
     let preview = html.find("id=\"preview\"").expect("preview card");
     let commit = html.find("class=\"repo-commit-box").expect("commit box");
     let editor_card = html
@@ -2061,7 +2060,7 @@ fn a_tag_view_downloads_the_tag_by_its_full_ref_unless_a_branch_has_its_name() {
 
 #[test]
 fn empty_repository_quick_setup_is_shown_only_to_writers() {
-    let page = TreePage {
+    let mut page = TreePage {
         languages: Vec::new(),
         releases: None,
         reference: "main".into(),
@@ -2117,6 +2116,21 @@ fn empty_repository_quick_setup_is_shown_only_to_writers() {
     );
     // The body already offers the two choices, so the repository toolbar has no Add file menu.
     assert!(!html.contains("class=\"native-menu repo-menu repo-add-menu\""));
+
+    // With an SSH URL, the SSH choice has its own commands pushing to that URL.
+    page.ssh_clone = "ssh://git@git.example.invalid/alice/project.git".into();
+    let both =
+        crate::webui::tests::in_scope(|| dioxus_ssr::render_element(tree(&chrome(true), &page)));
+    assert!(
+        both.contains(
+            "git remote add origin &#39;ssh://git@git.example.invalid/alice/project.git&#39;"
+        ) || both
+            .contains("git remote add origin 'ssh://git@git.example.invalid/alice/project.git'")
+            || both.contains(
+                "git remote add origin &#x27;ssh://git@git.example.invalid/alice/project.git&#x27;"
+            )
+    );
+    page.ssh_clone = String::new();
 
     let reader =
         crate::webui::tests::in_scope(|| dioxus_ssr::render_element(tree(&chrome(false), &page)));
@@ -2456,24 +2470,12 @@ fn go_to_file_matches_loaded_names_and_paths_in_path_order() {
 }
 
 #[test]
-fn prerendered_static_repository_css_has_no_raw_text_markers() {
+fn repository_pages_carry_no_inline_css() {
     crate::webui::tests::in_scope(|| {
         let mut renderer = dioxus_ssr::Renderer::new();
         renderer.pre_render = true;
         let html = renderer.render_element(render(fixtures()[0].clone()));
-        let css = html
-            .split_once("<style")
-            .unwrap()
-            .1
-            .split_once('>')
-            .unwrap()
-            .1
-            .split_once("</style>")
-            .unwrap()
-            .0;
-        assert_eq!(css, include_str!("style.css"));
-        assert!(!css.contains("<!--"));
-        assert!(!css.contains("&gt;"));
+        assert!(!html.contains("<style"));
     });
 }
 
@@ -2546,7 +2548,6 @@ fn restored_file_browser_integrates_commit_rows_and_repository_description() {
         assert!(subtree.contains("class=\"repo-blob-layout\""));
         assert!(subtree.contains("class=\"repo-files-panel\""));
         assert!(subtree.contains("aria-label=\"File path\""));
-        // The page's inline stylesheet names the class too, so check for the element's attribute.
         assert!(!subtree.contains("class=\"repo-description\""));
         assert!(!subtree.contains("class=\"repo-about\""));
     });
@@ -2576,7 +2577,6 @@ fn repository_home_about_lists_topics_and_website_and_offers_the_gear_to_writers
         repo.can_write = false;
         let html = dioxus_ssr::render_element(tree(&repo, &page));
         assert!(html.contains("href=\"/explore?topic=git\""));
-        // The inline stylesheet names the class too, so check for the element's attribute.
         assert!(!html.contains("class=\"repo-about-edit\""));
         assert!(!html.contains("_forms/about"));
 

@@ -27,6 +27,7 @@ pub enum Page {
     Actions(pages::ci::Page),
     /// `/notifications`: the signed-in user's inbox.
     Notifications(pages::notifications::NotificationsPage),
+    Email(pages::admin::email::Page),
     Nodes(pages::admin::nodes::Page),
     Storage(pages::admin::storage::Page),
     /// `repo` is set only when the viewer may read that repository.
@@ -136,6 +137,7 @@ pub(crate) fn render_body(page: Page) -> Element {
         Page::Collaboration(page) => pages::repos::issues::render(*page),
         Page::Actions(page) => pages::ci::render(page),
         Page::Notifications(model) => rsx! { pages::notifications::NotificationsView { model } },
+        Page::Email(page) => pages::admin::email::render(page),
         Page::Nodes(page) => pages::admin::nodes::render(page),
         Page::Storage(page) => pages::admin::storage::render(page),
         Page::Error {
@@ -157,8 +159,6 @@ pub(crate) fn page_tree(envelope: PageEnvelope) -> Element {
     // advance its hidden revision snapshot. Equal Page props memoize this body.
     // A genuinely different URL resets scoped drafts/tasks; same-URL log polling
     // retains component state, whose controls still need proper local handlers.
-    // Drafts belong to the signed-in account, so another account's drafts are dropped first.
-    components::draft_text::keep_for_account(envelope.chrome.username.as_deref());
     let location = format!("{:?}:{}", envelope.chrome.username, envelope.location);
     let repo = envelope.page.repo_chrome().cloned();
     let located = !matches!(envelope.page, Page::Error { repo: None, .. });

@@ -17,6 +17,7 @@ use crate::backend::db::{
     },
     DbPool,
 };
+use crate::backend::email::links::{self, Purpose};
 
 pub struct PasswordChange<'a> {
     pub current_password: &'a str,
@@ -74,6 +75,52 @@ pub async fn change_password(
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum PasswordResetError {
+    Input(AccountInputError),
+    Password(PasswordError),
+    /// The link is unknown, expired, already used, or no longer fits the account.
+    InvalidLink,
+    AccountUnavailable,
+}
+
+/// Sets a new password from the link in a reset email. The link works once. Like a password
+/// change, it ends every session and access token of the account.
+pub async fn reset_password(
+    pool: &DbPool,
+    token: &str,
+    new_password: &str,
+) -> Result<(), PasswordResetError> {
+    validate_new_password(new_password).map_err(PasswordResetError::Input)?;
+    // Hashing is costly, so it waits until the link is known to be good.
+    let valid = links::is_valid(pool, Purpose::Reset, token)
+        .await
+        .map_err(|_| PasswordResetError::AccountUnavailable)?;
+    if !valid {
+        return Err(PasswordResetError::InvalidLink);
+    }
+    let hash = passwords::hash_password(new_password)
+        .await
+        .map_err(PasswordResetError::Password)?;
+    let (user_id, _) = links::take(pool, Purpose::Reset, token)
+        .await
+        .map_err(|_| PasswordResetError::AccountUnavailable)?
+        .ok_or(PasswordResetError::InvalidLink)?;
+    let user = db::users::accounts::get_user_by_id(pool, user_id)
+        .await
+        .map_err(|_| PasswordResetError::AccountUnavailable)?
+        .ok_or(PasswordResetError::InvalidLink)?;
+    let expected = user
+        .password_hash
+        .as_deref()
+        .ok_or(PasswordResetError::InvalidLink)?;
+    transitions::compare_exchange_password(pool, user.id, expected, &hash, true, true, None)
+        .await
+        .map_err(|_| PasswordResetError::AccountUnavailable)?
+        .map(|_| ())
+        .ok_or(PasswordResetError::InvalidLink)
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum EmailChangeError {
     Authority(AccountAuthorityError),
     InvalidEmail,
@@ -126,7 +173,13 @@ pub async fn change_email(
     .await
     .map_err(|_| EmailChangeError::AccountUnavailable)?
     {
-        EmailChange::Updated(user) => Ok(*user),
+        EmailChange::Updated(user) => {
+            // The transition clears the flag for a new address; a repeated one stays verified.
+            if !user.email_verified {
+                let _ = links::send_verification(pool, &user).await;
+            }
+            Ok(*user)
+        }
         EmailChange::Taken => Err(EmailChangeError::Taken),
         EmailChange::Missing => Err(EmailChangeError::InvalidCredentials),
     }
@@ -183,6 +236,7 @@ pub async fn create_managed_account(
         AccountAdmission::Conflict => return Err(ManagedAccountError::Conflict),
         _ => return Err(ManagedAccountError::Denied),
     };
+    let _ = links::send_verification(pool, &user).await;
     Ok(user)
 }
 
@@ -236,19 +290,8 @@ pub async fn review_signup(
     let decision = decision.ok_or(SignupReviewError::InvalidDecision)?;
     // These named transactions also revalidate reviewer authority after locking.
     match decision {
-        SignupDecision::Approve => db::users::signup_requests::approve_signup_request(
-            pool,
-            request_id,
-            (
-                admin.id,
-                administrator_session.unwrap_or_default().to_owned(),
-            ),
-        )
-        .await
-        .map(|user| SignupReviewOutcome::Approved(Box::new(user)))
-        .map_err(review_failure),
-        SignupDecision::Reject => {
-            db::users::signup_requests::reject_signup_request(
+        SignupDecision::Approve => {
+            let user = db::users::signup_requests::approve_signup_request(
                 pool,
                 request_id,
                 (
@@ -258,6 +301,28 @@ pub async fn review_signup(
             )
             .await
             .map_err(review_failure)?;
+            crate::backend::email::signup_decision(
+                pool,
+                user.email.as_deref(),
+                &user.username,
+                true,
+            )
+            .await;
+            let _ = links::send_verification(pool, &user).await;
+            Ok(SignupReviewOutcome::Approved(Box::new(user)))
+        }
+        SignupDecision::Reject => {
+            let (username, email) = db::users::signup_requests::reject_signup_request(
+                pool,
+                request_id,
+                (
+                    admin.id,
+                    administrator_session.unwrap_or_default().to_owned(),
+                ),
+            )
+            .await
+            .map_err(review_failure)?;
+            crate::backend::email::signup_decision(pool, email.as_deref(), &username, false).await;
             Ok(SignupReviewOutcome::Rejected)
         }
     }

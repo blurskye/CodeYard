@@ -467,6 +467,7 @@
 .repo-quick-setup-clone { display: grid; justify-items: start; gap: 8px; }
 /* One URL field at a time: the checked protocol shows its field and marks its label. */
 .repo-clone-https, .repo-clone-ssh { width: 100%; }
+.repo-quick-setup-clone .repo-clone-https, .repo-quick-setup-clone .repo-clone-ssh { display: grid; gap: 12px; }
 .repo-clone-radio-https:checked ~ .repo-clone-ssh, .repo-clone-radio-ssh:checked ~ .repo-clone-https { display: none; }
 .repo-clone-radio-https:checked ~ .repo-view-switch .repo-view-option-https, .repo-clone-radio-ssh:checked ~ .repo-view-switch .repo-view-option-ssh { background: var(--secondary, #21262d); color: var(--foreground, #e6edf3); }
 .repo-clone-radio-https:focus-visible ~ .repo-view-switch .repo-view-option-https, .repo-clone-radio-ssh:focus-visible ~ .repo-view-switch .repo-view-option-ssh { outline: 2px solid var(--repo-link, #2f81f7); outline-offset: 2px; }

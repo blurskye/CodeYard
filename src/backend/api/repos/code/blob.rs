@@ -102,11 +102,9 @@ pub async fn get_blob(
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    let permit = state
-        .repository_downloads
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
+    let permit = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+        .await
+        .ok_or_else(|| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ApiError::new(

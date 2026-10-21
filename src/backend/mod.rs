@@ -10,6 +10,7 @@ pub mod cluster;
 pub mod crypto;
 pub mod dashboard;
 pub mod db;
+pub mod email;
 pub mod files;
 pub mod git;
 pub mod identity;

@@ -9,8 +9,7 @@ and HTTP, and provides issues, pull requests with reviews and merges, a web file
 editor, organizations, notifications, and CI runs in the style of GitHub Actions
 (workflows run through `act`).
 
-The application and executable are `codeyard`. The Cargo package is `codeyard`,
-because Cargo does not accept package names that start with a digit.
+![From the home page to a repository, then a workflow run from start to finish](branding/demo.gif)
 
 ## Quick start
 
@@ -150,6 +149,30 @@ argument.
   Generate it once (for example with `openssl rand -hex 32`) and keep it. A different
   key makes stored secrets unreadable. Without it the secrets feature is off.
 - `ADMIN_SECRET`: optional. When set, the `/setup` form requires this exact value.
+
+## Email
+
+Codeyard can send mail through an SMTP server: notification emails to users who have a
+verified address and the setting on (Settings, Email), and the approval or rejection of
+a signup request. Set the server under Admin, Email, which also sends a test message.
+The settings are stored in the database, so every node uses them. Links in the mail are
+built from `PUBLIC_URL`; without it, mail has no links. A saved password is encrypted with
+`SECRETS_MASTER_KEY` and is never shown again; leaving the field empty keeps it. Mail is
+queued and retried for a few attempts, and its text is deleted once it is sent or given up.
+
+With mail set up, a new or changed email address gets a confirmation code (good for 24
+hours), to paste under Settings, Email, which also has a resend button. "Forgot password?"
+mails a reset code (good for one hour, once) to an account with a verified address, and
+the next page takes that code and the new password. With `PUBLIC_URL` set, the same mail
+also has a link that does the same. A new request within a minute of the last one sends
+nothing, and changing the password in Settings cancels a pending reset. Without a mail
+server neither is sent, and the pages say so.
+
+On a fresh install the settings can come from the environment instead:
+`CODEYARD_SMTP_HOST`, `CODEYARD_SMTP_PORT` (default by security), `CODEYARD_SMTP_SECURITY`
+(`starttls` by default, `tls` or `none`), `CODEYARD_SMTP_USERNAME`, `CODEYARD_SMTP_PASSWORD`,
+`CODEYARD_SMTP_FROM` (an address or `Name <address>`) and `CODEYARD_SMTP_REPLY_TO`. Once
+settings are saved from the admin page, the database wins.
 
 ## Docker Compose
 

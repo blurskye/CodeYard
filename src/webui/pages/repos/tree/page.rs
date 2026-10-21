@@ -264,7 +264,7 @@ fn code_menu(repo: &RepoChrome, page: &TreePage) -> Element {
             div { class: "repo-menu-panel repo-clone-panel",
                 h2 { class: "repo-menu-heading", {icon("code")} "Clone" }
                 div { class: "repo-clone-urls",
-                    {clone_choice("clone-menu", &page.http_clone, &page.ssh_clone)}
+                    {clone_choice("clone-menu", &page.http_clone, &page.ssh_clone, None)}
                 }
                 p { class: "repo-clone-help", "Copy a URL to clone this repository." }
                 if !page.empty {
@@ -399,35 +399,48 @@ fn shell_argument(value: &str) -> String {
 
 /// Setup for an empty repository: the URL with an HTTPS or SSH choice, a line on what to add
 /// first, then the commands as plain preformatted text. The first command makes the commit from
-/// whatever the folder holds, since an empty repository has no README yet.
+/// whatever the folder holds, since an empty repository has no README yet. The commands follow
+/// the chosen protocol.
 fn quick_setup(http: &str, ssh: &str, branch: &str) -> Element {
-    let quoted_http = shell_argument(http);
-    let branch = shell_argument(branch);
-    let new_repository = format!(
-        "git init\ngit add .\ngit commit -m \"first commit\"\ngit branch -M {branch}\ngit remote add origin {quoted_http}\ngit push -u origin {branch}"
-    );
-    let existing_repository = format!(
-        "git remote add origin {quoted_http}\ngit branch -M {branch}\ngit push -u origin {branch}"
-    );
     rsx! {
         div { class: "repo-quick-setup",
             h3 { "Quick setup" }
             p { class: "repo-quick-setup-hint", "Consider adding a README, a .gitignore and a license to your first commit." }
-            div { class: "repo-quick-setup-clone", {clone_choice("quick-setup", http, ssh)} }
-            h4 { "Create a new repository on the command line" }
-            pre { class: "repo-quick-setup-code", "{new_repository}" }
-            h4 { "Push an existing repository from the command line" }
-            pre { class: "repo-quick-setup-code", "{existing_repository}" }
+            div { class: "repo-quick-setup-clone", {clone_choice("quick-setup", http, ssh, Some(branch))} }
         }
+    }
+}
+
+/// The two command blocks that push to `url`.
+fn setup_commands(url: &str, branch: &str) -> Element {
+    let url = shell_argument(url);
+    let branch = shell_argument(branch);
+    let new_repository = format!(
+        "git init\ngit add .\ngit commit -m \"first commit\"\ngit branch -M {branch}\ngit remote add origin {url}\ngit push -u origin {branch}"
+    );
+    let existing_repository =
+        format!("git remote add origin {url}\ngit branch -M {branch}\ngit push -u origin {branch}");
+    rsx! {
+        h4 { "Create a new repository on the command line" }
+        pre { class: "repo-quick-setup-code", "{new_repository}" }
+        h4 { "Push an existing repository from the command line" }
+        pre { class: "repo-quick-setup-code", "{existing_repository}" }
     }
 }
 
 /// The clone URLs of a repository. With an SSH URL too, a segmented HTTPS and SSH choice shows one
 /// URL field at a time. The choice is a radio group, so it works without scripts. `prefix` keeps the
-/// ids unique when a page shows two of these.
-fn clone_choice(prefix: &str, http: &str, ssh: &str) -> Element {
+/// ids unique when a page shows two of these. With a `setup_branch`, the push commands for that
+/// branch follow each URL.
+fn clone_choice(prefix: &str, http: &str, ssh: &str, setup_branch: Option<&str>) -> Element {
+    let url_block = |protocol: &str, url: &str| {
+        rsx! {
+            {clone_field(protocol, url)}
+            if let Some(branch) = setup_branch { {setup_commands(url, branch)} }
+        }
+    };
     if ssh.is_empty() {
-        return rsx! { div { class: "repo-clone-https", {clone_field("HTTPS", http)} } };
+        return rsx! { div { class: "repo-clone-https", {url_block("HTTPS", http)} } };
     }
     let https_id = format!("{prefix}-https");
     let ssh_id = format!("{prefix}-ssh");
@@ -438,8 +451,8 @@ fn clone_choice(prefix: &str, http: &str, ssh: &str) -> Element {
             label { class: "repo-view-option repo-view-option-https", r#for: "{https_id}", "HTTPS" }
             label { class: "repo-view-option repo-view-option-ssh", r#for: "{ssh_id}", "SSH" }
         }
-        div { class: "repo-clone-https", {clone_field("HTTPS", http)} }
-        div { class: "repo-clone-ssh", {clone_field("SSH", ssh)} }
+        div { class: "repo-clone-https", {url_block("HTTPS", http)} }
+        div { class: "repo-clone-ssh", {url_block("SSH", ssh)} }
     }
 }
 

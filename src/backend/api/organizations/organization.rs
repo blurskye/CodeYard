@@ -352,15 +352,6 @@ pub(super) async fn respond_with_hook_draft(
         }
         _ => 0,
     };
-    let manage_access = match ctx.user.as_ref() {
-        Some(user) if user.is_admin => {
-            match crate::backend::api::user::profile::private_access(ctx).await {
-                Ok(allowed) => allowed,
-                Err(response) => return response,
-            }
-        }
-        _ => false,
-    };
     let (after, page) = match cursor(ctx, "after") {
         Some(page) => page,
         None => return invalid(ctx),
@@ -409,7 +400,6 @@ pub(super) async fn respond_with_hook_draft(
         can_manage,
         is_owner,
         viewer_id: actor,
-        manage_access,
         tab,
         members: vec![],
         teams: vec![],

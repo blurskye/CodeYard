@@ -326,6 +326,10 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
             let name = act_job_name(&line.line).unwrap_or_else(|| "Runner".into());
             buckets.push((line.stage.clone(), identity.clone(), name, vec![line]));
         }
+        // act's unprefixed output after a job's end flag is the runner's, not that job's.
+        if act_job_result(&line.line).is_some() {
+            *identity = "Runner".into();
+        }
     }
     buckets
         .into_iter()
@@ -340,7 +344,11 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
 
 pub fn selected_job(jobs: &[WorkflowJob], selection: &str) -> Option<usize> {
     if selection.is_empty() {
-        return (!jobs.is_empty()).then_some(0);
+        // The runner's own lines come first; open the first workflow job instead when there is one.
+        return jobs
+            .iter()
+            .position(|job| job.name != "Runner")
+            .or((!jobs.is_empty()).then_some(0));
     }
     jobs.iter()
         .position(|job| job.key == selection)
@@ -551,6 +559,19 @@ mod tests {
     }
 
     #[test]
+    fn the_first_workflow_job_opens_before_the_runner_lines() {
+        let lines = vec![
+            log(1, "Using docker host"),
+            log(2, "[CI/test] ⭐ Run Main checkout"),
+            log(3, "[CI/test] ✅ Success - Main checkout [15.6ms]"),
+        ];
+        let jobs = project_logs(&lines, "success");
+        assert_eq!(jobs[0].name, "Runner");
+        assert_eq!(selected_job(&jobs, ""), Some(1));
+        assert_eq!(selected_job(&jobs[..1], ""), Some(0));
+    }
+
+    #[test]
     fn real_act_markers_project_steps_without_losing_output() {
         let lines = vec![
             log(1, "Preparing runner"),
@@ -602,10 +623,15 @@ mod tests {
             log(1, "[CI/build] ⭐ Run Complete job"),
             log(2, "[CI/build]   ✅  Success - Complete job"),
             log(3, "[CI/build] 🏁  Job succeeded"),
+            log(4, "level=info msg=A newer version of 'act' is available"),
         ];
         let jobs = project_logs(&lines, "success");
         assert_eq!(jobs[0].steps.len(), 1, "{:?}", jobs[0].steps);
         assert_eq!(jobs[0].steps[0].lines.len(), 3);
+        // act's own trailer after the flag is runner output, not a step of the job.
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[1].name, "Runner");
+        assert_eq!(jobs[1].steps[0].lines[0].id, 4);
     }
     #[test]
     fn job_flag_lines_read_as_the_job_result() {

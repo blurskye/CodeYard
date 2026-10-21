@@ -253,8 +253,10 @@ pub enum Operation {
         email: String,
     },
     /// Moves the branches of a restack, each checked against its old commit, with `base_branch`
-    /// checked against `base`.
+    /// checked against `base` and the stack against the `versions` the rebase read.
     PublishRestack {
+        stack_id: i64,
+        versions: Vec<(i64, i64)>,
         base_branch: String,
         base: String,
         moves: Vec<RestackMove>,

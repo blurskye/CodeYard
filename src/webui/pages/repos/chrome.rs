@@ -64,9 +64,6 @@ impl RepoChrome {
 /// wider screens. A phone keeps them in the More menu of the tab row.
 pub fn chrome(repo: &RepoChrome, body: Element) -> Element {
     rsx! {
-        // Raw-text elements cannot contain Dioxus hydration text markers.
-        // This is exclusively trusted, compile-time CSS, never repository/user text.
-        style { dangerous_inner_html: include_str!("style.css") }
         div { class: "repo-content page-shell",
             if let (Some(name), Some(url)) = (&repo.parent_name, &repo.parent_url) {
                 p { class: "repo-fork-notice", "forked from " NavLink { href: url.clone(), "{name}" } }

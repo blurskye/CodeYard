@@ -1,10 +1,12 @@
 pub(crate) use crate::backend::db::models;
 pub(crate) mod activity;
 pub(crate) mod assignees;
+pub(crate) mod audit;
 pub(crate) mod ci;
 pub(crate) mod cluster;
 pub(crate) mod deploy_keys;
 pub(crate) mod discussions;
+pub(crate) mod email;
 pub(crate) mod files;
 pub(crate) mod following;
 pub(super) mod inet;

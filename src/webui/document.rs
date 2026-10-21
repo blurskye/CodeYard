@@ -42,9 +42,6 @@ impl Theme {
 /// Only explicit presentation data crosses the server/browser boundary.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Chrome {
-    /// This page contains values from a native POST, not GET defaults.
-    #[serde(default)]
-    pub submitted_form: Option<String>,
     pub username: Option<String>,
     pub is_admin: bool,
     pub csrf_token: String,
@@ -89,6 +86,42 @@ pub fn render_model(
     ))
 }
 
+/// A stylesheet the server serves at `/assets/{name}`. The page links it with `version` in the
+/// query, so a browser keeps it until its text changes.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct Stylesheet {
+    pub name: &'static str,
+    pub text: &'static str,
+    pub version: String,
+}
+
+/// Every page links these in this order, so later sheets win over earlier ones.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn stylesheets() -> &'static [Stylesheet] {
+    use sha2::{Digest, Sha256};
+    static SHEETS: std::sync::OnceLock<Vec<Stylesheet>> = std::sync::OnceLock::new();
+    SHEETS.get_or_init(|| {
+        [
+            ("tailwind.css", include_str!("assets/tailwind.css")),
+            ("actions.css", include_str!("assets/actions.css")),
+            ("native.css", include_str!("components/native.css")),
+            ("account.css", include_str!("pages/account.css")),
+            (
+                "organization.css",
+                include_str!("pages/orgs/organization.css"),
+            ),
+            ("repository.css", include_str!("pages/repos/style.css")),
+        ]
+        .into_iter()
+        .map(|(name, text)| Stylesheet {
+            name,
+            text,
+            version: format!("{:x}", Sha256::digest(text.as_bytes()))[..16].to_owned(),
+        })
+        .collect()
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn document(title: &str, theme: Theme, body: Element) -> String {
     let title = crate::webui::app::tab_title(title);
@@ -108,9 +141,9 @@ fn document(title: &str, theme: Theme, body: Element) -> String {
                 title { "{title}" }
                 link { rel: "icon", r#type: "image/png", href: "/assets/favicon.png" }
                 link { rel: "preload", href: "/assets/fonts/mona-sans.woff2", r#as: "font", r#type: "font/woff2", crossorigin: "anonymous" }
-                link { rel: "stylesheet", href: "/assets/tailwind.css" }
-                link { rel: "stylesheet", href: "/assets/actions.css" }
-                link { rel: "stylesheet", href: "/assets/native.css" }
+                for sheet in stylesheets() {
+                    link { key: "{sheet.name}", rel: "stylesheet", href: "/assets/{sheet.name}?v={sheet.version}" }
+                }
             }
             body { class: "site-document-body min-h-screen bg-background text-foreground", {body} }
     };
@@ -147,6 +180,13 @@ mod tests {
         assert!(html.contains("class=\"site-brand-mark\""));
         assert!(html.contains("rel=\"icon\" type=\"image/png\" href=\"/assets/favicon.png\""));
         assert!(!html.contains("src=\"/assets/logo.svg\""));
+        for sheet in stylesheets() {
+            assert!(html.contains(&format!(
+                "href=\"/assets/{}?v={}\"",
+                sheet.name, sheet.version
+            )));
+        }
+        assert!(!html.contains("<style"));
         assert!(html.ends_with("</html>"));
         assert!(!html.contains("<script")); // fallback-only evidence, not hydrated target guard
     }

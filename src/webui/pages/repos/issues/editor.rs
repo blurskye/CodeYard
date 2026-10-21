@@ -21,9 +21,6 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
     initial_preview: bool,
     #[props(default)] placeholder: String,
     #[props(default)] references: References,
-    // The page's revision, which the save checks. See `DraftTextarea`.
-    #[props(default)] revision: Option<String>,
-    #[props(default)] on_revision: Option<EventHandler<Option<String>>>,
 ) -> Element {
     let mut text = use_signal(|| initial.clone());
     let mut showing = use_signal(|| initial_preview);
@@ -48,7 +45,7 @@ pub(in crate::webui::pages::repos) fn MarkdownEditor(
             MarkdownToolbar { target: id.clone() }
             DraftTextarea {
                 id: Some(id), name: "body", initial_value: initial, required,
-                maxlength: Some(65536), rows: rows as u32, placeholder, revision, on_revision,
+                maxlength: Some(65536), rows: rows as u32, placeholder,
                 class: "collaboration-textarea",
                 on_value: move |value| text.set(value),
             }
@@ -89,7 +86,7 @@ pub(super) fn CommentEditForm(
             // Enter in a field saves, not the Preview button that comes first in the editor.
             button { r#type: "submit", class: "sr-only", tabindex: "-1", aria_hidden: "true" }
             label { r#for: format!("edit-comment-{id}"), class: "sr-only", "Edit comment (Markdown)" }
-            MarkdownEditor { id: format!("edit-comment-{id}"), initial: body, rows: 8usize, required: true, initial_preview: preview, references, revision: Some(original) }
+            MarkdownEditor { id: format!("edit-comment-{id}"), initial: body, rows: 8usize, required: true, initial_preview: preview, references }
             div { class: "collaboration-form-actions",
                 button { class: "btn btn-primary", r#type: "submit", "Save changes" }
             }
@@ -125,19 +122,16 @@ pub(super) fn DetailEditForm(
         preview: draft.preview,
     });
     let snapshot = snapshot.read().clone();
-    // The revision the save checks, so a draft typed before the item changed is not saved silently.
-    let revision = snapshot.expected_updated.clone();
-    let mut expected_updated = use_signal(|| revision.clone());
     rsx! {
         form { method: "post", action: format!("{url}/edit"), class: "collaboration-form-fields",
             {csrf(&csrf_token)}
             input { r#type: "hidden", name: "expected_state", value: snapshot.expected_state }
-            input { r#type: "hidden", name: "expected_updated", value: expected_updated() }
+            input { r#type: "hidden", name: "expected_updated", value: snapshot.expected_updated }
             button { r#type: "submit", name: "intent", value: "save", class: "sr-only", tabindex: "-1", aria_hidden: "true" }
             label { r#for: "edit-title", "Title" }
             DraftInput { id: "edit-title", name: "title", initial_value: snapshot.title, required: true, maxlength: Some(255), class: "collaboration-input" }
             label { r#for: "edit-body", "Description (Markdown)" }
-            MarkdownEditor { id: "edit-body", initial: snapshot.body, rows: 10, required: false, initial_preview: snapshot.preview, references, revision: Some(revision), on_revision: move |revision: Option<String>| expected_updated.set(revision.unwrap_or_default()) }
+            MarkdownEditor { id: "edit-body", initial: snapshot.body, rows: 10, required: false, initial_preview: snapshot.preview, references }
             div { class: "collaboration-actions", button { r#type: "submit", name: "intent", value: "save", class: "btn btn-primary", "Save changes" } }
         }
     }

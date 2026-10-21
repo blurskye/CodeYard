@@ -75,6 +75,9 @@ aws-smithy-types = "1"
 tempfile = "3"
 libc = "0.2"
 reqwest = { version = "0.13.2", features = ["json", "query"] }
+# Outgoing mail over SMTP. rustls with aws-lc-rs, the provider the rest of the graph already uses,
+# and the system certificate store. No openssl, no connection pool.
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls", "aws-lc-rs", "rustls-native-certs"] }
 serde_yaml = "0.9"
 # Node-to-node transport (QUIC, peers authenticated by their keys). Pinned exactly: the
 # newest release that was two weeks old when added. aws-lc-rs is the TLS provider the rest
@@ -88,7 +91,7 @@ gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "HtmlDocument", "ScrollRestoration", "Element", "Node", "Location", "History", "Navigator", "Performance", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "HtmlFormElement", "KeyboardEvent", "NodeList", "Storage", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "ScrollRestoration", "Element", "Node", "Location", "History", "Navigator", "Performance", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "HtmlFormElement", "KeyboardEvent", "NodeList", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

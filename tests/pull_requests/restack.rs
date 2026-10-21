@@ -14,7 +14,10 @@ use codeyard::backend::{
     app::AppState,
     ci::CiConfig,
     db,
-    repositories::store::{repo_store, RestackMove},
+    repositories::{
+        pull_requests::{restack, OperationError},
+        store::{repo_store, RestackMove},
+    },
     storage::ObjectStore,
 };
 use database::Database;
@@ -24,6 +27,7 @@ use std::{path::Path, sync::Arc};
 
 /// Alice owns `proj`, and bob can read it but not write to it.
 struct App {
+    state: Arc<AppState>,
     alice: Client,
     bob: Client,
     owner: i64,
@@ -66,6 +70,7 @@ async fn setup(f: &mut Database, root: &Path) -> App {
     let alice = Client::login(&router, f.pool(), owner).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
     App {
+        state,
         alice,
         bob,
         owner,
@@ -440,10 +445,48 @@ async fn stale_publication_contract(pg: bool) {
     let (one, two, _three) = three_layers(&app.alice, &main0).await;
     let main1 = move_trunk(&app.alice, &main0).await;
     let store = repo_store(&app.repository, None);
+    let stack_id = db::pull_requests::records::get_pull_request(f.pool(), app.repository.id, 2)
+        .await
+        .unwrap()
+        .unwrap()
+        .stack_id
+        .expect("the layers form a stack");
+    let versions =
+        db::pull_requests::records::list_stack_versions(f.pool(), app.repository.id, stack_id)
+            .await
+            .unwrap();
     let replayed = store
         .prepare_restack(&one, &two, &main1, "Tester", "tester@example.invalid")
         .await
         .unwrap();
+
+    // A stack read at other versions refuses the publication, though every branch is in place.
+    let before = refs_of(&path);
+    let outdated: Vec<(i64, i64)> = versions.iter().map(|(id, v)| (*id, v - 1)).collect();
+    let changed = store
+        .publish_restack_as(
+            f.pool(),
+            app.repository.id,
+            app.owner,
+            stack_id,
+            &outdated,
+            "feature-1",
+            &one,
+            &[RestackMove {
+                branch: "feature-2".into(),
+                old: two.clone(),
+                new: replayed.clone(),
+            }],
+        )
+        .await;
+    assert!(
+        changed
+            .as_ref()
+            .is_err_and(|error| error.is_stack_changed()),
+        "{changed:?}"
+    );
+    assert_eq!(refs_of(&path), before, "no ref moved");
+
     // A push lands on the layer between the preparation and the publication.
     let pushed = app.alice.save("feature-2", "again.txt", &two).await;
     let before = refs_of(&path);
@@ -452,6 +495,8 @@ async fn stale_publication_contract(pg: bool) {
             f.pool(),
             app.repository.id,
             app.owner,
+            stack_id,
+            &versions,
             "feature-1",
             &one,
             &[RestackMove {
@@ -471,6 +516,8 @@ async fn stale_publication_contract(pg: bool) {
             f.pool(),
             app.repository.id,
             app.owner,
+            stack_id,
+            &versions,
             "feature-1",
             &main0,
             &[RestackMove {
@@ -485,6 +532,54 @@ async fn stale_publication_contract(pg: bool) {
         "a stale base must refuse the publication"
     );
     assert_eq!(refs_of(&path), before, "no ref moved");
+    f.finish().await;
+}
+
+/// A stack that changes between the replay and the publication refuses the publication, even when
+/// it looks the same afterwards: unstacking and joining again leaves the same layers on the same
+/// branches. Nothing moves, and a rebase started afterwards works.
+async fn stack_changed_contract(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let root = tempfile::tempdir().unwrap();
+    let app = setup(&mut f, root.path()).await;
+    let path = app.repository.disk_path.clone();
+    let main0 = app.alice.save("main", "README.md", "unborn").await;
+    three_layers(&app.alice, &main0).await;
+    move_trunk(&app.alice, &main0).await;
+    let before = refs_of(&path);
+
+    let target = ("alice".to_owned(), "proj".to_owned(), 1);
+    let prepared = restack::prepare_rebase(f.pool(), &app.state.ci_runs, app.owner, target)
+        .await
+        .unwrap()
+        .expect("every layer is behind trunk");
+    app.alice
+        .expect(
+            "DELETE",
+            "/api/repos/alice/proj/pulls/2/stack",
+            Value::Null,
+            StatusCode::OK,
+        )
+        .await;
+    join(&app.alice, 2).await;
+    join(&app.alice, 3).await;
+    let refused = restack::publish_rebase(f.pool(), &app.state.ci_runs, prepared).await;
+    assert!(
+        matches!(
+            refused,
+            Err(OperationError::Conflict {
+                code: "stack_changed",
+                ..
+            })
+        ),
+        "{:?}",
+        refused.err()
+    );
+    assert_eq!(refs_of(&path), before, "no ref moved");
+
+    let (status, rebased) = rebase(&app.alice, 1).await;
+    assert_eq!(status, StatusCode::OK, "{rebased}");
+    assert_eq!(rebased["rebased"], 3);
     f.finish().await;
 }
 
@@ -899,6 +994,16 @@ async fn sqlite_restack_publication_is_stale_when_a_branch_moved() {
 #[tokio::test]
 async fn postgres_restack_publication_is_stale_when_a_branch_moved() {
     stale_publication_contract(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_restack_refuses_a_stack_that_changed_while_it_was_replayed() {
+    stack_changed_contract(false).await;
+}
+
+#[tokio::test]
+async fn postgres_restack_refuses_a_stack_that_changed_while_it_was_replayed() {
+    stack_changed_contract(true).await;
 }
 
 #[tokio::test]

@@ -98,8 +98,6 @@ pub struct Page {
     pub is_owner: bool,
     /// The signed-in viewer. Their own row asks for their username before removal.
     pub viewer_id: i64,
-    /// Shows the Administration section of the account settings navigation.
-    pub manage_access: bool,
     /// The section the URL names: `overview`, `members`, `teams` or `webhooks`.
     pub tab: String,
     /// The webhooks section, built only on the webhooks tab of an owner. Boxed: most pages lack it.
@@ -162,8 +160,6 @@ pub struct PendingInvitation {
 pub fn render(page: Page) -> Element {
     let target = teams::form_target(&page);
     rsx! {
-        style { dangerous_inner_html: include_str!("../account.css") }
-        style { dangerous_inner_html: include_str!("organization.css") }
         div { class: "org-page identity-settings page-shell",
             if let Some(org) = &page.selected {
                 {organization_header(org)}
@@ -200,7 +196,7 @@ pub fn render(page: Page) -> Element {
                 }
             } else {
                 div { class: "identity-settings-layout",
-                    {settings::settings_nav("organizations", page.manage_access)}
+                    {settings::settings_nav("organizations")}
                     div { class: "identity-settings-content",
                         {index(&page)}
                     }

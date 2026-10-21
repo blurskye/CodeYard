@@ -1,19 +1,19 @@
-use crate::backend::api::admin::accounts::{access_result, require_admin_user};
+use crate::backend::api::admin::accounts::require_admin_user;
 use crate::backend::api::auth::errors;
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::auth::setup::node_setup_status;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session;
 use crate::backend::api::user::responses::{
-    field, mutation_guard, require_account, AuthResponse, AuthUserResponse as UserResponse, Fields,
+    require_account, AuthResponse, AuthUserResponse as UserResponse,
 };
-use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::identity::accounts::SignupReviewOutcome;
 use crate::backend::{db, identity};
 use crate::webui::pages::admin::{Signup, SIGNUP_REQUESTS_PER_PAGE};
-use axum::extract::{Form, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -163,30 +163,4 @@ pub(crate) async fn load_requests(
         total,
         page,
     ))
-}
-
-pub(crate) async fn signup_post(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-    Path(id): Path<i64>,
-    Form(form): Form<Fields>,
-) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
-    if let Err(response) = mutation_guard(&ctx, &form, true) {
-        return response;
-    }
-    let session_id = session::extract_session_id(&ctx.headers);
-    let result = identity::accounts::review_signup(
-        &ctx.state.pool,
-        session_id.as_deref(),
-        id,
-        signup_decision(field(&form, "action")),
-    )
-    .await
-    .map_err(auth::errors::signup_review_failure);
-    access_result(&ctx, &uri, &form, result, "request").await
 }

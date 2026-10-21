@@ -199,11 +199,11 @@ pub fn new(
                                 if draft.form.is_empty() {
                                     div { key: "{draft.repository_id}:{draft.template}:{draft.template_revision}:new:{draft.body}:{preview}", class: "collaboration-form-field",
                                         label { r#for: "new-body", "Description (Markdown)" }
-                                        MarkdownEditor { id: "new-body", initial: draft.body.clone(), rows: 12, required: false, initial_preview: preview, revision: Some(draft.template_revision.clone()), placeholder: body_hint, references: references.clone() }
+                                        MarkdownEditor { id: "new-body", initial: draft.body.clone(), rows: 12, required: false, initial_preview: preview, placeholder: body_hint, references: references.clone() }
                                     }
                                 } else {
                                     for (index, field) in draft.form.iter().enumerate() {
-                                        {form_field(index, field, &draft.template_revision)}
+                                        {form_field(index, field)}
                                     }
                                 }
                                 if kind == Kind::Pull {
@@ -230,7 +230,7 @@ pub fn new(
 }
 /// One field of an issue form. Its answers are posted as `form_<index>`, in the order of the
 /// file, so the server can write them into the issue body.
-fn form_field(index: usize, field: &FormField, revision: &str) -> Element {
+fn form_field(index: usize, field: &FormField) -> Element {
     let name = format!("form_{index}");
     let id = format!("form-field-{index}");
     let first = field.values.first().cloned().unwrap_or_default();
@@ -268,7 +268,7 @@ fn form_field(index: usize, field: &FormField, revision: &str) -> Element {
                     DraftInput { id: id.clone(), name, required: field.required, maxlength: Some(255), placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
                 FieldKind::Textarea => rsx! {
-                    DraftTextarea { id: id.clone(), name, revision: Some(revision.to_owned()), required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
+                    DraftTextarea { id: id.clone(), name, required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
                 _ => rsx! {
                     DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone())).collect::<Vec<_>>() }

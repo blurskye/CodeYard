@@ -72,6 +72,18 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                     back_to_settings("email").post(email::email_post),
                 )
                 .route(
+                    "/settings/email-verification",
+                    back_to_settings("email").post(email::verification_post),
+                )
+                .route(
+                    "/settings/email-verification/code",
+                    back_to_settings("email").post(email::verification_code_post),
+                )
+                .route(
+                    "/settings/email-notifications",
+                    back_to_settings("email").post(email::notifications_post),
+                )
+                .route(
                     "/settings/sessions/revoke",
                     back_to_settings("sessions").post(sessions::revoke_post),
                 )

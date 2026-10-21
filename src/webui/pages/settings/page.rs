@@ -4,11 +4,8 @@ use crate::webui::components::{
 };
 use crate::webui::document::Theme;
 use crate::webui::navigation::NavLink;
-use crate::webui::pages::admin::Signup;
-use crate::webui::pages::auth::{password_field, password_field_with_id};
-use crate::webui::pages::fields::{
-    access_forms, csrf, notice, text_field, FormValues, FIELD, SUBMIT,
-};
+use crate::webui::pages::auth::{code_field, password_field, password_field_with_id};
+use crate::webui::pages::fields::{csrf, notice, text_field, FormValues, FIELD, SUBMIT};
 use crate::webui::pages::users::{profile_icon, Profile, ProfileIcon};
 use dioxus::prelude::*;
 
@@ -27,6 +24,9 @@ const APPEARANCE_CHOICES: [(Theme, &str, &str); 3] = [
 pub struct Settings {
     pub profile: Profile,
     pub email: String,
+    /// Whether notifications are also sent by email.
+    pub email_notifications: bool,
+    pub email_verification: EmailVerification,
     pub tab: String,
     pub keys: Vec<Key>,
     pub tokens: Vec<Token>,
@@ -34,14 +34,20 @@ pub struct Settings {
     pub new_token: Option<String>,
     pub password_supported: bool,
     pub must_change_password: bool,
-    pub manage_access: bool,
-    pub requests: Vec<Signup>,
-    pub requests_count: usize,
-    pub requests_page: usize,
     pub values: FormValues,
     /// The theme saved on this device, read from the same cookie as the header toggle.
     pub theme: Theme,
     pub two_factor: TwoFactor,
+}
+
+/// Whether the account's address is confirmed, and if not, whether the server can ask for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum EmailVerification {
+    Verified,
+    /// Not confirmed; the server can mail a confirmation link.
+    Unverified,
+    /// Not confirmed, and the server has no mail server to send the link.
+    Unavailable,
 }
 
 /// Two-factor sign-in on this account. `setup` is set while a new secret waits for its confirming
@@ -113,10 +119,10 @@ fn token_expiry_day(submitted: String) -> String {
     }
 }
 
-/// The account settings navigation, in three groups. Organization pages share it; `current` is
+/// The account settings navigation, in two groups. Organization pages share it; `current` is
 /// the tab or page being shown.
-pub fn settings_nav(current: &str, manage_access: bool) -> Element {
-    let mut groups = vec![
+pub fn settings_nav(current: &str) -> Element {
+    let groups = [
         (
             "Account",
             vec![
@@ -182,17 +188,6 @@ pub fn settings_nav(current: &str, manage_access: bool) -> Element {
             ],
         ),
     ];
-    if manage_access {
-        groups.push((
-            "Administration",
-            vec![(
-                "/settings?tab=access",
-                "Account access",
-                "access",
-                ProfileIcon::Shield,
-            )],
-        ));
-    }
     let label = groups
         .iter()
         .flat_map(|(_, tabs)| tabs)
@@ -236,7 +231,6 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
     let current_theme = try_consume_context::<crate::webui::app::CurrentPage>()
         .map_or(model.theme, |page| page.0.read().chrome.theme);
     rsx! {
-        style { dangerous_inner_html: include_str!("../account.css") }
         div { class: "identity-settings page-shell",
             header { class: "identity-settings-header",
                 h1 { "Account settings" }
@@ -250,7 +244,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                 }
             }
             div { class: "identity-settings-layout",
-                {settings_nav(&model.tab, model.manage_access)}
+                {settings_nav(&model.tab)}
                 div { class: "identity-settings-content",
                     if model.tab == "profile" {
                         section { class: "identity-settings-section", aria_labelledby: "settings-profile-title",
@@ -464,6 +458,24 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 h2 { id: "settings-email-title", "Email address" }
                                 p { "Your sign-in and account notices go to this address. Changing it needs your current password." }
                             }
+                            if !model.email.is_empty() {
+                                match model.email_verification {
+                                    EmailVerification::Verified => rsx! { p { class: "identity-form-hint", "This address is verified." } },
+                                    EmailVerification::Unverified => rsx! {
+                                        p { class: "identity-form-hint", "This address is not verified. Paste the code from the verification email, or have a new one sent. A verified address also lets you reset your password by email." }
+                                        form { method: "post", action: "/settings/email-verification/code", class: "identity-form",
+                                            {csrf(token)}
+                                            {code_field("verify-code")}
+                                            div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Verify" } }
+                                        }
+                                        form { method: "post", action: "/settings/email-verification", class: "identity-form",
+                                            {csrf(token)}
+                                            div { class: "identity-form-actions", button { r#type: "submit", class: "btn", "Resend verification email" } }
+                                        }
+                                    },
+                                    EmailVerification::Unavailable => rsx! { p { class: "identity-form-hint", "This address is not verified. Verification is unavailable because this server cannot send email." } },
+                                }
+                            }
                             if model.password_supported {
                                 form { method: "post", action: "/settings/email", class: "identity-form",
                                     {csrf(token)}
@@ -473,6 +485,20 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 }
                             } else {
                                 div { class: "identity-empty", h3 { "Email changes aren't available" } p { "This account uses OAuth and does not support email changes." } }
+                            }
+                        }
+                        section { class: "identity-settings-section", aria_labelledby: "settings-email-notifications-title",
+                            header { class: "identity-section-header",
+                                h2 { id: "settings-email-notifications-title", "Email notifications" }
+                                p { "Also get your notifications by email. This needs a verified address and a mail server set up by an administrator." }
+                            }
+                            form { method: "post", action: "/settings/email-notifications", class: "identity-form",
+                                {csrf(token)}
+                                label { class: "identity-check",
+                                    input { r#type: "checkbox", name: "email_notifications", value: "yes", checked: model.email_notifications }
+                                    " Email me my notifications"
+                                }
+                                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Save" } }
                             }
                         }
                     } else if model.tab == "sessions" {
@@ -516,9 +542,6 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                         }
                     } else if model.tab == "two-factor" {
                         {two_factor_section(&model.two_factor, model.password_supported, token)}
-                    } else if model.tab == "access" && model.manage_access {
-                        section { class: "identity-settings-section identity-access-section", {access_forms(&model.requests, token, values, "/settings/access")}
-                            {crate::webui::pages::admin::signup_pagination(model.requests_page, model.requests_count, "/settings?tab=access")} }
                     }
                 }
             }
@@ -544,7 +567,6 @@ pub fn settings_tab(raw: Option<&str>) -> &'static str {
         Some("two-factor") => "two-factor",
         Some("email") => "email",
         Some("sessions") => "sessions",
-        Some("access") => "access",
         _ => "profile",
     }
 }

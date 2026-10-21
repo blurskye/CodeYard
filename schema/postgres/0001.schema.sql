@@ -58,6 +58,8 @@ CREATE TABLE IF NOT EXISTS users (
     must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
     email_verified BOOLEAN NOT NULL DEFAULT FALSE,
     two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Whether notifications are also sent by email, when the site has a mail server.
+    email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -87,6 +89,51 @@ CREATE TABLE IF NOT EXISTS node_configuration (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT node_configuration_singleton CHECK (id = 1),
     CONSTRAINT node_configuration_mode_check CHECK (node_mode IN ('public', 'private'))
+);
+
+-- Outgoing mail server, set from the admin page. Absent until saved; the environment applies then.
+CREATE TABLE IF NOT EXISTS email_settings (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    host VARCHAR(255) NOT NULL CHECK (length(host) >= 1),
+    port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+    security VARCHAR(10) NOT NULL CHECK (security IN ('starttls', 'tls', 'none')),
+    username VARCHAR(255) NOT NULL DEFAULT '',
+    encrypted_password BYTEA,
+    password_nonce BYTEA,
+    from_name VARCHAR(255) NOT NULL DEFAULT '',
+    from_address VARCHAR(255) NOT NULL CHECK (length(from_address) >= 1),
+    reply_to VARCHAR(255) NOT NULL DEFAULT '',
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK ((encrypted_password IS NULL) = (password_nonce IS NULL))
+);
+
+-- Mail waiting to be sent. A sender claims a due row by pushing its next_attempt_at forward,
+-- so a sender that dies mid-send only delays the retry. Rows that used all attempts stay as failed.
+CREATE TABLE IF NOT EXISTS email_outbox (
+    id BIGSERIAL PRIMARY KEY,
+    to_address VARCHAR(255) NOT NULL,
+    subject VARCHAR(998) NOT NULL,
+    body_text TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_error VARCHAR(1000),
+    sent_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_outbox_due ON email_outbox(next_attempt_at) WHERE sent_at IS NULL;
+
+-- A link mailed to a user: it confirms their address ('verify') or lets them choose a new
+-- password ('reset'). Its token is also shown as a code to paste. Only the hash of the token is
+-- kept. A user has one link of each kind, and a new one replaces it. A link works only while the
+-- user still has the address it was sent to.
+CREATE TABLE IF NOT EXISTS email_tokens (
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    purpose VARCHAR(10) NOT NULL CHECK (purpose IN ('verify', 'reset')),
+    email VARCHAR(255) NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE CHECK (char_length(token_hash) = 64),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, purpose)
 );
 
 CREATE TABLE IF NOT EXISTS cluster_ssh_host_key (
@@ -210,21 +257,6 @@ CREATE TABLE IF NOT EXISTS ssh_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ssh_keys_user_id ON ssh_keys(user_id);
-
-CREATE TABLE IF NOT EXISTS gpg_keys (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    key_id VARCHAR(40) NOT NULL UNIQUE,
-    public_key TEXT NOT NULL,
-    emails TEXT[] NOT NULL DEFAULT '{}',
-    can_sign BOOLEAN NOT NULL DEFAULT TRUE,
-    can_encrypt BOOLEAN NOT NULL DEFAULT FALSE,
-    expires_at TIMESTAMPTZ,
-    verified BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_gpg_keys_user_id ON gpg_keys(user_id);
 
 --------------------------------------------------------------------------------
 -- PART 5: TWO-FACTOR AUTHENTICATION
@@ -639,6 +671,8 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     merged_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
     merge_commit_sha VARCHAR(40),
     stack_id BIGINT,
+    -- Counts the changes to this row's place in its stack (joined, left, closed, reopened, retargeted, merged). A rebase of the stack refuses to publish when any of them moved.
+    stack_version BIGINT NOT NULL DEFAULT 0,
     milestone_id BIGINT REFERENCES milestones(id) ON DELETE SET NULL,
     additions INTEGER NOT NULL DEFAULT 0,
     deletions INTEGER NOT NULL DEFAULT 0,
@@ -849,17 +883,6 @@ CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id);
 -- PART 16: USER PROFILE EXTRAS
 --------------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS pinned_repos (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    position SMALLINT NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, repo_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_pinned_repos_user_id ON pinned_repos(user_id);
-
 --------------------------------------------------------------------------------
 -- PART 17: SECRETS (encrypted)
 --------------------------------------------------------------------------------
@@ -876,19 +899,6 @@ CREATE TABLE IF NOT EXISTS repo_secrets (
     UNIQUE(repo_id, name)
 );
 
-
-CREATE TABLE IF NOT EXISTS org_secrets (
-    id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    encrypted_value BYTEA NOT NULL,
-    nonce BYTEA NOT NULL,
-    visibility VARCHAR(20) NOT NULL DEFAULT 'all', -- all, private, selected
-    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(org_id, name)
-);
 
 
 --------------------------------------------------------------------------------
@@ -1151,18 +1161,6 @@ CREATE TABLE IF NOT EXISTS ci_logs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_ci_logs_run_id_id ON ci_logs(run_id, id);
-
-CREATE TABLE IF NOT EXISTS ci_artifacts (
-    id BIGSERIAL PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    storage_url TEXT NOT NULL,
-    size_bytes BIGINT,
-    content_type VARCHAR(100),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_ci_artifacts_run_id ON ci_artifacts(run_id);
 
 CREATE TABLE IF NOT EXISTS ci_deployments (
     id BIGSERIAL PRIMARY KEY,

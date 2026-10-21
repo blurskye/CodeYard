@@ -82,9 +82,6 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
     let repository_total = repository_count;
     let current = |active: bool| active.then(|| "page".to_owned());
     rsx! {
-        // Trusted static CSS: the repository list reuses the profile styles.
-        style { dangerous_inner_html: include_str!("../account.css") }
-        style { dangerous_inner_html: include_str!("organization.css") }
         div { class: "identity-profile",
             div { class: "identity-profile-content",
                 header { class: "org-profile-header",

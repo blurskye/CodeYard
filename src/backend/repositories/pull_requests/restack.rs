@@ -1,6 +1,7 @@
 //! Rebase stack: moves the open layers of a stack onto the layers below them. Each layer replays
 //! its own commits onto the new head of the layer below, bottom-up. Every head moves in one ref
-//! transaction after all layers have replayed, so a conflict or a failed check moves nothing.
+//! transaction after all layers have replayed, so a conflict or a failed check moves nothing. A
+//! stack that changed while the layers replayed is refused too: see `publish_rebase`.
 
 use super::merge::{open_chain, prepare_error};
 use super::{actor, branches_moved, database_error, require_write, OperationError};
@@ -32,8 +33,35 @@ pub async fn rebase_stack(
     pool: &db::DbPool,
     ci: &CiRuns,
     actor_id: i64,
-    (owner, repo, number): (String, String, i32),
+    target: (String, String, i32),
 ) -> Result<RestackResponse, OperationError> {
+    match prepare_rebase(pool, ci, actor_id, target).await? {
+        Some(prepared) => publish_rebase(pool, ci, prepared).await,
+        None => Ok(RestackResponse { rebased: 0 }),
+    }
+}
+
+/// The replayed layers of a rebase, ready to publish.
+pub struct PreparedRestack {
+    actor_id: i64,
+    owner: String,
+    repository: db::models::Repository,
+    stack_id: i64,
+    /// The stack's versions from before its layers were read.
+    versions: Vec<(i64, i64)>,
+    base_branch: String,
+    base_tip: String,
+    moves: Vec<RestackMove>,
+}
+
+/// Replays the layers a rebase moves, without moving any branch. `None` when nothing needs to move.
+/// This can take minutes, so it holds no database transaction.
+pub async fn prepare_rebase(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    actor_id: i64,
+    (owner, repo, number): (String, String, i32),
+) -> Result<Option<PreparedRestack>, OperationError> {
     let deadline = tokio::time::Instant::now() + RESTACK_PREPARE_DEADLINE;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -69,6 +97,11 @@ pub async fn rebase_stack(
             message: "This pull request is not in a stack.".into(),
         });
     };
+    // The versions are read before the layers, so a change between the two reads shows up when
+    // the rebase is published.
+    let versions = db::pull_requests::records::list_stack_versions(pool, repository.id, stack_id)
+        .await
+        .map_err(database_error)?;
     // A closed or cyclic layer below refuses the rebase, as it refuses a merge.
     open_chain(pool, &pull).await?;
     let members = db::pull_requests::records::list_stack_members(pool, repository.id, stack_id)
@@ -78,7 +111,7 @@ pub async fn rebase_stack(
     let refs = store.refs().await.map_err(git_unavailable)?;
     let moving = layers_to_move(&store, &refs, &pull, &members).await?;
     let Some(first) = moving.first() else {
-        return Ok(RestackResponse { rebased: 0 });
+        return Ok(None);
     };
     let base_tip = tip_of(&refs, &first.base_branch)
         .ok_or_else(base_branch_missing)?
@@ -119,15 +152,50 @@ pub async fn rebase_stack(
         onto = new_head;
     }
     if moves.is_empty() {
-        return Ok(RestackResponse { rebased: 0 });
+        return Ok(None);
     }
+    Ok(Some(PreparedRestack {
+        actor_id,
+        owner,
+        repository,
+        stack_id,
+        versions,
+        base_branch: first.base_branch.clone(),
+        base_tip,
+        moves,
+    }))
+}
 
+/// Moves the branches of a prepared rebase. Every layer, and every layer that joined or left, must
+/// still be at the version it was read at, or nothing moves. The branches move only if each is still
+/// at the commit that was replayed, so a push to a layer fails the rebase as well.
+pub async fn publish_rebase(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    prepared: PreparedRestack,
+) -> Result<RestackResponse, OperationError> {
+    let PreparedRestack {
+        actor_id,
+        owner,
+        repository,
+        stack_id,
+        versions,
+        base_branch,
+        base_tip,
+        moves,
+    } = prepared;
+    // The replays can take a while. If a layer was unstacked, retargeted, closed or merged
+    // meanwhile, or another layer joined, they were built for a stack that no longer exists.
+    // The store compares the versions under the repository lock, just before the refs move.
+    let store = repo_store(&repository, ci.cluster.as_ref());
     let published = store
         .publish_restack_as(
             pool,
             repository.id,
             actor_id,
-            &first.base_branch,
+            stack_id,
+            &versions,
+            &base_branch,
             &base_tip,
             &moves,
         )
@@ -459,7 +527,13 @@ fn rebase_failure(number: i32, error: RepoError) -> OperationError {
 /// Maps a failed publication. A branch rule's refusal keeps the rule's own text, and a stale head or
 /// base is a revision conflict. Nothing moved in either case.
 fn publish_failure(error: RepoError) -> OperationError {
-    if error.is_write_denied() {
+    if error.is_stack_changed() {
+        OperationError::Conflict {
+            code: "stack_changed",
+            message: "The stack changed while it was being rebased. Nothing moved; try again."
+                .into(),
+        }
+    } else if error.is_write_denied() {
         OperationError::Denied {
             code: "write_denied",
             message: "Repository write authority changed; rebase denied.".into(),

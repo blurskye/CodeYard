@@ -69,6 +69,22 @@ pub async fn count_users(pool: &PgPool) -> Result<i64> {
     Ok(count)
 }
 
+pub async fn replace_password_hash(
+    pool: &PgPool,
+    user_id: i64,
+    old: &str,
+    new: &str,
+) -> Result<bool> {
+    let changed =
+        sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2 AND password_hash = $3")
+            .bind(new)
+            .bind(user_id)
+            .bind(old)
+            .execute(pool)
+            .await?;
+    Ok(changed.rows_affected() == 1)
+}
+
 pub async fn update_user_password(
     pool: &PgPool,
     user_id: i64,
@@ -304,6 +320,13 @@ pub async fn list_admin_users(
 pub async fn admin_totals(pool: &PgPool) -> Result<(i64, i64, i64)> {
     Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM users WHERE is_banned), ((SELECT COALESCE(SUM(size_bytes),0) FROM repositories) + (SELECT COALESCE(SUM(file_size),0) FROM files WHERE is_active))::BIGINT")
         .fetch_one(pool).await?)
+}
+
+/// Repositories, organizations and queued CI runs, for the admin overview.
+pub async fn admin_site_counts(pool: &PgPool) -> Result<(i64, i64, i64)> {
+    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM repositories), (SELECT COUNT(*) FROM organizations), (SELECT COUNT(*) FROM ci_runs WHERE status = 'queued')")
+        .fetch_one(pool)
+        .await?)
 }
 
 /// The five newest accounts as (id, username, created).

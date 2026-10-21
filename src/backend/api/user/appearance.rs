@@ -26,7 +26,7 @@ pub(crate) async fn set_theme(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if let Err(response) = ctx.check_csrf(&form) {
+    if let Err(response) = ctx.check_theme_form(&form) {
         return response;
     }
     let Some(theme) = form.get("theme").and_then(|v| Theme::parse(v)) else {

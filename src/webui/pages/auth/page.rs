@@ -115,8 +115,6 @@ pub fn auth_page(
     };
     let redirect_query = crate::webui::encode_component(redirect);
     rsx! {
-        // Same trusted static CSS receiver as the profile; no user content enters raw HTML.
-        style { dangerous_inner_html: include_str!("../account.css") }
         section { class: "identity-auth", "aria-labelledby": "identity-auth-title",
             header { class: "identity-auth-header",
                 img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "identity-auth-brand" }
@@ -200,22 +198,165 @@ pub fn auth_page(
     }
 }
 
-/// The page behind "Forgot password?". Codeyard sends no reset email and has no reset form, so
-/// the page says so. It changes nothing.
-pub fn password_help_page(redirect: &str) -> Element {
+/// The page behind "Forgot password?". With a mail server it asks for the account's address and
+/// emails a reset link; without one it says who can help.
+pub fn password_help_page(
+    redirect: &str,
+    token: &str,
+    mail_available: bool,
+    message: Option<&str>,
+    is_error: bool,
+) -> Element {
     let redirect_query = crate::webui::encode_component(redirect);
     rsx! {
-        // Same trusted static CSS receiver as the sign-in page; no user content enters raw HTML.
-        style { dangerous_inner_html: include_str!("../account.css") }
         section { class: "identity-auth", "aria-labelledby": "identity-auth-title",
             header { class: "identity-auth-header",
                 img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "identity-auth-brand" }
                 h1 { id: "identity-auth-title", "Forgot your password?" }
-                p { "Codeyard does not email password resets, and this page cannot change a password." }
-                p { "Ask the administrator of this Codeyard server to help you get back into your account." }
+                if mail_available {
+                    p { "Enter the email address of your account. If it is verified, we email you a code to choose a new password." }
+                } else {
+                    p { "This server cannot send email, so it cannot send a password reset code." }
+                    p { "Ask the administrator of this Codeyard server to help you get back into your account." }
+                }
+            }
+            {link_notice(message, is_error)}
+            if mail_available {
+                form { method: "post", action: "/forgot-password", class: "identity-form",
+                    {csrf(token)}
+                    input { r#type: "hidden", name: "redirect", value: redirect.to_owned() }
+                    div { class: "space-y-2",
+                        label { r#for: "forgot-email", class: "block text-sm font-semibold", "Email address" }
+                        input { id: "forgot-email", r#type: "email", name: "email", class: FIELD, required: true, maxlength: "320",
+                            autocomplete: "email", autocapitalize: "none", autofocus: true, spellcheck: "false" }
+                    }
+                    div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Send reset code" } }
+                }
             }
             p { class: "identity-auth-switch",
                 NavLink { href: format!("/login?redirect={redirect_query}"), class: "identity-auth-link", "Back to sign in" }
+            }
+        }
+    }
+}
+
+fn link_notice(message: Option<&str>, is_error: bool) -> Element {
+    rsx! {
+        if let Some(message) = message {
+            p { role: if is_error { "alert" } else { "status" }, class: if is_error { "identity-auth-notice identity-auth-notice-error" } else { "identity-auth-notice" }, "{message}" }
+        }
+    }
+}
+
+/// The code field of the pages that take a mailed code. Spaces around a pasted code are fine.
+pub(in crate::webui::pages) fn code_field(id: &str) -> Element {
+    rsx! {
+        div { class: "space-y-2",
+            label { r#for: id.to_owned(), class: "block text-sm font-semibold", "Code from the email" }
+            input { id: id.to_owned(), r#type: "text", name: "code", class: FIELD, required: true, maxlength: "128",
+                autocomplete: "one-time-code", autocapitalize: "none", spellcheck: "false" }
+        }
+    }
+}
+
+/// The step after asking for a reset: the code from the email, the address it went to, and the
+/// new password, in one form.
+pub fn reset_code_page(
+    csrf_token: &str,
+    email: &str,
+    message: Option<&str>,
+    is_error: bool,
+) -> Element {
+    rsx! {
+        section { class: "identity-auth", "aria-labelledby": "identity-auth-title",
+            header { class: "identity-auth-header",
+                img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "identity-auth-brand" }
+                h1 { id: "identity-auth-title", "Check your email" }
+                p { "Paste the code from the email and choose a new password. Every device you are signed in on is signed out." }
+            }
+            {link_notice(message, is_error)}
+            form { method: "post", action: "/reset-password/code", class: "identity-form",
+                {csrf(csrf_token)}
+                div { class: "space-y-2",
+                    label { r#for: "reset-email", class: "block text-sm font-semibold", "Email address" }
+                    input { id: "reset-email", r#type: "email", name: "email", class: FIELD, maxlength: "320",
+                        value: email.to_owned(), autocomplete: "email", autocapitalize: "none", spellcheck: "false" }
+                }
+                {code_field("reset-code")}
+                {password_field("new_password", "New password", true)}
+                {password_field("confirm_password", "Confirm new password", true)}
+                p { class: "identity-form-hint", "Use at least 8 characters. The code works for one hour." }
+                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Change password" } }
+            }
+            p { class: "identity-auth-switch",
+                NavLink { href: "/forgot-password".to_string(), class: "identity-auth-link", "Ask for a new code" }
+            }
+        }
+    }
+}
+
+/// The page a password reset link opens. The new password is set when its form is sent.
+pub fn reset_password_page(
+    csrf_token: &str,
+    token: &str,
+    valid: bool,
+    message: Option<&str>,
+    is_error: bool,
+) -> Element {
+    rsx! {
+        section { class: "identity-auth", "aria-labelledby": "identity-auth-title",
+            header { class: "identity-auth-header",
+                img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "identity-auth-brand" }
+                h1 { id: "identity-auth-title", "Reset your password" }
+                if valid { p { "Choose a new password. Every device you are signed in on is signed out." } }
+            }
+            {link_notice(message, is_error)}
+            if valid {
+                form { method: "post", action: "/reset-password", class: "identity-form",
+                    {csrf(csrf_token)}
+                    input { r#type: "hidden", name: "token", value: token.to_owned() }
+                    {password_field("new_password", "New password", true)}
+                    {password_field("confirm_password", "Confirm new password", true)}
+                    p { class: "identity-form-hint", "Use at least 8 characters." }
+                    div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Change password" } }
+                }
+            }
+            p { class: "identity-auth-switch",
+                if valid {
+                    NavLink { href: "/login".to_string(), class: "identity-auth-link", "Back to sign in" }
+                } else {
+                    NavLink { href: "/forgot-password".to_string(), class: "identity-auth-link", "Ask for a new link" }
+                }
+            }
+        }
+    }
+}
+
+/// The page an address confirmation link opens. The address is confirmed when its form is sent.
+pub fn verify_email_page(
+    csrf_token: &str,
+    token: &str,
+    valid: bool,
+    message: Option<&str>,
+    is_error: bool,
+) -> Element {
+    rsx! {
+        section { class: "identity-auth", "aria-labelledby": "identity-auth-title",
+            header { class: "identity-auth-header",
+                img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "identity-auth-brand" }
+                h1 { id: "identity-auth-title", "Confirm your email address" }
+                if valid { p { "Confirm that this is your email address and that you want Codeyard to use it." } }
+            }
+            {link_notice(message, is_error)}
+            if valid {
+                form { method: "post", action: "/verify-email", class: "identity-form",
+                    {csrf(csrf_token)}
+                    input { r#type: "hidden", name: "token", value: token.to_owned() }
+                    div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Confirm email address" } }
+                }
+            }
+            p { class: "identity-auth-switch",
+                NavLink { href: "/settings?tab=email".to_string(), class: "identity-auth-link", "Email settings" }
             }
         }
     }
@@ -232,7 +373,6 @@ pub fn two_factor_page(
     is_error: bool,
 ) -> Element {
     rsx! {
-        style { dangerous_inner_html: include_str!("../account.css") }
         section { class: "identity-auth", aria_labelledby: "identity-auth-title",
             header { class: "identity-auth-header",
                 img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "identity-auth-brand" }

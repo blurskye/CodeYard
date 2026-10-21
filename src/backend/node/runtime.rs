@@ -327,6 +327,15 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             expiry_stop,
         ))
     });
+    // Every web node sends queued email; each claims its own messages.
+    let (stop_email, email_stop) = tokio::sync::watch::channel(false);
+    let email = config.roles.contains(NodeRole::Web).then(|| {
+        tokio::spawn(crate::backend::email::outbox::run(
+            pool.clone(),
+            state.secret_encryptor.clone(),
+            email_stop,
+        ))
+    });
     // Storage nodes keep the replica copies of their repositories current.
     let (stop_replicas, replica_stop) = tokio::sync::watch::channel(false);
     let replicas = member
@@ -387,6 +396,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         stop_listeners.send_replace(true);
     }
     stop_expiry.send_replace(true);
+    stop_email.send_replace(true);
     stop_replicas.send_replace(true);
     workers.request_stop();
     // Stop being a placement target before the node drains its work. The withdrawal is
@@ -419,6 +429,13 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         if finished.is_err() {
             expiry.abort();
             let _ = expiry.await;
+        }
+    }
+    if let Some(mut email) = email {
+        let finished = tokio::time::timeout_at(deadline, &mut email).await;
+        if finished.is_err() {
+            email.abort();
+            let _ = email.await;
         }
     }
     if let Some(mut replicas) = replicas {

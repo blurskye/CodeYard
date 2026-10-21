@@ -1,8 +1,19 @@
-//! Administrator users page: search, the account list with its actions, and account creation.
+//! Administrator users page: pending signup requests, account creation, and the searchable
+//! account list with its actions.
+use super::nav::{admin_header, Section};
+use super::SIGNUP_REQUESTS_PER_PAGE;
 use crate::webui::components::{compact_date, confirm_dialog, count_label};
 use crate::webui::navigation::NavLink;
-use crate::webui::pages::fields::{csrf, managed_account_form, notice, FormValues};
+use crate::webui::pages::fields::{csrf, managed_account_form, notice, FormValues, SUBMIT};
 use dioxus::prelude::*;
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Signup {
+    pub id: i64,
+    pub username: String,
+    pub email: String,
+    pub created: String,
+}
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AccountMetadata {
@@ -18,6 +29,7 @@ pub struct AccountMetadata {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AdminUsers {
+    /// A private node: it creates accounts for people and reviews their signup requests.
     pub managed_accounts: bool,
     pub current_user_id: i64,
     /// The rows on this page.
@@ -29,16 +41,25 @@ pub struct AdminUsers {
     /// Accounts that match the search, on every page.
     pub total: usize,
     pub values: FormValues,
+    /// The requests on this page. Empty on a public node.
+    pub requests: Vec<Signup>,
+    /// Pending requests on every page.
+    pub requests_count: usize,
+    pub requests_page: usize,
 }
 
-/// The users page address for a search and page. Pages after the first keep their number.
-fn list_url(search: &str, page: usize) -> String {
+/// The users page address for a search, an account page and a request page. Pages after the
+/// first keep their number.
+fn list_url(search: &str, page: usize, requests_page: usize) -> String {
     let mut query = url::form_urlencoded::Serializer::new(String::new());
     if !search.is_empty() {
         query.append_pair("q", search);
     }
     if page > 1 {
         query.append_pair("page", &page.to_string());
+    }
+    if requests_page > 1 {
+        query.append_pair("request_page", &requests_page.to_string());
     }
     let query = query.finish();
     if query.is_empty() {
@@ -65,7 +86,7 @@ fn AccountActions(account: AccountMetadata, token: String, search: String, page:
     let ban_id = format!("ban-account-{id}");
     let role_id = format!("role-account-{id}");
     let reset_id = format!("two-factor-account-{id}");
-    let cancel = list_url(&search, page);
+    let cancel = list_url(&search, page, 1);
     rsx! {
         details { class: "native-menu identity-row-menu",
             summary { class: "identity-row-menu-button", "aria-label": menu_label.clone(), title: menu_label,
@@ -133,32 +154,59 @@ pub fn admin_users_page(
 ) -> Element {
     let search = model.search.clone();
     let page = model.page;
-    let previous = (page > 1).then(|| list_url(&search, page - 1));
-    let next = (page < model.pages).then(|| list_url(&search, page + 1));
+    let requests_page = model.requests_page;
+    let request_pages = model
+        .requests_count
+        .div_ceil(SIGNUP_REQUESTS_PER_PAGE)
+        .max(1);
+    let previous = (page > 1).then(|| list_url(&search, page - 1, requests_page));
+    let next = (page < model.pages).then(|| list_url(&search, page + 1, requests_page));
+    let previous_requests = (requests_page > 1).then(|| list_url(&search, page, requests_page - 1));
+    let next_requests =
+        (requests_page < request_pages).then(|| list_url(&search, page, requests_page + 1));
     rsx! {
-        style { dangerous_inner_html: include_str!("../account.css") }
         div { class: "identity-settings identity-admin page-shell",
-            header { class: "admin-header",
-                div { class: "admin-header-main",
-                    nav { class: "admin-crumbs", aria_label: "Breadcrumb",
-                        NavLink { href: "/admin".to_string(), "Administration" }
-                        " / Users"
-                    }
-                    h1 { "Users" }
-                    p { "Find accounts, create them, ban them and grant the administrator role." }
-                }
-                nav { class: "admin-header-actions", aria_label: "Administration",
-                    NavLink { href: "/admin".to_string(), class: "btn", "Overview" }
-                }
-            }
+            {admin_header(Section::Users, "Users", "Find accounts, review signup requests, ban accounts and grant the administrator role.")}
             {notice(message, error)}
             if model.managed_accounts {
-            section { class: "identity-admin-panel", aria_labelledby: "admin-create-title",
-                header { class: "identity-admin-panel-header",
-                    div { h2 { id: "admin-create-title", "Create user" } p { "The new account signs in with the temporary password and must change it." } }
+                section { class: "identity-admin-panel", aria_labelledby: "admin-requests-title",
+                    header { class: "identity-admin-panel-header",
+                        div { h2 { id: "admin-requests-title", "Pending requests" } p { {count_label(model.requests_count, "request", "requests")} " waiting for a decision." } }
+                    }
+                    if model.requests.is_empty() {
+                        div { class: "identity-empty", h3 { "No pending requests" } p { "New requests will appear here." } }
+                    } else {
+                        div { class: "identity-row-list",
+                            for request in model.requests.iter() {
+                                article { key: "{request.id}", class: "identity-row",
+                                    div { class: "identity-row-main",
+                                        h3 { "{request.username}" }
+                                        p { "{request.email} · Requested {compact_date(&request.created)}" }
+                                    }
+                                    form { method: "post", action: format!("/admin/users/requests/{}/resolve", request.id), class: "identity-row-actions",
+                                        {csrf(token)}
+                                        {listing_fields(&search, page)}
+                                        button { r#type: "submit", name: "action", value: "approve", class: SUBMIT, "Approve" }
+                                        button { r#type: "submit", name: "action", value: "reject", class: "btn", "Reject" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if request_pages > 1 {
+                        nav { class: "identity-admin-pager", aria_label: "Signup request pages",
+                            if let Some(href) = previous_requests { NavLink { href, class: "btn", "Previous requests" } }
+                            span { class: "identity-muted", "Page {requests_page} of {request_pages}" }
+                            if let Some(href) = next_requests { NavLink { href, class: "btn", "Next requests" } }
+                        }
+                    }
                 }
-                {managed_account_form(token, &model.values, "/admin/access/users", true)}
-            }
+                section { class: "identity-admin-panel", aria_labelledby: "admin-create-title",
+                    header { class: "identity-admin-panel-header",
+                        div { h2 { id: "admin-create-title", "Create user" } p { "The new account signs in with the temporary password and must change it." } }
+                    }
+                    {managed_account_form(token, &model.values, "/admin/users")}
+                }
             }
             section { class: "identity-admin-panel", aria_labelledby: "admin-accounts-title",
                 header { class: "identity-admin-panel-header",

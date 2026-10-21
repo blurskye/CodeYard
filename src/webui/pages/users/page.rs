@@ -39,8 +39,6 @@ pub fn profile_page(
     };
     let days = activity_days(&activity.items);
     rsx! {
-        // Trusted static CSS only: prerender text-node markers would corrupt style raw text.
-        style { dangerous_inner_html: include_str!("../account.css") }
         div { class: "identity-profile",
             div { class: "identity-profile-content",
                 if let Some(message) = message {

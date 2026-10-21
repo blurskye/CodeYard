@@ -143,7 +143,6 @@ pub fn render(list: WorkList) -> Element {
     };
     let state = if list.open { "open" } else { "closed" };
     rsx! {
-        style { dangerous_inner_html: include_str!("../repos/style.css") }
         div { class: "repo-content",
             section { class: "collaboration-page collaboration-list", aria_label: heading,
                 div { class: "collaboration-toolbar",
@@ -220,7 +219,6 @@ pub fn choose_repository(model: &RepositoryChoices) -> Element {
         )
     };
     rsx! {
-        style { dangerous_inner_html: include_str!("../repos/style.css") }
         div { class: "repo-content",
             section { class: "collaboration-page collaboration-list", aria_label: "New issue",
                 div { class: "collaboration-toolbar",
@@ -298,7 +296,6 @@ mod tests {
         assert!(html.contains("aria-current=\"page\""), "{html}");
         assert!(html.contains("tab=created"), "{html}");
         assert!(html.contains("state=open"), "{html}");
-        // The page's inline stylesheet names the class too, so check for the element's attribute.
         assert!(!html.contains("class=\"collaboration-empty\""), "{html}");
         assert!(!html.contains("Showing the latest"), "{html}");
     }

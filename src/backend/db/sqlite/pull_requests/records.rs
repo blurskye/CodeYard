@@ -539,6 +539,7 @@ pub async fn update_pull_request(
             base_branch = COALESCE(?9, base_branch), base_sha = COALESCE(?10, base_sha),
             fork_sha = CASE WHEN ?9 IS NULL THEN fork_sha WHEN stack_id IS NOT NULL THEN COALESCE(fork_sha, base_sha) ELSE NULL END,
             closed_at = CASE WHEN ?4 = 'open' THEN NULL WHEN ?4 = 'closed' AND state <> 'closed' THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now') ELSE closed_at END,
+            stack_version = stack_version + CASE WHEN ?4 IS NULL AND ?9 IS NULL THEN 0 ELSE 1 END,
             updated_at = ?7
         WHERE id = ?1 AND state = ?5 AND updated_at = ?6 AND repo_id = ?8
             AND (?4 IS NULL OR (state <> 'merged' AND ?4 IN ('open', 'closed')))
@@ -567,7 +568,7 @@ pub async fn mark_pull_requests_merged(
     ordered.sort_by_key(|pull| pull.id);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     for pull in ordered {
-        let changed = sqlx::query("UPDATE pull_requests SET state='merged',merged=1,merged_by_id=?2,merge_commit_sha=?3,merged_at=?4,closed_at=?4,updated_at=?4,head_sha=?5,base_sha=?6 WHERE id=?1 AND state='open' AND NOT merged AND base_branch=?7")
+        let changed = sqlx::query("UPDATE pull_requests SET state='merged',merged=1,merged_by_id=?2,merge_commit_sha=?3,merged_at=?4,closed_at=?4,updated_at=?4,head_sha=?5,base_sha=?6,stack_version=stack_version+1 WHERE id=?1 AND state='open' AND NOT merged AND base_branch=?7")
             .bind(pull.id)
             .bind(actor_id)
             .bind(merge_sha)
@@ -650,9 +651,14 @@ pub async fn join_pull_request_stack(
             .execute(&mut *tx)
             .await?;
     }
-    sqlx::query("UPDATE pull_requests SET stack_id = ?2 WHERE id = ?1 AND stack_id IS NULL")
+    sqlx::query("UPDATE pull_requests SET stack_id = ?2, stack_version = stack_version + 1 WHERE id = ?1 AND stack_id IS NULL")
         .bind(pull_request_id)
         .bind(plan.stack_id)
+        .execute(&mut *tx)
+        .await?;
+    // The layer below gained a layer above it.
+    sqlx::query("UPDATE pull_requests SET stack_version = stack_version + 1 WHERE id = ?1")
+        .bind(plan.parent_id)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -724,7 +730,7 @@ pub async fn retarget_stacked_pull_requests(
         )?;
         // The row comes back from the statement that moves it, so it is what the move wrote.
         let row = sqlx::query_as::<_, PullRequest>(
-            "UPDATE pull_requests SET base_branch = ?2, base_sha = ?3, fork_sha = COALESCE(fork_sha, base_sha), updated_at = ?4 WHERE id = ?1 AND state = 'open' AND base_branch = ?5 AND updated_at = ?6 RETURNING *",
+            "UPDATE pull_requests SET base_branch = ?2, base_sha = ?3, fork_sha = COALESCE(fork_sha, base_sha), stack_version = stack_version + 1, updated_at = ?4 WHERE id = ?1 AND state = 'open' AND base_branch = ?5 AND updated_at = ?6 RETURNING *",
         )
         .bind(id)
         .bind(to)
@@ -770,7 +776,7 @@ pub async fn unstack_pull_requests(
     let mut members = Vec::new();
     if let Some(Some(stack_id)) = stack {
         members = sqlx::query_as::<_, PullRequest>(
-            "UPDATE pull_requests SET stack_id = NULL WHERE repo_id = ?1 AND stack_id = ?2 AND state <> 'merged' RETURNING *",
+            "UPDATE pull_requests SET stack_id = NULL, stack_version = stack_version + 1 WHERE repo_id = ?1 AND stack_id = ?2 AND state <> 'merged' RETURNING *",
         )
         .bind(repo)
         .bind(stack_id)
@@ -788,6 +794,21 @@ pub async fn list_stack_members(
 ) -> Result<Vec<PullRequest>> {
     let rows = sqlx::query_as::<_, PullRequest>(
         "SELECT * FROM pull_requests WHERE repo_id = ?1 AND stack_id = ?2 ORDER BY number",
+    )
+    .bind(repo_id)
+    .bind(stack_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn list_stack_versions(
+    pool: &SqlitePool,
+    repo_id: i64,
+    stack_id: i64,
+) -> Result<Vec<(i64, i64)>> {
+    let rows = sqlx::query_as::<_, (i64, i64)>(
+        "SELECT id, stack_version FROM pull_requests WHERE repo_id = ?1 AND stack_id = ?2 ORDER BY id",
     )
     .bind(repo_id)
     .bind(stack_id)

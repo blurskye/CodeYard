@@ -98,16 +98,9 @@ const MAX_BODY: u64 = 4 * 1024 * 1024;
 /// authenticated or the anonymous pool, 8 each, while it is read. Upload routes are exempt.
 pub(crate) async fn bounded_form_body(
     Extension(state): Extension<Arc<AppState>>,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Response {
-    request.headers_mut().remove("x-codeyard-submitted");
-    request.headers_mut().remove("x-codeyard-draft-submission");
-    if request.method() == Method::POST {
-        request
-            .headers_mut()
-            .insert("x-codeyard-submitted", "true".parse().unwrap());
-    }
     if !matches!(
         *request.method(),
         Method::POST | Method::PUT | Method::PATCH | Method::DELETE
@@ -138,7 +131,7 @@ pub(crate) async fn bounded_form_body(
         };
         Some(permit)
     };
-    let (mut parts, body) = request.into_parts();
+    let (parts, body) = request.into_parts();
     let bytes = match tokio::time::timeout(
         Duration::from_secs(30),
         axum::body::to_bytes(body, MAX_BODY as usize),
@@ -150,35 +143,8 @@ pub(crate) async fn bounded_form_body(
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
     drop(permit);
-    if parts
-        .headers
-        .get(header::CONTENT_TYPE)
-        .is_some_and(|value| {
-            value
-                .as_bytes()
-                .starts_with(b"application/x-www-form-urlencoded")
-        })
-    {
-        if let Some(token) = url::form_urlencoded::parse(&bytes)
-            .find_map(|(name, value)| (name == "draft_submission").then_some(value.into_owned()))
-        {
-            if valid_submission_token(&token) {
-                parts
-                    .headers
-                    .insert("x-codeyard-draft-submission", token.parse().unwrap());
-            }
-        }
-    }
     next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
         .await
-}
-
-pub(super) fn valid_submission_token(token: &str) -> bool {
-    !token.is_empty()
-        && token.len() <= 100
-        && token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.'))
 }
 
 struct DownloadTask(tokio::task::JoinHandle<io::Result<()>>);
@@ -189,14 +155,43 @@ impl Drop for DownloadTask {
     }
 }
 
+/// How long a download or search waits for a free slot before the request is refused.
+const SLOT_WAIT: Duration = Duration::from_secs(3);
+
+/// A client may take 30 seconds to start, plus this many bytes per second after that.
+const MIN_DOWNLOAD_RATE: u64 = 16 * 1024;
+
+/// Waits briefly for a slot so a short burst queues instead of failing at once.
+pub(crate) async fn wait_for_slot(
+    slots: &Arc<tokio::sync::Semaphore>,
+) -> Option<tokio::sync::OwnedSemaphorePermit> {
+    tokio::time::timeout(SLOT_WAIT, slots.clone().acquire_owned())
+        .await
+        .ok()?
+        .ok()
+}
+
+/// Waits briefly for a slot of a fixed pool, like `wait_for_slot`.
+pub(crate) async fn wait_for_static_slot(
+    slots: &'static tokio::sync::Semaphore,
+) -> Option<tokio::sync::SemaphorePermit<'static>> {
+    tokio::time::timeout(SLOT_WAIT, slots.acquire())
+        .await
+        .ok()?
+        .ok()
+}
+
 /// The producer owns the allocation or file permit. Its send deadline runs even
-/// when Hyper stops polling the response. Only one small chunk remains queued.
+/// when Hyper stops polling the response. Only one small chunk remains queued. A reader
+/// that falls below the minimum rate loses the download, so a trickle cannot hold a slot.
 pub(crate) fn download_body(
     stream: impl Stream<Item = io::Result<bytes::Bytes>> + Send + 'static,
 ) -> axum::body::Body {
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
     let task = DownloadTask(tokio::spawn(async move {
         let mut stream = Box::pin(stream);
+        let started = tokio::time::Instant::now();
+        let mut sent = 0_u64;
         loop {
             let chunk = tokio::select! {
                 _ = sender.closed() => return Ok(()),
@@ -205,7 +200,12 @@ pub(crate) fn download_body(
                     None => return Ok(()),
                 },
             };
-            match tokio::time::timeout(Duration::from_secs(30), sender.send(chunk)).await {
+            let allowed = Duration::from_secs(30 + sent / MIN_DOWNLOAD_RATE);
+            let wait = allowed
+                .saturating_sub(started.elapsed())
+                .min(Duration::from_secs(30));
+            sent += chunk.len() as u64;
+            match tokio::time::timeout(wait, sender.send(chunk)).await {
                 Ok(Ok(())) => (),
                 Ok(Err(_)) => return Ok(()),
                 Err(_) => {

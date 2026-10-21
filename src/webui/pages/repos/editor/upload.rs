@@ -290,7 +290,6 @@ mod tests {
         let html =
             crate::webui::tests::in_scope(|| dioxus_ssr::render_element(upload_page(&repo, &form)));
         assert!(html.contains("Upload files to the root of main"));
-        // The stylesheet is inlined in every repository page, so match the element, not its class name.
         assert!(!html.contains("class=\"repo-breadcrumbs\""));
     }
 

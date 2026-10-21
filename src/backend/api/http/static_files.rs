@@ -1,7 +1,7 @@
 //! Embedded native assets + contained dx-generated runtime files. Never a SPA fallback.
 use axum::{
     body::Body,
-    http::{header, HeaderMap, StatusCode, Uri},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
 use sha2::{Digest, Sha256};
@@ -33,7 +33,7 @@ const fn embedded(path: &'static str, bytes: &'static [u8], mime: &'static str) 
     }
 }
 
-static EMBEDDED: [Embedded; 8] = [
+static EMBEDDED: [Embedded; 5] = [
     embedded(
         "/assets/logo.svg",
         include_bytes!("../../../webui/assets/logo.svg"),
@@ -48,21 +48,6 @@ static EMBEDDED: [Embedded; 8] = [
         "/assets/favicon.png",
         include_bytes!("../../../webui/assets/favicon.png"),
         "image/png",
-    ),
-    embedded(
-        "/assets/tailwind.css",
-        include_bytes!("../../../webui/assets/tailwind.css"),
-        "text/css; charset=utf-8",
-    ),
-    embedded(
-        "/assets/actions.css",
-        include_bytes!("../../../webui/assets/actions.css"),
-        "text/css; charset=utf-8",
-    ),
-    embedded(
-        "/assets/native.css",
-        include_bytes!("../../../webui/components/native.css"),
-        "text/css; charset=utf-8",
     ),
     embedded(
         "/assets/fonts/mona-sans.woff2",
@@ -137,7 +122,33 @@ pub(crate) fn runtime_module() -> Result<&'static str, ()> {
     runtime().map(|runtime| runtime.module.as_str())
 }
 
+/// A page stylesheet. The page links it as `?v=<version>`, so that exact URL never changes
+/// and the browser may keep it; any other URL is revalidated.
+fn stylesheet(uri: &Uri, headers: &HeaderMap) -> Option<Response> {
+    let name = uri.path().strip_prefix("/assets/")?;
+    let sheet = crate::webui::document::stylesheets()
+        .iter()
+        .find(|sheet| sheet.name == name)?;
+    let etag = format!("W/\"{}\"", sheet.version);
+    let mut response = asset_response(
+        Body::from(sheet.text),
+        "text/css; charset=utf-8",
+        &etag,
+        headers,
+    );
+    if uri.query().and_then(|query| query.strip_prefix("v=")) == Some(sheet.version.as_str()) {
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+    }
+    Some(response)
+}
+
 pub async fn asset(uri: Uri, headers: HeaderMap) -> Response {
+    if let Some(response) = stylesheet(&uri, &headers) {
+        return response;
+    }
     if let Some(file) = EMBEDDED.iter().find(|file| file.path == uri.path()) {
         let etag = file
             .etag
@@ -202,7 +213,7 @@ async fn serve_runtime(root: &Path, uri: &Uri, headers: &HeaderMap) -> Response 
     if not_modified(headers, &etag) {
         return asset_response(Body::empty(), mime, &etag, headers);
     }
-    let Ok(permit) = DOWNLOADS.try_acquire() else {
+    let Some(permit) = super::middleware::wait_for_static_slot(&DOWNLOADS).await else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     let file = match tokio::fs::File::open(&file).await {
@@ -305,6 +316,33 @@ mod tests {
                     );
                 }
                 _ => {}
+            }
+        }
+    }
+    #[tokio::test]
+    async fn stylesheets_are_kept_only_under_their_versioned_url() {
+        for sheet in crate::webui::document::stylesheets() {
+            let versioned = format!("/assets/{}?v={}", sheet.name, sheet.version);
+            let response = asset(versioned.parse().unwrap(), HeaderMap::new()).await;
+            assert_eq!(response.status(), StatusCode::OK, "{versioned}");
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "public, max-age=31536000, immutable"
+            );
+            let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
+                .await
+                .unwrap();
+            assert_eq!(&bytes[..], sheet.text.as_bytes());
+            for plain in [
+                format!("/assets/{}", sheet.name),
+                format!("/assets/{}?v=old", sheet.name),
+            ] {
+                let response = asset(plain.parse().unwrap(), HeaderMap::new()).await;
+                assert_eq!(response.status(), StatusCode::OK, "{plain}");
+                assert_eq!(
+                    response.headers()[header::CACHE_CONTROL],
+                    "public, max-age=0, must-revalidate"
+                );
             }
         }
     }

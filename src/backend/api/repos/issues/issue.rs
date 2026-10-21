@@ -229,6 +229,41 @@ pub(crate) async fn native_detail(
                 .await;
             return Ok(ctx.redirect(&location));
         }
+        // A review link names the review the same way.
+        if let Some(id) = ctx.query.get("review") {
+            let id = id
+                .parse::<i64>()
+                .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid review."))?;
+            let pull = db::pull_requests::records::get_pull_request(
+                &ctx.state.pool,
+                repo.record.id,
+                number,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
+            let review =
+                db::pull_requests::reviews::get_pull_request_review_by_id(&ctx.state.pool, id)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?
+                    .filter(|review| review.pull_request_id == pull.id && review.state != "pending")
+                    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Review not found."))?;
+            let page = crate::backend::issues::discussion_page(
+                db::pull_requests::reviews::count_discussion_items_through(
+                    &ctx.state.pool,
+                    pull.id,
+                    db::pull_requests::reviews::DiscussionRef::Review(review.id),
+                )
+                .await,
+            );
+            let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+            let location = crate::backend::issues::discussion_link(
+                &base,
+                page,
+                &format!("review-{}", review.id),
+            );
+            return Ok(ctx.redirect(&location));
+        }
     }
     render_detail(
         &ctx,

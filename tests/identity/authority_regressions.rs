@@ -117,6 +117,73 @@ async fn postgres_account_metadata_and_privileged_audit() {
     administration(true).await;
 }
 
+async fn audit_count(f: &Database, action: &str, actor: &str) -> i64 {
+    db::audit::count_audit_entries(f.pool(), action, actor)
+        .await
+        .unwrap()
+}
+
+async fn audit_log_listing(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let alice = f.actor("audit_alice").await;
+    let bob = f.actor("audit_bob").await;
+    for (actor, action) in [
+        (alice, "user.ban"),
+        (bob, "user.admin_role"),
+        (alice, "user.admin_role"),
+    ] {
+        let sql = format!("INSERT INTO audit_log(actor_id,action) VALUES($1,'{action}')");
+        f.execute(&sql, &[actor]).await;
+    }
+    f.execute("INSERT INTO audit_log(action) VALUES('node.status')", &[])
+        .await;
+
+    assert_eq!(audit_count(&f, "", "").await, 4);
+    assert_eq!(audit_count(&f, "ADMIN", "").await, 2);
+    assert_eq!(audit_count(&f, "", "AUDIT_ali").await, 2);
+    assert_eq!(audit_count(&f, "admin_role", "audit_alice").await, 1);
+    assert_eq!(audit_count(&f, ".", "").await, 4);
+    assert_eq!(audit_count(&f, "%", "").await, 0);
+
+    let first = db::audit::list_audit_entries(f.pool(), "", "", 3, 0)
+        .await
+        .unwrap();
+    let rest = db::audit::list_audit_entries(f.pool(), "", "", 3, 3)
+        .await
+        .unwrap();
+    let order: Vec<_> = first
+        .iter()
+        .chain(&rest)
+        .map(|entry| (entry.actor.as_deref(), entry.action.as_str()))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            (None, "node.status"),
+            (Some("audit_alice"), "user.admin_role"),
+            (Some("audit_bob"), "user.admin_role"),
+            (Some("audit_alice"), "user.ban"),
+        ]
+    );
+    assert!(first.windows(2).all(|pair| pair[0].id > pair[1].id));
+    assert_eq!(first[0].details, "{}");
+    let filtered = db::audit::list_audit_entries(f.pool(), "ban", "alice", 50, 0)
+        .await
+        .unwrap();
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].action, "user.ban");
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_audit_log_is_listed_newest_first_filtered_and_paged() {
+    audit_log_listing(false).await;
+}
+#[tokio::test]
+async fn postgres_audit_log_is_listed_newest_first_filtered_and_paged() {
+    audit_log_listing(true).await;
+}
+
 async fn blank_email(pg: bool) {
     let _work = PASSWORD_WORK.lock().await;
     let mut f = Database::new(pg).await;

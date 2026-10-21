@@ -645,17 +645,6 @@ fn explore_topic_filter_is_a_removable_chip_and_cards_link_their_topics() {
 }
 
 #[test]
-fn demo_routes_have_real_bidirectional_links_without_developer_scaffolding() {
-    let html = dioxus_ssr::render_element(demo(false));
-    assert!(html.contains("/demo/no-nav"));
-    assert!(html.contains("Codeyard interface"));
-    assert!(!html.contains("transition library"));
-    let html = dioxus_ssr::render_element(demo(true));
-    assert!(html.contains("href=\"/demo\""));
-    assert!(html.contains("Focused view"));
-}
-
-#[test]
 fn home_has_real_content_before_any_client_runtime() {
     let html = dioxus_ssr::render_element(home(HomeModel::default()));
     assert!(html.contains("Git hosting, written in Rust."));

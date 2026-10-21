@@ -166,33 +166,3 @@ fn role_name(level: i16) -> &'static str {
         AccessLevel::Owner => "Owner",
     }
 }
-
-pub(super) async fn demo(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
-    ctx.page_model(
-        "Blurshell Demo",
-        AppPage::Discovery(view::Page::Demo { no_nav: false }),
-    )
-}
-
-pub(super) async fn demo_no_nav(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    uri: Uri,
-) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
-    ctx.page_model(
-        "No Navbar Page",
-        AppPage::Discovery(view::Page::Demo { no_nav: true }),
-    )
-}

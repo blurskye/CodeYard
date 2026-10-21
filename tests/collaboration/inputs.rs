@@ -1206,63 +1206,6 @@ async fn assert_form_comments_land_on_their_page(alice: &Client, main: &str) {
             .unwrap();
         let composer = composer.split("</form>").next().unwrap();
         assert!(!composer.contains("Preview only on page two"));
-        assert_draft_acknowledgment(
-            alice,
-            &format!("{form_path}/{comment_id}/edit"),
-            "Thirty-first from the form",
-        )
-        .await;
-    }
-}
-
-async fn assert_draft_acknowledgment(client: &Client, path: &str, original: &str) {
-    use axum::{body::Body, http::Request};
-    use tower::ServiceExt;
-    for intent in ["preview", "save"] {
-        let body = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("csrf_token", &client.csrf)
-            .append_pair("body", "Newer native submission B")
-            .append_pair("expected_body", &serde_json::to_string(original).unwrap())
-            .append_pair("draft_submission", "123-456.789")
-            .append_pair("intent", intent)
-            .finish();
-        let response = client
-            .router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri(path)
-                    .header("cookie", format!("session_id={}", client.session))
-                    .header("accept", codeyard::webui::bootstrap::MODEL_CONTENT_TYPE)
-                    .header("content-type", "application/x-www-form-urlencoded")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let accepted = response
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .any(|cookie| {
-                cookie
-                    .to_str()
-                    .unwrap()
-                    .starts_with("codeyard-draft-accepted=123-456.789;")
-            });
-        assert_eq!(accepted, intent == "save");
-        if intent == "preview" {
-            assert_eq!(response.status(), StatusCode::OK);
-            let bytes = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
-                .await
-                .unwrap();
-            let model: Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(model["chrome"]["submitted_form"], path);
-            assert!(String::from_utf8_lossy(&bytes).contains("Newer native submission B"));
-        } else {
-            assert_eq!(response.status(), StatusCode::SEE_OTHER);
-        }
     }
 }
 

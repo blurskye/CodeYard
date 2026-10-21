@@ -1531,17 +1531,20 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .identity-avatar-form input[type="file"]::file-selector-button { min-height: 32px; margin-right: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--secondary); color: var(--foreground); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
 .identity-avatar-form input[type="file"]::file-selector-button:hover { background: var(--accent); }
 
-/* Administration pages (overview, nodes, storage, ban): breadcrumb, title, one line of text and
-   the actions on the right. */
-.admin-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+/* Administration pages: title and one line of text, then the section tabs. The tabs wrap on a
+   narrow screen, so none is cut off. */
+.admin-top { margin-bottom: 24px; }
+.identity-admin > .admin-top { margin-bottom: 0; }
+.admin-header { margin-bottom: 16px; }
 .admin-header-main { min-width: 0; }
-.admin-crumbs { margin: 0 0 4px; color: var(--muted-foreground); font-size: 13px; }
-.admin-crumbs a { color: var(--primary); text-decoration: none; }
-.admin-crumbs a:hover { text-decoration: underline; }
 .admin-header h1 { margin: 0; font-size: 24px; line-height: 1.25; font-weight: 600; letter-spacing: -.025em; }
 .admin-header p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 14px; }
-.admin-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
-@media (max-width: 640px) { .admin-header { align-items: flex-start; flex-direction: column; } }
+.admin-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.admin-tab { padding: 6px 12px; border-radius: 6px; color: var(--muted-foreground); font-size: 14px; text-decoration: none; }
+.admin-tab:hover { background: var(--accent); color: var(--foreground); }
+.admin-tab[aria-current="page"] { background: var(--accent); color: var(--foreground); font-weight: 600; }
+.admin-subtabs { margin-top: 8px; padding-bottom: 0; border-bottom: 0; }
+.admin-subtabs .admin-tab { padding: 4px 10px; font-size: 13px; }
 
 /* Actions runs toolbar: the workflow version is a compact field before the run menu. */
 .actions-page .actions-log-marker { display: inline-flex; align-items: center; gap: 6px; }

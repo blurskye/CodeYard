@@ -1,6 +1,9 @@
 //! Admin storage overview. Storage is configured with environment variables;
 //! credentials and filesystem paths are never page data.
-use crate::webui::navigation::NavLink;
+use crate::webui::{
+    navigation::NavLink,
+    pages::admin::{admin_header, Section},
+};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -16,16 +19,7 @@ pub struct Page {
 pub fn render(page: Page) -> Element {
     rsx! {
         div { class: "page-shell max-w-5xl py-8 pb-14",
-            header { class: "admin-header",
-                div { class: "admin-header-main",
-                    nav { class: "admin-crumbs", aria_label: "Breadcrumb",
-                        NavLink { href: "/admin".to_string(), "Administration" }
-                        " / Storage"
-                    }
-                    h1 { "Storage" }
-                    p { "See where application data and uploaded files are stored." }
-                }
-            }
+            {admin_header(Section::Storage, "Storage", "See where application data and uploaded files are stored.")}
             div { class: "grid grid-cols-1 gap-4",
                 section { class: "panel overflow-hidden", aria_labelledby: "database-storage-title",
                     header { class: "border-b border-border bg-muted/30 px-5 py-4",
@@ -75,14 +69,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_header_names_the_administration_section() {
+    fn the_page_has_the_administration_tabs_and_explains_the_settings() {
         let html = dioxus_ssr::render_element(render(Page {
             database: "SQLite".into(),
             object_storage: "Local".into(),
             location: None,
         }));
-        assert!(html.contains("Administration</a> / Storage"));
-        assert!(html.contains("class=\"admin-header\""));
+        assert!(html.contains("aria-label=\"Administration\""));
+        assert!(html.contains("href=\"/admin/nodes\""));
         assert!(html.contains("Change storage settings with environment variables and restart"));
         assert!(html.contains("GITSERV_STATE_DIR"));
         assert!(!html.contains(">Bucket<"));

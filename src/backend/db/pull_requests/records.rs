@@ -227,6 +227,17 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::list_sta
     stack_id: i64,
 ) -> Result<Vec<PullRequest>>);
 
+// The id and stack version of every pull request of a stack, in id order. Each change to a
+// pull request's place in the stack (joining, leaving, closing, reopening, retargeting, merging)
+// raises its version, so two equal answers mean the stack did not change in between.
+native_operation!(crate::backend::db::postgres::pull_requests::records::list_stack_versions,
+    crate::backend::db::sqlite::pull_requests::records::list_stack_versions,
+    fn list_stack_versions(
+    pool: &DbPool,
+    repo_id: i64,
+    stack_id: i64,
+) -> Result<Vec<(i64, i64)>>);
+
 /// The most pull requests one stack holds, the pull request at its top included.
 pub const MAX_STACK_LAYERS: usize = 25;
 

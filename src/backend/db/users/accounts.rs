@@ -31,6 +31,12 @@ native_operation!(crate::backend::db::postgres::users::accounts::count_users,
     crate::backend::db::sqlite::users::accounts::count_users,
     fn count_users(pool: &DbPool) -> Result<i64>);
 
+native_operation!(crate::backend::db::postgres::users::accounts::replace_password_hash,
+    crate::backend::db::sqlite::users::accounts::replace_password_hash,
+    /// Swaps in a hash of the same password made at a newer cost, if the stored hash is still
+    /// `old`. Sessions stay signed in. Returns whether the hash was replaced.
+    fn replace_password_hash(pool: &DbPool, user_id: i64, old: &str, new: &str) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::users::accounts::update_user_password,
     crate::backend::db::sqlite::users::accounts::update_user_password,
     fn update_user_password(
@@ -118,6 +124,10 @@ native_operation!(crate::backend::db::postgres::users::accounts::list_admin_user
 native_operation!(crate::backend::db::postgres::users::accounts::admin_totals,
     crate::backend::db::sqlite::users::accounts::admin_totals,
     fn admin_totals(pool: &DbPool) -> Result<(i64, i64, i64)>);
+
+native_operation!(crate::backend::db::postgres::users::accounts::admin_site_counts,
+    crate::backend::db::sqlite::users::accounts::admin_site_counts,
+    fn admin_site_counts(pool: &DbPool) -> Result<(i64, i64, i64)>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::recent_admin_accounts,
     crate::backend::db::sqlite::users::accounts::recent_admin_accounts,

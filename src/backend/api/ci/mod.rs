@@ -5,7 +5,6 @@ pub mod responses;
 pub mod run_forms;
 pub mod trigger;
 pub mod workflows;
-pub mod ws;
 
 use crate::backend::{
     api::{http::csrf, http::error::ApiError, http::middleware},
@@ -30,12 +29,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(jobs::router())
         .route_layer(from_fn(middleware::require_node_access))
         .layer(from_fn(middleware::private_sensitive_response));
-    let socket = Router::new()
-        .route("/api/ci/ws", get(ws::ws_handler))
-        .route_layer(from_fn(middleware::require_node_access));
     Router::new()
         .merge(json)
-        .merge(socket)
         .route("/ci", get(actions_page::global_actions))
         .route("/ci/dispatch", post(trigger::global_dispatch))
         .route(

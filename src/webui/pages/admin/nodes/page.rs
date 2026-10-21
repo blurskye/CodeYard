@@ -1,7 +1,7 @@
 //! Admin list of the cluster's nodes, with approve and revoke.
 use crate::webui::{
     components::{count_label, CopyButton},
-    navigation::NavLink,
+    pages::admin::{admin_header, Section},
 };
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -31,19 +31,7 @@ pub struct Page {
 pub fn render(page: Page) -> Element {
     rsx! {
         div { class: "page-shell max-w-5xl py-8 pb-14",
-            header { class: "admin-header",
-                div { class: "admin-header-main",
-                    nav { class: "admin-crumbs", aria_label: "Breadcrumb",
-                        NavLink { href: "/admin".to_string(), "Administration" }
-                        " / Nodes"
-                    }
-                    div { class: "title-with-count",
-                        h1 { "Cluster nodes" }
-                        span { class: "count-badge", {count_label(page.nodes.len(), "node", "nodes")} }
-                    }
-                    p { "Review the machines connected to this installation." }
-                }
-            }
+            {admin_header(Section::Nodes, "Cluster nodes", &format!("{} connected to this installation.", count_label(page.nodes.len(), "node", "nodes")))}
             if let Some(message) = &page.message {
                 p { role: "status", class: "mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-destructive", "{message}" }
             }
@@ -161,14 +149,16 @@ mod tests {
     }
 
     #[test]
-    fn the_header_names_the_administration_section() {
+    fn the_header_has_the_administration_tabs_and_the_node_count() {
         let html = dioxus_ssr::render_element(render(Page {
             csrf_token: String::new(),
             nodes: vec![],
             message: None,
         }));
-        assert!(html.contains("Administration</a> / Nodes"));
-        assert!(html.contains("class=\"admin-header\""));
+        assert!(html.contains("aria-label=\"Administration\""));
+        assert!(html.contains("Cluster nodes"));
+        assert!(html.contains("0 nodes connected to this installation."));
+        assert!(html.contains("href=\"/admin/storage\""));
     }
 
     #[test]

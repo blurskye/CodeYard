@@ -1,8 +1,14 @@
 //! Account pages: sign-in and sign-out, account settings, administration and profiles.
 //! One `Page` covers them, and the app renders it through `render`.
 use crate::webui::pages::{
-    admin::{admin_page, admin_users_page, Admin, AdminUsers},
-    auth::{auth_page, logout_page, password_help_page, two_factor_page, AuthMode},
+    admin::{
+        admin_audit_page, admin_page, admin_settings_page, admin_users_page, Admin, AdminAudit,
+        AdminSettings, AdminUsers,
+    },
+    auth::{
+        auth_page, logout_page, password_help_page, reset_code_page, reset_password_page,
+        two_factor_page, verify_email_page, AuthMode,
+    },
     fields::FormValues,
     settings::{settings_page, Settings},
     users::{profile_page, Profile, ProfileActivity, ProfileStars, Repository},
@@ -31,6 +37,33 @@ pub enum Page {
     },
     PasswordHelp {
         redirect: String,
+        csrf_token: String,
+        /// Whether the server can send the reset link.
+        mail_available: bool,
+        message: Option<String>,
+        is_error: bool,
+    },
+    /// The step after asking for a reset: the mailed code and a new password.
+    ResetCode {
+        csrf_token: String,
+        email: String,
+        message: Option<String>,
+        is_error: bool,
+    },
+    ResetPassword {
+        csrf_token: String,
+        token: String,
+        /// Whether the link still works, which shows the form.
+        valid: bool,
+        message: Option<String>,
+        is_error: bool,
+    },
+    VerifyEmail {
+        csrf_token: String,
+        token: String,
+        valid: bool,
+        message: Option<String>,
+        is_error: bool,
     },
     TwoFactor {
         action: String,
@@ -48,6 +81,9 @@ pub enum Page {
     },
     Admin {
         model: Admin,
+    },
+    AdminSettings {
+        model: AdminSettings,
         csrf_token: String,
         message: Option<String>,
         is_error: bool,
@@ -57,6 +93,9 @@ pub enum Page {
         csrf_token: String,
         message: Option<String>,
         is_error: bool,
+    },
+    AdminAudit {
+        model: AdminAudit,
     },
     Profile {
         profile: Profile,
@@ -100,7 +139,39 @@ pub fn render(page: Page) -> Element {
             is_error,
         ),
         Page::Logout { csrf_token } => logout_page(&csrf_token),
-        Page::PasswordHelp { redirect } => password_help_page(&redirect),
+        Page::PasswordHelp {
+            redirect,
+            csrf_token,
+            mail_available,
+            message,
+            is_error,
+        } => password_help_page(
+            &redirect,
+            &csrf_token,
+            mail_available,
+            message.as_deref(),
+            is_error,
+        ),
+        Page::ResetCode {
+            csrf_token,
+            email,
+            message,
+            is_error,
+        } => reset_code_page(&csrf_token, &email, message.as_deref(), is_error),
+        Page::ResetPassword {
+            csrf_token,
+            token,
+            valid,
+            message,
+            is_error,
+        } => reset_password_page(&csrf_token, &token, valid, message.as_deref(), is_error),
+        Page::VerifyEmail {
+            csrf_token,
+            token,
+            valid,
+            message,
+            is_error,
+        } => verify_email_page(&csrf_token, &token, valid, message.as_deref(), is_error),
         Page::TwoFactor {
             action,
             csrf_token,
@@ -122,18 +193,20 @@ pub fn render(page: Page) -> Element {
             message,
             is_error,
         } => settings_page(*model, &csrf_token, message.as_deref(), is_error),
-        Page::Admin {
+        Page::Admin { model } => admin_page(model),
+        Page::AdminSettings {
             model,
             csrf_token,
             message,
             is_error,
-        } => admin_page(model, &csrf_token, message.as_deref(), is_error),
+        } => admin_settings_page(model, &csrf_token, message.as_deref(), is_error),
         Page::AdminUsers {
             model,
             csrf_token,
             message,
             is_error,
         } => admin_users_page(model, &csrf_token, message.as_deref(), is_error),
+        Page::AdminAudit { model } => admin_audit_page(model),
         Page::Profile {
             profile,
             repositories,
@@ -172,9 +245,12 @@ pub fn render(page: Page) -> Element {
 mod tests {
     use super::*;
     use crate::webui::pages::{
-        admin::{Account, Activity, AdminUsers, Signup},
+        admin::{
+            Account, Activity, AdminAudit, AdminSettings, AdminUsers, AuditEntry, Signup,
+            SystemStatus,
+        },
         fields::preserved_values,
-        settings::Key,
+        settings::{EmailVerification, Key},
     };
     use dioxus::prelude::Element;
     use std::collections::HashMap;
@@ -230,12 +306,20 @@ mod tests {
             },
             "Sign out",
         ));
+        pages.push((
+            Page::ResetCode {
+                csrf_token: "csrf-marker".into(),
+                email: "alice@example.test".into(),
+                message: Some("<b>Validation error</b>".into()),
+                is_error: true,
+            },
+            "Check your email",
+        ));
         for (tab, label) in [
             ("profile", "Save profile"),
             ("keys", "Add SSH key"),
             ("tokens", "Create token"),
             ("password", "Confirm new password"),
-            ("access", "Create managed account"),
         ] {
             pages.push((
                 Page::Settings {
@@ -255,16 +339,9 @@ mod tests {
                         sessions: vec![],
                         new_token: None,
                         password_supported: true,
+                        email_notifications: true,
+                        email_verification: EmailVerification::Verified,
                         must_change_password: true,
-                        manage_access: true,
-                        requests: vec![Signup {
-                            id: 8,
-                            username: "bob".into(),
-                            email: "bob@example.test".into(),
-                            created: "2026-10-02".into(),
-                        }],
-                        requests_count: 1,
-                        requests_page: 1,
                         values: values.clone(),
                         two_factor: Default::default(),
                     }),
@@ -278,14 +355,17 @@ mod tests {
         pages.push((
             Page::Admin {
                 model: Admin {
-                    current_user_id: 1,
-                    totals: (1, 0, 1024),
-                    ai_crawlers: "block".into(),
                     accounts: vec![Account {
                         id: 2,
                         username: "bob".into(),
                         created: "2026-10-02".into(),
                     }],
+                    users: 1,
+                    banned: 0,
+                    repositories: 2,
+                    organizations: 1,
+                    pending_requests: Some(1),
+                    storage_bytes: 1024,
                     activity: vec![Activity {
                         date: "2026-10-02".into(),
                         contributions: 6,
@@ -294,17 +374,28 @@ mod tests {
                         cumulative_bytes: 1024,
                     }],
                     days: 7,
-                    manage_access: true,
-                    requests: vec![],
-                    requests_count: 0,
-                    requests_page: 1,
-                    values,
+                    status: SystemStatus {
+                        version: "0.1.2".into(),
+                        database: "SQLite".into(),
+                        private: true,
+                        nodes: None,
+                        queued_runs: 0,
+                    },
+                },
+            },
+            "System status",
+        ));
+        pages.push((
+            Page::AdminSettings {
+                model: AdminSettings {
+                    private: true,
+                    ai_crawlers: "block".into(),
                 },
                 csrf_token: "csrf-marker".into(),
                 message: Some("<b>Validation error</b>".into()),
                 is_error: true,
             },
-            "Manage users",
+            "AI crawler policy",
         ));
         pages.push((
             Page::AdminUsers {
@@ -326,12 +417,40 @@ mod tests {
                     pages: 2,
                     total: 30,
                     values: FormValues::default(),
+                    requests: vec![Signup {
+                        id: 8,
+                        username: "carol".into(),
+                        email: "carol@example.test".into(),
+                        created: "2026-10-02".into(),
+                    }],
+                    requests_count: 1,
+                    requests_page: 1,
                 },
                 csrf_token: "csrf-marker".into(),
                 message: Some("<b>Validation error</b>".into()),
                 is_error: true,
             },
             "Users",
+        ));
+        pages.push((
+            Page::AdminAudit {
+                model: AdminAudit {
+                    entries: vec![AuditEntry {
+                        id: 1,
+                        actor: "alice".into(),
+                        action: "user.ban".into(),
+                        target: "user 2".into(),
+                        details: "{}".into(),
+                        time: "2026-10-02 09:30 UTC".into(),
+                    }],
+                    action: String::new(),
+                    actor: String::new(),
+                    page: 1,
+                    pages: 1,
+                    total: 1,
+                },
+            },
+            "Audit log",
         ));
         pages.push((
             Page::Profile {
@@ -403,7 +522,12 @@ mod tests {
             for (page, label) in safe_pages() {
                 let output = html(render(page));
                 assert!(output.contains(label), "missing {label} in {output}");
-                assert!(output.contains("csrf-marker"));
+                // The admin overview and the audit log only read, so they have no forms.
+                assert!(
+                    output.contains("csrf-marker")
+                        || label == "System status"
+                        || label == "Audit log"
+                );
                 assert!(!output.contains("<script>"));
                 assert!(!output.contains("<b>Validation error</b>"));
                 assert!(!output.contains("secret-"));

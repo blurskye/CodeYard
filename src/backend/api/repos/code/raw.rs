@@ -146,11 +146,9 @@ pub async fn get_raw_blob(
             )),
         )
     })?;
-    let permit = state
-        .repository_downloads
-        .clone()
-        .try_acquire_owned()
-        .map_err(|_| {
+    let permit = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+        .await
+        .ok_or_else(|| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ApiError::new("downloads_busy", "Repository downloads busy")),
@@ -254,7 +252,9 @@ pub async fn raw_page(
         Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let Ok(permit) = ctx.state.repository_downloads.clone().try_acquire_owned() else {
+    let Some(permit) =
+        crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await
+    else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Repository downloads busy.",

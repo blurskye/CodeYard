@@ -144,15 +144,22 @@ async fn bounded_administration(pg: bool) {
     let client = Client::login(&router, f.pool(), admin).await;
     let (status, page) = client.model("/admin").await;
     assert_eq!(status, StatusCode::OK);
-    let Page::Identity(account::Page::Admin { model, .. }) = page else {
+    let Page::Identity(account::Page::Admin { model }) = page else {
         panic!("admin model")
     };
     assert_eq!(model.accounts.len(), 5);
+    assert_eq!(model.pending_requests, Some(105));
+    assert_eq!(model.storage_bytes, before.2 + 1073741824 + 13);
+    assert!(model.organizations >= 1 && model.repositories >= 1);
+    let (status, page) = client.model("/admin/users").await;
+    assert_eq!(status, StatusCode::OK);
+    let Page::Identity(account::Page::AdminUsers { model, .. }) = page else {
+        panic!("users model")
+    };
     assert_eq!(model.requests.len(), 30);
     assert_eq!(model.requests_count, 105);
-    assert_eq!(model.totals.2, before.2 + 1073741824 + 13);
     let (status, body) = client
-        .send("GET", "/settings?tab=access", "text/html", String::new())
+        .send("GET", "/admin/users", "text/html", String::new())
         .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Next requests"));

@@ -114,14 +114,14 @@ async fn signup_review(pg: bool) {
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
     let client = Client::login(&router, f.pool(), admin).await;
-    let (status, page) = client.model("/settings?tab=access&request_page=2").await;
+    let (status, page) = client.model("/admin/users?request_page=2").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Settings {
+    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::AdminUsers {
         model,
         ..
     }) = page
     else {
-        panic!("settings")
+        panic!("users")
     };
     assert_eq!(
         (

@@ -1,6 +1,5 @@
 //! Shared native form controls, and the form values that survive a refused submission.
-use crate::webui::components::compact_date;
-use crate::webui::pages::{admin::Signup, auth::password_field};
+use crate::webui::pages::auth::password_field;
 use dioxus::prelude::*;
 use std::collections::HashMap;
 
@@ -27,7 +26,6 @@ pub struct FormValues {
     pub expires_at: String,
     pub redirect: String,
     pub mode: String,
-    pub days: String,
 }
 
 /// Only explicitly non-secret values may survive a failed submission.
@@ -53,7 +51,6 @@ pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
         },
         redirect: get("redirect"),
         mode: get("mode"),
-        days: get("days"),
     }
 }
 
@@ -83,13 +80,12 @@ pub(in crate::webui::pages) fn text_field(
             required, maxlength: max.to_string(), class: FIELD }
     } }
 }
-/// The form that creates an account with a temporary password. `with_admin` adds the
-/// administrator checkbox; the new account is then made an administrator right after it is created.
+/// The form that creates an account with a temporary password. The new account is made an
+/// administrator right after it is created when the box is checked.
 pub(in crate::webui::pages) fn managed_account_form(
     token: &str,
     values: &FormValues,
     action: &str,
-    with_admin: bool,
 ) -> Element {
     rsx! {
         form { method: "post", action: action.to_owned(), class: "identity-form",
@@ -97,56 +93,12 @@ pub(in crate::webui::pages) fn managed_account_form(
             {text_field("username", "Username", values.username.clone(), "text", true, 255)}
             {text_field("email", "Email (optional)", values.email.clone(), "email", false, 320)}
             {password_field("password", "Temporary password", true)}
-            if with_admin {
-                label { class: "identity-check",
-                    input { r#type: "checkbox", name: "is_admin" }
-                    " Make administrator"
-                }
+            label { class: "identity-check",
+                input { r#type: "checkbox", name: "is_admin" }
+                " Make administrator"
             }
             p { class: "identity-form-hint", "The new user will be asked to change this password when they sign in." }
             div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Create account" } }
-        }
-    }
-}
-
-pub(in crate::webui::pages) fn access_forms(
-    requests: &[Signup],
-    token: &str,
-    values: &FormValues,
-    prefix: &str,
-) -> Element {
-    rsx! {
-        header { class: "identity-section-header",
-            h2 { "Account access" }
-            p { "Create accounts and review requests to join this private node." }
-        }
-        div { class: "identity-access-grid",
-            section { class: "identity-access-form", aria_labelledby: "managed-account-title",
-                h3 { id: "managed-account-title", "Create managed account" }
-                {managed_account_form(token, values, &format!("{prefix}/users"), false)}
-            }
-            section { class: "identity-access-requests", aria_labelledby: "signup-requests-title",
-                h3 { id: "signup-requests-title", "Pending signup requests" }
-                div { class: "identity-row-list",
-                    if requests.is_empty() {
-                        div { class: "identity-empty", h4 { "No pending requests" } p { "New requests will appear here." } }
-                    }
-                    for request in requests {
-                        article { class: "identity-row",
-                            div { class: "identity-row-main",
-                                h4 { "{request.username}" }
-                                p { "{request.email} · Requested {compact_date(&request.created)}" }
-                            }
-                            form { method: "post", action: format!("{prefix}/requests/{}/resolve", request.id), class: "identity-row-actions",
-                                {csrf(token)}
-                                if prefix.starts_with("/admin/") { input { r#type: "hidden", name: "days", value: values.days.clone() } }
-                                button { r#type: "submit", name: "action", value: "approve", class: SUBMIT, "Approve" }
-                                button { r#type: "submit", name: "action", value: "reject", class: "identity-button", "Reject" }
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }

@@ -434,7 +434,7 @@ async fn temporary_password_settings_contract(pg: bool) {
     for (path, marker) in [
         ("/settings?tab=keys", "owner-key-marker"),
         ("/settings?tab=tokens", "owner-token-marker"),
-        ("/settings?tab=access", "applicant-marker@example.test"),
+        ("/admin/users", "applicant-marker@example.test"),
     ] {
         let (status, _, body) = get(&router, path, Some(&session)).await;
         assert_eq!(status, StatusCode::OK, "{path}: {body}");
@@ -452,7 +452,6 @@ async fn temporary_password_settings_contract(pg: bool) {
         "/settings?tab=profile",
         "/settings?tab=keys",
         "/settings?tab=tokens",
-        "/settings?tab=access",
     ] {
         let (status, headers, body) = get(&router, path, Some(&session)).await;
         assert_eq!(status, StatusCode::SEE_OTHER, "{path}: {body}");
@@ -470,6 +469,11 @@ async fn temporary_password_settings_contract(pg: bool) {
             assert!(!body.contains(marker), "{path} leaked {marker}");
         }
     }
+    // Administration pages send the account to settings too.
+    let (status, headers, body) = get(&router, "/admin/users", Some(&session)).await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{body}");
+    assert_eq!(headers[header::LOCATION].to_str().unwrap(), "/settings");
+    assert!(!body.contains("applicant-marker@example.test"));
     let (status, _, body) = get(&router, "/settings?tab=password", Some(&session)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.contains("action=\"/settings/password\""), "{body}");

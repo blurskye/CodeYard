@@ -1571,6 +1571,107 @@ async fn identity_login_owns_alias_admission_and_anonymous_csrf_rotation() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn identity_login_rehashes_a_password_stored_at_an_older_cost() {
+    use argon2::{
+        password_hash::{PasswordHasher, SaltString},
+        Algorithm, Argon2, Params, Version,
+    };
+    let _password_work = PASSWORD_FIXTURE_WORK.lock().await;
+    let fixture = Database::new().await;
+    fixture.setup("public").await;
+    let cheaper = Argon2::new(
+        Algorithm::Argon2id,
+        Version::V0x13,
+        Params::new(8192, 1, 1, Some(32)).unwrap(),
+    );
+    let older_hash = || {
+        cheaper
+            .hash_password(
+                b"older-cost-password",
+                &SaltString::generate(&mut rand::rngs::OsRng),
+            )
+            .unwrap()
+            .to_string()
+    };
+    let old_hash = older_hash();
+    let user = db::users::accounts::create_user_with_password_and_flags(
+        &fixture.pool,
+        "older",
+        None,
+        &old_hash,
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let fresh = random_id();
+    let account = signed_in(
+        identity::login::password_login(
+            &fixture.pool,
+            None,
+            PasswordCredentials {
+                identity: "older",
+                password: "older-cost-password",
+            },
+            session_context(&fresh, None),
+        )
+        .await,
+    )
+    .unwrap();
+    let stored_hash = account.user.password_hash.unwrap();
+    assert_ne!(stored_hash, old_hash);
+    assert!(stored_hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
+    let saved = db::users::accounts::get_user_by_id(&fixture.pool, user.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.password_hash.as_deref(), Some(stored_hash.as_str()));
+    assert!(
+        passwords::verify_password("older-cost-password", Some(&stored_hash))
+            .await
+            .unwrap()
+            .valid
+    );
+
+    // Two logins racing on the first rehash both succeed; the loser adopts the winner's hash.
+    let racing = db::users::accounts::create_user_with_password_and_flags(
+        &fixture.pool,
+        "racing",
+        None,
+        &older_hash(),
+        false,
+        false,
+    )
+    .await
+    .unwrap();
+    let (first_id, second_id) = (random_id(), random_id());
+    let pool = &fixture.pool;
+    let login = |fresh: String| async move {
+        identity::login::password_login(
+            pool,
+            None,
+            PasswordCredentials {
+                identity: "racing",
+                password: "older-cost-password",
+            },
+            session_context(&fresh, None),
+        )
+        .await
+    };
+    let (first, second) = tokio::join!(login(first_id), login(second_id));
+    signed_in(first).unwrap();
+    signed_in(second).unwrap();
+    let saved = db::users::accounts::get_user_by_id(&fixture.pool, racing.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(saved
+        .password_hash
+        .unwrap()
+        .starts_with("$argon2id$v=19$m=19456,t=2,p=1$"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn identity_setup_and_registration_session_outages_leave_committed_accounts_retryable() {
     let _password_work = PASSWORD_FIXTURE_WORK.lock().await;
     let fixture = Database::new().await;

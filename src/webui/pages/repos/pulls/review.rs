@@ -349,10 +349,11 @@ pub(in crate::webui::pages::repos) fn review_changes(
 
 #[component]
 fn ReviewEditor(commit: String, body: String, preview: bool, references: References) -> Element {
-    let mut revision = use_signal(|| commit.clone());
+    // The commit the review is for stays the one the form loaded with.
+    let commit = use_signal(|| commit);
     rsx! {
-        input { r#type: "hidden", name: "commit_sha", value: revision() }
-        MarkdownEditor { id: "review-body", initial: body, rows: 6, required: false, initial_preview: preview, references, revision: Some(commit), on_revision: move |value: Option<String>| revision.set(value.unwrap_or_default()) }
+        input { r#type: "hidden", name: "commit_sha", value: commit() }
+        MarkdownEditor { id: "review-body", initial: body, rows: 6, required: false, initial_preview: preview, references }
     }
 }
 
@@ -620,21 +621,20 @@ fn LineComposer(
     review: Option<bool>,
 ) -> Element {
     let repository_id = use_signal(|| target.repository_id.unwrap_or(repo.chrome.id));
-    let mut commit = use_signal(|| {
+    let commit = use_signal(|| {
         if target.commit.is_empty() {
             head.clone()
         } else {
             target.commit.clone()
         }
     });
-    let mut comparison_base = use_signal(|| {
+    let comparison_base = use_signal(|| {
         if target.base.is_empty() {
             base.clone()
         } else {
             target.base.clone()
         }
     });
-    let revision = format!("{head}:{base}");
     let repo = &repo;
     let url = &url;
     let target = &target;
@@ -665,12 +665,7 @@ fn LineComposer(
             input { r#type: "hidden", name: "from", value: "diff" }
             input { r#type: "hidden", name: "repository_id", value: repository_id().to_string() }
             label { r#for: id.clone(), "{caption}" }
-            MarkdownEditor { key: "{url}:{id}:{target.body}:{target.preview}", id: id.clone(), initial: target.body.clone(), rows: 4, required: true, initial_preview: target.preview, references: references.clone(), revision: Some(revision), on_revision: move |revision: Option<String>| {
-                let revision = revision.unwrap_or_default();
-                let (head, base) = revision.split_once(':').unwrap_or((&revision, ""));
-                commit.set(head.to_owned());
-                comparison_base.set(base.to_owned());
-            } }
+            MarkdownEditor { key: "{url}:{id}:{target.body}:{target.preview}", id: id.clone(), initial: target.body.clone(), rows: 4, required: true, initial_preview: target.preview, references: references.clone() }
             div { class: "collaboration-actions",
                 if reply {
                     button { r#type: "submit", name: "intent", value: "comment", class: "btn btn-primary", "Comment" }

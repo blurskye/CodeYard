@@ -1,4 +1,3 @@
-use crate::backend::api::admin::signup_requests::load_requests;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::http::session::{self, get_current_user};
@@ -13,7 +12,7 @@ use crate::backend::identity::{self, profiles};
 use crate::webui::pages::{
     account,
     fields::{preserved_values, FormValues},
-    settings::{settings_tab, Key, Settings, Token, TwoFactor},
+    settings::{settings_tab, EmailVerification, Key, Settings, Token, TwoFactor},
     users::Profile,
 };
 use axum::extract::{Form, State};
@@ -80,24 +79,6 @@ pub(crate) fn profile_model(user: &db::models::User) -> Profile {
     }
 }
 
-pub(crate) async fn private_access(ctx: &PageContext) -> Result<bool, Response> {
-    let config = db::node_config::get_node_configuration(&ctx.state.pool)
-        .await
-        .map_err(|_| {
-            ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load node access configuration.",
-            )
-        })?
-        .ok_or_else(|| {
-            ctx.error(
-                StatusCode::PRECONDITION_REQUIRED,
-                "Complete node setup first.",
-            )
-        })?;
-    Ok(config.setup_completed && config.is_private())
-}
-
 pub(crate) async fn load_settings(
     ctx: &PageContext,
     tab: &str,
@@ -108,13 +89,6 @@ pub(crate) async fn load_settings(
     // before any other tab loads data, so every caller gets the same restriction.
     if user.must_change_password && tab != "password" {
         return Err(ctx.redirect("/settings?tab=password"));
-    }
-    let manage_access = user.is_admin && private_access(ctx).await?;
-    if tab == "access" && !manage_access {
-        return Err(ctx.error(
-            StatusCode::FORBIDDEN,
-            "Private node access management requires an administrator on a private node.",
-        ));
     }
     let keys = if tab == "keys" {
         db::users::ssh_keys::list_user_key_summaries(
@@ -184,11 +158,27 @@ pub(crate) async fn load_settings(
     } else {
         Vec::new()
     };
-    let (requests, requests_count, requests_page) = if tab == "access" {
-        load_requests(ctx).await?
+    let email_notifications = if tab == "email" {
+        db::email::get_email_notifications(&ctx.state.pool, user.id)
+            .await
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load your notification setting.",
+                )
+            })?
     } else {
-        (Vec::new(), 0, 1)
+        true
     };
+    let email_verification =
+        if tab != "email" || user.email_verified || user.email.as_deref().is_none_or(str::is_empty)
+        {
+            EmailVerification::Verified
+        } else if crate::backend::email::config::is_configured(&ctx.state.pool).await {
+            EmailVerification::Unverified
+        } else {
+            EmailVerification::Unavailable
+        };
     let profile = profile_model(user);
     let values = if let Some(form) = submitted {
         preserved_values(form)
@@ -205,6 +195,8 @@ pub(crate) async fn load_settings(
         theme: ctx.chrome().theme,
         profile,
         email: user.email.clone().unwrap_or_default(),
+        email_notifications,
+        email_verification,
         tab: tab.to_owned(),
         keys,
         tokens,
@@ -212,10 +204,6 @@ pub(crate) async fn load_settings(
         new_token: None,
         password_supported: user.password_hash.is_some(),
         must_change_password: user.must_change_password,
-        manage_access,
-        requests,
-        requests_count,
-        requests_page,
         values,
         two_factor: TwoFactor {
             enabled: identity::two_factor::is_enabled(&ctx.state.pool, user.id)
@@ -277,9 +265,12 @@ pub(crate) async fn settings_get(
         Some("deleted") => Some("SSH key deleted."),
         Some("token-deleted") => Some("Access token deleted."),
         Some("email") => Some("Email address updated."),
+        Some("email-notifications") => Some("Notification setting saved."),
+        Some("verification-sent") => {
+            Some("Verification email sent. Paste its code here; it works for 24 hours.")
+        }
+        Some("email-verified") => Some("Your email address is confirmed."),
         Some("sessions-revoked") => Some("Session signed out."),
-        Some("account") => Some("Managed account created. Share the temporary password securely."),
-        Some("request") => Some("Signup request decision recorded."),
         _ => None,
     };
     settings_response(&ctx, tab, None, StatusCode::OK, message).await

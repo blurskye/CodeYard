@@ -1209,15 +1209,3 @@ async fn deleting_a_repository_does_not_claim_success_when_its_files_remain() {
             .is_none()
     );
 }
-
-#[tokio::test]
-async fn the_unscoped_ci_event_socket_stays_gone() {
-    // The old socket sent every repository's events to every connection. It stays
-    // registered only to answer clearly; runs and logs come from the stored rows.
-    let fixture = Fixture::new().await;
-    let (status, body) = fixture
-        .request(&fixture.owner, "GET", "/api/ci/ws", String::new(), false)
-        .await;
-    assert_eq!(status, StatusCode::GONE);
-    assert!(body.contains("has been disabled"));
-}

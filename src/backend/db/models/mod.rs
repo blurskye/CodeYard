@@ -1,6 +1,8 @@
+pub mod audit;
 pub mod ci;
 pub mod cluster;
 pub mod deploy_keys;
+pub mod email;
 pub mod files;
 pub mod following;
 pub mod issues;
@@ -14,9 +16,11 @@ pub mod repositories;
 pub mod users;
 pub mod webhooks;
 
+pub use audit::*;
 pub use ci::*;
 pub use cluster::*;
 pub use deploy_keys::*;
+pub use email::*;
 pub use files::*;
 pub use following::*;
 pub use issues::*;

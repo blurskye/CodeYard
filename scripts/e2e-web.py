@@ -327,7 +327,7 @@ class Response:
         except ValueError as error:
             raise Failure(f"response is not JSON ({error}): {self.excerpt()}") from None
 
-    def excerpt(self, limit=500):
+    def excerpt(self, limit=int(os.environ.get("E2E_EXCERPT", "500"))):
         text = visible_text(self.text) if self.is_html else " ".join(self.text.split())
         return text[:limit]
 
@@ -746,7 +746,9 @@ def cmd_page(client, a):
     check(initial["location"] == a.path, f"{where}: bootstrap location {initial['location']!r}")
     shown = initial["title"] if initial["title"].endswith("Codeyard") else initial["title"] + " · Codeyard"
     check(shown == title, f"{where}: bootstrap title {initial['title']!r} vs {title!r}")
-    check(HEX64.match(initial["chrome"]["csrf_token"] or ""), f"{where}: bootstrap csrf token")
+    # A visitor with no session cookie gets a token only on the sign-in pages.
+    token = initial["chrome"]["csrf_token"] or ""
+    check(HEX64.match(token) or (a.anonymous and not token), f"{where}: bootstrap csrf token")
     check(isinstance(data["hydration"]["data"], str) and data["hydration"]["data"], f"{where}: no hydration data")
     lane = initial["page"].get("lane", "")
     if a.lane:

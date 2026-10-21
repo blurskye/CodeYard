@@ -134,6 +134,8 @@ pub async fn approve_signup_request(
     .bind(request_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'signup.approve','user',?2,?3)")
+        .bind(reviewer_user_id).bind(user.id).bind(serde_json::json!({"username":user.username}).to_string()).execute(&mut *tx).await?;
 
     tx.commit().await?;
     Ok(user)
@@ -143,24 +145,26 @@ pub async fn reject_signup_request(
     pool: &SqlitePool,
     request_id: i64,
     reviewer: impl Into<AdministratorActor>,
-) -> Result<()> {
+) -> Result<(String, Option<String>)> {
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_private_reviewer(&mut tx, &reviewer).await?;
-    let result = sqlx::query(
-        "UPDATE signup_requests SET status = 'rejected', reviewed_by = ?1, reviewed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND status = 'pending'",
+    let rejected = sqlx::query_as::<_, (String, Option<String>)>(
+        "UPDATE signup_requests SET status = 'rejected', reviewed_by = ?1, reviewed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND status = 'pending' RETURNING username, email",
     )
     .bind(reviewer_user_id)
     .bind(request_id)
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
 
-    if result.rows_affected() == 0 {
+    let Some(request) = rejected else {
         return Err(ReviewError::Processed.into());
-    }
+    };
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'signup.reject','signup_request',?2,?3)")
+        .bind(reviewer_user_id).bind(request_id).bind(serde_json::json!({"username":request.0}).to_string()).execute(&mut *tx).await?;
     tx.commit().await?;
-    Ok(())
+    Ok(request)
 }
 
 async fn require_private_reviewer(

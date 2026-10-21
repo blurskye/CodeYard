@@ -4,6 +4,6 @@ mod page;
 mod tests;
 
 pub use page::{
-    settings_nav, settings_page, settings_tab, AccountSession, Key, Settings, Token, TwoFactor,
-    TwoFactorSetup,
+    settings_nav, settings_page, settings_tab, AccountSession, EmailVerification, Key, Settings,
+    Token, TwoFactor, TwoFactorSetup,
 };

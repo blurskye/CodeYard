@@ -182,7 +182,8 @@ pub async fn info_refs(
         Ok(repo) => repo,
         Err(response) => return response,
     };
-    let Ok(permit) = state.repository_downloads.clone().try_acquire_owned() else {
+    let Some(permit) = super::http::middleware::wait_for_slot(&state.repository_downloads).await
+    else {
         return unavailable();
     };
     let refs = match repo_store(&repo, state.cluster.as_ref())

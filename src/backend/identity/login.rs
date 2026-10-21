@@ -86,9 +86,12 @@ pub async fn password_login(
         return Err(LoginError::InvalidCredentials);
     }
     admission::forgive_login(pool, &attempt).await;
-    let user = user.ok_or(LoginError::InvalidCredentials)?;
+    let mut user = user.ok_or(LoginError::InvalidCredentials)?;
     if user.is_banned {
         return Err(LoginError::Banned);
+    }
+    if verification.outdated {
+        upgrade_hash(pool, &mut user, credentials.password).await;
     }
     if two_factor::is_enabled(pool, user.id)
         .await
@@ -119,6 +122,41 @@ pub async fn password_login(
         user,
         session_id,
     })))
+}
+
+/// Stores the password again at the current cost. This is best effort: a failure is logged and
+/// the old hash keeps working. If another login stored a new hash first, the session is issued
+/// against that hash, as long as it accepts the same password.
+async fn upgrade_hash(pool: &DbPool, user: &mut db::models::User, password: &str) {
+    let Some(old) = user.password_hash.clone() else {
+        return;
+    };
+    let new = match passwords::hash_password(password).await {
+        Ok(new) => new,
+        Err(error) => {
+            tracing::warn!(?error, "could not rehash a password at the current cost");
+            return;
+        }
+    };
+    match db::users::accounts::replace_password_hash(pool, user.id, &old, &new).await {
+        Ok(true) => user.password_hash = Some(new),
+        Ok(false) => adopt_current_hash(pool, user, password).await,
+        Err(error) => tracing::warn!(?error, "could not store a rehashed password"),
+    }
+}
+
+/// Picks up the stored hash after a lost rehash race, but only if it still accepts the password;
+/// a real password change in between keeps the old hash, so the session is refused.
+async fn adopt_current_hash(pool: &DbPool, user: &mut db::models::User, password: &str) {
+    let Ok(Some(current)) = db::users::accounts::get_user_by_id(pool, user.id).await else {
+        return;
+    };
+    if let Ok(check) = passwords::verify_password(password, current.password_hash.as_deref()).await
+    {
+        if check.valid {
+            user.password_hash = current.password_hash;
+        }
+    }
 }
 
 /// The second step: a current TOTP or recovery code for the account the sealed token names. Wrong

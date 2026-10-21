@@ -85,13 +85,16 @@ async fn contract(pg: bool) {
     let (_, headers, _) = fetch(&router, "/no/such/page/here").await;
     assert_eq!(headers["x-robots-tag"], "noai, noimageai");
 
-    // The admin page offers the setting, and the form saves an allow and redirects back.
+    // The site settings form saves an allow and redirects back.
     let admin = Client::login(&router, f.pool(), admin_id).await;
     let reply = admin
-        .form_reply("/admin/ai-crawlers", &[("ai_crawlers", "allow")])
+        .form_reply("/admin/settings", &[("ai_crawlers", "allow")])
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
-    assert_eq!(reply.location.as_deref(), Some("/admin?saved=crawlers"));
+    assert_eq!(
+        reply.location.as_deref(),
+        Some("/admin/settings?saved=crawlers")
+    );
     let (_, _, robots) = fetch(&router, "/robots.txt").await;
     assert_eq!(robots, ALLOW_ALL);
     let (_, _, ai) = fetch(&router, "/ai.txt").await;
@@ -137,8 +140,14 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    let reply = member
+        .form_reply("/admin/settings", &[("ai_crawlers", "allow")])
+        .await;
+    assert!(!reply.status.is_success() && reply.location.is_none());
+    let (_, _, robots) = fetch(&router, "/robots.txt").await;
+    assert_blocked_robots(&robots);
     let reply = admin
-        .form_reply("/admin/ai-crawlers", &[("ai_crawlers", "sometimes")])
+        .form_reply("/admin/settings", &[("ai_crawlers", "sometimes")])
         .await;
     // A refused value is not saved or redirected. The page it returns is an error page.
     assert!(!reply.status.is_success() && reply.location.is_none());

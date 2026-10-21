@@ -58,7 +58,6 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         can_manage: true,
         is_owner: true,
         viewer_id: 0,
-        manage_access: false,
         more_organizations: false,
         more_members: false,
         more_teams: false,
@@ -756,8 +755,8 @@ fn public_team_page_shows_header_members_and_manage_link() {
     assert!(output.contains("href=\"/settings/organizations/3?tab=teams"));
     assert!(output.contains("team=9\""));
     assert!(output.contains("Manage team"));
-    // Only the active tab carries aria-current, and a short page has no Next link. The inline
-    // stylesheets also name aria-current, so count inside the tab list only.
+    // Only the active tab carries aria-current, and a short page has no Next link. Count
+    // inside the tab list only.
     let tabs = output
         .split_once("class=\"org-team-tabs\"")
         .unwrap()
@@ -1050,15 +1049,11 @@ fn organization_pages_share_the_account_settings_layout() {
     let mut page = sample_page(HashMap::new(), vec![]);
     page.selected = None;
     page.selected_team = None;
-    let output = html(page.clone());
+    let output = html(page);
     assert!(output.contains("identity-settings-layout"));
     assert!(output.contains("aria-label=\"Account settings\""));
     assert!(output.contains("Organizations, current page"));
     assert!(!output.contains("org-breadcrumb"));
-    // The Administration section appears only to people who may manage access.
-    assert!(!output.contains("Account access"));
-    page.manage_access = true;
-    assert!(html(page).contains("Account access"));
 }
 
 #[test]
@@ -1066,7 +1061,6 @@ fn organization_settings_leave_the_personal_shell() {
     let output = html(sample_page(HashMap::new(), vec![]));
     // The organization's name, its own tabs and a way out, with no personal navigation.
     assert!(output.contains("Native org settings"));
-    // The shared stylesheet mentions the personal navigation, so check the rendered elements.
     assert!(!output.contains(">Account settings</h1>"));
     assert!(!output.contains("aria-label=\"Account settings\""));
     assert!(!output.contains("class=\"identity-settings-nav\""));

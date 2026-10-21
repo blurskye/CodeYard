@@ -69,8 +69,9 @@ native_operation!(crate::backend::db::postgres::users::signup_requests::approve_
 
 native_operation!(crate::backend::db::postgres::users::signup_requests::reject_signup_request,
     crate::backend::db::sqlite::users::signup_requests::reject_signup_request,
+    /// Returns the username and the email address (if any) the rejected request gave.
     fn reject_signup_request(
     pool: &DbPool,
     request_id: i64,
     reviewer_user_id: impl Into<super::transitions::AdministratorActor>,
-) -> Result<()>);
+) -> Result<(String, Option<String>)>);

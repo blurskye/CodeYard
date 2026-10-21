@@ -1,13 +1,15 @@
-//! The site-wide AI crawler setting, changed from the admin page or the admin API.
-use super::accounts::{admin_response, require_admin_user};
+//! The site settings page and the site-wide AI crawler setting, changed from the page or the
+//! admin API.
+use super::accounts::require_admin_user;
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::crawlers::{self, BLOCK};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::user::responses::{field, mutation_guard, Fields};
+use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::admin::normalize_days;
+use crate::webui::app::Page;
+use crate::webui::pages::{account, admin::AdminSettings};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -66,8 +68,62 @@ pub async fn admin_set_ai_crawlers(
     }))
 }
 
-/// The admin page form. Without JavaScript it posts here and is redirected back.
-pub(crate) async fn ai_crawlers_post(
+/// The site settings page. A refused save shows the page again with the message.
+async fn settings_response(
+    ctx: &PageContext,
+    status: StatusCode,
+    message: Option<&str>,
+) -> Response {
+    let mut ctx = ctx.clone();
+    ctx.return_to = Some("/admin/settings".to_owned());
+    let ctx = &ctx;
+    if let Err(response) = require_account(ctx, true) {
+        return response;
+    }
+    let config = match db::node_config::get_node_configuration(&ctx.state.pool).await {
+        Ok(config) => config,
+        Err(_) => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load the site settings.",
+            )
+        }
+    };
+    let private = config.as_ref().is_some_and(|config| config.is_private());
+    let ai_crawlers = config.map_or_else(|| BLOCK.to_owned(), |config| config.ai_crawlers);
+    ctx.page_model_status(
+        status,
+        "Site settings",
+        Page::Identity(account::Page::AdminSettings {
+            model: AdminSettings {
+                private,
+                ai_crawlers,
+            },
+            csrf_token: ctx.csrf_token.clone(),
+            message: message.map(str::to_owned),
+            is_error: !status.is_success(),
+        }),
+    )
+}
+
+pub(crate) async fn settings_get(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    let message = match ctx.query.get("saved").map(String::as_str) {
+        Some("crawlers") => Some("AI crawler setting saved."),
+        _ => None,
+    };
+    settings_response(&ctx, StatusCode::OK, message).await
+}
+
+/// The settings form. Without JavaScript it posts here and is redirected back.
+pub(crate) async fn settings_post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     uri: Uri,
@@ -81,10 +137,8 @@ pub(crate) async fn ai_crawlers_post(
         return response;
     }
     let Some(value) = crawlers::setting_value(field(&form, "ai_crawlers")) else {
-        return admin_response(
+        return settings_response(
             &ctx,
-            normalize_days(None),
-            Some(&form),
             StatusCode::BAD_REQUEST,
             Some("Choose allow or block for AI crawlers."),
         )
@@ -100,22 +154,18 @@ pub(crate) async fn ai_crawlers_post(
     )
     .await
     {
-        Ok(true) => ctx.redirect("/admin?saved=crawlers"),
+        Ok(true) => ctx.redirect("/admin/settings?saved=crawlers"),
         Ok(false) => {
-            admin_response(
+            settings_response(
                 &ctx,
-                normalize_days(None),
-                Some(&form),
                 StatusCode::CONFLICT,
                 Some("Finish setup before changing this setting."),
             )
             .await
         }
         Err(_) => {
-            admin_response(
+            settings_response(
                 &ctx,
-                normalize_days(None),
-                Some(&form),
                 StatusCode::SERVICE_UNAVAILABLE,
                 Some("Unable to save the AI crawler setting."),
             )

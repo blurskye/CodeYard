@@ -15,6 +15,14 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new().route("/admin/storage", get(show))
 }
 
+/// The name of the database engine in use.
+pub(super) fn database_name(pool: &db::DbPool) -> &'static str {
+    match pool {
+        db::DbPool::Postgres(_) => "PostgreSQL",
+        db::DbPool::Sqlite(_) => "SQLite",
+    }
+}
+
 async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
@@ -23,12 +31,8 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
     if ctx.administrator().is_none() {
         return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
     }
-    let database = match ctx.state.pool {
-        db::DbPool::Postgres(_) => "PostgreSQL",
-        db::DbPool::Sqlite(_) => "SQLite",
-    };
     let model = view::Page {
-        database: database.into(),
+        database: database_name(&ctx.state.pool).into(),
         object_storage: match ctx.state.storage.kind() {
             "s3" => "S3-compatible bucket",
             _ => "Local directory",

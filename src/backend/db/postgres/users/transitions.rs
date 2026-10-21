@@ -626,6 +626,11 @@ pub async fn compare_exchange_password(
             .bind(user_id)
             .execute(&mut *tx)
             .await?;
+        // A reset link still in a mailbox would undo the new password.
+        sqlx::query("DELETE FROM email_tokens WHERE user_id=$1 AND purpose='reset'")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
     }
     tx.commit().await?;
     Ok(changed)

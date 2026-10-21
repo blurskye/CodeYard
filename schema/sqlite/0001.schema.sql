@@ -47,6 +47,8 @@ CREATE TABLE users (
     must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0,1)),
     email_verified INTEGER NOT NULL DEFAULT 0 CHECK (email_verified IN (0,1)),
     two_factor_enabled INTEGER NOT NULL DEFAULT 0 CHECK (two_factor_enabled IN (0,1)),
+    -- Whether notifications are also sent by email, when the site has a mail server.
+    email_notifications INTEGER NOT NULL DEFAULT 1 CHECK (email_notifications IN (0,1)),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
@@ -66,6 +68,51 @@ CREATE TABLE node_configuration (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     CONSTRAINT node_configuration_singleton CHECK (id = 1),
     CONSTRAINT node_configuration_mode_check CHECK (node_mode IN ('public', 'private'))
+);
+
+-- Outgoing mail server, set from the admin page. Absent until saved; the environment applies then.
+CREATE TABLE email_settings (
+    id INTEGER PRIMARY KEY CHECK (id IS NULL OR typeof(id)='integer') CHECK (id = 1),
+    host TEXT NOT NULL CHECK (length(host) BETWEEN 1 AND 255),
+    port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+    security TEXT NOT NULL CHECK (security IN ('starttls', 'tls', 'none')),
+    username TEXT NOT NULL DEFAULT '' CHECK (length(username) <= 255),
+    encrypted_password BLOB,
+    password_nonce BLOB,
+    from_name TEXT NOT NULL DEFAULT '' CHECK (length(from_name) <= 255),
+    from_address TEXT NOT NULL CHECK (length(from_address) BETWEEN 1 AND 255),
+    reply_to TEXT NOT NULL DEFAULT '' CHECK (length(reply_to) <= 255),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    CHECK ((encrypted_password IS NULL) = (password_nonce IS NULL))
+);
+
+-- Mail waiting to be sent. A sender claims a due row by pushing its next_attempt_at forward,
+-- so a sender that dies mid-send only delays the retry. Rows that used all attempts stay as failed.
+CREATE TABLE email_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
+    to_address TEXT NOT NULL CHECK (length(to_address) <= 255),
+    subject TEXT NOT NULL CHECK (length(subject) <= 998),
+    body_text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    attempts INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    last_error TEXT CHECK (length(last_error) <= 1000),
+    sent_at TEXT
+);
+
+CREATE INDEX idx_email_outbox_due ON email_outbox(next_attempt_at) WHERE sent_at IS NULL;
+
+-- A link mailed to a user: it confirms their address ('verify') or lets them choose a new
+-- password ('reset'). Its token is also shown as a code to paste. Only the hash of the token is
+-- kept. A user has one link of each kind, and a new one replaces it. A link works only while the
+-- user still has the address it was sent to.
+CREATE TABLE email_tokens (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (typeof(user_id)='integer'),
+    purpose TEXT NOT NULL CHECK (purpose IN ('verify', 'reset')),
+    email TEXT NOT NULL CHECK (length(email) <= 255),
+    token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, purpose)
 );
 
 CREATE TABLE cluster_ssh_host_key (
@@ -157,19 +204,6 @@ CREATE TABLE ssh_keys (
     last_used_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     CONSTRAINT ssh_keys_fingerprint_unique UNIQUE (fingerprint)
-);
-
-CREATE TABLE gpg_keys (
-    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
-    key_id TEXT NOT NULL UNIQUE CHECK (length(key_id)<=40),
-    public_key TEXT NOT NULL,
-    emails TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(emails) AND json_type(emails)='array'),
-    can_sign INTEGER NOT NULL DEFAULT 1 CHECK (can_sign IN (0,1)),
-    can_encrypt INTEGER NOT NULL DEFAULT 0 CHECK (can_encrypt IN (0,1)),
-    expires_at TEXT,
-    verified INTEGER NOT NULL DEFAULT 0 CHECK (verified IN (0,1)),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 
 -- The encrypted TOTP secret, the last accepted time step (a code works once) and the hashed
@@ -522,6 +556,8 @@ CREATE TABLE pull_requests (
     merged_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (merged_by_id IS NULL OR typeof(merged_by_id)='integer'),
     merge_commit_sha TEXT CHECK (length(merge_commit_sha)<=40),
     stack_id INTEGER CHECK (stack_id IS NULL OR typeof(stack_id)='integer'),
+    -- Counts the changes to this row's place in its stack (joined, left, closed, reopened, retargeted, merged). A rebase of the stack refuses to publish when any of them moved.
+    stack_version INTEGER NOT NULL DEFAULT 0 CHECK (typeof(stack_version)='integer'),
     milestone_id INTEGER REFERENCES milestones(id) ON DELETE SET NULL CHECK (milestone_id IS NULL OR typeof(milestone_id)='integer'),
     additions INTEGER NOT NULL DEFAULT 0 CHECK (additions IS NULL OR typeof(additions)='integer') CHECK (additions BETWEEN -2147483648 AND 2147483647),
     deletions INTEGER NOT NULL DEFAULT 0 CHECK (deletions IS NULL OR typeof(deletions)='integer') CHECK (deletions BETWEEN -2147483648 AND 2147483647),
@@ -652,15 +688,6 @@ CREATE TABLE follows (
     CHECK (follower_id != following_id)
 );
 
-CREATE TABLE pinned_repos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
-    repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
-    position INTEGER NOT NULL DEFAULT 0 CHECK (position IS NULL OR typeof(position)='integer') CHECK (position BETWEEN -32768 AND 32767),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    UNIQUE(user_id, repo_id)
-);
-
 CREATE TABLE repo_secrets (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
@@ -671,19 +698,6 @@ CREATE TABLE repo_secrets (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     UNIQUE(repo_id, name)
-);
-
-CREATE TABLE org_secrets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
-    org_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE CHECK (org_id IS NULL OR typeof(org_id)='integer'),
-    name TEXT NOT NULL CHECK (length(name)<=255),
-    encrypted_value BLOB NOT NULL,
-    nonce BLOB NOT NULL,
-    visibility TEXT NOT NULL DEFAULT 'all' CHECK (length(visibility)<=20), 
-    created_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL CHECK (created_by_id IS NULL OR typeof(created_by_id)='integer'),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    UNIQUE(org_id, name)
 );
 
 CREATE TABLE audit_log (
@@ -799,16 +813,6 @@ CREATE TABLE ci_logs (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 
-CREATE TABLE ci_artifacts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
-    run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE CHECK (run_id IS NULL OR typeof(run_id)='integer'),
-    name TEXT NOT NULL CHECK (length(name)<=255),
-    storage_url TEXT NOT NULL,
-    size_bytes INTEGER CHECK (size_bytes IS NULL OR typeof(size_bytes)='integer'),
-    content_type TEXT CHECK (length(content_type)<=100),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
-);
-
 CREATE TABLE ci_deployments (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE CHECK (run_id IS NULL OR typeof(run_id)='integer'),
@@ -917,8 +921,6 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at ON oauth_states(expires_a
 
 CREATE INDEX IF NOT EXISTS idx_ssh_keys_user_id ON ssh_keys(user_id);
 
-CREATE INDEX IF NOT EXISTS idx_gpg_keys_user_id ON gpg_keys(user_id);
-
 CREATE INDEX IF NOT EXISTS idx_organizations_avatar_file ON organizations(avatar_file_id) WHERE avatar_file_id IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_org_memberships_user_id ON org_memberships(user_id);
@@ -1019,8 +1021,6 @@ CREATE INDEX IF NOT EXISTS idx_watches_repo_id ON watches(repo_id);
 
 CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id);
 
-CREATE INDEX IF NOT EXISTS idx_pinned_repos_user_id ON pinned_repos(user_id);
-
 CREATE INDEX IF NOT EXISTS idx_audit_log_org_id ON audit_log(org_id);
 
 CREATE INDEX IF NOT EXISTS idx_audit_log_actor_id ON audit_log(actor_id);
@@ -1072,8 +1072,6 @@ CREATE INDEX IF NOT EXISTS idx_ci_runs_push_user_created_at ON ci_runs(triggered
     WHERE event = 'push';
 
 CREATE INDEX IF NOT EXISTS idx_ci_logs_run_id_id ON ci_logs(run_id, id);
-
-CREATE INDEX IF NOT EXISTS idx_ci_artifacts_run_id ON ci_artifacts(run_id);
 
 CREATE INDEX IF NOT EXISTS idx_ci_deployments_repo_env ON ci_deployments(repo_id, environment, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_deployments_run ON ci_deployments(run_id);

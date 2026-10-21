@@ -263,7 +263,7 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
                             pre { class: "repo-code-editor-gutter", aria_hidden: "true", {gutter()} }
                             div { class: "repo-editor-stack",
                                 EditorHighlight { text: content, path: live_path, enabled: hydrated() }
-                                DraftTextarea { id: "repository-file-content", class: "repo-editor-textarea", name: "content", rows: lines().max(10) as u32, initial_value: editor.content.clone(), revision: Some(editor.expected_revision.clone()), on_value: move |next: String| content.set(next), on_scroll: move |event: ScrollEvent| follow_scroll(event.data().scroll_top(), event.data().scroll_left()) }
+                                DraftTextarea { id: "repository-file-content", class: "repo-editor-textarea", name: "content", rows: lines().max(10) as u32, initial_value: editor.content.clone(), on_value: move |next: String| content.set(next), on_scroll: move |event: ScrollEvent| follow_scroll(event.data().scroll_top(), event.data().scroll_left()) }
                             }
                         }
                     }

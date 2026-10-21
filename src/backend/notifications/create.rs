@@ -70,5 +70,19 @@ pub async fn create_and_broadcast_notification(
             unread_count: 0,
         })
         .await;
+    // Follows and stars are not worth an email.
+    if !matches!(
+        notification.kind.as_str(),
+        "user_followed" | "repository_starred"
+    ) {
+        crate::backend::email::notify_user(
+            pool,
+            notification.user_id,
+            &notification.title,
+            notification.body.as_deref(),
+            notification.link.as_deref(),
+        )
+        .await;
+    }
     Ok(notification)
 }

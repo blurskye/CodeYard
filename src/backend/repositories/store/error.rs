@@ -41,6 +41,7 @@ pub enum RepoErrorReason {
     RangeNotSatisfiable,
     BranchMissing,
     MergeMethodNotAllowed,
+    StackChanged,
 }
 
 /// A failed store call.
@@ -96,6 +97,10 @@ impl RepoError {
 
     pub fn is_merge_method_not_allowed(&self) -> bool {
         self.reason == Some(RepoErrorReason::MergeMethodNotAllowed)
+    }
+
+    pub fn is_stack_changed(&self) -> bool {
+        self.reason == Some(RepoErrorReason::StackChanged)
     }
 
     pub fn is_replica_busy(&self) -> bool {
@@ -206,6 +211,16 @@ impl RepoError {
             kind: ErrorKind::Invalid,
             reason: Some(RepoErrorReason::MergeMethodNotAllowed),
             message: MERGE_METHOD_NOT_ALLOWED.into(),
+        }
+    }
+
+    /// A layer of the stack being rebased was retargeted, closed, merged, unstacked or joined
+    /// since the rebase read it.
+    pub fn stack_changed() -> Self {
+        Self {
+            kind: ErrorKind::Conflict,
+            reason: Some(RepoErrorReason::StackChanged),
+            message: "The stack changed while it was being rebased.".into(),
         }
     }
 

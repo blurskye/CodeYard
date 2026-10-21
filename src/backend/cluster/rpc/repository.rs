@@ -798,6 +798,8 @@ impl RpcHandler {
                 email,
             } => json!(store.prepare_restack(&from, &head, &onto, &name, &email)),
             Operation::PublishRestack {
+                stack_id,
+                versions,
                 base_branch,
                 base,
                 moves,
@@ -805,6 +807,8 @@ impl RpcHandler {
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                stack_id,
+                &versions,
                 &base_branch,
                 &base,
                 &moves

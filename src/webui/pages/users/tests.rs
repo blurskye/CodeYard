@@ -217,7 +217,7 @@ fn profile_initial_html_has_real_rows_metadata_links_and_safe_personal_details()
 }
 
 #[test]
-fn profile_prerendered_static_css_has_no_hydration_markers() {
+fn profile_prerender_has_no_inline_css() {
     let mut renderer = dioxus_ssr::Renderer::new();
     renderer.pre_render = true;
     let output = renderer.render_element(profile_page(
@@ -247,18 +247,7 @@ fn profile_prerendered_static_css_has_no_hydration_markers() {
         None,
         None,
     ));
-    let css = output
-        .split_once("<style")
-        .unwrap()
-        .1
-        .split_once('>')
-        .unwrap()
-        .1
-        .split_once("</style>")
-        .unwrap()
-        .0;
-    assert_eq!(css, include_str!("../account.css"));
-    assert!(!css.contains("<!--"));
+    assert!(!output.contains("<style"));
     assert!(output.contains("href=\"/alice/real-repository\""));
     assert!(output.contains("action=\"/alice/_forms/follow\""));
     assert!(output.contains("name=\"csrf_token\""));

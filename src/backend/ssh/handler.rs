@@ -101,10 +101,33 @@ impl GitSshHandler {
         self.authenticated = Some(signal);
     }
 
+    /// Refuses a request that is not supported (shell, subsystem, pty).
     fn refuse_channel(&mut self, channel: ChannelId, session: &mut Session, message: &str) {
+        self.end_channel(channel, session, message, false);
+    }
+
+    /// Fails a Git command with its message. The command is accepted first, as hosted Git
+    /// services do: a failed exec request makes recent OpenSSH clients exit without printing the
+    /// message sent before it.
+    fn refuse_command(&mut self, channel: ChannelId, session: &mut Session, message: &str) {
+        self.end_channel(channel, session, message, true);
+    }
+
+    fn end_channel(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+        message: &str,
+        accepted: bool,
+    ) {
         self.channels.remove(&u32::from(channel));
+        if accepted {
+            let _ = session.channel_success(channel);
+        }
         let _ = session.extended_data(channel, 1, Bytes::from(format!("{}\n", message)));
-        let _ = session.channel_failure(channel);
+        if !accepted {
+            let _ = session.channel_failure(channel);
+        }
         let _ = session.exit_status_request(channel, 1);
         let _ = session.eof(channel);
         let _ = session.close(channel);
@@ -132,7 +155,7 @@ impl GitSshHandler {
                 .is_err()
             {
                 let msg = Self::deploy_key_denial_message(write);
-                self.refuse_channel(channel, session, msg.trim_end());
+                self.refuse_command(channel, session, msg.trim_end());
                 return Ok(None);
             }
             return Ok(Some(ReceiveCredential::DeployKey(key_id)));
@@ -165,7 +188,7 @@ impl GitSshHandler {
         };
         if !current || access < required_access || (write && repo.is_archived) {
             let msg = Self::repository_denial_message(Some((repo.is_private, access)), write);
-            self.refuse_channel(channel, session, msg.trim_end());
+            self.refuse_command(channel, session, msg.trim_end());
             return Ok(None);
         }
         Ok(Some(ReceiveCredential::SshKey(key_id)))
@@ -456,7 +479,7 @@ impl russh::server::Handler for GitSshHandler {
         let command = String::from_utf8_lossy(data).trim().to_owned();
 
         if self.user.is_none() && self.deploy_key.is_none() {
-            self.refuse_channel(channel, session, "Not authenticated");
+            self.refuse_command(channel, session, "Not authenticated");
             return Ok(());
         }
 
@@ -465,7 +488,7 @@ impl russh::server::Handler for GitSshHandler {
             .get(&u32::from(channel))
             .is_none_or(|state| state.channel.is_none())
         {
-            self.refuse_channel(
+            self.refuse_command(
                 channel,
                 session,
                 "A Git command is already active on this channel",
@@ -476,7 +499,7 @@ impl russh::server::Handler for GitSshHandler {
         let git_cmd = match validation::parse_command(&command) {
             Ok(cmd) => cmd,
             Err(_) => {
-                self.refuse_channel(
+                self.refuse_command(
                     channel,
                     session,
                     "Invalid command. Only git operations are allowed.",
@@ -500,7 +523,7 @@ impl russh::server::Handler for GitSshHandler {
                 } else {
                     Self::repository_denial_message(None, git_cmd.write)
                 };
-                self.refuse_channel(channel, session, msg.trim_end());
+                self.refuse_command(channel, session, msg.trim_end());
                 return Ok(());
             }
         };
@@ -517,7 +540,7 @@ impl russh::server::Handler for GitSshHandler {
             credential, git_cmd.owner, git_cmd.repo
         );
         let Ok(task_slot) = self.git_slots.clone().try_acquire_owned() else {
-            self.refuse_channel(channel, session, "Git sessions busy");
+            self.refuse_command(channel, session, "Git sessions busy");
             return Ok(());
         };
         let mut io = std::mem::take(
@@ -603,7 +626,7 @@ impl russh::server::Handler for GitSshHandler {
             let _ = handle.eof(channel).await;
             let _ = handle.close(channel).await;
         }) {
-            self.refuse_channel(channel, session, "Git server busy or shutting down");
+            self.refuse_command(channel, session, "Git server busy or shutting down");
             return Ok(());
         }
         let _ = session.channel_success(channel);

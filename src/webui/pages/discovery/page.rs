@@ -313,9 +313,6 @@ pub enum Page {
         form: NewRepositoryForm,
         error: Option<FormError>,
     },
-    Demo {
-        no_nav: bool,
-    },
 }
 
 pub fn render(page: Page) -> Element {
@@ -331,7 +328,6 @@ pub fn render(page: Page) -> Element {
             form,
             error,
         } => new_repository(owner, csrf_token, choices, form, error),
-        Page::Demo { no_nav } => demo(no_nav),
     }
 }
 
@@ -803,9 +799,7 @@ fn search_notices(model: &SearchModel) -> Element {
 
 /// The issue or pull request results: state icon and state, title, number, author and an excerpt.
 fn issue_results(model: &SearchModel, kind: Kind, issues: &[IssueCard], none: &str) -> Element {
-    // The rows are the issue list's rows, so they take its stylesheet.
     rsx! {
-        style { dangerous_inner_html: include_str!("../repos/style.css") }
         div { class: "panel overflow-hidden repo-content",
             if issues.is_empty() { div { class: "px-4 py-14 text-center", h2 { class: "font-semibold", "{none}" } } }
             for issue in issues {
@@ -1241,17 +1235,6 @@ fn NewRepositoryView(
                     if let Some(after) = choices.next_after { button { r#type: "submit", name: "intent", value: "page-owners", formaction: choices.page_url(after), class: "text-primary hover:underline", "Next organization choices" } }
                 }
             }
-        }
-    }
-}
-
-pub fn demo(no_nav: bool) -> Element {
-    rsx! {
-        div { class: "mx-auto max-w-2xl space-y-4 p-8",
-            img { src: "/assets/logo.webp", alt: "Codeyard logo", width: "512", height: "512", class: "h-auto w-16" }
-            h1 { class: "text-3xl font-semibold tracking-tight", if no_nav { "Focused view" } else { "Codeyard interface" } }
-            p { class: "text-muted-foreground", if no_nav { "A distraction-free page for focused tasks." } else { "A familiar workspace for repositories, collaboration, and automation." } }
-            NavLink { href: if no_nav { "/demo" } else { "/demo/no-nav" }, class: BUTTON, if no_nav { "Back to interface" } else { "Open focused view" } }
         }
     }
 }

@@ -18,12 +18,14 @@ mod sqlite;
 
 pub mod activity;
 pub mod assignees;
+pub mod audit;
 pub mod ci;
 pub mod cluster;
 mod connection;
 pub mod copy;
 pub mod deploy_keys;
 pub mod discussions;
+pub mod email;
 pub mod files;
 pub mod following;
 pub mod issues;

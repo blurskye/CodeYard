@@ -281,14 +281,15 @@ impl RepoStore {
     }
 
     /// All refs and the default branch. A local repository reads the default from HEAD, so
-    /// the branches are listed once.
+    /// the branches are listed once. A remote one asks for both at the same time.
     pub async fn refs_and_default(&self) -> Result<(HashMap<String, String>, String), RepoError> {
-        let refs = self.refs().await?;
-        let default_branch = match &self.0 {
-            Backend::Local(local) => local.default_branch().await?,
-            Backend::Remote(_) => self.info().await?.default_branch,
-        };
-        Ok((refs, default_branch))
+        match &self.0 {
+            Backend::Local(local) => Ok((local.refs().await?, local.default_branch().await?)),
+            Backend::Remote(_) => {
+                let (refs, info) = tokio::try_join!(self.refs(), self.info())?;
+                Ok((refs, info.default_branch))
+            }
+        }
     }
 
     /// Branch names and the default branch, without traversing history.
@@ -1439,13 +1440,20 @@ impl RepoStore {
         }
     }
 
-    /// Moves each branch in `moves` to its new commit, provided each is still at its old one and
-    /// `base_branch` is still at `base`. Nothing moves unless every check passes.
+    /// Moves each branch in `moves` to its new commit, provided each is still at its old one,
+    /// `base_branch` is still at `base`, and stack `stack_id` still has the `versions` the rebase
+    /// read. Nothing moves unless every check passes.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Restack publication carries explicit authority, stack and CAS inputs."
+    )]
     pub async fn publish_restack_as(
         &self,
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
+        stack_id: i64,
+        versions: &[(i64, i64)],
         base_branch: &str,
         base: &str,
         moves: &[RestackMove],
@@ -1453,7 +1461,16 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => {
                 local
-                    .publish_restack(pool, repo_id, actor, base_branch, base, moves)
+                    .publish_restack(
+                        pool,
+                        repo_id,
+                        actor,
+                        stack_id,
+                        versions,
+                        base_branch,
+                        base,
+                        moves,
+                    )
                     .await
             }
             Backend::Remote(remote) => {
@@ -1461,6 +1478,8 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::PublishRestack {
+                            stack_id,
+                            versions: versions.to_vec(),
                             base_branch: base_branch.into(),
                             base: base.into(),
                             moves: moves.to_vec(),

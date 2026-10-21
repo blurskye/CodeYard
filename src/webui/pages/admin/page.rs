@@ -1,9 +1,7 @@
-//! Site administration account and activity presentation.
-use crate::webui::components::{
-    compact_date, count_label, format_bytes, DraftSelect, SelectOption,
-};
+//! The administration overview: totals, system status, recent signups and the activity chart.
+use super::nav::{admin_header, Section};
+use crate::webui::components::{compact_date, count_label, format_bytes};
 use crate::webui::navigation::NavLink;
-use crate::webui::pages::fields::{access_forms, csrf, notice, FormValues};
 use dioxus::prelude::*;
 
 /// The daily table lists this many of the newest days. The chart always shows the whole window.
@@ -13,20 +11,31 @@ const TIMEFRAMES: [i32; 4] = [7, 30, 90, 180];
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Admin {
-    pub current_user_id: i64,
     /// At most five recent signups, newest first.
     pub accounts: Vec<Account>,
-    pub totals: (usize, usize, i64),
+    pub users: usize,
+    pub banned: usize,
+    pub repositories: usize,
+    pub organizations: usize,
+    /// Signup requests waiting for a decision. `None` on a public node, which has none.
+    pub pending_requests: Option<usize>,
+    pub storage_bytes: i64,
     pub activity: Vec<Activity>,
     pub days: i32,
-    pub manage_access: bool,
-    pub requests: Vec<Signup>,
-    pub requests_count: usize,
-    pub requests_page: usize,
-    pub values: FormValues,
-    /// `block` or `allow`.
-    pub ai_crawlers: String,
+    pub status: SystemStatus,
 }
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SystemStatus {
+    pub version: String,
+    pub database: String,
+    /// Whether anyone can register, or an administrator approves each request.
+    pub private: bool,
+    /// The cluster's nodes, or `None` on a single node.
+    pub nodes: Option<usize>,
+    pub queued_runs: usize,
+}
+
 pub fn normalize_days(raw: Option<&str>) -> i32 {
     raw.and_then(|s| s.parse().ok())
         .filter(|days| [7, 30, 90, 180, 365].contains(days))
@@ -90,32 +99,6 @@ pub(super) fn date_tick_indices(days: usize) -> Vec<usize> {
     indices
 }
 
-/// The AI crawler setting. A component, so its select runs inside the renderer's runtime.
-#[component]
-fn AiCrawlersPanel(token: String, value: String) -> Element {
-    rsx! {
-        section { class: "identity-admin-panel", aria_labelledby: "admin-crawlers-title",
-            header { class: "identity-admin-panel-header",
-                div { h2 { id: "admin-crawlers-title", "AI crawlers" } p { "Block AI training crawlers in robots.txt and ai.txt, and ask crawlers not to use HTML pages." } }
-            }
-            form { method: "post", action: "/admin/ai-crawlers", class: "identity-admin-crawlers",
-                {csrf(&token)}
-                div { class: "identity-admin-crawlers-field",
-                    label { r#for: "ai_crawlers", "AI crawler policy" }
-                    DraftSelect { id: Some("ai_crawlers".to_owned()), name: "ai_crawlers", class: "border border-border bg-background",
-                        initial_value: value,
-                        options: vec![
-                            SelectOption::new("block", "Block (default)"),
-                            SelectOption::new("allow", "Allow"),
-                        ] }
-                    p { class: "identity-admin-hint", "Block disallows AI training crawlers in robots.txt and ai.txt. Allow lets every crawler in." }
-                }
-                button { r#type: "submit", class: "btn", "Save" }
-            }
-        }
-    }
-}
-
 /// The activity timeframe. Each choice is a plain link, so it works before scripts load.
 pub(super) fn timeframe_control(days: i32) -> Element {
     rsx! {
@@ -130,7 +113,7 @@ pub(super) fn timeframe_control(days: i32) -> Element {
     }
 }
 
-pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool) -> Element {
+pub fn admin_page(model: Admin) -> Element {
     let values: Vec<i64> = model
         .activity
         .iter()
@@ -148,7 +131,6 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
         ),
         (0, PLOT_BOTTOM, PLOT_BOTTOM + 4.0),
     ];
-    let ai_crawlers = model.ai_crawlers.clone();
     let (contributions, bytes, active_days) = activity_totals(&model.activity);
     let table_rows = &model.activity[model.activity.len().saturating_sub(TABLE_DAYS)..];
     let first_day = model
@@ -178,71 +160,53 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
             )
         })
         .collect();
-    let (users, banned, storage_used) = model.totals;
-    let requests = model.requests_count;
-    let newest = &model.accounts;
+    let status = &model.status;
     rsx! {
-        style { dangerous_inner_html: include_str!("../account.css") }
         div { class: "identity-settings identity-admin page-shell",
-            header { class: "admin-header",
-                div { class: "admin-header-main",
-                    nav { class: "admin-crumbs", aria_label: "Breadcrumb",
-                        NavLink { href: "/admin".to_string(), "Administration" }
-                        " / Overview"
-                    }
-                    h1 { "Overview" }
-                    p { "Monitor activity and manage accounts across this installation." }
-                }
-                nav { class: "admin-header-actions", aria_label: "Administration",
-                    NavLink { href: "/admin/nodes".to_string(), class: "btn", "Nodes" }
-                    NavLink { href: "/admin/storage".to_string(), class: "btn", "Storage" }
-                }
-            }
-            {notice(message, error)}
+            {admin_header(Section::Overview, "Overview", "Activity and status of this installation.")}
             div { class: "identity-admin-totals",
-                div { class: "identity-admin-total", span { "Users" } strong { "{users}" } }
-                div { class: "identity-admin-total", span { "Banned" } strong { "{banned}" } }
-                div { class: "identity-admin-total", span { "Pending requests" } strong { "{requests}" } }
-                div { class: "identity-admin-total", span { "Storage used" } strong { {format_bytes(storage_used)} } }
+                div { class: "identity-admin-total", span { "Users" } strong { "{model.users}" } }
+                div { class: "identity-admin-total", span { "Banned" } strong { "{model.banned}" } }
+                div { class: "identity-admin-total", span { "Repositories" } strong { "{model.repositories}" } }
+                div { class: "identity-admin-total", span { "Organizations" } strong { "{model.organizations}" } }
+                div { class: "identity-admin-total", span { "Storage used" } strong { {format_bytes(model.storage_bytes)} } }
+                if let Some(pending) = model.pending_requests {
+                    div { class: "identity-admin-total",
+                        span { "Pending requests" }
+                        strong { "{pending}" }
+                        if pending > 0 {
+                            NavLink { href: "/admin/users".to_string(), class: "identity-account-name", "Review requests" }
+                        }
+                    }
+                }
             }
             div { class: "identity-admin-columns",
+                section { class: "identity-admin-panel", aria_labelledby: "admin-status-title",
+                    header { class: "identity-admin-panel-header",
+                        div { h2 { id: "admin-status-title", "System status" } p { "This node and its cluster." } }
+                    }
+                    ul { class: "identity-admin-list",
+                        li { span { "Version" } span { class: "identity-muted", "{status.version}" } }
+                        li { span { "Database" } span { class: "identity-muted", "{status.database}" } }
+                        li { span { "Sign-up" } span { class: "identity-muted", if status.private { "By approval" } else { "Open" } } }
+                        li { span { "Nodes" } span { class: "identity-muted",
+                            if let Some(nodes) = status.nodes { {count_label(nodes, "cluster node", "cluster nodes")} } else { "Single node" }
+                        } }
+                        li { span { "CI queue" } span { class: "identity-muted", {count_label(status.queued_runs, "queued run", "queued runs")} } }
+                    }
+                }
                 section { class: "identity-admin-panel", aria_labelledby: "admin-signups-title",
                     header { class: "identity-admin-panel-header",
                         div { h2 { id: "admin-signups-title", "Recent signups" } p { "The newest accounts." } }
                     }
                     ul { class: "identity-admin-list",
-                        for account in newest {
+                        for account in &model.accounts {
                             li { key: "{account.id}",
                                 a { class: "identity-account-name", href: format!("/{}", crate::webui::encode_component(&account.username)), "{account.username}" }
                                 span { class: "identity-muted", {compact_date(&account.created)} }
                             }
                         }
                     }
-                }
-                section { class: "identity-admin-panel", aria_labelledby: "admin-requests-title",
-                    header { class: "identity-admin-panel-header",
-                        div { h2 { id: "admin-requests-title", "Pending requests" } p { "Sign-up requests waiting for a decision." } }
-                        if model.manage_access && requests > 0 {
-                            a { href: "/settings?tab=access", class: "identity-button", "Review requests" }
-                        }
-                    }
-                    ul { class: "identity-admin-list",
-                        if requests == 0 {
-                            li { span { class: "identity-muted", "No pending requests." } }
-                        }
-                        for request in model.requests.iter().take(5) {
-                            li { key: "{request.id}",
-                                span { "{request.username}" }
-                                span { class: "identity-muted", {compact_date(&request.created)} }
-                            }
-                        }
-                    }
-                }
-            }
-            section { class: "identity-admin-panel", aria_labelledby: "admin-accounts-title",
-                header { class: "identity-admin-panel-header",
-                    div { h2 { id: "admin-accounts-title", "Accounts" } p { {count_label(users, "account", "accounts")} " · {banned} banned" } }
-                    NavLink { href: "/admin/users".to_string(), class: "btn", "Manage users" }
                 }
             }
             section { class: "identity-admin-panel", aria_labelledby: "admin-activity-title",
@@ -288,22 +252,10 @@ pub fn admin_page(model: Admin, token: &str, message: Option<&str>, error: bool)
                     }
                 }
             }
-            AiCrawlersPanel { token: token.to_owned(), value: ai_crawlers }
-            if model.manage_access {
-                section { class: "identity-admin-panel identity-access-section", {access_forms(&model.requests, token, &model.values, "/admin/access")}
-                    {super::signup_pagination(model.requests_page, model.requests_count, &format!("/admin?days={}", model.days))} }
-            }
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Signup {
-    pub id: i64,
-    pub username: String,
-    pub email: String,
-    pub created: String,
-}
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Account {
     pub id: i64,

@@ -799,7 +799,7 @@ t_editor() {
     newtext=$'# proj\n\nEdited in the web editor: <b>é ☃</b> & done.\n'
     as alice form-post --from "$RUN/tab-a.json" --submit intent=save \
         --set "content=$newtext" --set 'message=Edit README in the web editor' \
-        --location /alice/proj/blob/main/README.md
+        --location /alice/proj/blob/refs/heads/main/README.md
     as alice req GET /alice/proj/raw/main/README.md --body-sha256 "$(sha_of "$newtext")"
     saved=$(as alice req GET /api/repos/alice/proj/commits --accept json \
         --json-has '0.message=Edit README in the web editor' --json-eq "0.parents.0=$main0" \
@@ -817,7 +817,7 @@ t_editor() {
     guide=$'# Guide\n\nCreated in the web editor.\n'
     as alice form /alice/proj/new/main --action /alice/proj/_forms/write-file --has creating=yes \
         --set path=docs/guide.md --set "content=$guide" --set 'message=Add docs/guide.md' \
-        --submit intent=save --location /alice/proj/blob/main/docs/guide.md
+        --submit intent=save --location /alice/proj/blob/refs/heads/main/docs/guide.md
     as alice req GET /alice/proj/raw/main/docs/guide.md --body-sha256 "$(sha_of "$guide")"
     as alice req GET /alice/proj/blob/main/docs/guide.md --contains 'Created in the web editor.'
 }
@@ -1231,7 +1231,7 @@ t_pr_review_pages() {
     as alice req GET "/api/repos/alice/proj/pulls/$pr/requested_reviewers" --accept json --json-eq 0.username=bob
     as alice req GET "/alice/proj/pulls/$pr" --contains 'Review requested' \
         --contains 'Remove the review request for bob'
-    as bob form "/alice/proj/pulls/$pr" --action "/alice/proj/pulls/$pr/reviews" --has state \
+    as bob form "/alice/proj/pulls/$pr/diff" --action "/alice/proj/pulls/$pr/reviews" --has state \
         --submit intent=submit --set state=approved --set 'body=Approved by the end-to-end check' \
         --location "/alice/proj/pulls/$pr#review-*"
     as bob form "/alice/proj/pulls/$pr/diff?path=review-page.txt&side=RIGHT&line=1" \
@@ -1461,6 +1461,10 @@ alice /new Discovery -
 alice /settings Identity -
 alice /settings/organizations Organizations -
 alice /admin - -
+alice /admin/users Identity -
+alice /admin/settings Identity -
+alice /admin/audit Identity -
+alice /admin/storage Storage -
 alice /admin/nodes Nodes No nodes have joined
 alice /notifications - -
 alice /alice/proj/settings Repositories -
@@ -1474,11 +1478,11 @@ t_pages() {
     check_pages
     local target_id
     target_id=$(as alice req GET /api/users/bob --accept json --print json:id)
-    as alice page "/admin/accounts/$target_id/ban?days=30" --user alice --lane Identity --contains 'Ban bob?'
-    as bob req GET "/admin/accounts/$target_id/ban?days=30" --status 403
-    as alice form "/admin/accounts/$target_id/ban?days=30" \
+    as alice page /admin/users --user alice --lane Identity --contains 'Ban bob'
+    as bob req GET /admin/users --status 403
+    as alice form /admin/users \
         --action "/admin/accounts/$target_id/ban" --unset confirm_delete \
-        --status 400 --contains 'Confirm deletion'
+        --status 400 --contains 'Confirm the ban before saving it'
     # The data client navigation fetches: same page, as typed JSON.
     as alice req GET /alice/proj --accept model --header-eq 'content-type: application/vnd.codeyard.page+json' \
         --json-eq page.lane=Repositories --json-eq location=/alice/proj --json-eq chrome.username=alice

@@ -1,8 +1,6 @@
 use super::{database_error, OperationError};
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
-use crate::backend::db::pull_requests::reviews::DiscussionRef;
-use crate::backend::issues::{discussion_link, discussion_page};
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
@@ -183,17 +181,9 @@ pub async fn create_pull_request_review(
     .await
     .map_err(super::write_error)?;
 
-    // The review sits at its own place in the Conversation, and its notices link to that place.
+    // The link names the review; the pull request page finds its current page when followed.
     let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
-    let page = discussion_page(
-        db::pull_requests::reviews::count_discussion_items_through(
-            pool,
-            pull_request.id,
-            DiscussionRef::Review(review.id),
-        )
-        .await,
-    );
-    let link = discussion_link(&base, page, &format!("review-{}", review.id));
+    let link = format!("{base}?review={0}#review-{0}", review.id);
 
     if pull_request.author_id != user.id {
         let title = format!(

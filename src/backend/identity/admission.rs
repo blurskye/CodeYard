@@ -33,7 +33,27 @@ pub async fn admit_login(
             hex::encode(Sha256::digest(identity.trim().to_lowercase().as_bytes()))
         ),
     };
-    let client = client.map(|client| format!("ip:{client}"));
+    admit(pool, client.map(|client| format!("ip:{client}")), account).await
+}
+
+/// Counts a request for a mailed link against `client` and `key` (a user, or the hash of an
+/// address). Every request counts, so the answer says nothing about whether the key exists.
+/// Mail requests have their own budget per client address, so they cannot use up the one for
+/// signing in.
+pub async fn admit_mail(
+    pool: &DbPool,
+    client: Option<&str>,
+    key: &str,
+) -> Result<(), AdmissionError> {
+    let client = client.map(|client| format!("mail-ip:{client}"));
+    admit(pool, client, format!("mail:{key}")).await.map(drop)
+}
+
+async fn admit(
+    pool: &DbPool,
+    client: Option<String>,
+    account: String,
+) -> Result<Attempt, AdmissionError> {
     let admitted = tokio::time::timeout(
         Duration::from_secs(5),
         db::users::admission::admit_password_attempt(pool, client.as_deref(), &account),

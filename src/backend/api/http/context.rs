@@ -153,37 +153,50 @@ impl PageContext {
         }
 
         let had_verified_session = existing_session.is_some();
-        let (verified_session, pending_session_cookie) = match existing_session {
-            Some(s) => (s, None),
-            None => {
-                // Never adopt an attacker-supplied unknown cookie ID.
-                let id = session::generate_session_id();
-                let agent = session::extract_user_agent(&headers);
-                let s = db::users::sessions::create_browser_session(
-                    &state.pool,
-                    &id,
-                    agent.as_deref(),
-                    None,
-                    chrono::Utc::now() + chrono::Duration::days(session::session_duration_days()),
-                )
-                .await
-                .map_err(|_| unavailable())?;
-                (
-                    s,
-                    Some(session::build_session_cookie(
+        // A visitor with no cookie gets a session row only on the sign-in pages, which have
+        // a form to protect. Other cookieless pages (crawlers, 404s, public browsing) write
+        // nothing and carry an empty token; the theme switch accepts that. A stale cookie
+        // still gets a fresh session so its owner can sign in again.
+        let mints_session = existing_session.is_some()
+            || session::has_session_cookie(&headers)
+            || anonymous_form_path(&path);
+        let (csrf_token, pending_session_cookie) = if mints_session {
+            let (verified_session, pending_session_cookie) = match existing_session {
+                Some(s) => (s, None),
+                None => {
+                    // Never adopt an attacker-supplied unknown cookie ID.
+                    let id = session::generate_session_id();
+                    let agent = session::extract_user_agent(&headers);
+                    let s = db::users::sessions::create_browser_session(
+                        &state.pool,
                         &id,
-                        session::session_duration_days(),
-                    )),
-                )
-            }
+                        agent.as_deref(),
+                        None,
+                        chrono::Utc::now()
+                            + chrono::Duration::days(session::session_duration_days()),
+                    )
+                    .await
+                    .map_err(|_| unavailable())?;
+                    (
+                        s,
+                        Some(session::build_session_cookie(
+                            &id,
+                            session::session_duration_days(),
+                        )),
+                    )
+                }
+            };
+            // PostgreSQL owns the session and its synchronizer together. Concurrent
+            // first GETs share a token; login rotation invalidates the old identity.
+            let csrf_token = csrf_token_for_session(&state, &verified_session)
+                .await
+                .map_err(|_| unavailable())?
+                .filter(|token| is_hex_token(token, 64))
+                .ok_or_else(unavailable)?;
+            (csrf_token, pending_session_cookie)
+        } else {
+            (String::new(), None)
         };
-        // PostgreSQL owns the session and its synchronizer together. Concurrent
-        // first GETs share a token; login rotation invalidates the old identity.
-        let csrf_token = csrf_token_for_session(&state, &verified_session)
-            .await
-            .map_err(|_| unavailable())?
-            .filter(|token| is_hex_token(token, 64))
-            .ok_or_else(unavailable)?;
         let query = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
             .into_owned()
             .collect();
@@ -252,12 +265,27 @@ impl PageContext {
         Ok(())
     }
 
+    /// The appearance switch for a visitor who was never given a session: it only has to
+    /// come from this site. Anyone with a session must send its token.
+    #[expect(
+        clippy::result_large_err,
+        reason = "The shared HTML helper contract returns complete Axum responses without boxing."
+    )]
+    pub fn check_theme_form(&self, form: &HashMap<String, String>) -> Result<(), Response> {
+        if !self.had_verified_session && self.csrf_token.is_empty() {
+            if same_origin_submission(&self.headers) {
+                return Ok(());
+            }
+            return Err(self.error(
+                StatusCode::FORBIDDEN,
+                "The form expired or came from another site. Reload the page and try again.",
+            ));
+        }
+        self.check_csrf(form)
+    }
+
     pub(in crate::backend::api) fn chrome(&self) -> Chrome {
         Chrome {
-            submitted_form: self
-                .headers
-                .contains_key("x-codeyard-submitted")
-                .then(|| self.path.clone()),
             username: self.user.as_ref().map(|u| u.username.clone()),
             is_admin: self.user.as_ref().is_some_and(|u| u.is_admin),
             unread_notifications: self.unread_notifications,
@@ -295,6 +323,10 @@ pub(crate) fn csrf_matches(expected: &str, supplied: Option<&str>) -> bool {
         is_hex_token(token, 64) && bool::from(expected.as_bytes().ct_eq(token.as_bytes()))
     })
 }
+/// The pages a signed-out visitor submits a form from.
+fn anonymous_form_path(path: &str) -> bool {
+    public_identity_path(path) && path != "/_forms/theme"
+}
 fn public_identity_path(path: &str) -> bool {
     matches!(
         path,
@@ -306,6 +338,9 @@ fn public_identity_path(path: &str) -> bool {
             | "/logout"
             | "/_forms/theme"
             | "/forgot-password"
+            | "/reset-password"
+            | "/reset-password/code"
+            | "/verify-email"
     )
 }
 fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -363,6 +398,34 @@ mod tests {
         assert!(ctx.check_csrf(&HashMap::new()).is_err());
         ctx.csrf_token = "b".repeat(64); // expired or identity-transition token
         assert!(ctx.check_csrf(&form).is_err());
+    }
+
+    #[tokio::test]
+    async fn theme_form_needs_no_token_only_without_a_session() {
+        let mut ctx = PageContext {
+            state: Arc::new(crate::backend::api::tests::closed_state().await),
+            headers: HeaderMap::new(),
+            user: None,
+            csrf_token: String::new(),
+            path: "/_forms/theme".into(),
+            query: HashMap::new(),
+            return_to: None,
+            unread_notifications: None,
+            pending_session_cookie: None,
+            had_verified_session: false,
+            location: "/_forms/theme".into(),
+        };
+        assert!(ctx.check_theme_form(&HashMap::new()).is_ok());
+        ctx.headers
+            .insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+        assert!(ctx.check_theme_form(&HashMap::new()).is_err());
+        ctx.headers.remove("sec-fetch-site");
+        ctx.csrf_token = "a".repeat(64);
+        ctx.had_verified_session = true;
+        assert!(ctx.check_theme_form(&HashMap::new()).is_err());
+        assert!(anonymous_form_path("/login"));
+        assert!(!anonymous_form_path("/_forms/theme"));
+        assert!(!anonymous_form_path("/explore"));
     }
 
     #[tokio::test]
