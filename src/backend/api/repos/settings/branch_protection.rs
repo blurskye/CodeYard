@@ -1,8 +1,8 @@
 use crate::backend::api::http::error::protection_write_error;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_admin_access;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use axum::extract::Path;
@@ -33,6 +33,9 @@ pub struct BranchProtectionRuleResponse {
     pub push_allowances: Vec<String>,
     pub force_push_allowances: Vec<String>,
 }
+
+/// More approvals than this cannot be met by a small team and would block every merge.
+const MAX_REQUIRED_APPROVALS: i32 = 10;
 
 fn yes() -> bool {
     true
@@ -109,7 +112,7 @@ pub(in crate::backend::api::repos) async fn rule_responses(
     ids.dedup();
     let users = db::users::accounts::get_users_by_ids(pool, &ids)
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|_| storage_unavailable())?;
     let users: std::collections::HashMap<_, _> = users
         .into_iter()
         .map(|user| (user.id, user.username))
@@ -147,38 +150,14 @@ pub async fn list_branch_protection_rules(
     headers: HeaderMap,
     Path((owner, repo)): Path<(String, String)>,
 ) -> Result<Json<Vec<BranchProtectionRuleResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let user = get_current_user(&state.pool, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
 
     let rules =
         db::repositories::protection::list_branch_protection_rules(&state.pool, repository.id)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Collaboration storage is temporarily unavailable",
-                    )),
-                )
-            })?;
+            .map_err(|_| storage_unavailable())?;
 
     Ok(Json(rule_responses(&state.pool, rules).await?))
 }
@@ -190,28 +169,8 @@ pub async fn upsert_branch_protection_rule(
     Json(req): Json<UpsertBranchProtectionRuleRequest>,
 ) -> Result<Json<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
     let rule = save_rule(&state.pool, actor.id, &repository, req).await?;
     Ok(Json(rule_response(&state.pool, rule).await?))
@@ -230,12 +189,12 @@ pub(in crate::backend::api::repos) async fn save_rule(
     db::repositories::protection::validate_branch_pattern(pattern)
         .map_err(|error| protection_write_error(error.into()))?;
 
-    if req.required_approving_reviews < 0 {
+    if !(0..=MAX_REQUIRED_APPROVALS).contains(&req.required_approving_reviews) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
-                "required_approving_reviews must be >= 0",
+                "required_approving_reviews must be between 0 and 10",
             )),
         ));
     }
@@ -363,11 +322,11 @@ async fn write_user_ids(
     let users =
         db::users::accounts::get_users_by_usernames(pool, &names.into_iter().collect::<Vec<_>>())
             .await
-            .map_err(|_| unavailable())?;
+            .map_err(|_| storage_unavailable())?;
     let ids: Vec<_> = users.iter().map(|user| user.id).collect();
     let allowed = db::repositories::access::write_access_user_ids(pool, repository.id, &ids)
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|_| storage_unavailable())?;
     let users: std::collections::HashMap<_, _> = users
         .into_iter()
         .filter(|user| allowed.contains(&user.id))
@@ -393,44 +352,14 @@ async fn write_user_ids(
     Ok(result)
 }
 
-fn unavailable() -> (StatusCode, Json<ApiError>) {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ApiError::new(
-            "database_error",
-            "Collaboration storage is temporarily unavailable",
-        )),
-    )
-}
-
 pub async fn delete_branch_protection_rule(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, repo, pattern)): Path<(String, String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
     delete_rule(&state.pool, actor.id, repository.id, &pattern).await?;
     Ok(StatusCode::NO_CONTENT)

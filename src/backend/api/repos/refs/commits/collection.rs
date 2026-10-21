@@ -1,13 +1,17 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::{access_error, readable_repository};
 use crate::backend::api::repos::chrome::{
-    commit, default_ref, ensure_ref, json_page, load_refs_from_repo, number, page_window,
-    ref_names_under, repository_default_branch, store_error, Loaded, DEFAULT_PER_PAGE, MAX_PAGE,
+    commit, default_ref, ensure_ref, load_refs_from_repo, ref_names_under,
+    repository_default_branch, store_error, Loaded,
+};
+use crate::backend::api::repos::paging::{
+    json_page, number, page_window, DEFAULT_PER_PAGE, MAX_PAGE,
 };
 use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::store::{repo_store, CommitFilter};
 use crate::webui::pages::repos as view;
 use axum::extract::{Path, Query, State};
@@ -32,28 +36,10 @@ pub async fn list_commits(
     Query(query): Query<CommitsQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<CommitResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
+    let refs = load_refs_from_repo(&state, &repository).await?;
 
     if refs.is_empty() {
         return Ok(Json(Vec::new()));
@@ -85,7 +71,7 @@ pub async fn list_commits(
         .collect();
     let users = db::users::accounts::get_users_by_emails(&state.pool, &emails)
         .await
-        .unwrap_or_default();
+        .map_err(|_| access_error(AccessError::Unavailable))?;
     let user_map: HashMap<String, &db::models::User> = users
         .iter()
         .filter_map(|user| user.email.clone().map(|email| (email, user)))
@@ -187,10 +173,7 @@ async fn commits_page(ctx: &PageContext, loaded: &Loaded) -> Result<Response, Re
         .get("ref")
         .cloned()
         .unwrap_or_else(|| default_ref(loaded));
-    let page = number(ctx, "page", 1, 1000)?;
-    if page == 0 {
-        return Err(ctx.error(StatusCode::BAD_REQUEST, "Page numbers start at 1."));
-    }
+    let page = number(ctx, "page", 1, 1..=MAX_PAGE)?;
     let Some(path) = history_path(ctx) else {
         return Err(ctx.repo_error(
             &loaded.chrome,

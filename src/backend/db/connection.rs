@@ -304,8 +304,8 @@ mod safe_logging_tests {
         }
     }
 
-    #[test]
-    fn unknown_postgres_options_are_rejected_without_logging_values() {
+    #[tokio::test]
+    async fn unknown_postgres_options_are_rejected_without_logging_values() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let writer = Capture(output.clone());
         let subscriber = tracing_subscriber::fmt()
@@ -313,19 +313,14 @@ mod safe_logging_tests {
             .with_ansi(false)
             .with_writer(move || writer.clone())
             .finish();
-        tracing::subscriber::with_default(subscriber, || {
-            for name in ["sslpassword", "Password", "pass%77ord_typo"] {
-                let url =
-                    format!("postgres://fixture@localhost/unused?{name}=private-key-password");
-                for result in [
-                    futures::executor::block_on(init_db(&url)),
-                    futures::executor::block_on(open_source(&url)),
-                ] {
-                    let error = result.err().expect("reject before connecting").to_string();
-                    assert_eq!(error, "Unsupported PostgreSQL connection parameter");
-                }
+        let _logging = tracing::subscriber::set_default(subscriber);
+        for name in ["sslpassword", "Password", "pass%77ord_typo"] {
+            let url = format!("postgres://fixture@localhost/unused?{name}=private-key-password");
+            for result in [init_db(&url).await, open_source(&url).await] {
+                let error = result.err().expect("reject before connecting").to_string();
+                assert_eq!(error, "Unsupported PostgreSQL connection parameter");
             }
-        });
+        }
         let logged = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(!logged.contains("private-key-password"));
         assert!(!logged.contains("unrecognized connect parameter"));
@@ -366,8 +361,8 @@ mod safe_logging_tests {
         }
     }
 
-    #[test]
-    fn connection_diagnostic_does_not_log_passwords_or_the_raw_url() {
+    #[tokio::test]
+    async fn connection_diagnostic_does_not_log_passwords_or_the_raw_url() {
         let output = Arc::new(Mutex::new(Vec::new()));
         let writer = Capture(output.clone());
         let subscriber = tracing_subscriber::fmt()
@@ -378,9 +373,8 @@ mod safe_logging_tests {
         // An invalid IPv6 literal fails URL parsing before options/pgpass,
         // connection establishment, or any service access.
         let url = "postgres://fixture:logging-fixture-password@[not-ipv6]/unused?password=logging-fixture-query-password";
-        let result = tracing::subscriber::with_default(subscriber, || {
-            futures::executor::block_on(init_db(url))
-        });
+        let _logging = tracing::subscriber::set_default(subscriber);
+        let result = init_db(url).await;
         assert!(result.is_err());
         let logged = String::from_utf8(output.lock().unwrap().clone()).unwrap();
         assert!(logged.contains("Connecting to PostgreSQL"));

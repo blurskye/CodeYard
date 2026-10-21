@@ -4,7 +4,7 @@
 #![cfg(not(target_arch = "wasm32"))]
 use crate::support::{
     fake_webui_bundle as bundle,
-    git_server::{git, success, Server},
+    git_server::{git, success, write_token, Server},
     native_database as native,
 };
 
@@ -13,18 +13,12 @@ use axum::{
     http::{header, Request, StatusCode},
     Router,
 };
-use chrono::Utc;
 use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
     db::{self, users::transitions::SetupClaim},
     repositories::lifecycle,
-    storage::ObjectStore,
 };
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, time::Duration};
 use tower::ServiceExt;
 
 const RUST_CONTENT: &str = "pub fn answer() -> u32 { 42 }\n";
@@ -80,14 +74,7 @@ async fn languages_contract(pool: &db::DbPool) {
         .unwrap()
         .set_head("refs/heads/main")
         .unwrap();
-    let router = create_router(AppState::new(
-        pool.clone(),
-        directory.path().to_owned(),
-        Arc::new(ObjectStore::open(directory.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = crate::support::database::router(pool, directory.path()).await;
 
     let (status, body) = get_json(&router, None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -275,9 +262,9 @@ async fn sqlite_repository_languages_from_git() {
 
 #[tokio::test]
 async fn postgres_repository_languages_from_git() {
-    let fixture = native::PostgresDatabase::new().await;
+    let mut fixture = native::PostgresDatabase::new().await;
     languages_contract(&fixture.pool).await;
-    fixture.pool.close().await;
+    fixture.finish().await;
 }
 
 /// Commits `files` on `branch` of the working copy at `source` and pushes that branch to `url`
@@ -362,15 +349,9 @@ async fn page(router: &Router, path: &str) -> (StatusCode, String) {
 /// database, the repository page and Explore show of the languages it stores.
 async fn push_contract(pool: &db::DbPool, database_url: &str) {
     bundle::install();
-    const SETUP: &str = "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE";
-    match pool {
-        db::DbPool::Postgres(raw) => {
-            sqlx::query(SETUP).execute(raw).await.unwrap();
-        }
-        db::DbPool::Sqlite(raw) => {
-            sqlx::query(SETUP).execute(raw).await.unwrap();
-        }
-    }
+    db::node_config::upsert_node_configuration(pool, "public", true)
+        .await
+        .unwrap();
     let owner = db::users::accounts::create_user(pool, "language_owner", None)
         .await
         .unwrap();
@@ -386,30 +367,7 @@ async fn push_contract(pool: &db::DbPool, database_url: &str) {
     )
     .await
     .unwrap();
-    let session = native::token();
-    db::users::sessions::create_session(
-        pool,
-        &session,
-        owner.id,
-        None,
-        None,
-        Utc::now() + chrono::Duration::hours(1),
-    )
-    .await
-    .unwrap();
-    let token = native::token();
-    db::users::tokens::create_token(
-        pool,
-        owner.id,
-        &session,
-        "push",
-        &hex::encode(Sha256::digest(token.as_bytes())),
-        "write",
-        None,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let token = write_token(pool, owner.id).await;
     let server = Server::start(root.path(), database_url).await;
     let push_url = format!("{}/language_owner/public-languages.git", server.base);
     let source = root.path().join("source");
@@ -439,14 +397,7 @@ async fn push_contract(pool: &db::DbPool, database_url: &str) {
     assert!((total - 100.0).abs() < 0.05, "shares add up: {total}");
 
     // The repository home shows the bar, and Explore finds the repository by its language.
-    let router = create_router(AppState::new(
-        pool.clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = crate::support::database::router(pool, root.path()).await;
     let (status, home) = page(&router, "/language_owner/public-languages").await;
     assert_eq!(status, StatusCode::OK, "{home}");
     assert!(home.contains("class=\"language-bar\""), "{home}");
@@ -521,7 +472,7 @@ async fn sqlite_default_branch_pushes_store_languages() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_default_branch_pushes_store_languages() {
-    let fixture = native::PostgresDatabase::new().await;
+    let mut fixture = native::PostgresDatabase::new().await;
     push_contract(&fixture.pool, &fixture.connection_url()).await;
-    fixture.pool.close().await;
+    fixture.finish().await;
 }

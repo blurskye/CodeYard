@@ -10,10 +10,10 @@ use crate::backend::{
     db::repositories::{discovery::ItemSort, records::RepositorySort},
 };
 use crate::webui::app::Page as AppPage;
+use crate::webui::components::body_preview;
 use crate::webui::pages::discovery::{
     self as view, IssueCard, SearchCounts, SearchModel, UserCard, SEARCH_COUNT_CAP,
 };
-use crate::webui::pages::notifications::body_preview;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
@@ -135,65 +135,44 @@ pub async fn search(
     let limit = 50i64;
     let search_type = query.search_type.as_deref();
 
-    let (repos, issues, users) = match search_type {
-        Some("repos") => {
-            let repos = db::repositories::discovery::search_repositories(
-                &state.pool,
-                viewer,
-                q,
-                RepositorySort::Stars,
-                0,
-                limit,
-            )
+    // A missing or unknown type searches all three.
+    let wants = |kind: &str| {
+        search_type == Some(kind) || !matches!(search_type, Some("repos" | "issues" | "users"))
+    };
+    let repos = if wants("repos") {
+        db::repositories::discovery::search_repositories(
+            &state.pool,
+            viewer,
+            q,
+            RepositorySort::Stars,
+            0,
+            limit,
+        )
+        .await
+        .map_err(database_error)?
+    } else {
+        vec![]
+    };
+    let issues = if wants("issues") {
+        db::repositories::discovery::search_issues(
+            &state.pool,
+            viewer,
+            q,
+            ItemSort::Updated,
+            0,
+            limit,
+        )
+        .await
+        .map_err(database_error)?
+    } else {
+        vec![]
+    };
+    let users = if wants("users") {
+        db::repositories::discovery::search_users(&state.pool, q, 0, limit)
             .await
-            .map_err(database_error)?;
-            (repos, vec![], vec![])
-        }
-        Some("issues") => {
-            let issues = db::repositories::discovery::search_issues(
-                &state.pool,
-                viewer,
-                q,
-                ItemSort::Updated,
-                0,
-                limit,
-            )
-            .await
-            .map_err(database_error)?;
-            (vec![], issues, vec![])
-        }
-        Some("users") => {
-            let users = db::repositories::discovery::search_users(&state.pool, q, 0, limit)
-                .await
-                .map_err(database_error)?;
-            (vec![], vec![], users)
-        }
-        _ => {
-            let repos = db::repositories::discovery::search_repositories(
-                &state.pool,
-                viewer,
-                q,
-                RepositorySort::Stars,
-                0,
-                limit,
-            )
-            .await
-            .map_err(database_error)?;
-            let issues = db::repositories::discovery::search_issues(
-                &state.pool,
-                viewer,
-                q,
-                ItemSort::Updated,
-                0,
-                limit,
-            )
-            .await
-            .map_err(database_error)?;
-            let users = db::repositories::discovery::search_users(&state.pool, q, 0, limit)
-                .await
-                .map_err(database_error)?;
-            (repos, issues, users)
-        }
+            .map_err(database_error)?
+    } else {
+        vec![]
     };
 
     let ids = issues.iter().map(|issue| issue.repo_id).collect::<Vec<_>>();
@@ -217,28 +196,12 @@ pub async fn search(
     let mut repo_responses = Vec::with_capacity(repos.len());
     for repo in repos {
         let owner = owner_name(&repo, &owners).map_err(|_| missing_owner())?;
-        repo_responses.push(RepoResponse {
-            id: repo.id,
-            owner_id: repo.owner_id(),
-            owner: owner.clone(),
-            name: repo.name.clone(),
-            full_name: format!("{}/{}", owner, repo.name),
-            description: repo.description,
-            website: repo.website,
-            topics: topics.remove(&repo.id).unwrap_or_default(),
-            is_private: repo.is_private,
-            is_archived: repo.is_archived,
-            allow_merge_commit: repo.allow_merge_commit,
-            allow_squash_merge: repo.allow_squash_merge,
-            allow_rebase_merge: repo.allow_rebase_merge,
-            default_branch: repo.default_branch,
-            stars_count: repo.stars_count,
-            forks_count: repo.forks_count,
-            watchers_count: repo.watchers_count,
-            forked_from: None,
-            created_at: repo.created_at.to_rfc3339(),
-            updated_at: repo.updated_at.to_rfc3339(),
-        });
+        repo_responses.push(RepoResponse::new(
+            &repo,
+            &owner,
+            topics.remove(&repo.id).unwrap_or_default(),
+            None,
+        ));
     }
 
     let author_ids = issues

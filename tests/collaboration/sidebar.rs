@@ -4,22 +4,19 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
 use pulls::Client;
 use serde_json::json;
-use std::sync::Arc;
 
 async fn contract(pg: bool) {
     // The native forms answer with rendered pages, which need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
@@ -54,14 +51,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
     let carol = Client::login(&router, f.pool(), carol_id).await;
@@ -343,7 +333,7 @@ async fn contract(pg: bool) {
     let (_, list) = alice.page("/alice/proj/pulls?milestone=1").await;
     assert!(list.contains("Topic"), "{list}");
     assert!(list.contains("collaboration-row-milestone\""), "{list}");
-    let (_, list) = alice.page("/alice/proj/pulls?milestone=none").await;
+    let list = alice.page_ok("/alice/proj/pulls?milestone=none").await;
     assert!(!list.contains("Topic"), "{list}");
     let (_, page) = alice.page("/alice/proj/milestones/1").await;
     assert!(page.contains("Topic"), "{page}");
@@ -366,7 +356,7 @@ async fn contract(pg: bool) {
     );
     let (_, list) = alice.page("/alice/proj/pulls?label=BUG").await;
     assert!(list.contains("Topic"), "{list}");
-    let (_, list) = alice.page("/alice/proj/pulls?label=docs").await;
+    let list = alice.page_ok("/alice/proj/pulls?label=docs").await;
     assert!(!list.contains("Topic"), "{list}");
     let (status, page) = alice
         .form(&format!("{pull_page}/labels"), &[("label", "999999")])
@@ -386,7 +376,7 @@ async fn contract(pg: bool) {
         .form_reply(&format!("{pull_page}/labels/{bug_id}/remove"), &[])
         .await;
     assert_eq!(removed.status, StatusCode::SEE_OTHER);
-    let (_, page) = alice.page(&pull_page).await;
+    let page = alice.page_ok(&pull_page).await;
     assert!(
         !page.contains(&format!("{pull_page}/labels/{bug_id}/remove")),
         "{page}"
@@ -398,8 +388,17 @@ async fn contract(pg: bool) {
     let (_, list) = alice.page("/alice/proj/pulls?assignee=bob").await;
     assert!(list.contains("Topic"), "{list}");
 
-    let closed = alice
+    let repository_id = proj.id.to_string();
+    // A form from before a rename names no current repository and is refused.
+    let stale = alice
         .form_reply("/alice/proj/milestones/1/close", &[])
+        .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    let closed = alice
+        .form_reply(
+            "/alice/proj/milestones/1/close",
+            &[("repository_id", &repository_id)],
+        )
         .await;
     assert_eq!(closed.status, StatusCode::SEE_OTHER);
     let (_, closed_list) = alice.page("/alice/proj/milestones?state=closed").await;
@@ -411,7 +410,6 @@ async fn contract(pg: bool) {
         .milestone
         .id
         .to_string();
-    let repository_id = proj.id.to_string();
     let deleted = alice
         .form_reply(
             "/alice/proj/milestones/1/delete",
@@ -455,7 +453,7 @@ async fn postgres_collaboration_sidebar_matches_forms_and_pages() {
 async fn new_issue_picks(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
@@ -487,14 +485,7 @@ async fn new_issue_picks(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
     let carol = Client::login(&router, f.pool(), carol_id).await;
@@ -616,7 +607,7 @@ async fn postgres_new_issue_applies_picks_in_its_create_request() {
 async fn new_issue_chooser(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -631,14 +622,7 @@ async fn new_issue_chooser(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     // The chooser lists the repositories the viewer owns or shares. Bob has none.
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let (status, page) = alice.page("/issues/new").await;

@@ -1,4 +1,5 @@
 //! JSON and browser CI resources retain their distinct authentication and response layers.
+pub mod actions_page;
 pub mod jobs;
 pub mod responses;
 pub mod run_forms;
@@ -35,11 +36,11 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .merge(json)
         .merge(socket)
-        .route("/ci", get(jobs::collection::global_actions))
+        .route("/ci", get(actions_page::global_actions))
         .route("/ci/dispatch", post(trigger::global_dispatch))
         .route(
             "/:owner/:repo/actions",
-            get(jobs::collection::repository_actions),
+            get(actions_page::repository_actions),
         )
         .route(
             "/:owner/:repo/actions/dispatch",

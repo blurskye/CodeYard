@@ -1,6 +1,6 @@
 //! The store against real bare repositories in temporary directories.
 use super::*;
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Serialize};
 
 /// Sends a value through JSON and back, the way a remote store would carry it.
 fn round_trip<T: Serialize + DeserializeOwned>(value: &T) -> T {
@@ -1710,7 +1710,7 @@ async fn oversized_commit_and_tag_metadata_return_the_typed_too_large_error() {
     let parent = f.repo.find_commit(f.second).unwrap();
     let tree = parent.tree().unwrap();
     let author = signature();
-    let message = "x".repeat(MAX_COMMIT_METADATA_BYTES);
+    let message = "x".repeat(crate::backend::git::MAX_COMMIT_OBJECT_BYTES);
     let commit = f
         .repo
         .commit(
@@ -1735,7 +1735,7 @@ async fn oversized_commit_and_tag_metadata_return_the_typed_too_large_error() {
         .unwrap_err()
         .is_response_too_large());
 
-    let tag_message = "x".repeat(MAX_TAG_METADATA_BYTES);
+    let tag_message = "x".repeat(crate::backend::git::MAX_TAG_OBJECT_BYTES);
     f.repo
         .tag(
             "large-tag",
@@ -2780,7 +2780,7 @@ async fn commit_and_pull_request_diffs_keep_the_json_shape() {
 }
 
 #[test]
-fn unavailable_reasons_preserve_the_released_rpc_fields() {
+fn error_reasons_cross_the_wire() {
     for (error, message) in [
         (
             RepoError::storage_node_unavailable(),
@@ -2793,10 +2793,9 @@ fn unavailable_reasons_preserve_the_released_rpc_fields() {
         ),
     ] {
         let value = serde_json::to_value(&error).unwrap();
-        assert_eq!(
-            value,
-            serde_json::json!({"kind": "Unavailable", "message": message})
-        );
+        assert_eq!(value["kind"], "Unavailable");
+        assert_eq!(value["message"], message);
+        assert!(value["reason"].is_string());
         assert_eq!(round_trip(&error), error);
     }
     let error = RepoError::from(
@@ -2806,11 +2805,14 @@ fn unavailable_reasons_preserve_the_released_rpc_fields() {
     assert_eq!(error.reason, Some(RepoErrorReason::SessionsBusy));
     assert_eq!(error.message, "Git sessions busy");
     let missing = RepoError::branch_missing();
-    assert_eq!(
-        serde_json::to_value(&missing).unwrap(),
-        serde_json::json!({"kind": "Conflict", "message": "The branch does not exist."})
-    );
     assert!(round_trip(&missing).is_branch_missing());
+    // An ordinary error keeps no reason, even when its text equals a reason's text.
+    let plain = RepoError::new(ErrorKind::Invalid, "protected branch");
+    assert_eq!(
+        serde_json::to_value(&plain).unwrap(),
+        serde_json::json!({"kind": "Invalid", "message": "protected branch"})
+    );
+    assert_eq!(round_trip(&plain).reason, None);
 }
 
 #[test]

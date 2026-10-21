@@ -44,7 +44,7 @@ impl PageContext {
             chrome: self.chrome(),
             page,
         };
-        if crate::backend::api::ci::jobs::collection::bound_log_projection(&mut envelope).is_err()
+        if crate::backend::api::ci::responses::bound_log_projection(&mut envelope).is_err()
             || crate::backend::api::repos::pulls::diff::bound_thread_projection(&mut envelope)
                 .is_err()
         {

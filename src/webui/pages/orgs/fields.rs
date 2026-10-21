@@ -1,5 +1,6 @@
 use super::Page;
 use crate::webui::components::{DraftInput, DraftSelect, DraftTextarea, SelectOption};
+use crate::webui::pages::fields::csrf;
 use dioxus::prelude::*;
 
 pub(super) const FIELD: &str = "org-field";
@@ -20,7 +21,7 @@ pub(super) fn field_value(page: &Page, action: &str, name: &str) -> String {
             match (action, name) {
                 (_, "team_id") => detail.team.id.to_string(),
                 ("team-edit", "name") => detail.team.name.clone(),
-                ("team-edit", "description") => detail.description.clone(),
+                ("team-edit", "description") => detail.team.description.clone(),
                 ("team-edit", "privacy") => detail.team.privacy.clone(),
                 _ => String::new(),
             }
@@ -51,13 +52,6 @@ pub(super) fn input(page: &Page, action: &str, name: &str, label: &str) -> Eleme
         }
     } }
 }
-/// One option of a fixed-choice select: the value posted and the label people read.
-pub(super) fn choice(value: &str, label: &str) -> SelectOption {
-    SelectOption {
-        value: value.to_owned(),
-        label: label.to_owned(),
-    }
-}
 /// A fixed-choice field. `initial_value` comes from `field_value`, or from the row itself
 /// when one form repeats for each row.
 pub(super) fn select(
@@ -83,7 +77,7 @@ pub(super) fn controls(page: &Page, action: &str, label: &str) -> Element {
 /// The hidden CSRF and action fields that an organization form posts with its button.
 pub(super) fn hidden_controls(page: &Page, action: &str) -> Element {
     rsx! {
-        input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+        {csrf(&page.csrf_token)}
         input { r#type: "hidden", name: "action", value: action.to_owned() }
     }
 }

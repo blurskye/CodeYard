@@ -30,12 +30,7 @@ pub(crate) fn default_picture(name: &str) -> String {
         .chars()
         .next()
         .map_or_else(|| "?".to_owned(), |first| first.to_uppercase().to_string());
-    let letter = letter
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;");
+    let letter = crate::webui::components::escape_html(&letter);
     format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\" width=\"64\" height=\"64\">\
 <rect width=\"64\" height=\"64\" rx=\"12\" fill=\"{color}\"/>\

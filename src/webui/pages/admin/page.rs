@@ -21,7 +21,6 @@ pub struct Admin {
     pub days: i32,
     pub manage_access: bool,
     pub requests: Vec<Signup>,
-    pub pending_requests: i64,
     pub requests_count: usize,
     pub requests_page: usize,
     pub values: FormValues,
@@ -309,16 +308,6 @@ pub struct Signup {
 pub struct Account {
     pub id: i64,
     pub username: String,
-    pub email: String,
-    pub admin: bool,
-    pub banned: bool,
-    pub must_change_password: bool,
-    pub two_factor: bool,
-    pub files: i64,
-    pub bytes: i64,
-    pub commits: i64,
-    pub pushes: i64,
-    pub contributions: i64,
     pub created: String,
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

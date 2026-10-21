@@ -1,5 +1,5 @@
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
 use crate::backend::api::repos::chrome::{load_refs_from_repo, repository_default_branch};
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
@@ -25,27 +25,9 @@ pub async fn download_archive(
     Query(query): Query<ArchiveQuery>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-
-    let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
+    let refs = load_refs_from_repo(&state, &repository).await?;
     if refs.is_empty() {
         return Err((
             StatusCode::NOT_FOUND,
@@ -83,8 +65,7 @@ pub async fn download_archive(
     ))
 }
 
-/// Refs that Git cannot resolve stay a 400 `invalid_ref`. Unreachable storage is a service
-/// failure and takes the shared 503 mapping.
+/// An unknown ref is a 404 and an unreadable one a 400. Unreachable storage is a 503.
 fn archive_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
     if error.is_response_too_large() {
         (
@@ -94,16 +75,8 @@ fn archive_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
                 "Repository archives are limited to 32 MiB",
             )),
         )
-    } else if error.kind == ErrorKind::Unavailable {
-        repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE)
     } else {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ApiError::new(
-                "invalid_ref",
-                "Repository operation is unavailable",
-            )),
-        )
+        repo_store_error(error, StatusCode::BAD_REQUEST)
     }
 }
 
@@ -279,6 +252,10 @@ mod archive_error_tests {
         assert_eq!(
             archive_error(RepoError::new(ErrorKind::Invalid, "bad ref")).0,
             StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            archive_error(RepoError::new(ErrorKind::NotFound, "missing ref")).0,
+            StatusCode::NOT_FOUND
         );
     }
 }

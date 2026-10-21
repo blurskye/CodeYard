@@ -288,7 +288,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn account_and_global_password_budgets_are_shared_by_independent_handles() {
+async fn client_and_account_password_budgets_are_shared_by_independent_handles() {
     let fixture = NativeDatabase::new().await;
     let other = fixture.second_handle().await;
     let mut tasks = tokio::task::JoinSet::new();
@@ -299,7 +299,7 @@ async fn account_and_global_password_budgets_are_shared_by_independent_handles()
             other.clone()
         };
         tasks.spawn(async move {
-            admission::admit_password_attempt(&pool, "user:42")
+            admission::admit_password_attempt(&pool, None, "user:42")
                 .await
                 .unwrap()
         });
@@ -309,28 +309,62 @@ async fn account_and_global_password_budgets_are_shared_by_independent_handles()
         admitted += usize::from(result.unwrap());
     }
     assert_eq!(admitted, 10);
-    assert!(!admission::admit_password_attempt(&other, "user:42")
+    assert!(!admission::admit_password_attempt(&other, None, "user:42")
         .await
         .unwrap());
-    // Denied account attempts spent global budget too: only 103 remain.
-    for index in 0..103 {
-        assert!(
-            admission::admit_password_attempt(&fixture.pool, &format!("unknown:{index}"))
-                .await
-                .unwrap()
-        );
+    // A refusal by the account still spent the client's budget: 29 attempts remain.
+    let client = Some("ip:198.51.100.1");
+    assert!(
+        !admission::admit_password_attempt(&fixture.pool, client, "user:42")
+            .await
+            .unwrap()
+    );
+    for index in 0..29 {
+        assert!(admission::admit_password_attempt(
+            &fixture.pool,
+            client,
+            &format!("unknown:{index}")
+        )
+        .await
+        .unwrap());
     }
-    assert!(!admission::admit_password_attempt(&other, "unknown:denied")
-        .await
-        .unwrap());
+    assert!(
+        !admission::admit_password_attempt(&other, client, "unknown:denied")
+            .await
+            .unwrap()
+    );
     let allocated: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM auth_login_limits WHERE account_key='unknown:denied'",
     )
     .fetch_one(&fixture.raw)
     .await
     .unwrap();
-    assert_eq!(allocated, 0);
-    assert!(admission::admit_password_attempt(&other, "global")
+    assert_eq!(
+        allocated, 0,
+        "a client over its budget allocates no account row"
+    );
+    // Another client address is separate.
+    assert!(
+        admission::admit_password_attempt(&other, Some("ip:198.51.100.2"), "unknown:denied")
+            .await
+            .unwrap()
+    );
+    // A right password gives its attempt back, from the client and the account alike.
+    let third = Some("ip:198.51.100.3");
+    assert!(admission::admit_password_attempt(&other, third, "user:7")
+        .await
+        .unwrap());
+    admission::forgive_password_attempt(&fixture.pool, third, "user:7")
+        .await
+        .unwrap();
+    let spent: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(SUM(attempts),0) FROM auth_login_limits WHERE account_key IN ('ip:198.51.100.3','user:7')",
+    )
+    .fetch_one(&fixture.raw)
+    .await
+    .unwrap();
+    assert_eq!(spent, 0);
+    assert!(admission::admit_password_attempt(&other, None, "")
         .await
         .is_err());
     other.close().await;
@@ -1749,7 +1783,10 @@ async fn default_branch_accepts_full_ref_length(pool: &db::DbPool) {
         .await
         .unwrap();
     let repo = repository(pool, owner.id, "kept").await;
-    repositories::records::update_repo_default_branch_and_size(pool, repo.id, "release/stable", 17)
+    repositories::records::update_repo_default_branch(pool, repo.id, "release/stable")
+        .await
+        .unwrap();
+    repositories::records::update_repo_size(pool, repo.id, 17)
         .await
         .unwrap();
     repositories::engagement::star_repo(pool, owner.id, repo.id)
@@ -1761,7 +1798,10 @@ async fn default_branch_accepts_full_ref_length(pool: &db::DbPool) {
         "b".repeat(124)
     );
     assert_eq!(format!("refs/heads/{branch}").len(), 1024);
-    repositories::records::update_repo_default_branch_and_size(pool, repo.id, &branch, 88)
+    repositories::records::update_repo_default_branch(pool, repo.id, &branch)
+        .await
+        .unwrap();
+    repositories::records::update_repo_size(pool, repo.id, 88)
         .await
         .unwrap();
     let stored = repositories::records::get_repository_by_id(pool, repo.id)
@@ -2438,30 +2478,6 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     )
     .await
     .unwrap();
-    db::repository_stats::upsert_repo_contributors(
-        pool,
-        repo.id,
-        &[(
-            "Reader".into(),
-            "reader@fixture.invalid".into(),
-            7,
-            Some(reader.id),
-        )],
-    )
-    .await
-    .unwrap();
-    assert!(db::repository_stats::upsert_repo_contributors(
-        pool,
-        repo.id,
-        &[(
-            "Invalid".into(),
-            "invalid@fixture.invalid".into(),
-            1,
-            Some(-1)
-        )]
-    )
-    .await
-    .is_err());
     db::repositories::engagement::star_repo(pool, reader.id, repo.id)
         .await
         .unwrap();
@@ -2621,7 +2637,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         .unwrap();
     json!({"issue":[closed.number,pr.number],"closed":[closed.state,closed.title,closed.closed_by_id],"labels":db::labels::get_issue_labels(pool,issue.id).await.unwrap().into_iter().map(|l|l.name).collect::<Vec<_>>(),
         "comments":db::issues::list_issue_comments(pool,issue.id,100,0).await.unwrap().len(),"reviews":db::pull_requests::reviews::list_pull_request_reviews(pool,pr.id,100,0).await.unwrap().into_iter().map(|entry|entry.review.state).collect::<Vec<_>>(),
-        "languages":db::repository_stats::get_repo_languages(pool,repo.id).await.unwrap().into_iter().map(|l|(l.language,l.bytes,l.percentage)).collect::<Vec<_>>(),"contributors":db::repository_stats::get_repo_contributors(pool,repo.id,100).await.unwrap().into_iter().map(|c|(c.name,c.commits_count)).collect::<Vec<_>>(),
+        "languages":db::repository_stats::get_repo_languages(pool,repo.id).await.unwrap().into_iter().map(|l|(l.language,l.bytes,l.percentage)).collect::<Vec<_>>(),
         "social":[repo.stars_count,repo.watchers_count,repo.forks_count],"followers":db::following::count_user_followers(pool,owner.id).await.unwrap(),"rule":[rule.required_status_checks,rule.push_allowances],
         "notification":db::notifications::records::list_notifications_for_user(pool,owner.id,10,false).await.unwrap()[0].metadata,"storage":[stats.total_files,stats.total_bytes,stats.avatar_count,stats.uploads_24h,stats.bytes_24h,stats.downloads_24h],
         "summaries":summaries.into_iter().map(|s|(s.username,s.total_files,s.total_bytes,s.commits_total,s.pushes_total,s.contributions_total)).collect::<Vec<_>>(),
@@ -3982,9 +3998,7 @@ fn postgres_plan_nodes(plan: &Value) -> Vec<&Value> {
 async fn postgres_identity_cleanup_uses_expiry_index_bounds() {
     let fixture = PostgresDatabase::new().await;
     let owner = setup(&fixture.pool, "public").await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!()
-    };
+    let raw = &fixture.raw;
     insert_expired_identity_rows(&fixture.pool, owner.id, 1).await;
     sqlx::query("INSERT INTO sessions(id,user_id,expires_at) SELECT 'live-' || i,$1,now()+interval '1 day' FROM generate_series(1,20000) i")
         .bind(owner.id).execute(raw).await.unwrap();
@@ -4084,9 +4098,7 @@ async fn postgres_acknowledgement_waits_for_membership_transition() {
     )
     .await
     .unwrap();
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture")
-    };
+    let raw = &fixture.raw;
 
     // A transition holds the membership lock until it commits.
     let mut transition = raw.begin().await.unwrap();

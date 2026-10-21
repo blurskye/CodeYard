@@ -3,21 +3,18 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests::Client;
+use crate::support::http_client::Client;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
 use serde_json::Value;
-use std::sync::Arc;
 
 async fn contract(pg: bool) {
     // The native form answers with a rendered page, which needs the browser bundle.
     bundle::install();
-    let f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    let mut f = Database::new(pg).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     codeyard::backend::repositories::lifecycle::provision(
@@ -31,14 +28,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let proj = alice
         .expect("GET", "/api/repos/alice/proj", Value::Null, StatusCode::OK)
@@ -140,6 +130,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
+    f.finish().await;
 }
 
 #[tokio::test]

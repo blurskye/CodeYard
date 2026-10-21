@@ -1,7 +1,5 @@
-//! A signed-in user talking to the application's JSON API and HTML forms, for the
-//! pull request tests. Uses the shared `native` database fixture (see
-//! support/native_database.rs).
-#![allow(dead_code)]
+//! A signed-in user talking to the application's JSON API and HTML forms, in process. The
+//! shortcuts that name a repository (`save`, `branch`, `open_pull`, `pull`) use `alice/proj`.
 use crate::support::native_database as native;
 use axum::{
     body::{to_bytes, Body},
@@ -24,6 +22,45 @@ impl Reply {
     pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.body).into_owned()
     }
+
+    /// The id a redirect names after `marker`, such as `#review-` or `#thread-`.
+    pub fn id_after(&self, marker: &str) -> i64 {
+        let location = self.location.as_deref().expect("a redirect");
+        location
+            .rsplit_once(marker)
+            .unwrap_or_else(|| panic!("{marker} in {location}"))
+            .1
+            .parse()
+            .unwrap_or_else(|_| panic!("{marker} in {location}"))
+    }
+}
+
+/// The page without the comments Dioxus writes between text nodes, so a count or a label reads
+/// as one piece of text next to its tag.
+pub fn visible_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<!--") {
+        out.push_str(&rest[..start]);
+        rest = rest[start..].split_once("-->").map_or("", |(_, tail)| tail);
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The value of the first form field called `name` on the page, if it has one.
+pub fn field_value(html: &str, name: &str) -> Option<String> {
+    let at = html.find(&format!("name=\"{name}\""))?;
+    let start = html[..at].rfind('<')?;
+    let end = at + html[at..].find('>')?;
+    let tag = &html[start..=end];
+    let value = tag.find("value=\"")? + "value=\"".len();
+    Some(tag[value..].split('"').next()?.to_owned())
+}
+
+/// The value of the form field called `name`; the page has to have it.
+pub fn hidden_value(html: &str, name: &str) -> String {
+    field_value(html, name).unwrap_or_else(|| panic!("no {name} field with a value: {html}"))
 }
 
 /// One signed-in user talking to the application.
@@ -191,7 +228,13 @@ impl Client {
 
     /// Saves a new file on `branch` through the editor API and returns the new tip.
     pub async fn save(&self, branch: &str, file: &str, tip: &str) -> String {
-        let content = base64::engine::general_purpose::STANDARD.encode(format!("{file}\n"));
+        self.save_text(branch, file, &format!("{file}\n"), tip)
+            .await
+    }
+
+    /// Saves `content` as a new file `file` on `branch` and returns the new tip.
+    pub async fn save_text(&self, branch: &str, file: &str, content: &str, tip: &str) -> String {
+        let content = base64::engine::general_purpose::STANDARD.encode(content);
         let saved = self
             .expect(
                 "POST",
@@ -201,6 +244,20 @@ impl Client {
             )
             .await;
         saved["sha"].as_str().unwrap().to_owned()
+    }
+
+    /// Overwrites `file` on `branch` with `content` and returns the new tip.
+    pub async fn update_text(&self, branch: &str, file: &str, content: &str, tip: &str) -> String {
+        let content = base64::engine::general_purpose::STANDARD.encode(content);
+        let saved = self
+            .expect(
+                "PUT",
+                &format!("/api/repos/alice/proj/contents/{file}"),
+                json!({"content": content, "message": format!("Change {file}"), "branch": branch, "expected_revision": tip}),
+                StatusCode::OK,
+            )
+            .await;
+        saved["commit"]["sha"].as_str().unwrap().to_owned()
     }
 
     pub async fn branch(&self, name: &str, sha: &str) {
@@ -236,6 +293,14 @@ impl Client {
     /// An HTML page, as the browser would get it.
     pub async fn page(&self, path: &str) -> (StatusCode, String) {
         self.send("GET", path, "text/html", String::new()).await
+    }
+
+    /// An HTML page that has to answer 200. Use it where the test shows the page lacks
+    /// something, so an error page cannot pass for it.
+    pub async fn page_ok(&self, path: &str) -> String {
+        let (status, html) = self.page(path).await;
+        assert_eq!(status, StatusCode::OK, "{path}: {html}");
+        html
     }
 
     /// A page as typed data, the way the browser loads it on navigation. Answers that are not
@@ -280,12 +345,8 @@ impl Client {
         {
             let page_path = path.split("/comments").next().unwrap();
             let (_, page) = self.page(page_path).await;
-            if let Some(value) = page
-                .split_once("name=\"repository_id\"")
-                .and_then(|(_, tail)| tail.split_once("value=\""))
-                .and_then(|(_, tail)| tail.split('"').next())
-            {
-                body.append_pair("repository_id", value);
+            if let Some(value) = field_value(&page, "repository_id") {
+                body.append_pair("repository_id", &value);
             }
         }
         // New-issue forms carry the repository identity and the rendered template revision.
@@ -302,14 +363,8 @@ impl Client {
                 .await;
             for name in ["repository_id", "template_revision"] {
                 if !pairs.iter().any(|(key, _)| *key == name) {
-                    if let Some(tail) = page.split_once(&format!("name=\"{name}\"")) {
-                        if let Some(value) = tail
-                            .1
-                            .split_once("value=\"")
-                            .and_then(|(_, tail)| tail.split('"').next())
-                        {
-                            body.append_pair(name, value);
-                        }
+                    if let Some(value) = field_value(&page, name) {
+                        body.append_pair(name, &value);
                     }
                 }
             }
@@ -322,12 +377,8 @@ impl Client {
             let (_, page) = self.page(page_path).await;
             for name in ["repository_id", "issue_id"] {
                 if !pairs.iter().any(|(key, _)| *key == name) {
-                    if let Some(value) = page
-                        .split_once(&format!("name=\"{name}\""))
-                        .and_then(|(_, rest)| rest.split_once("value=\""))
-                        .and_then(|(_, rest)| rest.split('"').next())
-                    {
-                        body.append_pair(name, value);
+                    if let Some(value) = field_value(&page, name) {
+                        body.append_pair(name, &value);
                     }
                 }
             }

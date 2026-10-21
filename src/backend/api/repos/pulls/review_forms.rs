@@ -3,9 +3,11 @@
 //! written against, then calls the repository function its REST endpoint calls, so the rules
 //! stay in one place. The review data the Conversation tab and the diff show is built here too.
 use crate::backend::api::http::context::PageContext;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::{authorize_post, field};
+use crate::backend::api::repos::pulls::diff::diff_url;
 use crate::backend::api::repos::pulls::diff::render_diff;
 use crate::backend::api::repos::pulls::operation_error;
-use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::pull_requests::reviews::{PullRequestCommentEntry, PullRequestReviewEntry};
@@ -63,7 +65,7 @@ pub(crate) fn comment_view(
     view::Comment {
         id: comment.id,
         author,
-        revision: crate::backend::api::repos::issues::tasks::comment_revision(&comment.body),
+        revision: comment_revision(&comment.body),
         body: comment.body,
         created: comment.created_at.to_rfc3339(),
         location,
@@ -172,11 +174,11 @@ pub(crate) async fn page_reviews(
     entries: Vec<PullRequestReviewEntry>,
 ) -> ResultPage<Vec<pulls::Review>> {
     let ids: Vec<i64> = entries.iter().map(|entry| entry.review.id).collect();
-    let offset = crate::backend::api::repos::chrome::number(
+    let offset = crate::backend::api::repos::paging::number(
         ctx,
         "review_comments",
         0,
-        MAX_REVIEW_COMMENT_OFFSET,
+        0..=MAX_REVIEW_COMMENT_OFFSET,
     )?;
     let comments =
         db::pull_requests::reviews::list_review_comments_page(&ctx.state.pool, &ids, offset as i64)
@@ -197,11 +199,11 @@ pub(crate) async fn page_reviews(
             review.comments.push(comment);
         }
     }
-    let page = crate::backend::api::repos::chrome::number(
+    let page = crate::backend::api::repos::paging::number(
         ctx,
         "page",
         1,
-        crate::backend::issues::MAX_COMMENT_PAGE,
+        1..=crate::backend::issues::MAX_COMMENT_PAGE,
     )?;
     let base = format!(
         "{}/{}?page={page}",
@@ -231,31 +233,26 @@ pub(crate) async fn page_reviews(
 pub(crate) async fn reviewers(
     ctx: &PageContext,
     repo: &RepositoryData,
-    number: i32,
-    head: &str,
+    pull_id: i64,
+    (base, head): (&str, &str),
 ) -> ResultPage<Vec<pulls::Reviewer>> {
-    let pull =
-        db::pull_requests::records::get_pull_request(&ctx.state.pool, repo.record.id, number)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found"))?;
     let decisions =
-        db::pull_requests::reviews::list_pull_request_review_decisions(&ctx.state.pool, pull.id)
+        db::pull_requests::reviews::list_pull_request_review_decisions(&ctx.state.pool, pull_id)
             .await
             .map_err(|_| unavailable(ctx))?;
     let requested =
-        db::pull_requests::reviews::list_pull_request_reviewers(&ctx.state.pool, pull.id)
+        db::pull_requests::reviews::list_pull_request_reviewers(&ctx.state.pool, pull_id)
             .await
             .map_err(|_| unavailable(ctx))?;
     // The owners the changed files name. A reviewer named there gets the Code owner badge.
-    let rules = load_rules(&repo.record, ctx.state.cluster.as_ref(), &pull.base_sha)
+    let rules = load_rules(&repo.record, ctx.state.cluster.as_ref(), base)
         .await
         .unwrap_or_default();
     let changed = if rules.is_empty() {
         Vec::new()
     } else {
         repo_store(&repo.record, ctx.state.cluster.as_ref())
-            .changed_paths(&pull.base_sha, &pull.head_sha)
+            .changed_paths(base, head)
             .await
             .unwrap_or_default()
     };
@@ -700,12 +697,7 @@ pub(crate) async fn native_pull_comment(
             if from_diff {
                 let root = comment.in_reply_to_comment_id.unwrap_or(comment.id);
                 // The composer posts to a URL that keeps `view=split` when the comment came from there.
-                let view = if ctx.query.get("view").is_some_and(|view| view == "split") {
-                    "?view=split"
-                } else {
-                    ""
-                };
-                Ok(ctx.redirect(&format!("{base}/diff{view}#thread-{root}")))
+                Ok(ctx.redirect(&format!("{}#thread-{root}", diff_url(&ctx, &base))))
             } else {
                 let link =
                     crate::backend::repositories::pull_requests::comments::saved_comment_link(
@@ -832,12 +824,7 @@ pub(crate) async fn native_set_viewed(
         ));
     }
     let index = field(&form, "index").parse::<usize>().unwrap_or(0);
-    let view = if ctx.query.get("view").is_some_and(|view| view == "split") {
-        "?view=split"
-    } else {
-        ""
-    };
-    Ok(ctx.redirect(&format!("{base}/diff{view}#diff-file-{index}")))
+    Ok(ctx.redirect(&format!("{}#diff-file-{index}", diff_url(&ctx, &base))))
 }
 
 /// Discards the viewer's pending review and its comments, then returns to the Files changed page.
@@ -853,11 +840,17 @@ pub(crate) async fn native_discard_review(
     let repo = repository(&ctx, &owner, &name).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+    // The discard form posts to a URL that keeps `view=split` when it came from the split view.
+    let view = if ctx.query.get("view").is_some_and(|view| view == "split") {
+        "?view=split"
+    } else {
+        ""
+    };
     match review_rules::discard_pending_review(&ctx.state.pool, user, owner, name, number)
         .await
         .map_err(operation_error)
     {
-        Ok(()) => Ok(ctx.redirect(&format!("{base}/diff"))),
+        Ok(()) => Ok(ctx.redirect(&format!("{base}/diff{view}"))),
         Err(failure) => {
             let value = item(&ctx, &repo, Kind::Pull, number).await?;
             let (status, message) = safe_api_error(&failure);
@@ -895,12 +888,7 @@ async fn set_resolution(
     {
         Ok(_) => {
             let location = if from_diff {
-                let view = if ctx.query.get("view").is_some_and(|view| view == "split") {
-                    "?view=split"
-                } else {
-                    ""
-                };
-                format!("{base}/diff{view}#thread-{comment_id}")
+                format!("{}#thread-{comment_id}", diff_url(&ctx, &base))
             } else {
                 let page = field(&form, "page").parse::<usize>().unwrap_or(1);
                 let offset = field(&form, "review_comments")
@@ -945,7 +933,7 @@ pub(crate) async fn native_edit_conversation_comment(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, Kind::Pull, number).await?;
+    let load = || item(&ctx, &repo, Kind::Pull, number);
     let mut draft = submitted_detail(&form, "comment");
     draft.editing = Some(comment_id);
     let Ok(expected_body) = serde_json::from_str::<String>(&draft.expected_body) else {
@@ -953,7 +941,7 @@ pub(crate) async fn native_edit_conversation_comment(
             &ctx,
             &repo,
             Kind::Pull,
-            &value,
+            &load().await?,
             &draft,
             Some("The original comment is required. Reload before saving."),
             StatusCode::CONFLICT,
@@ -965,7 +953,7 @@ pub(crate) async fn native_edit_conversation_comment(
             &ctx,
             &repo,
             Kind::Pull,
-            &value,
+            &load().await?,
             &draft,
             None,
             StatusCode::OK,
@@ -1004,7 +992,7 @@ pub(crate) async fn native_edit_conversation_comment(
                 &ctx,
                 &repo,
                 Kind::Pull,
-                &value,
+                &load().await?,
                 &draft,
                 Some(&message),
                 status,
@@ -1025,7 +1013,6 @@ pub(crate) async fn native_delete_conversation_comment(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let result = comment_rules::delete_pull_request_comment(
         &ctx.state.pool,
         ctx.require_user()?.id,
@@ -1042,6 +1029,7 @@ pub(crate) async fn native_delete_conversation_comment(
         Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(Kind::Pull), number))),
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
+            let value = item(&ctx, &repo, Kind::Pull, number).await?;
             render_detail(
                 &ctx,
                 &repo,

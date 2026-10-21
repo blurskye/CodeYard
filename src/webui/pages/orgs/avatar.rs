@@ -1,5 +1,6 @@
 use super::{Organization, Page};
 use crate::webui::components::Avatar;
+use crate::webui::pages::fields::csrf;
 use dioxus::prelude::*;
 
 /// The organization's picture in a square frame. An uploaded picture is drawn from its file, so
@@ -28,7 +29,7 @@ pub(super) fn panel(page: &Page, org: &Organization) -> Element {
                 {picture(org, "org-avatar", 72)}
                 div { class: "org-picture-actions",
                     form { id: "organization-picture-upload", method: "post", action: base.clone(), enctype: "multipart/form-data", class: "org-form",
-                        input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                        {csrf(&page.csrf_token)}
                         label { span { "Upload a new picture" }
                             input { r#type: "file", name: "picture", accept: "image/png,image/jpeg,image/gif,image/webp", required: true }
                         }
@@ -38,7 +39,7 @@ pub(super) fn panel(page: &Page, org: &Organization) -> Element {
                         button { r#type: "submit", form: "organization-picture-upload", class: "btn btn-primary", "Upload picture" }
                         if org.avatar_url.is_some() {
                             form { method: "post", action: format!("{base}/remove"),
-                                input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                                {csrf(&page.csrf_token)}
                                 button { r#type: "submit", class: "btn btn-danger", "Remove picture" }
                             }
                         }

@@ -6,10 +6,9 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use base64::Engine as _;
 use codeyard::backend::{
     api::create_router,
     app::AppState,
@@ -41,11 +40,7 @@ struct Fixture {
 
 async fn setup(f: &mut Database, root: &Path) -> Fixture {
     bundle::install();
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let merger_id = f.actor("merger").await;
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -98,20 +93,6 @@ fn main_tip(path: &str) -> String {
     git.refname_to_id("refs/heads/main").unwrap().to_string()
 }
 
-/// Saves `content` as `file` on `branch` through the editor API and returns the new tip.
-async fn save_text(client: &Client, branch: &str, file: &str, content: &str, tip: &str) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(content);
-    let saved = client
-        .expect(
-            "POST",
-            &format!("/api/repos/alice/proj/contents/{file}"),
-            json!({"content": encoded, "message": format!("Add {file}"), "branch": branch, "expected_revision": tip}),
-            StatusCode::CREATED,
-        )
-        .await;
-    saved["sha"].as_str().unwrap().to_owned()
-}
-
 /// Merges pull request `number` through the JSON API at the revisions it shows now. Without
 /// `method` the request leaves the field out, as clients from before merge methods do.
 async fn merge(client: &Client, number: i64, method: Option<&str>) -> (StatusCode, Value) {
@@ -127,26 +108,6 @@ async fn merge(client: &Client, number: i64, method: Option<&str>) -> (StatusCod
             body,
         )
         .await
-}
-
-/// Overwrites `file` on `branch` through the editor API and returns the new tip.
-async fn update_text(
-    client: &Client,
-    branch: &str,
-    file: &str,
-    content: &str,
-    tip: &str,
-) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(content);
-    let saved = client
-        .expect(
-            "PUT",
-            &format!("/api/repos/alice/proj/contents/{file}"),
-            json!({"content": encoded, "message": format!("Change {file}"), "branch": branch, "expected_revision": tip}),
-            StatusCode::OK,
-        )
-        .await;
-    saved["commit"]["sha"].as_str().unwrap().to_owned()
 }
 
 /// The bytes of `file` in `commit` of the bare repository at `path`.
@@ -200,7 +161,9 @@ async fn refused_form_contract(pg: bool) {
     let app = setup(&mut f, root.path()).await;
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature", &main0).await;
-    save_text(&app.alice, "feature", "one.txt", "1\n", &main0).await;
+    app.alice
+        .save_text("feature", "one.txt", "1\n", &main0)
+        .await;
     app.alice.open_pull("One", "feature", "main").await;
     // The rule wants one approval, and nobody has given one.
     db::repositories::protection::upsert_branch_protection_rule(
@@ -456,8 +419,13 @@ async fn conflict_contract(pg: bool) {
     let path = app.repository.disk_path.clone();
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature", &main0).await;
-    save_text(&app.alice, "feature", "shared.txt", "feature\n", &main0).await;
-    let main1 = save_text(&app.alice, "main", "shared.txt", "main\n", &main0).await;
+    app.alice
+        .save_text("feature", "shared.txt", "feature\n", &main0)
+        .await;
+    let main1 = app
+        .alice
+        .save_text("main", "shared.txt", "main\n", &main0)
+        .await;
     let pull = app.alice.open_pull("Shared", "feature", "main").await;
     let number = pull["number"].as_i64().unwrap();
 
@@ -742,9 +710,7 @@ async fn sqlite_merge_queues_push_ci_when_marking_fails() {
     )
     .await;
     let main = app.alice.save("main", "README.md", "unborn").await;
-    let main = save_text(
-        &app.alice,
-        "main",
+    let main = app.alice.save_text("main",
         ".github/workflows/ci.yml",
         "on: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
         &main,
@@ -792,10 +758,15 @@ async fn stacked_bottom_contract(pg: bool) {
     let path = app.repository.disk_path.clone();
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature-1", &main0).await;
-    let one = save_text(&app.alice, "feature-1", "shared.txt", "A\n", &main0).await;
+    let one = app
+        .alice
+        .save_text("feature-1", "shared.txt", "A\n", &main0)
+        .await;
     app.alice.open_pull("One", "feature-1", "main").await;
     app.alice.branch("feature-2", &one).await;
-    update_text(&app.alice, "feature-2", "shared.txt", "B\n", &one).await;
+    app.alice
+        .update_text("feature-2", "shared.txt", "B\n", &one)
+        .await;
     app.alice.open_pull("Two", "feature-2", "feature-1").await;
     app.alice
         .expect(
@@ -847,12 +818,19 @@ async fn branching_stack_contract(pg: bool) {
     let path = app.repository.disk_path.clone();
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature-1", &main0).await;
-    let parent = save_text(&app.alice, "feature-1", "parent.txt", "P\n", &main0).await;
+    let parent = app
+        .alice
+        .save_text("feature-1", "parent.txt", "P\n", &main0)
+        .await;
     app.alice.branch("feature-2a", &parent).await;
-    save_text(&app.alice, "feature-2a", "a.txt", "A\n", &parent).await;
+    app.alice
+        .save_text("feature-2a", "a.txt", "A\n", &parent)
+        .await;
     app.alice.open_pull("A", "feature-2a", "feature-1").await;
     app.alice.branch("feature-2b", &parent).await;
-    save_text(&app.alice, "feature-2b", "b.txt", "B\n", &parent).await;
+    app.alice
+        .save_text("feature-2b", "b.txt", "B\n", &parent)
+        .await;
     app.alice.open_pull("B", "feature-2b", "feature-1").await;
     app.alice.open_pull("Parent", "feature-1", "main").await;
     join_stack(&app.alice, 1).await;
@@ -892,15 +870,23 @@ async fn middle_layer_contract(pg: bool) {
     let app = setup(&mut f, root.path()).await;
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature-1", &main0).await;
-    let bottom = save_text(&app.alice, "feature-1", "bottom.txt", "1\n", &main0).await;
+    let bottom = app
+        .alice
+        .save_text("feature-1", "bottom.txt", "1\n", &main0)
+        .await;
     app.alice.open_pull("Bottom", "feature-1", "main").await;
     app.alice.branch("feature-2", &bottom).await;
-    let middle = save_text(&app.alice, "feature-2", "middle.txt", "2\n", &bottom).await;
+    let middle = app
+        .alice
+        .save_text("feature-2", "middle.txt", "2\n", &bottom)
+        .await;
     app.alice
         .open_pull("Middle", "feature-2", "feature-1")
         .await;
     app.alice.branch("feature-3", &middle).await;
-    save_text(&app.alice, "feature-3", "top.txt", "3\n", &middle).await;
+    app.alice
+        .save_text("feature-3", "top.txt", "3\n", &middle)
+        .await;
     app.alice.open_pull("Top", "feature-3", "feature-2").await;
     join_stack(&app.alice, 2).await;
     join_stack(&app.alice, 3).await;
@@ -930,10 +916,15 @@ async fn stacked_top_contract(pg: bool) {
     let path = app.repository.disk_path.clone();
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature-1", &main0).await;
-    let one = save_text(&app.alice, "feature-1", "shared.txt", "A\n", &main0).await;
+    let one = app
+        .alice
+        .save_text("feature-1", "shared.txt", "A\n", &main0)
+        .await;
     app.alice.open_pull("One", "feature-1", "main").await;
     app.alice.branch("feature-2", &one).await;
-    update_text(&app.alice, "feature-2", "shared.txt", "B\n", &one).await;
+    app.alice
+        .update_text("feature-2", "shared.txt", "B\n", &one)
+        .await;
     app.alice.open_pull("Two", "feature-2", "feature-1").await;
     app.alice
         .expect(
@@ -972,13 +963,21 @@ async fn top_layer_merge_commit_contract(pg: bool) {
     let app = setup(&mut f, root.path()).await;
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature-1", &main0).await;
-    let one = save_text(&app.alice, "feature-1", "one.txt", "1\n", &main0).await;
+    let one = app
+        .alice
+        .save_text("feature-1", "one.txt", "1\n", &main0)
+        .await;
     app.alice.open_pull("One", "feature-1", "main").await;
     app.alice.branch("feature-2", &one).await;
-    let two = save_text(&app.alice, "feature-2", "two.txt", "2\n", &one).await;
+    let two = app
+        .alice
+        .save_text("feature-2", "two.txt", "2\n", &one)
+        .await;
     app.alice.open_pull("Two", "feature-2", "feature-1").await;
     app.alice.branch("feature-3", &two).await;
-    save_text(&app.alice, "feature-3", "three.txt", "3\n", &two).await;
+    app.alice
+        .save_text("feature-3", "three.txt", "3\n", &two)
+        .await;
     app.alice.open_pull("Three", "feature-3", "feature-2").await;
     join_stack(&app.alice, 2).await;
     join_stack(&app.alice, 3).await;

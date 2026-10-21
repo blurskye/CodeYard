@@ -12,8 +12,6 @@ name = "codeyard"
 path = "src/main.rs"
 
 [features]
-default = ["server"]
-server = []
 web = ["dep:dioxus-web", "dep:gloo-net", "dep:gloo-timers", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-sys", "dep:js-sys"]
 
 # Safe presentation models and pure rendering only; these compile for both targets.
@@ -49,7 +47,6 @@ tokio-util = { version = "0.7", features = ["io", "rt"] }
 tokio-rustls = "0.26"
 # TCP keepalive on node connections; tokio does not expose the socket option.
 socket2 = "0.6"
-futures.workspace = true
 flate2 = "1"
 axum.workspace = true
 tower-http.workspace = true
@@ -70,10 +67,8 @@ hmac = "0.12"
 sha1 = "0.10"
 data-encoding = "2"
 encoding_rs = "0.8"
-dirs = "6"
 dotenvy = "0.15"
 rand = "0.8"
-rand_core = "0.6"
 aes-gcm = "0.10"
 aws-credential-types = "1"
 aws-smithy-types = "1"
@@ -109,7 +104,6 @@ edition = "2021"
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["full"] }
-futures = "0.3"
 axum = { version = "0.7", features = ["macros", "ws", "multipart"] }
 tower-http = { version = "0.5", features = ["cors", "trace", "limit", "compression-gzip", "compression-br"] }
 serde = { version = "1", features = ["derive"] }

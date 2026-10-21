@@ -23,8 +23,10 @@ fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys
             ),
         ]);
         let values = preserved_values(&form);
-        assert!(values.get("public_key").is_empty());
-        assert!(values.get("new_password").is_empty());
+        assert!(values.public_key.is_empty());
+        assert!(!serde_json::to_string(&values)
+            .unwrap()
+            .contains("secret-new-marker"));
         let output = html(settings_page(
             Settings {
                 two_factor: Default::default(),

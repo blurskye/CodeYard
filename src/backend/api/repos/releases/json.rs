@@ -4,6 +4,8 @@ use super::pages::refused;
 use crate::backend::api::http::config::public_origin;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::{get_current_user, get_optional_user};
+use crate::backend::api::repos::access::find_repository;
+use crate::backend::api::repos::paging::{json_page, PageQuery};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::models::{ReleaseAsset, ReleaseRow};
@@ -55,12 +57,6 @@ pub struct ReleaseResponse {
     assets: Vec<AssetResponse>,
 }
 
-#[derive(Deserialize)]
-pub struct PageQuery {
-    page: Option<i64>,
-    per_page: Option<i64>,
-}
-
 /// The body of a create or update. An update changes only the fields it sends.
 #[derive(Deserialize)]
 pub struct ReleaseRequest {
@@ -89,6 +85,14 @@ fn json_error(error: ReleaseError) -> Failure {
         StatusCode::CONFLICT => "revision_conflict",
         StatusCode::UNPROCESSABLE_ENTITY => "validation_error",
         _ => "unavailable",
+    };
+    // The page words these two for a form with a draft. A JSON client has no draft.
+    let message = match error {
+        ReleaseError::Conflict => "The release changed. Fetch the latest release and retry.".into(),
+        ReleaseError::TargetRequired => {
+            "target_commitish must name a branch or commit for the new tag.".into()
+        }
+        _ => message,
     };
     (status, Json(ApiError::new(code, &message)))
 }
@@ -149,9 +153,6 @@ fn release_response(
     }
 }
 
-const DEFAULT_PER_PAGE: i64 = 30;
-const MAX_PER_PAGE: i64 = 100;
-
 pub(super) async fn list(
     State(state): State<Arc<AppState>>,
     Path((owner, name)): Path<(String, String)>,
@@ -161,12 +162,9 @@ pub(super) async fn list(
     let viewer = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);
-    let page = query.page.unwrap_or(1).max(1);
-    let per_page = query
-        .per_page
-        .unwrap_or(DEFAULT_PER_PAGE)
-        .clamp(1, MAX_PER_PAGE);
-    let listing = releases::list(&state.pool, viewer, &owner, &name, page, per_page)
+    let (offset, limit) = json_page(query.page, query.per_page)?;
+    let page = (offset / limit + 1) as i64;
+    let listing = releases::list(&state.pool, viewer, &owner, &name, page, limit as i64)
         .await
         .map_err(json_error)?;
     let origin = public_origin();
@@ -231,10 +229,7 @@ pub(super) async fn create(
     Json(request): Json<ReleaseRequest>,
 ) -> Result<(StatusCode, Json<ReleaseResponse>), Failure> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &name)
-        .await
-        .map_err(|_| json_error(ReleaseError::Unavailable))?
-        .ok_or_else(|| json_error(ReleaseError::NotFound))?;
+    let repository = find_repository(&state.pool, &owner, &name).await?;
     let input = ReleaseInput {
         repository_id: repository.id,
         tag: request.tag_name.clone().unwrap_or_default(),
@@ -293,6 +288,28 @@ pub(super) async fn update(
     Json(request): Json<ReleaseRequest>,
 ) -> Result<Json<ReleaseResponse>, Failure> {
     let actor = get_current_user(&state.pool, &headers).await?;
+    // A release keeps its tag and target. Echoing the current values back is accepted.
+    if request.tag_name.is_some() || request.target_commitish.is_some() {
+        let current = releases::detail_by_id(&state.pool, Some(actor.id), &owner, &name, id)
+            .await
+            .map_err(json_error)?;
+        let same =
+            |sent: &Option<String>, stored: &str| sent.as_deref().is_none_or(|sent| sent == stored);
+        if !same(&request.tag_name, &current.release.release.tag_name)
+            || !same(
+                &request.target_commitish,
+                &current.release.release.target_commitish,
+            )
+        {
+            return Err((
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ApiError::new(
+                    "validation_error",
+                    "The tag and target of a release cannot be changed.",
+                )),
+            ));
+        }
+    }
     let fields = ReleaseChanges {
         expected_revision: None,
         name: request

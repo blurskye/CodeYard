@@ -1,4 +1,5 @@
 use super::review::{self, LineComment, ReviewDraft, Thread};
+use crate::webui::pages::repos::chrome::csrf;
 use crate::webui::pages::repos::issues::{
     detail::{notice, pull_summary, pull_tabs, FilterBox, PickerRow, PullTab},
     Item, Kind, Repository,
@@ -57,6 +58,74 @@ struct Lines<'a> {
     /// The review a new line comment may start or join: None on a closed pull request, otherwise
     /// whether the viewer already has a pending review to add to.
     review: Option<bool>,
+}
+
+impl Lines<'_> {
+    /// One conversation. `reply` is the page's composer, which reopens its thread's reply form.
+    fn thread(&self, thread: &Thread, reply: Option<&LineComment>) -> Element {
+        review::thread_block(
+            self.repo,
+            self.url,
+            (self.head, self.base),
+            thread,
+            reply,
+            self.references,
+            self.split,
+        )
+    }
+
+    /// The composer for a new line comment.
+    fn composer(&self, draft: &LineComment) -> Element {
+        rsx! {
+            div { id: "compose", class: "collaboration-panel collaboration-diff-thread",
+                {review::line_composer(self.repo, self.url, (self.head, self.base), draft, self.references, self.split, self.review)}
+            }
+        }
+    }
+
+    /// The conversations and the composer that sit above a file's patch, because they have no
+    /// line in it to sit under.
+    fn above_patch(
+        &self,
+        threads: &[&Thread],
+        reply: Option<&LineComment>,
+        draft: Option<&LineComment>,
+    ) -> Element {
+        rsx! {
+            for thread in threads {
+                {self.thread(thread, reply)}
+            }
+            if let Some(draft) = draft {
+                {self.composer(draft)}
+            }
+        }
+    }
+}
+
+/// The conversations on one file, and the new line comment the page's composer opens on it.
+fn file_conversations<'a>(
+    file: &DiffFile,
+    threads: &'a [Thread],
+    composer: Option<&'a LineComment>,
+) -> (Vec<&'a Thread>, Option<&'a LineComment>) {
+    (
+        threads
+            .iter()
+            .filter(|thread| thread.path == file.filename)
+            .collect(),
+        composer.filter(|draft| draft.in_reply_to.is_none() && draft.path == file.filename),
+    )
+}
+
+/// A file whose patch is too large to draw still shows its conversations and composer.
+fn above_file(
+    lines: &Lines<'_>,
+    file: &DiffFile,
+    threads: &[Thread],
+    composer: Option<&LineComment>,
+) -> Element {
+    let (on_file, draft) = file_conversations(file, threads, composer);
+    lines.above_patch(&on_file, composer, draft)
 }
 
 #[expect(
@@ -126,10 +195,10 @@ pub fn diff_page(
                     p { class: "collaboration-panel collaboration-muted collaboration-diff-notice", "This pull request has more inline comments than the diff shows. The Discussion tab lists every comment." }
                 }
                 if let Some(draft) = loose_composer {
-                    div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(repo, &url, (head, base), draft, references, split, lines.review)} }
+                    {lines.composer(draft)}
                 }
                 for thread in unplaced {
-                    {review::thread_block(repo, &url, (head, base), thread, composer, references, split)}
+                    {lines.thread(thread, composer)}
                 }
                 div { class: "collaboration-diff-toolbar",
                     {view_toggle(&format!("{url}/diff"), split)}
@@ -142,17 +211,17 @@ pub fn diff_page(
                 if let (false, Some(refused)) = (open, review) {
                     {review::closed_review(refused)}
                 }
-                {files(Some(&lines), diff, threads, composer, diff.viewed.as_ref(), split)}
+                {files(Some(&lines), diff, threads, composer, split)}
             }
         },
     )
 }
 
 /// The Files changed list of a new pull request's preview, of a branch comparison and of a commit:
-/// the same rows, with no links, no conversations and no Viewed marks, because none of those has a
-/// pull request to keep them on.
+/// the same rows, with no links and no conversations, because none of those has a pull request to
+/// keep them on. Viewed marks show only when the diff carries them.
 pub(in crate::webui::pages::repos) fn diff_view(diff: &Diff, split: bool) -> Element {
-    files(None, diff, &[], None, diff.viewed.as_ref(), split)
+    files(None, diff, &[], None, split)
 }
 
 /// The Unified and Split buttons above a diff that has no pull request. Each links to `url` with
@@ -161,8 +230,8 @@ pub(in crate::webui::pages::repos) fn view_toggle(url: &str, split: bool) -> Ele
     let join = if url.contains('?') { '&' } else { '?' };
     rsx! {
         nav { class: "collaboration-view-toggle", aria_label: "Diff view",
-            NavLink { class: "collaboration-segment", href: url.to_owned(), span { aria_current: if split { "false" } else { "page" }, "Unified" } }
-            NavLink { class: "collaboration-segment", href: format!("{url}{join}view=split"), span { aria_current: if split { "page" } else { "false" }, "Split" } }
+            NavLink { class: "collaboration-segment", href: url.to_owned(), aria_current: (!split).then(|| "page".to_owned()), "Unified" }
+            NavLink { class: "collaboration-segment", href: format!("{url}{join}view=split"), aria_current: split.then(|| "page".to_owned()), "Split" }
         }
     }
 }
@@ -180,13 +249,11 @@ pub(in crate::webui::pages::repos) fn diff_summary(diff: &Diff) -> Element {
 }
 
 /// The summary line, then the file tree beside each file as a section that a reader can collapse.
-/// `viewed` holds the Viewed marks of a signed-in reader; it is None where nobody can mark files.
 fn files(
     lines: Option<&Lines<'_>>,
     diff: &Diff,
     threads: &[Thread],
     composer: Option<&LineComment>,
-    viewed: Option<&Viewed>,
     split: bool,
 ) -> Element {
     rsx! {
@@ -204,9 +271,9 @@ fn files(
                         details { class: "collaboration-diff-tree-toggle", open: true,
                             summary { {repos::chrome::icon("files")} "Files" }
                         }
-                        aside { class: "collaboration-diff-tree", {file_list(diff, viewed)} }
+                        aside { class: "collaboration-diff-tree", {file_list(diff)} }
                     }
-                    div { class: "collaboration-diff-files", {file_cards(lines, diff, threads, composer, viewed, split)} }
+                    div { class: "collaboration-diff-files", {file_cards(lines, diff, threads, composer, split)} }
                 }
             }
         }
@@ -261,16 +328,16 @@ fn file_cards(
     diff: &Diff,
     threads: &[Thread],
     composer: Option<&LineComment>,
-    viewed: Option<&Viewed>,
     split: bool,
 ) -> Element {
+    let viewed = diff.viewed.as_ref();
     let renderable = renderable_files(diff);
     rsx! {
         for (index, file) in diff.files.iter().enumerate() {
             if let Some(marks) = viewed {
                 // The Viewed button sits in the file's header and submits this form by id.
                 form { id: format!("viewed-form-{index}"), class: "collaboration-viewed-form", method: "post", action: if split { format!("{}?view=split", marks.action) } else { marks.action.clone() },
-                    input { r#type: "hidden", name: "csrf_token", value: marks.csrf.clone() }
+                    {csrf(&marks.csrf)}
                     input { r#type: "hidden", name: "path", value: file.filename.clone() }
                     input { r#type: "hidden", name: "expected_head", value: marks.head.clone() }
                     input { r#type: "hidden", name: "expected_base", value: marks.base.clone() }
@@ -304,12 +371,7 @@ fn file_cards(
                 } else {
                     p { class: "collaboration-diff-notice", role: "status", "This patch is too large to display. Use git diff locally to view the complete changes." }
                     if let Some(lines) = lines {
-                        for thread in threads.iter().filter(|thread| thread.path == file.filename) {
-                            {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
-                        }
-                        if let Some(draft) = composer.filter(|draft| draft.in_reply_to.is_none() && draft.path == file.filename) {
-                            div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
-                        }
+                        {above_file(lines, file, threads, composer)}
                     }
                 }
             }
@@ -318,8 +380,9 @@ fn file_cards(
 }
 
 /// One row per changed file, with its status and counts. The path links to the file's section.
-/// With `viewed` set, the header counts the files marked as viewed.
-fn file_list(diff: &Diff, viewed: Option<&Viewed>) -> Element {
+/// When the diff carries Viewed marks, the header counts the files marked as viewed.
+fn file_list(diff: &Diff) -> Element {
+    let viewed = diff.viewed.as_ref();
     let total = diff.files.len();
     let done = viewed.map_or(0, |marks| marks.paths.len());
     rsx! {
@@ -525,7 +588,8 @@ fn file_body(
     let rows = patch_rows(&file.patch);
     let mut under: Vec<Vec<&Thread>> = vec![Vec::new(); rows.len()];
     let mut top: Vec<&Thread> = Vec::new();
-    for thread in threads.iter().filter(|thread| thread.path == file.filename) {
+    let (on_file, here) = file_conversations(file, threads, composer);
+    for thread in on_file {
         match thread
             .line
             .and_then(|line| row_index(&rows, &thread.side, line))
@@ -534,19 +598,13 @@ fn file_body(
             None => top.push(thread),
         }
     }
-    let here = composer.filter(|draft| draft.in_reply_to.is_none() && draft.path == file.filename);
     let composer_index =
         here.and_then(|draft| row_index(&rows, &draft.side, draft.line.parse().ok()?));
     let composer_top = here.filter(|_| composer_index.is_none());
     let digits = patch_gutter_digits(&rows);
     rsx! {
         if let Some(lines) = lines {
-            for thread in top {
-                {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
-            }
-            if let Some(draft) = composer_top {
-                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
-            }
+            {lines.above_patch(&top, composer, composer_top)}
         }
         pre { class: "collaboration-diff-patch",
             code { class: "patch-lines", "data-digits": digits,
@@ -631,12 +689,7 @@ fn patch_row(
             span { class: row.class, "{row.text}" }
         }
         if let Some(lines) = lines {
-            for thread in threads {
-                {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, reply, lines.references, lines.split)}
-            }
-            if let Some(draft) = line_draft {
-                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
-            }
+            {lines.above_patch(threads, reply, line_draft)}
         }
     }
 }
@@ -695,7 +748,8 @@ fn split_file_body(
     }
     let mut under: Vec<Vec<&Thread>> = vec![Vec::new(); pairs.len()];
     let mut top: Vec<&Thread> = Vec::new();
-    for thread in threads.iter().filter(|thread| thread.path == file.filename) {
+    let (on_file, here) = file_conversations(file, threads, composer);
+    for thread in on_file {
         match thread
             .line
             .and_then(|line| row_index(&rows, &thread.side, line))
@@ -704,32 +758,19 @@ fn split_file_body(
             None => top.push(thread),
         }
     }
-    let here = composer.filter(|draft| draft.in_reply_to.is_none() && draft.path == file.filename);
     let composer_row =
         here.and_then(|draft| row_index(&rows, &draft.side, draft.line.parse().ok()?));
     let composer_top = here.filter(|_| composer_row.is_none());
     let composer_pair = composer_row.map(|row| pair_of[row]);
     rsx! {
         if let Some(lines) = lines {
-            for thread in top {
-                {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
-            }
-            if let Some(draft) = composer_top {
-                div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
-            }
+            {lines.above_patch(&top, composer, composer_top)}
         }
         div { class: "collaboration-split patch-lines",
             for (index, pair) in pairs.iter().enumerate() {
                 {split_row(lines, &file.filename, &rows, *pair)}
                 if let Some(lines) = lines {
-                    for thread in under[index].clone() {
-                        {review::thread_block(lines.repo, lines.url, (lines.head, lines.base), thread, composer, lines.references, lines.split)}
-                    }
-                    if composer_pair == Some(index) {
-                        if let Some(draft) = here {
-                            div { id: "compose", class: "collaboration-panel collaboration-diff-thread", {review::line_composer(lines.repo, lines.url, (lines.head, lines.base), draft, lines.references, lines.split, lines.review)} }
-                        }
-                    }
+                    {lines.above_patch(&under[index], composer, here.filter(|_| composer_pair == Some(index)))}
                 }
             }
         }

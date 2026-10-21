@@ -102,7 +102,7 @@ pub async fn list_repo_labels_page(
         "most-used" => "((SELECT COUNT(*) FROM issue_labels il WHERE il.label_id=l.id) + (SELECT COUNT(*) FROM pr_labels pl WHERE pl.label_id=l.id)) DESC, LOWER(l.name COLLATE \"C\"), l.id",
         _ => "LOWER(l.name COLLATE \"C\"), l.id",
     };
-    Ok(sqlx::query_as(&format!(r#"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at FROM labels l WHERE l.repo_id=$1 AND (LOWER(l.name COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\' OR LOWER(COALESCE(l.description,'') COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\') ORDER BY {order} LIMIT $3 OFFSET $4"#))
+    Ok(sqlx::query_as(&format!(r#"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at FROM labels l WHERE l.repo_id=$1 AND (l.name ILIKE $2::TEXT ESCAPE '\' OR COALESCE(l.description,'') ILIKE $2::TEXT ESCAPE '\') ORDER BY {order} LIMIT $3 OFFSET $4"#))
         .bind(repo_id).bind(crate::backend::db::discussions::contains_pattern(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 

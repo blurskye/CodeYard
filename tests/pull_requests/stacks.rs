@@ -7,13 +7,13 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use codeyard::backend::db::pull_requests::records::{StackJoin, StackRefusal};
 use codeyard::backend::repositories::pull_requests::{merge, OperationError};
 use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
-use database::Database;
+use database::{wait_until_blocked, Database};
 use pulls::Client;
 use serde_json::{json, Value};
 use std::path::Path;
@@ -29,11 +29,7 @@ struct Runs {
 }
 
 async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     codeyard::backend::repositories::lifecycle::provision(
@@ -128,7 +124,7 @@ async fn stacks_join_and_order_contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("/alice/proj/pulls/2/stack"), "{page}");
     assert!(page.contains("This pull request is based on #1"), "{page}");
-    let (_, reader) = bob.page("/alice/proj/pulls/2").await;
+    let reader = bob.page_ok("/alice/proj/pulls/2").await;
     assert!(!reader.contains("/alice/proj/pulls/2/stack"), "{reader}");
 
     // Joining starts the stack with the layer below, and asking again changes nothing.
@@ -956,24 +952,6 @@ async fn stack_unstack_by_target_contract(pg: bool) {
     f.finish().await;
 }
 
-/// Waits until a backend is blocked by a lock that backend `pid` holds.
-async fn wait_until_blocked_by(pool: &sqlx::PgPool, pid: i32) {
-    for _ in 0..1000 {
-        let blocked: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid))",
-        )
-        .bind(pid)
-        .fetch_one(pool)
-        .await
-        .unwrap();
-        if blocked > 0 {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-    panic!("no backend waited for the merge");
-}
-
 /// A stack can only be merged with merge commits, so a branch that requires a linear history
 /// leaves no method to choose. The page says the merge is blocked instead of offering it.
 async fn stack_on_a_linear_history_branch_is_blocked_contract(pg: bool) {
@@ -1138,7 +1116,7 @@ async fn postgres_join_waits_for_the_merge_that_marks_its_parent() {
     let joining = tokio::spawn(async move {
         db::pull_requests::records::join_pull_request_stack(&pool, alice_id, two_id).await
     });
-    wait_until_blocked_by(&raw, merging_pid).await;
+    wait_until_blocked(&raw, merging_pid, 1).await;
     merging.commit().await.unwrap();
     let answer = joining.await.unwrap().unwrap();
     assert_eq!(answer, StackJoin::Refused(StackRefusal::NoParent));
@@ -1258,10 +1236,10 @@ async fn postgres_join_refuses_a_replacement_parent_merged_meanwhile() {
         db::pull_requests::records::join_pull_request_stack(&pool, alice_id, child_id).await
     });
     // The join decides on the first parent and waits for its row.
-    wait_until_blocked_by(&raw, first_pid).await;
+    wait_until_blocked(&raw, first_pid, 1).await;
     merging_first.commit().await.unwrap();
     // It decides again on the second parent, locks that row, and waits for it.
-    wait_until_blocked_by(&raw, second_pid).await;
+    wait_until_blocked(&raw, second_pid, 1).await;
     merging_second.commit().await.unwrap();
 
     let answer = joining.await.unwrap().unwrap();

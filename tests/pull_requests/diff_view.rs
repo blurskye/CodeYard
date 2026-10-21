@@ -4,18 +4,14 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::{db, repositories::lifecycle};
 use codeyard::webui::{app::Page, pages::repos::issues};
 use database::Database;
 use pulls::Client;
 use serde_json::json;
-use std::sync::Arc;
 
 /// Whether the page at `path` is rendered in the split view, according to its model.
 async fn split_view(client: &Client, path: &str) -> bool {
@@ -34,7 +30,7 @@ async fn contract(pg: bool) {
     // The files page is HTML, which needs the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     lifecycle::provision(
@@ -48,14 +44,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
 
     // The topic branch rewrites README.md, which is a change with a removed and an added line.

@@ -12,7 +12,7 @@ mod search_box;
 #[cfg(test)]
 mod tests;
 
-pub(in crate::webui::pages::repos) use detail::{csrf, notice};
+pub(in crate::webui::pages::repos) use detail::notice;
 pub use detail::{detail, DetailDraft};
 pub(crate) use detail::{item_icon, state_class};
 pub use list::list;

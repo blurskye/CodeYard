@@ -4,22 +4,17 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as http;
+use crate::support::http_client as http;
 
 use axum::http::StatusCode;
 use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
     db,
     repositories::{
         lifecycle::provision,
         store::{repo_store, FileWrite, RepoStore},
     },
-    storage::ObjectStore,
 };
 use database::Database;
-use std::sync::Arc;
 
 /// Commits `bytes` as a new file at `path` on `main`, after `tip`, and returns the new tip.
 async fn save(
@@ -56,7 +51,7 @@ async fn save(
 async fn find_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("find_owner").await;
     let root = tempfile::tempdir().unwrap();
     let public = provision(
@@ -81,14 +76,7 @@ async fn find_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let anonymous = http::Client::anonymous(&router);
     let signed_in = http::Client::login(&router, f.pool(), owner).await;
 

@@ -11,7 +11,7 @@ use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
 use crate::backend::identity::accounts::SignupReviewOutcome;
 use crate::backend::{db, identity};
-use crate::webui::pages::admin::Signup;
+use crate::webui::pages::admin::{Signup, SIGNUP_REQUESTS_PER_PAGE};
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -53,7 +53,7 @@ pub async fn admin_list_signup_requests(
     let requests = crate::backend::db::users::signup_requests::list_signup_requests(
         &state.pool,
         "pending",
-        30,
+        SIGNUP_REQUESTS_PER_PAGE as i64,
         request_offset(query.page.unwrap_or(1)),
         query.after.unwrap_or(0),
     )
@@ -109,12 +109,16 @@ pub(crate) fn signup_decision(action: &str) -> Option<identity::accounts::Signup
 }
 
 fn request_offset(page: usize) -> i64 {
-    i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX)
+    i64::try_from(
+        page.saturating_sub(1)
+            .saturating_mul(SIGNUP_REQUESTS_PER_PAGE),
+    )
+    .unwrap_or(i64::MAX)
 }
 
+/// One page of pending requests, the total, and the page number. `per_page` must not be zero.
 pub(crate) async fn load_requests(
     ctx: &PageContext,
-    limit: i64,
 ) -> Result<(Vec<Signup>, usize, usize), Response> {
     // Callers must pass the admin + private-node guard before reading identities.
     require_account(ctx, true)?;
@@ -131,21 +135,13 @@ pub(crate) async fn load_requests(
         .get("request_page")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(1)
-        .clamp(1, total.div_ceil(30).max(1));
-    let after = match ctx.query.get("requests_after") {
-        Some(value) => value
-            .parse::<i64>()
-            .ok()
-            .filter(|value| *value >= 0)
-            .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid signup request page."))?,
-        None => 0,
-    };
+        .clamp(1, total.div_ceil(SIGNUP_REQUESTS_PER_PAGE).max(1));
     let requests = db::users::signup_requests::list_signup_requests(
         &ctx.state.pool,
         "pending",
-        limit,
+        SIGNUP_REQUESTS_PER_PAGE as i64,
         request_offset(page),
-        after,
+        0,
     )
     .await
     .map_err(|_| {

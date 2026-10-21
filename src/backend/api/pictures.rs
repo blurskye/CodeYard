@@ -3,15 +3,11 @@
 use crate::backend::identity::avatars::MAX_PICTURE_BYTES;
 use axum::{extract::Multipart, http::StatusCode};
 use std::collections::HashMap;
-use std::time::Duration;
 
 /// The most a request may carry: the largest picture plus room for the form fields.
 pub const BODY_LIMIT: usize = MAX_PICTURE_BYTES + 16 * 1024;
 const MAX_FIELDS: usize = 8;
 const MAX_FIELD_BYTES: usize = 256;
-/// How long a picture form may take to arrive. A sender that stalls holds a picture slot
-/// until then.
-const READ_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct PictureForm {
     /// The text fields.
@@ -24,7 +20,6 @@ pub struct PictureForm {
 pub enum PictureFormError {
     TooLarge,
     Unreadable,
-    TimedOut,
 }
 
 impl PictureFormError {
@@ -32,7 +27,6 @@ impl PictureFormError {
         match self {
             Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Unreadable => StatusCode::BAD_REQUEST,
-            Self::TimedOut => StatusCode::REQUEST_TIMEOUT,
         }
     }
 
@@ -40,7 +34,6 @@ impl PictureFormError {
         match self {
             Self::TooLarge => "The picture is larger than 2 MB.",
             Self::Unreadable => "The form could not be read. Choose the picture again.",
-            Self::TimedOut => "The form took too long to arrive. Choose the picture again.",
         }
     }
 }
@@ -53,15 +46,9 @@ fn read_error(error: axum::extract::multipart::MultipartError) -> PictureFormErr
     }
 }
 
-/// Reads the whole form, stopping as soon as a part is larger than allowed or the form
-/// is not complete within `READ_TIMEOUT`.
-pub async fn read(multipart: Multipart) -> Result<PictureForm, PictureFormError> {
-    tokio::time::timeout(READ_TIMEOUT, read_parts(multipart))
-        .await
-        .unwrap_or(Err(PictureFormError::TimedOut))
-}
-
-async fn read_parts(mut multipart: Multipart) -> Result<PictureForm, PictureFormError> {
+/// Reads the whole form, stopping as soon as a part is larger than allowed. The request
+/// body is already in memory by now, so reading cannot stall.
+pub async fn read(mut multipart: Multipart) -> Result<PictureForm, PictureFormError> {
     let mut form = PictureForm {
         fields: HashMap::new(),
         picture: None,

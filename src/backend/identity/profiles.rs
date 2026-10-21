@@ -121,7 +121,3 @@ pub async fn update(
     .map_err(|_| ProfileError::Unavailable)?
     .ok_or(ProfileError::Denied)
 }
-
-pub fn visible_on_profile(private: bool, own: bool) -> bool {
-    !private || own
-}

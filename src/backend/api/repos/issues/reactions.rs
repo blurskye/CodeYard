@@ -1,7 +1,9 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::discussion_write_error;
-use crate::backend::api::repos::chrome;
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::paging;
+use crate::backend::api::repos::pulls::diff::diff_url;
 use crate::backend::db;
 use crate::backend::db::reactions::{ReactionRefusal, Subject, CONTENTS};
 use crate::backend::issues::{discussion_link_at, MAX_COMMENT_PAGE, MAX_REVIEW_COMMENT_OFFSET};
@@ -68,12 +70,7 @@ pub(crate) async fn native_react(
         (None, None) => String::new(),
     };
     let location = if ctx.query.get("from").is_some_and(|from| from == "diff") {
-        let split = if ctx.query.get("view").is_some_and(|view| view == "split") {
-            "?view=split"
-        } else {
-            ""
-        };
-        let diff = format!("{base}/diff{split}");
+        let diff = diff_url(&ctx, &base);
         if anchor.is_empty() {
             diff
         } else {
@@ -82,8 +79,8 @@ pub(crate) async fn native_react(
     } else {
         // The discussion page and review comment offset the form was on, so the reaction comes
         // back to the same place.
-        let page = chrome::number(&ctx, "page", 1, MAX_COMMENT_PAGE)?;
-        let offset = chrome::number(&ctx, "review_comments", 0, MAX_REVIEW_COMMENT_OFFSET)?;
+        let page = paging::number(&ctx, "page", 1, 1..=MAX_COMMENT_PAGE)?;
+        let offset = paging::number(&ctx, "review_comments", 0, 0..=MAX_REVIEW_COMMENT_OFFSET)?;
         discussion_link_at(&base, page, offset, &anchor)
     };
     // The write checks the reactor's access, the archive state and the target in its transaction.
@@ -147,33 +144,15 @@ async fn reactions_on(
 /// and on the inline comments inside those reviews.
 pub(crate) async fn attach(
     ctx: &PageContext,
-    repo: &RepositoryData,
     kind: Kind,
     item: &mut Item,
     comments: &mut CommentPage,
 ) -> ResultPage<()> {
-    let pool = &ctx.state.pool;
-    let (item_subject, comment_subject, item_id) = match kind {
-        Kind::Issue => (
-            Subject::Issue,
-            Subject::IssueComment,
-            db::issues::get_issue(pool, repo.record.id, item.number)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .map(|issue| issue.id),
-        ),
-        Kind::Pull => (
-            Subject::PullRequest,
-            Subject::PullRequestComment,
-            db::pull_requests::records::get_pull_request(pool, repo.record.id, item.number)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .map(|pull| pull.id),
-        ),
+    let (item_subject, comment_subject) = match kind {
+        Kind::Issue => (Subject::Issue, Subject::IssueComment),
+        Kind::Pull => (Subject::PullRequest, Subject::PullRequestComment),
     };
-    let Some(item_id) = item_id else {
-        return Ok(());
-    };
+    let item_id = item.id;
     item.reactions = reactions_on(ctx, item_subject, &[item_id])
         .await?
         .remove(&item_id)

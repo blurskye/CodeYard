@@ -1,15 +1,14 @@
-use crate::support::{database::Database, fake_webui_bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::http::StatusCode;
 use codeyard::{
-    backend::{api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore},
+    backend::db,
     webui::{app::Page, pages::repos},
 };
-use std::sync::Arc;
 
 async fn contract(pg: bool) {
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("preview_owner").await;
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("preview.git");
@@ -55,14 +54,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = Client::login(&router, f.pool(), actor).await;
     let (status, page) = client
         .model("/preview_owner/preview/blob/main/late.md?view=code&line=60001")

@@ -105,18 +105,9 @@ impl Default for WorkflowMatchBudget {
 }
 
 impl WorkflowDefinition {
-    pub fn supports_event(&self, event: &str) -> bool {
-        match event {
-            "push" => self.triggers.push.is_some(),
-            "pull_request" => self.triggers.pull_request.is_some(),
-            "workflow_dispatch" => self.triggers.workflow_dispatch,
-            _ => false,
-        }
-    }
-
     pub fn matches_event(&self, event: &str, branch: &str) -> bool {
-        // Compatibility matcher used by manual trigger validation. This only checks event and
-        // ref filters, without changed-path or skip-message rules.
+        // Manual trigger validation uses this. It checks only the event and ref filters, not
+        // changed paths or skip messages.
         self.matches_event_with_budget(event, branch, &mut WorkflowMatchBudget::new())
             .unwrap_or(false)
     }
@@ -144,23 +135,6 @@ impl WorkflowDefinition {
             },
             _ => Ok(false),
         }
-    }
-
-    pub fn matches_event_with_context(
-        &self,
-        event: &str,
-        git_ref: &str,
-        changed_paths: &[String],
-        head_commit_message: Option<&str>,
-    ) -> bool {
-        self.matches_event_with_context_and_budget(
-            event,
-            git_ref,
-            changed_paths,
-            head_commit_message,
-            &mut WorkflowMatchBudget::new(),
-        )
-        .unwrap_or(false)
     }
 
     pub fn matches_event_with_context_and_budget(
@@ -228,11 +202,14 @@ pub async fn commit_message_for_ref(store: &RepoStore, commitish: &str) -> Optio
         .map(|commit| commit.message)
 }
 
+/// Reads the kind from whole words in the file name: `deploy-image.yml` is a deploy
+/// pipeline, `cdn-assets.yml` is not.
 pub fn infer_pipeline_from_workflow_path(path: &str) -> CiPipelineKind {
-    let lowered = path.to_ascii_lowercase();
-    if lowered.contains("full") {
+    let name = workflow_name_from_path(path).to_ascii_lowercase();
+    let has = |word: &str| name.split(['-', '_', '.']).any(|token| token == word);
+    if has("full") {
         CiPipelineKind::Full
-    } else if lowered.contains("cd") || lowered.contains("deploy") || lowered.contains("release") {
+    } else if has("cd") || has("deploy") || has("release") {
         CiPipelineKind::Cd
     } else {
         CiPipelineKind::Ci
@@ -274,7 +251,9 @@ pub async fn list_workflows_for_ref(
         .sha;
     let repository = store.location().to_owned();
     {
-        let cache = WORKFLOW_CACHE.lock().unwrap();
+        let cache = WORKFLOW_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if let Some(entry) = cache
             .iter()
             .find(|entry| entry.repository == repository && entry.sha == sha)
@@ -324,7 +303,9 @@ pub async fn list_workflows_for_ref(
             .expect("workflow definitions serialize")
             .len();
         if bytes <= WORKFLOW_CACHE_BYTES {
-            let mut cache = WORKFLOW_CACHE.lock().unwrap();
+            let mut cache = WORKFLOW_CACHE
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             cache.retain(|entry| entry.repository != repository || entry.sha != sha);
             while cache.len() >= WORKFLOW_CACHE_ENTRIES
                 || cache.iter().map(|entry| entry.bytes).sum::<usize>() + bytes
@@ -962,6 +943,34 @@ fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
 mod tests {
     use super::*;
 
+    impl WorkflowDefinition {
+        pub(crate) fn supports_event(&self, event: &str) -> bool {
+            match event {
+                "push" => self.triggers.push.is_some(),
+                "pull_request" => self.triggers.pull_request.is_some(),
+                "workflow_dispatch" => self.triggers.workflow_dispatch,
+                _ => false,
+            }
+        }
+
+        pub(crate) fn matches_event_with_context(
+            &self,
+            event: &str,
+            git_ref: &str,
+            changed_paths: &[String],
+            head_commit_message: Option<&str>,
+        ) -> bool {
+            self.matches_event_with_context_and_budget(
+                event,
+                git_ref,
+                changed_paths,
+                head_commit_message,
+                &mut WorkflowMatchBudget::new(),
+            )
+            .unwrap_or(false)
+        }
+    }
+
     #[test]
     fn workflow_quantifiers_do_not_change_other_glob_dialects() {
         let workflow = parse_workflow_definition(
@@ -1170,6 +1179,17 @@ mod tests {
         assert_eq!(
             infer_pipeline_from_workflow_path(".github/workflows/test.yml"),
             CiPipelineKind::Ci
+        );
+        for name in ["cdn-assets", "abcd", "scdoc", "fullstack-tests"] {
+            assert_eq!(
+                infer_pipeline_from_workflow_path(&format!(".github/workflows/{name}.yml")),
+                CiPipelineKind::Ci,
+                "{name}"
+            );
+        }
+        assert_eq!(
+            infer_pipeline_from_workflow_path(".github/workflows/prod_cd.yaml"),
+            CiPipelineKind::Cd
         );
     }
 

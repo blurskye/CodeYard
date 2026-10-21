@@ -115,11 +115,9 @@ impl GitSshHandler {
         Ok(Auth::reject())
     }
 
-    /// The same message for a repository that is missing and one the key cannot reach, so a deploy
-    /// key learns nothing about other repositories.
     /// The credential a Git command runs under. A refusal is written to the channel and gives
-    /// `None`. Called before the command waits for a session slot and again after it, so a key
-    /// or grant revoked during the wait is refused.
+    /// `None`. The command's task checks the credential again after it gets a session slot, so
+    /// a key or grant revoked during the wait is refused.
     async fn git_credential(
         &mut self,
         channel: ChannelId,
@@ -173,6 +171,8 @@ impl GitSshHandler {
         Ok(Some(ReceiveCredential::SshKey(key_id)))
     }
 
+    /// The same message for a repository that is missing and one the key cannot reach, so a deploy
+    /// key learns nothing about other repositories.
     fn deploy_key_denial_message(is_write: bool) -> String {
         format!(
             "Permission denied: this deploy key cannot {} this repository\n",
@@ -505,22 +505,12 @@ impl russh::server::Handler for GitSshHandler {
             }
         };
 
-        // Access is checked before the command waits for a session slot, and again after it.
-        if self
+        // The task checks access again after it gets a session slot.
+        let Some(credential) = self
             .git_credential(channel, session, &repo, git_cmd.write)
             .await?
-            .is_none()
-        {
+        else {
             return Ok(());
-        }
-
-        let credential = if let Some(id) = self.deploy_key {
-            ReceiveCredential::DeployKey(id)
-        } else {
-            ReceiveCredential::SshKey(
-                self.key_id
-                    .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?,
-            )
         };
         info!(
             "Access granted: {:?} for {}/{}",
@@ -584,7 +574,7 @@ impl russh::server::Handler for GitSshHandler {
             let status = match result {
                 Ok(status) => status.code().unwrap_or(1).clamp(0, 255) as u32,
                 Err(error) => {
-                    warn!("Git channel failed or was denied");
+                    warn!(%error, "Git channel failed or was denied");
                     let message = if error.is::<git_process::SessionsBusy>()
                         || error
                             .downcast_ref::<crate::backend::repositories::store::RepoError>()

@@ -2,7 +2,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use codeyard::backend::{
@@ -83,7 +83,7 @@ async fn blocked(client: &Client, number: i64, expected: &str) {
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let merger = f.actor("late_merger").await;
     let root = tempfile::tempdir().unwrap();
@@ -584,7 +584,7 @@ async fn merge_as(client: &Client, number: i64) -> (StatusCode, serde_json::Valu
 async fn protection_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let writer = f.actor("bob").await;
     let reader = f.actor("carol").await;
@@ -896,7 +896,7 @@ async fn postgres_branch_protection_rules_gate_writes_and_merges() {
 async fn linear_history_merge_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -1011,7 +1011,7 @@ async fn postgres_linear_history_refuses_merge_commits_from_a_pull_request() {
 async fn linear_history_branch_creation_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -1141,7 +1141,7 @@ async fn enqueue_pull_request_run(
 async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -1246,7 +1246,7 @@ async fn postgres_runs_of_another_pull_request_do_not_satisfy_a_check() {
 async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -1339,11 +1339,7 @@ async fn merge_with(client: &Client, number: i64, method: &str) -> (StatusCode, 
 async fn merge_method_history_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = codeyard::backend::repositories::lifecycle::provision(

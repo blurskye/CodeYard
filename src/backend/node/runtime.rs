@@ -141,7 +141,7 @@ async fn remove_expired_rows(
         {
             Ok(Ok(0)) => {}
             Ok(Ok(removed)) => info!(removed, "removed expired uploads"),
-            Ok(Err(_)) => warn!("could not remove expired uploads"),
+            Ok(Err(error)) => warn!(%error, "could not remove expired uploads"),
             Err(_) => warn!("upload cleanup budget exhausted; remaining work stays queued"),
         }
         match crate::backend::db::files::remove_expired_transfer_rows(&pool).await {

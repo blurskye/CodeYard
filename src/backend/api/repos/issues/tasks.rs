@@ -1,10 +1,11 @@
 //! Ticking a task box in an issue or pull request body, or in a comment. The box flips in the
-//! stored text and the text is saved through the same update the edit forms use, so the author or
-//! a writer may tick, and a stale page is refused.
+//! stored text and the text is saved through the same update the edit forms use. A writer may tick
+//! a box in the body, the author of a comment may tick one in it, and a stale page is refused.
 
-use super::issue::{save_entry_text, EntryText};
+use super::issue::{save_entry_change, EntryChange};
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::{authorize_post, field};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::issues::comment_link;
@@ -17,11 +18,6 @@ use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-pub(crate) fn comment_revision(body: &str) -> String {
-    use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(body.as_bytes()))
-}
 
 /// `task` is the box's number in the text; `comment` is the comment it is in, or empty for the
 /// body. A body save also sends the `expected_state` and `expected_updated` it was read at.
@@ -76,14 +72,15 @@ pub(crate) async fn native_toggle_task(
             )
             .await
         }
-        None => save_entry_text(
+        None => save_entry_change(
             &ctx,
             kind,
             actor_id,
             (owner, name, number),
-            EntryText {
-                title: value.title.clone(),
-                body: updated,
+            EntryChange {
+                title: Some(value.title.clone()),
+                body: Some(updated),
+                state: None,
                 expected_state: field(&form, "expected_state"),
                 expected_updated: field(&form, "expected_updated"),
             },

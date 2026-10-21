@@ -1,4 +1,4 @@
-use super::OperationError;
+use super::{database_error, OperationError};
 use crate::backend::ci::CiRuns;
 use crate::backend::db;
 use crate::backend::notifications::create::create_and_broadcast_notification;
@@ -64,10 +64,7 @@ pub async fn create_pull_request(
     let user = super::actor(pool, actor_id).await?;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -174,10 +171,7 @@ pub async fn create_pull_request(
             let existing =
                 db::pull_requests::records::get_pull_request(pool, repository.id, number)
                     .await
-                    .map_err(|_| OperationError::Unavailable {
-                        code: "database_error",
-                        message: "Collaboration storage is temporarily unavailable".to_owned(),
-                    })?;
+                    .map_err(database_error)?;
             let Some(existing) = existing.filter(|pull| pull.state == "open") else {
                 return Err(OperationError::Conflict {
                     code: "revision_conflict",
@@ -401,10 +395,7 @@ pub async fn update_pull_request(
 ) -> Result<db::models::PullRequest, OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -414,10 +405,7 @@ pub async fn update_pull_request(
     super::require_write(pool, &user, &repository).await?;
     let existing = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -720,10 +708,7 @@ async fn stack_change_target(
 > {
     let repository = db::repositories::records::get_repository(pool, owner, repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -732,10 +717,7 @@ async fn stack_change_target(
     super::require_write(pool, &user, &repository).await?;
     let existing = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -784,10 +766,7 @@ pub async fn unstack_pull_request(
     }
     db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -817,10 +796,7 @@ pub async fn join_stack(
     }
     let pull = db::pull_requests::records::get_pull_request_by_id(pool, existing.id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -901,10 +877,7 @@ pub async fn mark_pull_request_ready(
     let user = super::actor(pool, actor_id).await?;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -912,10 +885,7 @@ pub async fn mark_pull_request_ready(
     super::require_read(pool, &user, &repository).await?;
     let existing = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),

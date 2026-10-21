@@ -265,7 +265,7 @@ pub async fn count_issue_comments(pool: &SqlitePool, issue_ids: &[i64]) -> Resul
 fn viewer_issue_sql(relation: IssueRelation) -> &'static str {
     match relation {
         IssueRelation::Assigned => {
-            "EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id AND a.user_id = ?1)"
+            "i.id IN (SELECT issue_id FROM issue_assignees WHERE user_id = ?1)"
         }
         IssueRelation::Created => "i.author_id = ?1",
     }

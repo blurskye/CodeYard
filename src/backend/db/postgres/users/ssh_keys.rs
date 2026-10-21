@@ -111,89 +111,20 @@ pub async fn get_user_by_key_fingerprint(
 ) -> Result<Option<UserWithKey>> {
     debug!("Looking up user by key fingerprint: {}", fingerprint);
 
-    #[derive(sqlx::FromRow)]
-    struct JoinedRow {
-        u_id: i64,
-        u_username: String,
-        u_email: Option<String>,
-        u_password_hash: Option<String>,
-        u_avatar_file_id: Option<uuid::Uuid>,
-        u_display_name: Option<String>,
-        u_bio: Option<String>,
-        u_location: Option<String>,
-        u_website: Option<String>,
-        u_is_admin: bool,
-        u_is_banned: bool,
-        u_must_change_password: bool,
-        u_email_verified: bool,
-        u_two_factor_enabled: bool,
-        u_created_at: DateTime<Utc>,
-        u_updated_at: DateTime<Utc>,
-        k_id: i64,
-        k_user_id: i64,
-        k_name: String,
-        k_fingerprint: String,
-        k_public_key: String,
-        k_key_type: String,
-        k_last_used_at: Option<DateTime<Utc>>,
-        k_created_at: DateTime<Utc>,
-    }
+    let Some(key) = sqlx::query_as::<_, SshKey>("SELECT * FROM ssh_keys WHERE fingerprint = $1")
+        .bind(fingerprint)
+        .fetch_optional(pool)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(key.user_id)
+        .fetch_optional(pool)
+        .await?;
 
-    let result = sqlx::query_as::<_, JoinedRow>(
-        r#"
-        SELECT
-            u.id as u_id, u.username as u_username, u.email as u_email,
-            u.password_hash as u_password_hash, u.avatar_file_id as u_avatar_file_id,
-            u.display_name as u_display_name, u.bio as u_bio, u.location as u_location,
-            u.website as u_website, u.is_admin as u_is_admin,
-            u.is_banned as u_is_banned,
-            u.must_change_password as u_must_change_password,
-            u.email_verified as u_email_verified,
-            u.two_factor_enabled as u_two_factor_enabled,
-            u.created_at as u_created_at, u.updated_at as u_updated_at,
-            k.id as k_id, k.user_id as k_user_id, k.name as k_name,
-            k.fingerprint as k_fingerprint, k.public_key as k_public_key,
-            k.key_type as k_key_type, k.last_used_at as k_last_used_at, k.created_at as k_created_at
-        FROM users u
-        INNER JOIN ssh_keys k ON u.id = k.user_id
-        WHERE k.fingerprint = $1
-        "#,
-    )
-    .bind(fingerprint)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(result
-        .map(|row| UserWithKey {
-            user: User {
-                id: row.u_id,
-                username: row.u_username,
-                email: row.u_email,
-                password_hash: row.u_password_hash,
-                avatar_file_id: row.u_avatar_file_id,
-                display_name: row.u_display_name,
-                bio: row.u_bio,
-                location: row.u_location,
-                website: row.u_website,
-                is_admin: row.u_is_admin,
-                is_banned: row.u_is_banned,
-                must_change_password: row.u_must_change_password,
-                email_verified: row.u_email_verified,
-                two_factor_enabled: row.u_two_factor_enabled,
-                created_at: row.u_created_at,
-                updated_at: row.u_updated_at,
-            },
-            key: SshKey {
-                id: row.k_id,
-                user_id: row.k_user_id,
-                name: row.k_name,
-                fingerprint: row.k_fingerprint,
-                public_key: row.k_public_key,
-                key_type: row.k_key_type,
-                last_used_at: row.k_last_used_at,
-                created_at: row.k_created_at,
-            },
-        })
+    Ok(user
+        .map(|user| UserWithKey { user, key })
         .filter(|identity| valid_stored_key(&identity.key)))
 }
 

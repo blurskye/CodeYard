@@ -151,7 +151,7 @@ async fn refusal_workflows(
     let definitions = crate::backend::ci::list_workflows_for_ref(&store, branch).await?;
     Ok(definitions
         .into_iter()
-        .map(super::jobs::collection::workflow_view)
+        .map(super::responses::workflow_view)
         .collect())
 }
 

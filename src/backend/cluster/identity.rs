@@ -183,7 +183,7 @@ fn write_private(path: PathBuf, contents: &str) -> io::Result<TemporaryFile> {
 pub fn parse_public_key(text: &str) -> Result<PublicKey> {
     let text = text.trim();
     ensure!(
-        text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit()),
+        crate::backend::crypto::is_hex_token(text, 64),
         "a public key is 64 hex characters"
     );
     PublicKey::from_str(&text.to_ascii_lowercase())

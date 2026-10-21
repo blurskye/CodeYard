@@ -32,12 +32,16 @@ pub(super) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .process_group(0);
-    // A server started with SIGTERM ignored (nohup, some supervisors) would otherwise hand that
-    // to every job, and cancelling a job could only end in SIGKILL.
-    // SAFETY: `signal` is async-signal-safe, which is all `pre_exec` allows.
+    // A server started with SIGTERM ignored or blocked (nohup, some supervisors) would otherwise
+    // hand that to every job, and cancelling a job could only end in SIGKILL.
+    // SAFETY: `signal`, `sigemptyset` and `sigprocmask` are async-signal-safe, which is all
+    // `pre_exec` allows.
     unsafe {
         command.pre_exec(|| {
             libc::signal(libc::SIGTERM, libc::SIG_DFL);
+            let mut none: libc::sigset_t = std::mem::zeroed();
+            libc::sigemptyset(&mut none);
+            libc::sigprocmask(libc::SIG_SETMASK, &none, std::ptr::null_mut());
             Ok(())
         });
     }
@@ -506,10 +510,25 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             let cancelled_at = Instant::now();
+            // The signal state of the shells, for the failure message.
+            let state: String = std::fs::read_to_string(&pids)
+                .unwrap()
+                .split_whitespace()
+                .map(|pid| {
+                    let status =
+                        std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
+                    let signals: Vec<&str> = status
+                        .lines()
+                        .filter(|line| line.starts_with("Sig") || line.starts_with("PPid"))
+                        .collect();
+                    format!("{pid}: {signals:?}")
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
             tx.send(true).unwrap();
-            cancelled_at
+            (cancelled_at, state)
         };
-        let (result, cancelled_at) = tokio::join!(
+        let (result, (cancelled_at, state)) = tokio::join!(
             run(child, Duration::from_secs(60), cancel, |_, _| async {
                 Ok(())
             }),
@@ -519,7 +538,7 @@ mod tests {
         assert!(matches!(error.downcast_ref(), Some(Stopped::Cancelled)));
         assert!(
             term_marker.exists(),
-            "SIGTERM was not delivered before SIGKILL"
+            "SIGTERM was not delivered before SIGKILL: {state}"
         );
         assert!(cancelled_at.elapsed() >= TERM_GRACE);
         assert!(cancelled_at.elapsed() < TERM_GRACE + KILL_GRACE + Duration::from_secs(2));

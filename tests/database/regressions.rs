@@ -492,9 +492,19 @@ async fn transfers_drop_unmanageable_grants_and_stop_old_ci_authority() {
         db::repositories::access::grant_repo_access(f.pool(), outsider, r.id, AccessLevel::Admin)
             .await
             .unwrap();
+        f.execute(
+            "INSERT INTO teams(id,org_id,name,slug) VALUES(2001,1001,'writers','writers')",
+            &[],
+        )
+        .await;
+        let team_grant =
+            "INSERT INTO team_repo_access(team_id,repo_id,permission) VALUES(2001,$1,3)";
+        f.execute(team_grant, &[r.id]).await;
         records::transfer_repository(f.pool(), owner, r.id, RepositoryTarget::Organization(1001))
             .await
             .unwrap();
+        // The old team grant is gone: adding it again would break the unique key if it stayed.
+        f.execute(team_grant, &[r.id]).await;
         assert!(
             db::repositories::access::list_repo_collaborators(f.pool(), r.id)
                 .await

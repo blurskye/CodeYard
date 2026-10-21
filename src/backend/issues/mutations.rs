@@ -1,4 +1,4 @@
-use super::OperationError;
+use super::{database_error, OperationError};
 use crate::backend::db;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
@@ -34,10 +34,7 @@ pub async fn create_issue(
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -140,10 +137,7 @@ pub async fn update_issue(
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -153,10 +147,7 @@ pub async fn update_issue(
 
     let existing = db::issues::get_issue(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Issue not found".to_owned(),

@@ -5,7 +5,7 @@ use crate::support::database;
 mod fixture;
 
 use codeyard::backend::db::{self, repositories::records::RepositorySettingsRefusal as Refusal};
-use database::Database;
+use database::{wait_until_blocked, Database};
 use fixture::Fixture;
 use std::time::Duration;
 
@@ -655,29 +655,6 @@ async fn alias_and_visibility(pg: bool) {
     f.database.finish().await;
 }
 
-/// Waits until `waiters` backends are stuck behind the transaction of process
-/// `holder`, directly or through each other.
-async fn wait_until_blocked_by(raw: &sqlx::PgPool, holder: i32, waiters: i64) {
-    for _ in 0..800 {
-        let blocked: i64 = sqlx::query_scalar(
-            "WITH RECURSIVE waiting(pid) AS (
-                 SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-                 UNION
-                 SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid = ANY(pg_blocking_pids(a.pid))
-             ) SELECT COUNT(*) FROM waiting",
-        )
-        .bind(holder)
-        .fetch_one(raw)
-        .await
-        .unwrap();
-        if blocked >= waiters {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    panic!("the two requests are not waiting behind the lock the test holds");
-}
-
 /// Two requests change the same repository at once. They must queue behind each
 /// other: neither may be picked as the victim of a lock deadlock.
 async fn concurrent_mutations_queue_behind_each_other(pg: bool) {
@@ -711,7 +688,7 @@ async fn concurrent_mutations_queue_behind_each_other(pg: bool) {
             })
             .collect();
         if let (Some((tx, pid)), Database::Postgres(fixture)) = (reader, &f.database) {
-            wait_until_blocked_by(&fixture.raw, pid, 2).await;
+            wait_until_blocked(&fixture.raw, pid, 2).await;
             tx.commit().await.unwrap();
         }
         let mut results = Vec::new();
@@ -772,13 +749,11 @@ async fn postgres_collaborator_change_observes_a_ban_that_commits_first() {
     let owner = f.actor("collaborator_ban_owner").await;
     let target = f.actor("collaborator_ban_target").await;
     let repo = f.repo(owner, None, "collaborator_ban_repo").await;
-    let Database::Postgres(postgres) = &f.database else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = f.database.pg();
 
     // Hold both rows the old split check/effect path crossed without retaining
     // account authority. The request must wait on the actor row, then recheck it.
-    let mut ban = postgres.raw.begin().await.unwrap();
+    let mut ban = raw.begin().await.unwrap();
     let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *ban)
         .await
@@ -805,7 +780,7 @@ async fn postgres_collaborator_change_observes_a_ban_that_commits_first() {
         )
         .await
     });
-    wait_until_blocked_by(&postgres.raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     ban.commit().await.unwrap();
 
     assert_eq!(
@@ -820,7 +795,7 @@ async fn postgres_collaborator_change_observes_a_ban_that_commits_first() {
         sqlx::query_scalar("SELECT COUNT(*) FROM repo_access WHERE repo_id=$1 AND user_id=$2")
             .bind(repo)
             .bind(target)
-            .fetch_one(&postgres.raw)
+            .fetch_one(raw)
             .await
             .unwrap();
     assert_eq!(grants, 0, "a banned owner cannot grant an accomplice");
@@ -833,9 +808,7 @@ async fn postgres_collaborator_change_observes_a_ban_that_commits_first() {
 #[tokio::test]
 async fn postgres_fork_settings_and_source_narrowing_do_not_deadlock() {
     let f = Fixture::new(true).await;
-    let db::DbPool::Postgres(raw) = f.database.pool() else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = f.database.pg();
     let owner = f.actor("fork_settings_owner").await;
     let source_owner = f.actor("fork_settings_source").await;
     let source = f.repo(source_owner, None, "fork_settings_source").await;
@@ -879,7 +852,7 @@ async fn postgres_fork_settings_and_source_narrowing_do_not_deadlock() {
         )
         .await
     });
-    wait_until_blocked_by(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     sqlx::query("UPDATE repositories SET is_private = TRUE WHERE id = $1")
         .bind(source)
         .execute(&mut *source_update)

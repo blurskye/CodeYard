@@ -1,16 +1,5 @@
 use super::*;
-
-async fn wait_blocked(raw: &sqlx::PgPool, holder: i32, count: i64) {
-    for _ in 0..400 {
-        let n: i64 = sqlx::query_scalar("WITH RECURSIVE waiting(pid) AS (SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) UNION SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))) SELECT COUNT(*) FROM waiting")
-            .bind(holder).fetch_one(raw).await.unwrap();
-        if n >= count {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
-    panic!("requests did not reach the held lock");
-}
+use crate::support::database::wait_until_blocked;
 
 #[tokio::test]
 async fn postgres_direct_grant_changes_conflict_with_repository_authority_reads() {
@@ -18,9 +7,7 @@ async fn postgres_direct_grant_changes_conflict_with_repository_authority_reads(
     let owner = f.actor("grant_owner").await;
     let target = f.actor("grant_target").await;
     let r = repo(&f, owner, "grant_lock").await;
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     // Both the trusted DB operations and browser collaborator mutations must wait even
     // when the authority read found no direct grant to lock.
     for operation in 0..4 {
@@ -66,7 +53,7 @@ async fn postgres_direct_grant_changes_conflict_with_repository_authority_reads(
                 _ => unreachable!(),
             }
         });
-        wait_blocked(raw, holder, 1).await;
+        wait_until_blocked(raw, holder, 1).await;
         assert!(!request.is_finished());
         reader.commit().await.unwrap();
         request.await.unwrap();
@@ -102,9 +89,7 @@ async fn postgres_transfer_locks_target_organization_before_a_forks_source() {
     )
     .await
     .unwrap();
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut settings = raw.begin().await.unwrap();
     let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *settings)
@@ -124,7 +109,7 @@ async fn postgres_transfer_locks_target_organization_before_a_forks_source() {
         )
         .await
     });
-    wait_blocked(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
         .bind(source.id)
         .execute(&mut *settings)
@@ -156,9 +141,7 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
     .unwrap();
     for crawler in [false, true] {
         let original = session(f.pool(), admin).await;
-        let db::DbPool::Postgres(raw) = f.pool() else {
-            unreachable!()
-        };
+        let raw = f.pg();
         let mut holder = raw.begin().await.unwrap();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *holder)
@@ -200,14 +183,14 @@ async fn postgres_privileged_node_and_crawler_writes_retain_their_session() {
                 ));
             }
         });
-        wait_blocked(raw, pid, 1).await;
+        wait_until_blocked(raw, pid, 1).await;
         let pool = f.pool().clone();
         let revocation = tokio::spawn(async move {
             db::users::sessions::delete_session(&pool, &original)
                 .await
                 .unwrap();
         });
-        wait_blocked(raw, pid, 2).await;
+        wait_until_blocked(raw, pid, 2).await;
         assert!(!revocation.is_finished());
         holder.commit().await.unwrap();
         mutation.await.unwrap();
@@ -224,9 +207,7 @@ async fn postgres_unstar_locks_parent_before_the_star() {
     db::repositories::engagement::star_repo(f.pool(), owner, r.id)
         .await
         .unwrap();
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut deleting = raw.begin().await.unwrap();
     let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *deleting)
@@ -242,7 +223,7 @@ async fn postgres_unstar_locks_parent_before_the_star() {
         tokio::spawn(
             async move { db::repositories::engagement::unstar_repo(&pool, owner, r.id).await },
         );
-    wait_blocked(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     sqlx::query("SELECT user_id FROM stars WHERE repo_id=$1 FOR UPDATE NOWAIT")
         .bind(r.id)
         .execute(&mut *deleting)
@@ -264,9 +245,7 @@ async fn postgres_collaborator_takes_membership_lock_before_accounts() {
     let owner = f.actor("collaborator_owner").await;
     let admin = f.actor("collaborator_admin").await;
     let r = repo(&f, owner, "collaborator").await;
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut banning = raw.begin().await.unwrap();
     let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *banning)
@@ -292,7 +271,7 @@ async fn postgres_collaborator_takes_membership_lock_before_accounts() {
         )
         .await
     });
-    wait_blocked(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
         .bind(owner)
         .execute(&mut *banning)
@@ -311,9 +290,7 @@ async fn postgres_opposing_organization_transfers_retry_deadlocks() {
     organization(&f, 1002, owner).await;
     let a = org_repo(&f, owner, 1001, "first").await;
     let b = org_repo(&f, owner, 1002, "second").await;
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut reader = raw.begin().await.unwrap();
     let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *reader)
@@ -331,7 +308,7 @@ async fn postgres_opposing_organization_transfers_retry_deadlocks() {
     let second = tokio::spawn(async move {
         records::transfer_repository(&pool, owner, b.id, RepositoryTarget::Organization(1001)).await
     });
-    wait_blocked(raw, holder, 2).await;
+    wait_until_blocked(raw, holder, 2).await;
     reader.commit().await.unwrap();
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(20), first)
@@ -364,9 +341,7 @@ async fn postgres_inbox_and_transfer_retry_scope_deadlocks() {
     notice(f.pool(), owner, Some(personal.id), "personal").await;
     notice(f.pool(), owner, Some(organization.id), "organization").await;
     let session = session(f.pool(), owner).await;
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut reader = raw.begin().await.unwrap();
     let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *reader)
@@ -386,7 +361,7 @@ async fn postgres_inbox_and_transfer_retry_scope_deadlocks() {
         )
         .await
     });
-    wait_blocked(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     let pool = f.pool().clone();
     let inbox = tokio::spawn(async move {
         db::notifications::records::notification_inbox(
@@ -482,9 +457,7 @@ async fn postgres_family_promotion_refuses_a_fork_committed_during_its_lock_wait
         &[r.id, to],
     )
     .await;
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut fork = raw.begin().await.unwrap();
     let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *fork)
@@ -500,7 +473,7 @@ async fn postgres_family_promotion_refuses_a_fork_committed_during_its_lock_wait
     let pool = f.pool().clone();
     let promotion =
         tokio::spawn(async move { db::cluster::promote_fork_family(&pool, r.id, from, to).await });
-    wait_blocked(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     fork.commit().await.unwrap();
     assert_eq!(
         promotion.await.unwrap().unwrap(),

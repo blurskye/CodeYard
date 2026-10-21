@@ -1,4 +1,5 @@
 //! Git smart HTTP. Basic auth accepts a personal access token, never a password or session.
+use crate::backend::api::http::session;
 use crate::backend::db::models::{AccessLevel, Repository};
 use crate::backend::identity::tokens::token_hash;
 use crate::backend::repositories::git_sessions::ReceiveCredential;
@@ -72,35 +73,39 @@ fn basic_token(headers: &HeaderMap) -> Option<String> {
 async fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
-) -> Result<Option<db::models::PersonalAccessToken>, Response> {
+) -> Result<Option<(db::models::PersonalAccessToken, db::models::User)>, Response> {
     if !headers.contains_key(header::AUTHORIZATION) {
         return Ok(None);
     }
-    let found = match basic_token(headers) {
-        Some(value) => db::users::tokens::find_token(&state.pool, &token_hash(&value))
+    let presented = basic_token(headers);
+    let found = match presented.as_deref() {
+        Some(value) => db::users::tokens::find_token(&state.pool, &token_hash(value))
             .await
             .map_err(|_| unavailable())?,
         None => None,
     };
-    if let Some(token) = found.as_ref() {
-        if db::users::tokens::token_user(&state.pool, token.id, false)
+    let mut user_id = None;
+    if let Some(token) = found {
+        match db::users::tokens::token_user(&state.pool, token.id, false)
             .await
             .map_err(|_| unavailable())?
-            .is_some()
         {
-            return Ok(found);
+            Some(user) => return Ok(Some((token, user))),
+            None => user_id = Some(token.user_id),
         }
     }
-    // Successful Git requests do not spend the failed-login budget: a clone/fetch
-    // can make many RPCs. Invalid credentials use the password limiter's budgets.
+    // Successful Git requests do not spend the failed-login budget: a clone/fetch can make many
+    // RPCs. A refused token counts against the client address and the token's user. An unknown
+    // token is its own account key, like an unknown username.
     match admission::admit_login(
         &state.pool,
-        found.as_ref().map(|token| token.user_id),
-        "git-http",
+        session::client_address(headers),
+        user_id,
+        presented.as_deref().unwrap_or("git-http"),
     )
     .await
     {
-        Ok(()) => Err(challenge()),
+        Ok(_) => Err(challenge()),
         Err(admission::AdmissionError::Limited) => {
             Err((StatusCode::TOO_MANY_REQUESTS, "Too many failed Git logins").into_response())
         }
@@ -137,24 +142,14 @@ async fn authorize_repository(
         .filter(|config| config.setup_completed)
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
     let token = authenticate(state, headers).await?;
-    let Some(token) = token else {
+    let Some((token, user)) = token else {
         // A repository that does not exist looks like a private one, so names are not revealed.
         return match found {
-            Some(repo)
-                if !(write
-                    || repo.is_private
-                    || config.node_mode.eq_ignore_ascii_case("private")) =>
-            {
-                Ok((repo, None))
-            }
+            Some(repo) if !(write || repo.is_private || config.is_private()) => Ok((repo, None)),
             _ => Err(challenge()),
         };
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
-    let user = db::users::tokens::token_user(&state.pool, token.id, false)
-        .await
-        .map_err(|_| unavailable())?
-        .ok_or_else(challenge)?;
     let access = crate::backend::repositories::access::user_access(&state.pool, &user, &repo)
         .await
         .map_err(|_| unavailable())?;

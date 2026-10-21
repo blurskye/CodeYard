@@ -96,16 +96,6 @@
 }
 .identity-profile-main { display: flex; flex-direction: column; gap: 32px; min-width: 0; }
 .identity-profile-repositories, .identity-profile-activity { min-width: 0; scroll-margin-top: 100px; }
-.identity-profile-section-heading { margin-bottom: 12px; }
-.identity-profile-section-heading h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  font-size: 14px;
-  font-weight: 500;
-}
-.identity-profile-section-heading svg { color: var(--muted-foreground); }
 .identity-profile-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .identity-profile-search {
   position: relative;
@@ -467,11 +457,10 @@
 .identity-admin { display: flex; flex-direction: column; gap: 24px; }
 .identity-admin > [role="status"] { margin: -8px 0 0; }
 .identity-admin-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--background); }
-.identity-admin-panel > :not(.identity-table-wrap):not(.identity-admin-warning):not(.identity-admin-list) { margin-left: 20px; margin-right: 20px; }
+.identity-admin-panel > :not(.identity-table-wrap):not(.identity-admin-list) { margin-left: 20px; margin-right: 20px; }
 .identity-admin-panel-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 18px; margin-bottom: 18px; }
 .identity-admin-panel-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
 .identity-admin-panel-header p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 13px; }
-.identity-admin-warning { padding: 10px 20px; border-top: 1px solid var(--border); color: var(--muted-foreground); font-size: 13px; }
 .identity-table-wrap { width: 100%; overflow-x: auto; }
 .identity-table { width: 100%; min-width: 700px; border-collapse: collapse; text-align: left; font-size: 13px; }
 .identity-table th { padding: 9px 12px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }

@@ -815,20 +815,10 @@ pub async fn notification_inbox(
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<Option<NotificationInbox>> {
-    for attempt in 0..3 {
-        let result = notification_inbox_once(pool, session_id, user_id, action.clone()).await;
-        let deadlock = result
-            .as_ref()
-            .err()
-            .and_then(|e| e.downcast_ref::<sqlx::Error>())
-            .and_then(sqlx::Error::as_database_error)
-            .is_some_and(|e| e.code().as_deref() == Some("40P01"));
-        if !deadlock || attempt == 2 {
-            return result;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10 << attempt)).await;
-    }
-    unreachable!()
+    crate::backend::db::postgres::retry_on_deadlock(|| {
+        notification_inbox_once(pool, session_id, user_id, action.clone())
+    })
+    .await
 }
 
 async fn notification_inbox_once(

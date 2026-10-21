@@ -1,5 +1,5 @@
 //! An applied merge still reconciles PRs and CI when repository metadata cannot be saved.
-use crate::support::{database::Database, fake_webui_bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::http::StatusCode;
 use base64::Engine;
 use codeyard::backend::{
@@ -16,7 +16,7 @@ use std::sync::Arc;
 async fn contract(pg: bool) {
     fake_webui_bundle::install();
     let mut database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let actor = database.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repo = lifecycle::provision(

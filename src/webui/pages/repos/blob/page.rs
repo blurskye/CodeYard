@@ -3,7 +3,7 @@ use crate::webui::pages::repos::{
     commits::{latest_commit_bar, Commit},
     ref_path::{file_url, is_markdown_path, link_base},
     ref_switcher::{ref_options, RefOption, RefSwitcher},
-    tree::{breadcrumbs, TreeEntry},
+    tree::{breadcrumbs, sort_entries, TreeEntry},
 };
 use crate::webui::{
     components::{
@@ -199,7 +199,7 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
         }
         if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the 32 MiB download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
         if page.truncated { p { class: "text-sm text-muted-foreground", "Showing a bounded preview starting at byte {page.offset}." if downloadable { " Raw contains the complete file." } } }
-        if !page.binary {
+        if page.previous.is_some() || page.next.is_some() {
             nav { class: "flex gap-4", "aria-label": "File preview",
                 if let Some(offset) = page.previous { NavLink { href: format!("{url}?offset={offset}"), "Previous" } }
                 if let Some(offset) = page.next { NavLink { href: format!("{url}?offset={offset}"), "Next" } }
@@ -248,7 +248,7 @@ pub(in crate::webui::pages::repos) fn file_layout(
     let tag_options = ref_options(&base, "blob", path, tags, "refs/tags/");
     rsx! {
         div { class: "repo-blob-layout",
-            input { r#type: "checkbox", id: "repo-files-toggle", class: "repo-sr-only repo-files-toggle" }
+            input { r#type: "checkbox", id: "repo-files-toggle", class: "sr-only repo-files-toggle" }
             FilesPanel { key: "{reference}/{path}", base: base.clone(), reference: reference.to_owned(), path: path.to_owned(), directory: directory.to_owned(), folders: folders.to_vec(), branches: branch_options, tags: tag_options, can_write: can_commit_on(repo, reference, branches), default_branch: repo.default_branch.clone() }
             div { class: "repo-blob-main", {content} }
         }
@@ -294,8 +294,9 @@ pub fn FilesPanel(
 
 /// Go to file: a box that finds the files and folders the page has loaded, by name. Once the page
 /// runs in the browser, typing shows the matches in a dropdown, Enter opens the first one, Escape
-/// closes the dropdown, and "/" anywhere on the page moves to the box. Without scripts the box
-/// submits to the find page, which lists every file.
+/// closes the dropdown, and "/" anywhere on the page moves to the box. The dropdown stays while focus
+/// is in the box or its results, so Tab reaches every match. Without scripts the box submits to the
+/// find page, which lists every file.
 #[component]
 pub fn GoToFile(base: String, reference: String, folders: Vec<FolderListing>) -> Element {
     let mut filter = use_signal(String::new);
@@ -330,7 +331,6 @@ pub fn GoToFile(base: String, reference: String, folders: Vec<FolderListing>) ->
                         open.set(true);
                     }
                 },
-                onblur: move |_| open.set(false),
                 onkeydown: move |event| {
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -614,15 +614,9 @@ fn folder_items(
     let Some(listing) = folders.iter().find(|listing| listing.path == folder) else {
         return rsx! {};
     };
-    let mut entries: Vec<&TreeEntry> = listing.entries.iter().collect();
-    entries.sort_by(|a, b| {
-        (a.kind != "tree")
-            .cmp(&(b.kind != "tree"))
-            .then_with(|| a.name.cmp(&b.name))
-    });
     rsx! {
         ul { class: "repo-files-list",
-            for entry in entries {
+            for entry in sort_entries(&listing.entries) {
                 if entry.kind == "tree" && folders.iter().any(|loaded| loaded.path == entry.path) {
                     li { key: "{entry.path}",
                         details { class: "repo-files-folder", open: true,

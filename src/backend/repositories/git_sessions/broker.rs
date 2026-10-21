@@ -82,7 +82,7 @@ pub(super) async fn run(
     git_user: String,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let uid = private_files::effective_uid()?;
+    let uid = private_files::effective_uid();
     ensure!(
         !git_user.is_empty()
             && git_user.len() <= 64
@@ -123,8 +123,9 @@ pub(super) async fn receive_session(
 ) -> Result<std::process::ExitStatus> {
     let directory = private_files::private_tempdir("git-receive-")?;
     let socket = directory.path().join("broker.sock");
-    let uid = private_files::effective_uid()?;
-    let executable = hook_executable(uid)?;
+    let uid = private_files::effective_uid();
+    let executable =
+        private_files::trusted_executable(&std::fs::canonicalize(&receive.executable)?, uid)?;
     let path = std::fs::canonicalize(receive.path)?;
     let gateway = Arc::new(Gateway {
         socket: socket.clone(),
@@ -167,6 +168,7 @@ pub(super) async fn receive_session(
                         gateway.handle(&mut stream, request).await
                     }.await;
                     if let Err(error) = &result {
+                        tracing::warn!(error = %format!("{error:#}"), "receive hook failed");
                         if let Some(message) = refusal_message(error) {
                             let _ = protocol::write_frame(&mut stream, STDERR, &message).await;
                         }
@@ -185,20 +187,6 @@ pub(super) async fn receive_session(
         result.context("hook task failed")?;
     }
     result
-}
-
-fn hook_executable(uid: u32) -> Result<PathBuf> {
-    // Production always runs this application's early credential-free helper.
-    // Rust unit tests are not an application executable; CI supplies the real
-    // integrated binary explicitly, with the same ownership checks.
-    #[cfg(test)]
-    let executable = PathBuf::from(
-        std::env::var_os("GITSERV_TEST_OPENSSH_HELPER")
-            .context("set GITSERV_TEST_OPENSSH_HELPER to the integrated application")?,
-    );
-    #[cfg(not(test))]
-    let executable = std::env::current_exe()?;
-    private_files::trusted_executable(&std::fs::canonicalize(executable)?, uid)
 }
 
 /// The text a refused hook gives the pusher. Only a deliberate refusal, a `RepoError` of kind
@@ -261,8 +249,13 @@ async fn listen(
                             gateway.handle(&mut stream, request).await
                         };
                         if let Err(error) = &result {
-                            // Do not disclose driver errors, paths, or arbitrary client input.
-                            tracing::warn!(post_receive = post, "OpenSSH broker operation denied or failed");
+                            // The log gets the cause. The client never sees driver errors, paths or
+                            // arbitrary client input.
+                            tracing::warn!(
+                                post_receive = post,
+                                error = %format!("{error:#}"),
+                                "OpenSSH broker operation denied or failed"
+                            );
                             if let Some(message) = refusal_message(error) {
                                 let _ = protocol::write_frame(&mut stream, STDERR, &message).await;
                             } else {
@@ -342,7 +335,10 @@ impl Gateway {
                         )
                         .await;
                     if let Err(error) = result {
-                        tracing::warn!("OpenSSH Git session denied or failed");
+                        tracing::warn!(
+                            error = %format!("{error:#}"),
+                            "OpenSSH Git session denied or failed"
+                        );
                         let message = error
                             .downcast_ref::<RepoError>()
                             .filter(|error| error.kind == ErrorKind::Invalid)
@@ -842,5 +838,5 @@ async fn framed_output<R: AsyncRead + Unpin, E: AsyncRead + Unpin, W: AsyncWrite
 #[path = "policy_tests.rs"]
 pub(super) mod policy_tests;
 #[cfg(test)]
-#[path = "../../../../tests/support/openssh_gateway.rs"]
+#[path = "broker_tests.rs"]
 mod tests;

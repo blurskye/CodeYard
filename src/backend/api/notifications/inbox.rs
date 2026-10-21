@@ -112,36 +112,6 @@ pub(crate) fn notification_unavailable(_: anyhow::Error) -> (StatusCode, Json<Ap
     )
 }
 
-pub(crate) async fn require_notification_csrf(
-    state: &Arc<AppState>,
-    headers: &axum::http::HeaderMap,
-) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let token = if headers.get_all("x-csrf-token").iter().count() == 1 {
-        headers.get("x-csrf-token").and_then(|v| v.to_str().ok())
-    } else {
-        None
-    };
-    let context = crate::backend::api::http::context::PageContext::load(
-        state.clone(),
-        headers.clone(),
-        &axum::http::Uri::from_static("/api/notifications"),
-    )
-    .await
-    .map_err(|_| {
-        notification_unavailable(anyhow::anyhow!("Current notification session unavailable"))
-    })?;
-    let form = HashMap::from([("csrf_token".to_owned(), token.unwrap_or("").to_owned())]);
-    context.check_csrf(&form).map_err(|_| {
-        (
-            StatusCode::FORBIDDEN,
-            Json(ApiError::new(
-                "csrf_error",
-                "A current same-origin CSRF token is required",
-            )),
-        )
-    })
-}
-
 pub(crate) fn notification_session_denied() -> (StatusCode, Json<ApiError>) {
     (
         StatusCode::UNAUTHORIZED,
@@ -455,8 +425,11 @@ pub(crate) async fn notification_list(
                     .map(str::to_owned),
                 reason: reasons::label_for_kind(&item.kind).map(str::to_owned),
                 title: item.title,
-                body: item.body.as_deref().map(view::body_preview),
-                link: item.link.filter(|link| view::safe_notification_link(link)),
+                body: item
+                    .body
+                    .as_deref()
+                    .map(crate::webui::components::body_preview),
+                link: item.link,
                 read: item.read_at.is_some(),
                 saved: item.saved_at.is_some(),
                 done: item.done_at.is_some(),
@@ -489,7 +462,7 @@ pub(crate) async fn notification_list(
     };
     ctx.page_model(
         "Notifications",
-        crate::webui::app::Page::Actions(crate::webui::pages::ci::Page::Notifications(model)),
+        crate::webui::app::Page::Notifications(model),
     )
 }
 

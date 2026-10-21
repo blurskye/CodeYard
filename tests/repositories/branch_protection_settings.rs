@@ -4,16 +4,13 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 /// The rendered form that posts to `action` and shows `message`.
 fn form_with_message<'a>(page: &'a str, action: &str, message: &str) -> &'a str {
@@ -64,7 +61,7 @@ async fn contract(pg: bool) {
     // The native forms answer with rendered pages, which need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     // Carol has no access to the repository, so she cannot be a push allowance.
@@ -81,14 +78,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
     alice
@@ -549,7 +539,7 @@ async fn contract(pg: bool) {
             StatusCode::NO_CONTENT,
         )
         .await;
-    let (_, page) = alice.page(branches).await;
+    let page = alice.page_ok(branches).await;
     assert!(!page.contains("Status checks: ci"), "{page}");
 
     // A check name with a comma is quoted in the form. Saving the edit form with that value

@@ -66,7 +66,7 @@ pub async fn list_repo_issues(
     let issues = sqlx::query_as::<_, IssueListEntry>(&format!(
         r#"SELECT i.*, {columns} FROM issues i JOIN users u ON u.id=i.author_id
         WHERE i.repo_id = $1 AND ($2::TEXT IS NULL OR i.state = $2)
-            AND ($3::TEXT IS NULL OR LOWER(i.title COLLATE "C") LIKE LOWER($3::TEXT COLLATE "C") ESCAPE '\' OR LOWER(i.body COLLATE "C") LIKE LOWER($3::TEXT COLLATE "C") ESCAPE '\')
+            AND ($3::TEXT IS NULL OR i.title ILIKE $3::TEXT ESCAPE '\' OR i.body ILIKE $3::TEXT ESCAPE '\')
             AND ($5::BIGINT IS NULL OR i.author_id = $5)
             AND ($6::BIGINT = 0 OR ($6::BIGINT = 1 AND NOT EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id))
                 OR ($6::BIGINT = 2 AND EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id AND a.user_id = $7)))
@@ -104,7 +104,7 @@ pub async fn count_repo_issues(
     let labels = super::discussions::label_names_array(filter.labels);
     let rows = sqlx::query_as::<_, (String, i64)>(
         r#"SELECT i.state, COUNT(*) FROM issues i WHERE i.repo_id = $1
-            AND ($2::TEXT IS NULL OR LOWER(i.title COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\' OR LOWER(i.body COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\')
+            AND ($2::TEXT IS NULL OR i.title ILIKE $2::TEXT ESCAPE '\' OR i.body ILIKE $2::TEXT ESCAPE '\')
             AND ($3::BIGINT IS NULL OR i.author_id = $3)
             AND ($4::BIGINT = 0 OR ($4::BIGINT = 1 AND NOT EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id))
                 OR ($4::BIGINT = 2 AND EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id AND a.user_id = $5)))

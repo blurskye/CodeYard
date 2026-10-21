@@ -6,8 +6,8 @@ use crate::backend::db;
 use crate::backend::db::issues::IssueRelation;
 use crate::backend::db::pull_requests::records::PullRequestRelation;
 use crate::webui::app::Page;
+use crate::webui::components::relative_time;
 use crate::webui::pages::dashboard::{RepositoryChoice, RepositoryChoices, WorkItem, WorkList};
-use crate::webui::pages::repos::actions::logs::relative_time;
 use crate::webui::pages::repos::issues::{Kind, Label};
 use axum::{
     extract::{OriginalUri, State},

@@ -1,8 +1,8 @@
 //! Replicas: copies of a repository on other storage nodes. The database rules run on
 //! both engines; the copying runs between real in-process nodes on PostgreSQL.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::http_client as http;
 use crate::support::native_database as native;
-use crate::support::pull_requests as http;
 
 use codeyard::backend::cli::cluster::{self as cluster_cli, Command};
 use codeyard::backend::{

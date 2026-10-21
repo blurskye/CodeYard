@@ -8,10 +8,11 @@
 #   DX=/path/to/dx TAILWIND=/path/to/tailwindcss bash scripts/build-webui.sh [release|debug]
 #   TAILWIND=/path/to/tailwindcss bash scripts/build-webui.sh css > src/webui/assets/tailwind.css
 #
-# release|debug  Regenerate the CSS, then build the bundle into $WEBUI_DIST
-#                (default <checkout>/dist/webui): index.html, which the server reads
-#                only to find the module script (it is never served as a page), and
-#                assets/*.js|*.wasm. Build the server after this: it embeds the CSS.
+# release|debug  Check that the committed CSS is what Tailwind generates, then build the
+#                bundle into $WEBUI_DIST (default <checkout>/dist/webui): index.html,
+#                which the server reads only to find the module script (it is never
+#                served as a page), and assets/*.js|*.wasm. A stale CSS file stops the
+#                build; the server embeds that file, so refresh and commit it first.
 # css            Print the CSS Tailwind generates from the views to stdout (progress
 #                goes to stderr), changing nothing. Redirect it into
 #                src/webui/assets/tailwind.css to refresh the committed copy.
@@ -78,8 +79,8 @@ echo "== CSS"
 if [[ $(sha256sum <"$css_tmp") == "$(sha256sum <"$CSS")" ]]; then
     echo "$CSS is up to date"
 else
-    cp "$css_tmp" "$CSS"
-    echo "$CSS differed from what Tailwind generates and was rewritten here; refresh the committed copy"
+    echo "$CSS is stale; refresh it with: bash scripts/build-webui.sh css > $CSS" >&2
+    exit 1
 fi
 
 echo "== browser dependency graph"

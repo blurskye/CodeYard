@@ -1,29 +1,21 @@
 //! Organization repository discovery, paging, deletion scope and invitation consumption.
-use crate::support::{database::Database, fake_webui_bundle, pull_requests::Client};
+use crate::support::organizations::applied;
+use crate::support::{
+    database::{wait_until_blocked, Database},
+    fake_webui_bundle,
+    http_client::Client,
+};
 use axum::http::StatusCode;
 use codeyard::{
-    backend::{
-        api::create_router,
-        app::AppState,
-        ci::CiConfig,
-        db::{
-            self,
-            models::{OrgRole, Repository},
-            organizations::*,
-            repositories::creation::*,
-        },
-        storage::ObjectStore,
+    backend::db::{
+        self,
+        models::{OrgRole, Repository},
+        organizations::*,
+        repositories::creation::*,
     },
     webui::{app::Page, pages::discovery},
 };
-use std::sync::Arc;
 
-fn applied<T: std::fmt::Debug>(value: OrganizationOutcome<T>) -> T {
-    match value {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("{other:?}"),
-    }
-}
 async fn org(f: &Database, owner: i64, name: &str) -> i64 {
     applied(
         create_organization(
@@ -59,7 +51,7 @@ async fn repository(f: &Database, owner: i64, org: i64, name: &str) -> Repositor
 async fn discovery_and_deletion(pg: bool) {
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("org_owner").await;
     let member = f.actor("team_reader").await;
     let first_org = org(&f, owner, "first_org").await;
@@ -112,14 +104,7 @@ async fn discovery_and_deletion(pg: bool) {
         .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let owner_client = Client::login(&router, f.pool(), owner).await;
     let member_client = Client::login(&router, f.pool(), member).await;
     for (client, expected) in [(&owner_client, 31), (&member_client, 1)] {
@@ -373,9 +358,7 @@ async fn postgres_accept_and_decline_have_one_winner() {
             .await
             .unwrap(),
     );
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut gate = raw.begin().await.unwrap();
     let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *gate)
@@ -392,13 +375,7 @@ async fn postgres_accept_and_decline_have_one_winner() {
             .await
             .unwrap()
     });
-    tokio::time::timeout(std::time::Duration::from_secs(5),async {
-        loop {
-            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))").bind(blocker).fetch_one(raw).await.unwrap();
-            if waiting {break;}
-            tokio::task::yield_now().await;
-        }
-    }).await.unwrap();
+    wait_until_blocked(raw, blocker, 1).await;
     let pool = f.pool().clone();
     let decline = tokio::spawn(async move {
         decline_organization_invitation(&pool, member, organization)

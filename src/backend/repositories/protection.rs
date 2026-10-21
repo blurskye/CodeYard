@@ -21,19 +21,6 @@ pub const FORCE_PUSH_BLOCKED: &str = "Force pushes to this protected branch are 
 pub const MERGE_COMMIT_BLOCKED: &str =
     "Merge commits are not allowed on this protected branch, which requires a linear history.";
 
-/// The rule refusal whose text is `message`, if there is one. The cluster wire carries only the
-/// text of an error, so this lets a refusal read from another node keep its reason.
-pub fn refusal_text(message: &str) -> Option<&'static str> {
-    [
-        PULL_REQUEST_REQUIRED,
-        DELETION_BLOCKED,
-        PUSHER_NOT_ALLOWED,
-        FORCE_PUSH_BLOCKED,
-    ]
-    .into_iter()
-    .find(|text| *text == message)
-}
-
 /// Stands in for a tip whose sha the caller has not read or built yet, such as the editor's
 /// commit before it is prepared. The rules only ask whether a tip is there.
 pub const ANY_TIP: &str = "any-tip";

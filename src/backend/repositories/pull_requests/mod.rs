@@ -39,6 +39,14 @@ pub enum OperationError {
     Updated { number: i32 },
 }
 
+/// A storage failure, reported without the driver's own text.
+fn database_error<E>(_: E) -> OperationError {
+    OperationError::Unavailable {
+        code: "database_error",
+        message: "Collaboration storage is temporarily unavailable".into(),
+    }
+}
+
 pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
     db::users::accounts::get_user_by_id(pool, id)
         .await

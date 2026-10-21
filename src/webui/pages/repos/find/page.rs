@@ -7,9 +7,11 @@ use crate::webui::pages::repos::{
 use crate::webui::{components::count_label, navigation::NavLink};
 use dioxus::prelude::*;
 
-/// Most paths one listing shows. The backend cuts a larger tree to this many. The notice
-/// below names this number, so change both together.
+/// Most paths one listing carries. The backend cuts a larger tree to this many.
 pub const MAX_LISTED_FILES: usize = 10_000;
+
+/// Most matching rows the page draws. The reader narrows the query to reach the rest.
+const MAX_SHOWN_FILES: usize = 100;
 
 /// Every file path at a revision, sorted. `truncated` says the tree had more paths than were kept.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -20,8 +22,7 @@ pub struct FindPage {
     pub query: String,
 }
 
-/// Whether `path` matches `query`: every whitespace-separated term must appear in the path,
-/// ignoring case. An empty query matches every path.
+/// The whitespace-separated terms of a query: lowercased, deduplicated and cut to 256 characters.
 pub fn query_terms(query: &str) -> Vec<String> {
     let query: String = query.chars().take(256).collect();
     let mut terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
@@ -30,10 +31,7 @@ pub fn query_terms(query: &str) -> Vec<String> {
     terms
 }
 
-pub fn path_matches(path: &str, query: &str) -> bool {
-    matches_terms(path, &query_terms(query))
-}
-
+/// Whether every term appears in `path`, ignoring case. No terms match every path.
 fn matches_terms(path: &str, terms: &[String]) -> bool {
     let path = path.to_lowercase();
     terms.iter().all(|term| path.contains(term))
@@ -67,6 +65,16 @@ mod tests {
         assert_eq!(query_terms(&"a ".repeat(2000)), ["a"]);
         assert_eq!(query_terms(&"é".repeat(300))[0].chars().count(), 256);
         assert!(matches_terms("docs/AB", &query_terms("A b a")));
+    }
+
+    #[test]
+    fn path_filter_needs_every_term_and_ignores_case() {
+        let matches = |path: &str, query: &str| matches_terms(path, &query_terms(query));
+        assert!(matches("docs/Guide.md", ""));
+        assert!(matches("docs/Guide.md", "  guide   DOCS "));
+        assert!(matches("src/lib.rs", "lib.rs"));
+        assert!(!matches("docs/Guide.md", "guide readme"));
+        assert!(!matches("src/lib.rs", "lib.rs.bak"));
     }
 
     #[test]
@@ -116,7 +124,7 @@ fn FindFiles(base: String, page: FindPage) -> Element {
     let find_url = file_url(&base, "find", &page.reference, "");
     rsx! {
         form { class: "repo-find-form", method: "get", action: find_url, role: "search", "aria-label": "Go to file",
-            label { class: "repo-sr-only", "for": "repo-find-query", "Find a file by name" }
+            label { class: "sr-only", "for": "repo-find-query", "Find a file by name" }
             input { id: "repo-find-query", class: "repo-find-input", r#type: "search", name: "q", value: current.clone(), maxlength: "256", placeholder: "Go to file", autocomplete: "off",
                 oninput: move |event| filter.set(event.value()),
                 onmounted: move |event| {
@@ -147,15 +155,15 @@ fn FindFiles(base: String, page: FindPage) -> Element {
             }
         }
         p { class: "repo-find-summary", "{summary}" }
-        if page.truncated { p { class: "repo-find-notice", "Showing the first 10,000 files." } }
+        if page.truncated { p { class: "repo-find-notice", "Showing the first {MAX_LISTED_FILES} files." } }
         if matches.is_empty() {
             div { class: "repo-empty panel", {icon("search")} h3 { "No files match" } p { "Try part of the file name or the folder path." } }
         } else {
             div { class: "repo-file-browser border border-border rounded-md bg-card",
                 table { class: "repo-file-table repo-find-table w-full border-collapse text-sm",
-                    caption { class: "repo-sr-only", "Matching files" }
+                    caption { class: "sr-only", "Matching files" }
                     tbody {
-                        for (index, path) in matches.iter().enumerate() {
+                        for (index, path) in matches.iter().take(MAX_SHOWN_FILES).enumerate() {
                             tr { key: "{path}", class: if index == 0 && filtering { "repo-find-first" } else { "" },
                                 td { class: "repo-file-name",
                                     div { class: "repo-file-name-inner",
@@ -167,6 +175,9 @@ fn FindFiles(base: String, page: FindPage) -> Element {
                         }
                     }
                 }
+            }
+            if matches.len() > MAX_SHOWN_FILES {
+                p { class: "repo-find-notice", "Showing the first {MAX_SHOWN_FILES} matches. Type more of the name or folder to narrow the list." }
             }
         }
     }

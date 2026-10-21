@@ -3,11 +3,11 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::chrome::{self, resolve};
 use crate::backend::api::repos::code::contents::write_status;
-use crate::backend::api::repos::repository::{field, with_status};
+use crate::backend::api::repos::forms::{field, with_status};
 use crate::backend::app::AppState;
 use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
-    UploadFile, UploadWrite, MAX_UPLOAD_BYTES, MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES,
+    UploadFile, UploadWrite, MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use crate::webui::pages::repos as view;
 use crate::webui::pages::repos::ref_path::{compare_url, file_url};
@@ -25,12 +25,12 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 pub const ROUTE: &str = "/:owner/:repo/upload/*ref_path";
 /// The most a request may carry: every file plus room for the commit message and the
 /// multipart framing.
-pub const BODY_LIMIT: usize = MAX_UPLOAD_BYTES + 64 * 1024;
+pub const BODY_LIMIT: usize = MAX_UPLOAD_TOTAL_BYTES + 64 * 1024;
 /// Text fields are the commit message, its description and the form's own hidden fields.
 const MAX_FIELDS: usize = 9;
 const MAX_FIELD_BYTES: usize = 16 * 1024;
 /// How long an upload may take to arrive. Large files over a slow connection need minutes.
-const READ_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, PartialEq, Eq)]
 enum UploadFormError {
@@ -107,7 +107,7 @@ async fn read_parts(mut multipart: Multipart) -> Result<UploadParts, UploadFormE
                 if form.content.len() - start + chunk.len() > MAX_UPLOAD_FILE_BYTES {
                     return Err(UploadFormError::FileTooLarge);
                 }
-                if form.content.len() + chunk.len() > MAX_UPLOAD_BYTES {
+                if form.content.len() + chunk.len() > MAX_UPLOAD_TOTAL_BYTES {
                     return Err(UploadFormError::UploadTooLarge);
                 }
                 form.content.extend_from_slice(&chunk);

@@ -143,7 +143,7 @@ impl Broker {
         git_user: String,
         config: Option<crate::backend::ci::CiConfig>,
     ) -> Self {
-        let uid = private_files::effective_uid().unwrap();
+        let uid = private_files::effective_uid();
         let helper = PathBuf::from(
             std::env::var("GITSERV_TEST_OPENSSH_HELPER")
                 .expect("set GITSERV_TEST_OPENSSH_HELPER to the integrated application binary"),

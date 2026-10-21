@@ -1,8 +1,8 @@
 use super::{
-    fields::{choice, controls_as, field_value, hidden_controls, input, select},
+    fields::{controls_as, field_value, hidden_controls, input, select},
     Organization, Page,
 };
-use crate::webui::components::confirm_dialog;
+use crate::webui::components::{confirm_dialog, SelectOption};
 use dioxus::prelude::*;
 
 pub(super) fn suspension(org: &Organization) -> Element {
@@ -60,11 +60,11 @@ pub(super) fn deletion(page: &Page, target: &str) -> Element {
 
 /// Site administrators' recovery, a visible danger card. It appears only when an organization has no owner.
 pub(super) fn recovery(page: &Page) -> Element {
-    let options = std::iter::once(choice("", "Choose an organization"))
+    let options = std::iter::once(SelectOption::new("", "Choose an organization"))
         .chain(
             page.ownerless_organizations
                 .iter()
-                .map(|org| choice(&org.id.to_string(), &org.name)),
+                .map(|org| SelectOption::new(org.id.to_string(), &org.name)),
         )
         .collect();
     rsx! { if page.can_recover && !page.ownerless_organizations.is_empty() {

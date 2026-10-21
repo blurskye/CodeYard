@@ -1,5 +1,6 @@
 //! Original live-session and stale/forged wakeup projection contracts.
 use super::{db, Fixture};
+use crate::support::database::wait_until_blocked;
 use chrono::{Duration, Utc};
 use codeyard::backend::notifications::{current_event, NotificationEvent};
 
@@ -245,7 +246,7 @@ async fn contract(pg: bool) {
             .is_err(),
         "database outage never forwards a cached hint"
     );
-    f.close().await;
+    f.finish().await;
 }
 
 async fn canonical_links(pg: bool) {
@@ -342,7 +343,7 @@ async fn canonical_links(pg: bool) {
     .unwrap()
     .unwrap();
     assert!(projection.notification.is_none());
-    f.close().await;
+    f.finish().await;
 }
 
 #[tokio::test]
@@ -379,10 +380,8 @@ async fn postgres_delivery_waits_for_recipient_row_and_observes_session_revocati
     )
     .await
     .unwrap();
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
-    let mut revoker = f.raw.begin().await.unwrap();
+    let raw = fixture.pg();
+    let mut revoker = raw.begin().await.unwrap();
     let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *revoker)
         .await
@@ -393,19 +392,13 @@ async fn postgres_delivery_waits_for_recipient_row_and_observes_session_revocati
         .fetch_one(&mut *revoker)
         .await
         .unwrap();
-    let pool = f.pool.clone();
+    let pool = fixture.pool().clone();
     let original = session.clone();
     let task = tokio::spawn(async move {
         current_event(&pool, &original, recipient, &hint(recipient, notice)).await
     });
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            assert!(!task.is_finished());
-            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))").bind(blocker).fetch_one(&f.raw).await.unwrap();
-            if waiting { break; }
-            tokio::task::yield_now().await;
-        }
-    }).await.unwrap();
+    wait_until_blocked(raw, blocker, 1).await;
+    assert!(!task.is_finished());
     sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR UPDATE NOWAIT")
         .bind(&session)
         .fetch_one(&mut *revoker)
@@ -424,5 +417,5 @@ async fn postgres_delivery_waits_for_recipient_row_and_observes_session_revocati
             .unwrap()
             .is_err()
     );
-    fixture.close().await;
+    fixture.finish().await;
 }

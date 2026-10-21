@@ -1,5 +1,5 @@
 //! Dispatch form limits and reruns retain the same workflow inputs and files.
-use crate::support::{database::Database, fake_webui_bundle as bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
 use base64::Engine;
 use codeyard::backend::{

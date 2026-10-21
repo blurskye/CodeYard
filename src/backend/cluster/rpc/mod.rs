@@ -214,8 +214,8 @@ impl ProtocolHandler for RpcHandler {
         // Each stream the peer opens is one request, answered in turn.
         while let Some(link) = transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
-                tracing::debug!(%error, "repository RPC failed");
-                connection.close(413u32.into(), b"invalid or oversized RPC frame");
+                tracing::warn!(%error, "repository RPC failed");
+                connection.close(500u32.into(), b"RPC request failed");
                 break;
             }
         }

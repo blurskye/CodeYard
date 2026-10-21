@@ -4,6 +4,7 @@ use super::{
     ActionsPage,
 };
 use crate::webui::{
+    components::{relative_time, short_sha},
     encode_component,
     navigation::{NavLink, RefreshLink},
 };
@@ -83,7 +84,7 @@ pub(super) fn run_duration(run: &Run) -> String {
         (Some(start), Some(end)) => logs::duration(end - start),
         _ => match (logs::normalize_status(&run.status), run.started_at) {
             ("queued", _) => "Waiting for a runner".into(),
-            ("running", Some(start)) => format!("Started {}", logs::relative_time(start)),
+            ("running", Some(start)) => format!("Started {}", relative_time(start)),
             _ => "Not recorded".into(),
         },
     }
@@ -112,9 +113,9 @@ pub(super) fn workflow_file_url(model: &ActionsPage, run: &Run) -> Option<String
 fn commit_link(model: &ActionsPage, sha: &str) -> Element {
     match repository_base(&model.base_path) {
         Some(base) => rsx! {
-            NavLink { class: "actions-history-link", href: format!("{base}/commit/{}", encode_component(sha)), code { title: sha.to_owned(), "{short_id(sha, 7)}" } }
+            NavLink { class: "actions-history-link", href: format!("{base}/commit/{}", encode_component(sha)), code { title: sha.to_owned(), "{short_sha(sha)}" } }
         },
-        None => rsx! { code { title: sha.to_owned(), "{short_id(sha, 7)}" } },
+        None => rsx! { code { title: sha.to_owned(), "{short_sha(sha)}" } },
     }
 }
 
@@ -123,7 +124,7 @@ fn commit_link(model: &ActionsPage, sha: &str) -> Element {
 fn run_form(model: &ActionsPage, run_id: &str, action: &str, label: &str) -> Element {
     rsx! {
         form { method: "post", action: format!("{}/runs/{run_id}/{action}", model.base_path), class: "actions-run-form",
-            {crate::webui::pages::repos::issues::csrf(&model.csrf_token)}
+            {crate::webui::pages::repos::chrome::csrf(&model.csrf_token)}
             button { r#type: "submit", class: "actions-button", "{label}" }
         }
     }
@@ -166,7 +167,7 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
             div { class: "actions-run-heading-row",
                 h1 { "{display_workflow(model, run)}"
                     span { class: "actions-run-number", title: run.id.clone(), " #{short_id(&run.id, 8)}" }
-                    span { class: "actions-sr-only", "Run ID {run.id}" }
+                    span { class: "sr-only", "Run ID {run.id}" }
                 }
                 div { class: "actions-run-heading-actions",
                     if model.can_cancel && cancellable { {run_form(model, &run.id, "cancel", "Cancel run")} }
@@ -223,7 +224,7 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                     section { class: "actions-summary-card", id: "run-summary", "aria-label": "Run summary",
                         dl { class: "actions-summary-grid",
                             div { dt { "Triggered" } dd { "via {run.event}" }
-                                dd { class: "actions-summary-secondary", span { title: logs::timestamp(run.created_at), "{logs::relative_time(run.created_at)}" } }
+                                dd { class: "actions-summary-secondary", span { title: logs::timestamp(run.created_at), "{relative_time(run.created_at)}" } }
                             }
                             div { dt { "Status" } dd { {status_chip(&run.status)} } }
                             div { dt { "Total duration" } dd { "{run_duration(run)}" } }

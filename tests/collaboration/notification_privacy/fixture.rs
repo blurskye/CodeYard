@@ -1,76 +1,9 @@
-use super::{db, native, production};
+use super::db;
 use serde_json::{json, Value};
 
-pub enum Fixture {
-    Postgres(Box<production::Fixture>),
-    Sqlite(native::NativeDatabase),
-}
+pub use crate::support::database::Database as Fixture;
 
 impl Fixture {
-    pub async fn new(pg: bool) -> Self {
-        if pg {
-            Self::Postgres(Box::new(production::Fixture::new().await))
-        } else {
-            Self::Sqlite(native::NativeDatabase::new().await)
-        }
-    }
-    pub fn pool(&self) -> &db::DbPool {
-        match self {
-            Self::Postgres(f) => &f.pool,
-            Self::Sqlite(f) => &f.pool,
-        }
-    }
-    pub async fn execute(&self, sql: &str, ids: &[i64]) {
-        match self {
-            Self::Postgres(f) => {
-                let mut query = sqlx::query(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .execute(&f.raw)
-                    .await
-                    .expect("owned PG fixture mutation");
-            }
-            Self::Sqlite(f) => {
-                let mut query = sqlx::query(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .execute(&f.raw)
-                    .await
-                    .expect("owned SQLite fixture mutation");
-            }
-        }
-    }
-    pub async fn scalar(&self, sql: &str, ids: &[i64]) -> i64 {
-        match self {
-            Self::Postgres(f) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query.fetch_one(&f.raw).await.expect("owned PG fixture row")
-            }
-            Self::Sqlite(f) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .fetch_one(&f.raw)
-                    .await
-                    .expect("owned SQLite fixture row")
-            }
-        }
-    }
-    pub async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(self.pool(), name, None)
-            .await
-            .unwrap()
-            .id
-    }
     pub async fn repo(&self, owner: i64, org: Option<i64>, name: &str) -> i64 {
         let repo = db::repositories::records::create_repository(
             self.pool(),
@@ -255,16 +188,6 @@ impl Fixture {
                     .expect("verify reopened PostgreSQL history");
             }
             Self::Sqlite(f) => f.reopen().await,
-        }
-    }
-    pub async fn close(&mut self) {
-        match self {
-            Self::Postgres(f) => {
-                f.pool.close().await;
-                f.raw.close().await;
-                f.finish().await;
-            }
-            Self::Sqlite(f) => f.close().await,
         }
     }
 }

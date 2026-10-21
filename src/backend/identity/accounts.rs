@@ -44,7 +44,7 @@ pub async fn change_password(
         .await
         .map_err(PasswordChangeError::Authority)?;
     validate_new_password(input.new_password).map_err(PasswordChangeError::Input)?;
-    admission::admit_login(pool, Some(user.id), &user.username)
+    let attempt = admission::admit_login(pool, None, Some(user.id), &user.username)
         .await
         .map_err(PasswordChangeError::Admission)?;
     if !passwords::verify_password(input.current_password, user.password_hash.as_deref())
@@ -54,6 +54,7 @@ pub async fn change_password(
     {
         return Err(PasswordChangeError::InvalidCredentials);
     }
+    admission::forgive_login(pool, &attempt).await;
     if user.must_change_password && input.current_password == input.new_password {
         return Err(PasswordChangeError::UnchangedPassword);
     }
@@ -84,7 +85,8 @@ pub enum EmailChangeError {
 }
 
 /// Changes the account's address after the current password is checked. The new address
-/// is trimmed and must look like `name@host`; the password check shares the login limiter.
+/// is trimmed and must look like `name@host`; a wrong password counts against the account's
+/// login budget.
 pub async fn change_email(
     pool: &DbPool,
     session_id: Option<&str>,
@@ -101,7 +103,7 @@ pub async fn change_email(
     if !well_formed || validate_email(email).is_err() {
         return Err(EmailChangeError::InvalidEmail);
     }
-    admission::admit_login(pool, Some(user.id), &user.username)
+    let attempt = admission::admit_login(pool, None, Some(user.id), &user.username)
         .await
         .map_err(EmailChangeError::Admission)?;
     if !passwords::verify_password(current_password, user.password_hash.as_deref())
@@ -111,6 +113,7 @@ pub async fn change_email(
     {
         return Err(EmailChangeError::InvalidCredentials);
     }
+    admission::forgive_login(pool, &attempt).await;
     match transitions::change_email(
         pool,
         user.id,
@@ -134,7 +137,6 @@ pub enum ManagedAccountError {
     Authority(AccountAuthorityError),
     PrivateNodeRequired,
     Input(AccountInputError),
-    Admission(AdmissionError),
     Password(PasswordError),
     AccountUnavailable,
     Conflict,
@@ -162,9 +164,6 @@ pub async fn create_managed_account(
     }
     validate_account(&input).map_err(ManagedAccountError::Input)?;
     validate_new_account_name(input.username).map_err(ManagedAccountError::Input)?;
-    admission::admit_login(pool, Some(admin.id), &admin.username)
-        .await
-        .map_err(ManagedAccountError::Admission)?;
     let hash = passwords::hash_password(input.password)
         .await
         .map_err(ManagedAccountError::Password)?;

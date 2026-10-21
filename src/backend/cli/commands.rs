@@ -130,6 +130,7 @@ pub async fn add_key_cmd(
     key_name: &str,
     public_key: &str,
 ) -> Result<()> {
+    crate::backend::identity::keys::validate_name(key_name)?;
     let user = db::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;

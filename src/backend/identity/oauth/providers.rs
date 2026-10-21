@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-/// The providers the original supports (`OAuthProviderType`).
+/// The providers that can sign a user in.
 pub const PROVIDERS: [&str; 5] = ["github", "google", "gitlab", "discord", "bitbucket"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub struct ProviderMeta {
     pub scopes: &'static str,
 }
 
-/// `PROVIDER_META` from the Node redirect route.
+/// Endpoints and scopes for a provider; `None` for an unknown one.
 pub fn provider_meta(provider: &str) -> Option<ProviderMeta> {
     if !PROVIDERS.contains(&provider) {
         return None;
@@ -27,13 +27,13 @@ pub fn provider_meta(provider: &str) -> Option<ProviderMeta> {
             auth_url: "https://github.com/login/oauth/authorize",
             token_url: "https://github.com/login/oauth/access_token",
             user_info_url: "https://api.github.com/user",
-            scopes: "read:user user:email",
+            scopes: "read:user",
         },
         "google" => ProviderMeta {
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
             user_info_url: "https://www.googleapis.com/oauth2/v2/userinfo",
-            scopes: "openid email profile",
+            scopes: "openid profile",
         },
         "gitlab" => ProviderMeta {
             auth_url: "https://gitlab.com/oauth/authorize",
@@ -45,7 +45,7 @@ pub fn provider_meta(provider: &str) -> Option<ProviderMeta> {
             auth_url: "https://discord.com/api/oauth2/authorize",
             token_url: "https://discord.com/api/oauth2/token",
             user_info_url: "https://discord.com/api/users/@me",
-            scopes: "identify email",
+            scopes: "identify",
         },
         "bitbucket" => ProviderMeta {
             auth_url: "https://bitbucket.org/site/oauth2/authorize",
@@ -67,7 +67,7 @@ pub fn credential_env_keys(provider: &str) -> (String, String) {
     )
 }
 
-/// `getProviderCredentials` — both values must be present and non-empty.
+/// The client id and secret from the environment; both must be set and non-empty.
 pub fn provider_credentials(provider: &str) -> Option<(String, String)> {
     let (id_key, secret_key) = credential_env_keys(provider);
     let read = |key: &str| {
@@ -78,7 +78,7 @@ pub fn provider_credentials(provider: &str) -> Option<(String, String)> {
     Some((read(&id_key)?, read(&secret_key)?))
 }
 
-/// RFC 3986 unreserved-only percent encoding (see the deviation note).
+/// Percent encoding that leaves only RFC 3986 unreserved characters as they are.
 fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.as_bytes() {
@@ -109,7 +109,7 @@ pub fn authorize_url(
     )
 }
 
-/// `createOAuthSession`'s username derivation: lowercase, keep `[a-z0-9_-]`,
+/// A username from the provider's display name: lowercase, keep `[a-z0-9_-]`,
 /// falling back to `user_<first 8 chars of the provider id>`.
 pub fn username_from_profile(name: Option<&str>, provider_user_id: &str) -> String {
     let derived: String = name
@@ -137,9 +137,7 @@ pub fn username_from_profile(name: Option<&str>, provider_user_id: &str) -> Stri
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OAuthProfile {
     pub provider_user_id: String,
-    pub email: Option<String>,
     pub name: Option<String>,
-    pub avatar_url: Option<String>,
 }
 
 fn as_id(value: Option<&Value>) -> Option<String> {
@@ -154,58 +152,26 @@ fn as_optional_string(value: Option<&Value>) -> Option<String> {
     value?.as_str().map(|text| text.to_string())
 }
 
-/// `fetchUserInfo`'s per-provider mapping.
+/// The account id and display name from a provider's user-info response. The email is never
+/// read: accounts are linked by provider id only.
 pub fn profile_from_user_info(provider: &str, data: &Value) -> Option<OAuthProfile> {
-    match provider {
-        "github" => Some(OAuthProfile {
-            provider_user_id: as_id(data.get("id"))?,
-            email: as_optional_string(data.get("email")),
-            name: as_optional_string(data.get("name"))
-                .or_else(|| as_optional_string(data.get("login"))),
-            avatar_url: as_optional_string(data.get("avatar_url")),
-        }),
-        "google" => Some(OAuthProfile {
-            provider_user_id: as_id(data.get("id"))?,
-            email: as_optional_string(data.get("email")),
-            name: as_optional_string(data.get("name")),
-            avatar_url: as_optional_string(data.get("picture")),
-        }),
-        "gitlab" => Some(OAuthProfile {
-            provider_user_id: as_id(data.get("id"))?,
-            email: as_optional_string(data.get("email")),
-            name: as_optional_string(data.get("name"))
-                .or_else(|| as_optional_string(data.get("username"))),
-            avatar_url: as_optional_string(data.get("avatar_url")),
-        }),
-        "discord" => {
-            let id = as_id(data.get("id"))?;
-            let avatar = as_optional_string(data.get("avatar"))
-                .map(|hash| format!("https://cdn.discordapp.com/avatars/{id}/{hash}.png"));
-            Some(OAuthProfile {
-                email: as_optional_string(data.get("email")),
-                name: as_optional_string(data.get("global_name"))
-                    .or_else(|| as_optional_string(data.get("username"))),
-                avatar_url: avatar,
-                provider_user_id: id,
-            })
-        }
-        "bitbucket" => Some(OAuthProfile {
-            provider_user_id: as_id(data.get("uuid"))?,
-            // Bitbucket's profile endpoint carries no email.
-            email: None,
-            name: as_optional_string(data.get("display_name")),
-            avatar_url: data
-                .get("links")
-                .and_then(|links| links.get("avatar"))
-                .and_then(|avatar| avatar.get("href"))
-                .and_then(|href| href.as_str())
-                .map(|text| text.to_string()),
-        }),
-        _ => None,
-    }
+    let (id_field, name_fields): (&str, &[&str]) = match provider {
+        "github" => ("id", &["name", "login"]),
+        "google" => ("id", &["name"]),
+        "gitlab" => ("id", &["name", "username"]),
+        "discord" => ("id", &["global_name", "username"]),
+        "bitbucket" => ("uuid", &["display_name"]),
+        _ => return None,
+    };
+    Some(OAuthProfile {
+        provider_user_id: as_id(data.get(id_field))?,
+        name: name_fields
+            .iter()
+            .find_map(|field| as_optional_string(data.get(*field))),
+    })
 }
 
-/// No request header determines a callback origin. HTTP is permitted only on loopback fixtures.
+/// Only these providers take a PKCE code challenge.
 pub(crate) fn supports_pkce(provider: &str) -> bool {
     matches!(provider, "github" | "google" | "gitlab")
 }
@@ -350,7 +316,7 @@ mod tests {
     };
 
     #[test]
-    fn provider_metadata_covers_every_original_provider() {
+    fn provider_metadata_covers_every_provider() {
         for provider in PROVIDERS {
             let meta = provider_meta(provider).expect("known provider");
             assert!(meta.auth_url.starts_with("https://"));
@@ -383,9 +349,9 @@ mod tests {
             "state-1",
         );
         assert!(url.starts_with("https://github.com/login/oauth/authorize?"));
-        // space -> %20 (see the deviation note), colon/slash encoded too
+        // A space becomes %20; colon and slash are encoded too.
         assert!(url.contains("client_id=client%20id"));
-        assert!(url.contains("scope=read%3Auser%20user%3Aemail"));
+        assert!(url.contains("scope=read%3Auser"));
         assert!(url.contains(
             "redirect_uri=https%3A%2F%2Fgit.example%2Fapi%2Fauth%2Foauth%2Fgithub%2Fcallback"
         ));
@@ -394,7 +360,7 @@ mod tests {
     }
 
     #[test]
-    fn usernames_match_the_original_derivation() {
+    fn usernames_keep_only_safe_characters() {
         assert_eq!(
             username_from_profile(Some("Ada Lovelace"), "42"),
             "adalovelace"
@@ -405,7 +371,7 @@ mod tests {
             "user_12345678"
         );
         assert_eq!(username_from_profile(None, "abcdefghij"), "user_abcdefgh");
-        // Non-ASCII letters are stripped, as the JS class is a-z only.
+        // Non-ASCII letters are stripped.
         assert_eq!(username_from_profile(Some("Ünïcode"), "1"), "ncode");
         // A name that is a page of the site gets a suffix.
         assert_eq!(username_from_profile(Some("Admin"), "1"), "admin_user");
@@ -413,18 +379,10 @@ mod tests {
 
     #[test]
     fn profiles_map_per_provider() {
-        let github: Value = serde_json::json!({
-            "id": 7, "email": "a@b.c", "name": null, "login": "octocat",
-            "avatar_url": "https://avatars.example/x.png"
-        });
+        let github: Value = serde_json::json!({ "id": 7, "name": null, "login": "octocat" });
         let profile = profile_from_user_info("github", &github).unwrap();
         assert_eq!(profile.provider_user_id, "7");
         assert_eq!(profile.name.as_deref(), Some("octocat"));
-        assert_eq!(profile.email.as_deref(), Some("a@b.c"));
-        assert_eq!(
-            profile.avatar_url.as_deref(),
-            Some("https://avatars.example/x.png")
-        );
 
         let discord: Value = serde_json::json!({
             "id": "99", "global_name": null, "username": "ada", "avatar": "hash"
@@ -432,27 +390,13 @@ mod tests {
         let profile = profile_from_user_info("discord", &discord).unwrap();
         assert_eq!(profile.provider_user_id, "99");
         assert_eq!(profile.name.as_deref(), Some("ada"));
-        assert_eq!(
-            profile.avatar_url.as_deref(),
-            Some("https://cdn.discordapp.com/avatars/99/hash.png")
-        );
-        assert_eq!(profile.email, None);
 
-        let bitbucket: Value = serde_json::json!({
-            "uuid": "{abc}", "display_name": "Ada",
-            "links": { "avatar": { "href": "https://bb.example/a.png" } }
-        });
+        let bitbucket: Value = serde_json::json!({ "uuid": "{abc}", "display_name": "Ada" });
         let profile = profile_from_user_info("bitbucket", &bitbucket).unwrap();
         assert_eq!(profile.provider_user_id, "{abc}");
-        assert_eq!(profile.email, None);
-        assert_eq!(
-            profile.avatar_url.as_deref(),
-            Some("https://bb.example/a.png")
-        );
+        assert_eq!(profile.name.as_deref(), Some("Ada"));
 
-        let google: Value = serde_json::json!({
-            "id": "g-1", "email": "g@x.y", "name": "G", "picture": "https://p.example/g.png"
-        });
+        let google: Value = serde_json::json!({ "id": "g-1", "name": "G" });
         assert_eq!(
             profile_from_user_info("google", &google)
                 .unwrap()
@@ -460,10 +404,7 @@ mod tests {
             "g-1"
         );
 
-        let gitlab: Value = serde_json::json!({
-            "id": 5, "email": "gl@x.y", "name": null, "username": "gl",
-            "avatar_url": null
-        });
+        let gitlab: Value = serde_json::json!({ "id": 5, "name": null, "username": "gl" });
         let profile = profile_from_user_info("gitlab", &gitlab).unwrap();
         assert_eq!(profile.provider_user_id, "5");
         assert_eq!(profile.name.as_deref(), Some("gl"));

@@ -8,12 +8,12 @@ use super::{
 use crate::webui::{
     components::{
         compact_date, confirm_dialog, count_label, current_time, references::References,
-        relative_date, Avatar, Markdown,
+        relative_date, short_sha, Avatar, Markdown,
     },
     encode_component,
     navigation::NavLink,
     pages::repos::pulls::review::{self, Entry, Reviewer},
-    pages::repos::{self, ref_path::file_url},
+    pages::repos::{self, chrome::csrf, ref_path::file_url},
 };
 use dioxus::prelude::*;
 
@@ -42,9 +42,6 @@ pub struct DetailDraft {
 
 pub(in crate::webui::pages::repos) fn notice(error: Option<&str>) -> Element {
     rsx! { if let Some(error) = error { p { role: "alert", class: "collaboration-notice", "{error}" } } }
-}
-pub(in crate::webui::pages::repos) fn csrf(token: &str) -> Element {
-    rsx! { input { r#type: "hidden", name: "csrf_token", value: token } }
 }
 /// One label chip. Lists, the sidebar and the labels page all show a label this way.
 pub(in crate::webui::pages::repos) fn label_chip(label: &Label) -> Element {
@@ -238,11 +235,11 @@ pub(in crate::webui::pages::repos) fn pull_tabs(
             "collaboration-detail-tab"
         }
     };
-    let tab_current = |tab: PullTab| if tab == active { "page" } else { "false" };
-    // A count at the listing limit has more commits behind it, so it reads "100+".
+    let tab_current = |tab: PullTab| (tab == active).then(|| "page".to_owned());
+    // The count runs one past the listing limit when there are more commits, so it reads "100+".
     let commits = item.commit_count.map(|count| {
-        if count as usize >= repos::pulls::MAX_LISTED_COMMITS {
-            format!("{count}+")
+        if count as usize > repos::pulls::MAX_LISTED_COMMITS {
+            format!("{}+", repos::pulls::MAX_LISTED_COMMITS)
         } else {
             count.to_string()
         }
@@ -252,22 +249,22 @@ pub(in crate::webui::pages::repos) fn pull_tabs(
     rsx! {
         div { class: "collaboration-detail-tab-bar",
             nav { class: "collaboration-detail-tabs", aria_label: "Pull request",
-                NavLink { class: tab_class(PullTab::Conversation), href: url.to_owned(),
-                    span { aria_current: tab_current(PullTab::Conversation), "Conversation" }
+                NavLink { class: tab_class(PullTab::Conversation), href: url.to_owned(), aria_current: tab_current(PullTab::Conversation),
+                    "Conversation"
                     span { class: "collaboration-tab-count", "{item.comment_count}" }
                 }
                 div { class: "collaboration-detail-tabs-secondary",
-                    NavLink { class: tab_class(PullTab::Commits), href: format!("{url}/commits"),
-                        span { aria_current: tab_current(PullTab::Commits), "Commits" }
+                    NavLink { class: tab_class(PullTab::Commits), href: format!("{url}/commits"), aria_current: tab_current(PullTab::Commits),
+                        "Commits"
                         if let Some(count) = &commits { span { class: "collaboration-tab-count", "{count}" } }
                     }
-                    NavLink { class: tab_class(PullTab::Checks), href: format!("{url}/checks"),
-                        span { aria_current: tab_current(PullTab::Checks), "Checks" }
+                    NavLink { class: tab_class(PullTab::Checks), href: format!("{url}/checks"), aria_current: tab_current(PullTab::Checks),
+                        "Checks"
                         span { class: "collaboration-tab-count", "{item.check_count}" }
                     }
                 }
-                NavLink { class: tab_class(PullTab::Files), href: format!("{url}/diff"),
-                    span { aria_current: tab_current(PullTab::Files), "Files changed" }
+                NavLink { class: tab_class(PullTab::Files), href: format!("{url}/diff"), aria_current: tab_current(PullTab::Files),
+                    "Files changed"
                     if let Some(count) = item.file_count { span { class: "collaboration-tab-count", "{count}" } }
                 }
             }
@@ -357,6 +354,29 @@ pub(in crate::webui::pages::repos) fn picker_heading(
     }
 }
 
+/// One option of a sidebar picker: a form with one button that posts to `action`. `hidden` is the
+/// field that names the option. A chosen option is pressed and shows a check mark.
+pub(in crate::webui::pages::repos) fn picker_option(
+    action: String,
+    csrf_token: &str,
+    hidden: Option<(&str, String)>,
+    pressed: bool,
+    content: Element,
+) -> Element {
+    rsx! {
+        form { method: "post", action, class: "collaboration-picker-form",
+            {csrf(csrf_token)}
+            if let Some((name, value)) = hidden {
+                input { r#type: "hidden", name, value }
+            }
+            button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: if pressed { "true" } else { "false" },
+                span { class: "collaboration-picker-check", aria_hidden: "true", if pressed { "✓" } }
+                {content}
+            }
+        }
+    }
+}
+
 /// The text typed in a picker's filter box. Each option reads it to show or hide itself.
 #[derive(Clone, Copy)]
 struct PickerFilter(Signal<String>);
@@ -409,10 +429,16 @@ pub(in crate::webui::pages::repos) fn PickerRow(
 
 /// Assignees: the names, and for a writer a picker. `assignable` holds the users who may be
 /// assigned; the picker lists them with the current assignees, so the viewer needs no other control.
-fn assignees_panel(repo: &Repository, url: &str, item: &Item, assignable: &[String]) -> Element {
+fn assignees_panel(
+    repo: &Repository,
+    url: &str,
+    item: &Item,
+    kind: Kind,
+    assignable: &[String],
+) -> Element {
     let menu = repo
         .can_write
-        .then(|| assignee_options(repo, url, item, assignable));
+        .then(|| assignee_options(repo, url, item, kind, assignable));
     rsx! {
         section { class: "collaboration-sidebar-section",
             {picker_heading("Assignees", menu)}
@@ -428,7 +454,13 @@ fn assignees_panel(repo: &Repository, url: &str, item: &Item, assignable: &[Stri
 
 /// The assignee picker. A click on a current assignee removes it, and a click on anyone else adds
 /// them.
-fn assignee_options(repo: &Repository, url: &str, item: &Item, assignable: &[String]) -> Element {
+fn assignee_options(
+    repo: &Repository,
+    url: &str,
+    item: &Item,
+    kind: Kind,
+    assignable: &[String],
+) -> Element {
     let addable: Vec<&String> = assignable
         .iter()
         .filter(|name| !item.assignees.contains(*name))
@@ -437,7 +469,7 @@ fn assignee_options(repo: &Repository, url: &str, item: &Item, assignable: &[Str
     let viewer = repo.viewer.as_str();
     let self_assign = !viewer.is_empty() && addable.iter().any(|name| name.as_str() == viewer);
     rsx! {
-        PickerPopover { title: "Assign people to this issue",
+        PickerPopover { title: format!("Assign people to this {}", kind.singular()),
             if self_assign {
                 form { method: "post", action: format!("{url}/assignees"), class: "collaboration-picker-form",
                     {csrf(&repo.csrf)}
@@ -449,27 +481,24 @@ fn assignee_options(repo: &Repository, url: &str, item: &Item, assignable: &[Str
             ul { class: "collaboration-picker-list",
                 for name in &item.assignees {
                     PickerRow { key: "{name}", text: name.clone(),
-                        form { method: "post", action: format!("{url}/assignees/{}/remove", encode_component(name)), class: "collaboration-picker-form",
-                            {csrf(&repo.csrf)}
-                            button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: "true",
-                                span { class: "collaboration-picker-check", aria_hidden: "true", "✓" }
-                                Avatar { name: name.clone(), size: 20 }
-                                "{name}"
-                            }
-                        }
+                        {picker_option(
+                            format!("{url}/assignees/{}/remove", encode_component(name)),
+                            &repo.csrf,
+                            None,
+                            true,
+                            rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
+                        )}
                     }
                 }
                 for name in addable {
                     PickerRow { key: "{name}", text: name.clone(),
-                        form { method: "post", action: format!("{url}/assignees"), class: "collaboration-picker-form",
-                            {csrf(&repo.csrf)}
-                            input { r#type: "hidden", name: "username", value: name.clone() }
-                            button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: "false",
-                                span { class: "collaboration-picker-check", aria_hidden: "true" }
-                                Avatar { name: name.clone(), size: 20 }
-                                "{name}"
-                            }
-                        }
+                        {picker_option(
+                            format!("{url}/assignees"),
+                            &repo.csrf,
+                            Some(("username", name.clone())),
+                            false,
+                            rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
+                        )}
                     }
                 }
             }
@@ -479,10 +508,16 @@ fn assignee_options(repo: &Repository, url: &str, item: &Item, assignable: &[Str
 
 /// Labels: the chips, and for an administrator a picker over every label of the repository. A
 /// click adds a label, or removes it when the item already has it.
-fn labels_panel(repo: &Repository, url: &str, item: &Item, available_labels: &[Label]) -> Element {
+fn labels_panel(
+    repo: &Repository,
+    url: &str,
+    item: &Item,
+    kind: Kind,
+    available_labels: &[Label],
+) -> Element {
     let menu = repo
         .can_admin
-        .then(|| label_options(repo, url, item, available_labels));
+        .then(|| label_options(repo, url, item, kind, available_labels));
     rsx! {
         section { class: "collaboration-sidebar-section",
             {picker_heading("Labels", menu)}
@@ -493,30 +528,35 @@ fn labels_panel(repo: &Repository, url: &str, item: &Item, available_labels: &[L
 }
 
 /// The label picker, with a link to the labels page where labels are created and changed.
-fn label_options(repo: &Repository, url: &str, item: &Item, available_labels: &[Label]) -> Element {
+fn label_options(
+    repo: &Repository,
+    url: &str,
+    item: &Item,
+    kind: Kind,
+    available_labels: &[Label],
+) -> Element {
     rsx! {
-        PickerPopover { title: "Apply labels to this issue",
+        PickerPopover { title: format!("Apply labels to this {}", kind.singular()),
             if available_labels.is_empty() { p { class: "collaboration-muted", "No labels yet." } }
             ul { class: "collaboration-picker-list",
                 for label in available_labels {
                     PickerRow { key: "{label.id}", text: label.name.clone(),
                         if item.labels.iter().any(|applied| applied.id == label.id) {
-                            form { method: "post", action: format!("{url}/labels/{}/remove", label.id), class: "collaboration-picker-form",
-                                {csrf(&repo.csrf)}
-                                button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: "true",
-                                    span { class: "collaboration-picker-check", aria_hidden: "true", "✓" }
-                                    {label_option_text(label)}
-                                }
-                            }
+                            {picker_option(
+                                format!("{url}/labels/{}/remove", label.id),
+                                &repo.csrf,
+                                None,
+                                true,
+                                label_option_text(label),
+                            )}
                         } else {
-                            form { method: "post", action: format!("{url}/labels"), class: "collaboration-picker-form",
-                                {csrf(&repo.csrf)}
-                                input { r#type: "hidden", name: "label", value: label.id.to_string() }
-                                button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: "false",
-                                    span { class: "collaboration-picker-check", aria_hidden: "true" }
-                                    {label_option_text(label)}
-                                }
-                            }
+                            {picker_option(
+                                format!("{url}/labels"),
+                                &repo.csrf,
+                                Some(("label", label.id.to_string())),
+                                false,
+                                label_option_text(label),
+                            )}
                         }
                     }
                 }
@@ -553,25 +593,23 @@ fn milestone_options(
         PickerPopover { title: "Set milestone",
             ul { class: "collaboration-picker-list",
                 PickerRow { text: "No milestone".to_owned(),
-                    form { method: "post", action: format!("{url}/milestone"), class: "collaboration-picker-form",
-                        {csrf(&repo.csrf)}
-                        input { r#type: "hidden", name: "milestone_number", value: "" }
-                        button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: if current.is_none() { "true" } else { "false" },
-                            span { class: "collaboration-picker-check", aria_hidden: "true", if current.is_none() { "✓" } }
-                            "No milestone"
-                        }
-                    }
+                    {picker_option(
+                        format!("{url}/milestone"),
+                        &repo.csrf,
+                        Some(("milestone_number", String::new())),
+                        current.is_none(),
+                        rsx! { "No milestone" },
+                    )}
                 }
                 for milestone in milestones {
                     PickerRow { key: "{milestone.number}", text: milestone.title.clone(),
-                        form { method: "post", action: format!("{url}/milestone"), class: "collaboration-picker-form",
-                            {csrf(&repo.csrf)}
-                            input { r#type: "hidden", name: "milestone_number", value: milestone.number.to_string() }
-                            button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: if current == Some(milestone.number) { "true" } else { "false" },
-                                span { class: "collaboration-picker-check", aria_hidden: "true", if current == Some(milestone.number) { "✓" } }
-                                "{milestone.title}"
-                            }
-                        }
+                        {picker_option(
+                            format!("{url}/milestone"),
+                            &repo.csrf,
+                            Some(("milestone_number", milestone.number.to_string())),
+                            current == Some(milestone.number),
+                            rsx! { "{milestone.title}" },
+                        )}
                     }
                 }
             }
@@ -748,7 +786,7 @@ pub(in crate::webui::pages::repos) fn comment_entry(
     comment: &Comment,
     references: &References,
 ) -> Element {
-    // A writer or the author ticks the task boxes of a comment through its own form.
+    // The author of an open item ticks the task boxes of their comment through its own form.
     let task_form = (comment.can_edit && comment.conversation.is_none())
         .then(|| format!("task-comment-{}", comment.id));
     let article = rsx! {
@@ -807,7 +845,7 @@ fn merge_box(
                 .map_or(compare.base.as_str(), |event| event.detail.as_str());
             if let Some(sha) = compare.merged_commit.as_deref() {
                 let commit_url = format!("{}/commit/{}", repo.url(), encode_component(sha));
-                let short = sha.get(..7).unwrap_or(sha);
+                let short = short_sha(sha);
                 return rsx! { p { class: "collaboration-state-banner", "This pull request was merged into {destination} as " NavLink { class: "collaboration-merge-sha", href: commit_url, "{short}" } "." } };
             }
             return rsx! { p { class: "collaboration-state-banner", "This pull request was merged." } };
@@ -958,7 +996,9 @@ pub fn detail(
     // The close or reopen form stays after the discussion. Its button sits in the composer footer
     // and submits that form through the form attribute, so the two forms never nest.
     let state_form = "item-state-form";
-    let state_change = repo.can_write && (item.state == "open" || item.state == "closed");
+    let state_change = repo.can_write
+        && !repo.chrome.is_archived
+        && (item.state == "open" || item.state == "closed");
     let state_label = if item.state == "open" {
         format!("Close {}", kind.singular())
     } else {
@@ -986,17 +1026,19 @@ pub fn detail(
                 if draft.editing.is_some_and(|id| !comments.comments.iter().any(|comment| comment.id == id && comment.can_edit)) {
                     section { class: "collaboration-panel collaboration-form-fields", aria_label: "Comment text that was not saved",
                         p { "Your edit was not saved. Copy your text before leaving this page." }
-                        crate::webui::components::DraftTextarea { name: "unsaved-comment", initial_value: draft.comment.clone(), readonly: true, class: "collaboration-textarea" }
+                        label { r#for: "unsaved-comment", class: "sr-only", "Comment text that was not saved" }
+                        crate::webui::components::DraftTextarea { id: "unsaved-comment", name: "unsaved-comment", initial_value: draft.comment.clone(), readonly: true, class: "collaboration-textarea" }
                     }
                 }
                 header { class: "collaboration-detail-heading",
                     h2 { "{item.title} ", span { class: "collaboration-number", "#{item.number}" } }
-                    if kind == Kind::Issue && repo.signed_in {
+                    if kind == Kind::Issue && repo.signed_in && !repo.chrome.is_archived {
                         NavLink { class: "btn btn-primary collaboration-heading-action", href: format!("{}/new", repo.family_url(kind)), "New issue" }
                     }
                     if repo.can_write {
                         details { open: draft.title.is_some() || draft.body.is_some(), class: "collaboration-edit", title: "Edit title and description",
                             summary { class: "btn btn-secondary btn-sm", "Edit" }
+                            // A keyed loop item, so the form starts over when the page moves to another item.
                             for edit_url in [url.clone()] {
                                 DetailEditForm { key: "{edit_url}", url: edit_url, csrf_token: repo.csrf.clone(), item: item.clone(), draft: draft.clone(), references: references.clone() }
                             }
@@ -1015,9 +1057,9 @@ pub fn detail(
                                 ol { class: "collaboration-stack-layers",
                                     for layer in stack.layers.iter().rev() {
                                         li { class: stack_layer_class(layer),
-                                            span { class: "collaboration-stack-state", {item_icon(Kind::Pull, &layer.state)} span { class: "repo-sr-only", "{layer.state}" } }
-                                            NavLink { class: "collaboration-title-link", href: format!("{}/{}", repo.family_url(Kind::Pull), layer.number),
-                                                span { aria_current: if layer.current { "page" } else { "false" }, "{layer_title(layer)}" }
+                                            span { class: "collaboration-stack-state", {item_icon(Kind::Pull, &layer.state)} span { class: "sr-only", "{layer.state}" } }
+                                            NavLink { class: "collaboration-title-link", href: format!("{}/{}", repo.family_url(Kind::Pull), layer.number), aria_current: layer.current.then(|| "page".to_owned()),
+                                                "{layer_title(layer)}"
                                             }
                                             if layer.draft { span { class: "collaboration-muted", "Draft" } }
                                         }
@@ -1052,11 +1094,11 @@ pub fn detail(
                                 button { r#type: "submit", class: "btn btn-primary", "Ready for review" }
                             }
                         }
-                        if item.comparison.as_ref().is_some_and(|compare| compare.can_run_workflows) {
+                        if let Some(compare) = item.comparison.as_ref().filter(|compare| compare.can_run_workflows) {
                             form { method: "post", action: format!("{url}/workflows"), class: "collaboration-panel collaboration-action-row",
                                 {csrf(&repo.csrf)}
-                                input { r#type: "hidden", name: "expected_head", value: item.comparison.as_ref().unwrap().head_sha.clone() }
-                                if item.comparison.as_ref().is_some_and(|compare| compare.head_label != compare.head) {
+                                input { r#type: "hidden", name: "expected_head", value: compare.head_sha.clone() }
+                                if compare.head_label != compare.head {
                                     p { class: "collaboration-muted", "Fork workflows need approval for each head commit and run without repository or organization secrets." }
                                 }
                                 button { r#type: "submit", class: "btn btn-primary", "Run workflows" }
@@ -1111,9 +1153,11 @@ pub fn detail(
                                     {merge_box(repo, &url, item, compare, default_method.as_deref(), reviewers, &comments.events)}
                                 }
                             }
-                            if repo.signed_in {
-                                {review::composer(repo, &url, head, item.id, draft, composer_state, references)}
-                            } else { p { class: "collaboration-sign-in", NavLink { href: "/login", "Sign in" } " to join the discussion." } }
+                            if !repo.chrome.is_archived {
+                                if repo.signed_in {
+                                    {review::composer(repo, &url, head, item.id, draft, composer_state, references)}
+                                } else { p { class: "collaboration-sign-in", NavLink { href: "/login", "Sign in" } " to join the discussion." } }
+                            }
                             if state_change {
                                 form { id: state_form, method: "post", action: format!("{url}/state"), hidden: true,
                                     {csrf(&repo.csrf)}
@@ -1125,8 +1169,8 @@ pub fn detail(
                         }
                     }
                     aside { class: "collaboration-sidebar", aria_label: if kind == Kind::Issue { "Issue details" } else { "Pull request details" },
-                        {assignees_panel(repo, &url, item, assignable)}
-                        {labels_panel(repo, &url, item, available_labels)}
+                        {assignees_panel(repo, &url, item, kind, assignable)}
+                        {labels_panel(repo, &url, item, kind, available_labels)}
                         {milestone_panel(repo, &url, item, milestones)}
                         if let Some(compare) = &item.comparison {
                             section { class: "collaboration-sidebar-section",
@@ -1137,8 +1181,8 @@ pub fn detail(
                             section { class: "collaboration-sidebar-section",
                                 h3 { "Revisions" }
                                 dl { class: "collaboration-metadata",
-                                    div { dt { "Head" } dd { code { title: compare.head_sha.clone(), "{compare.head_sha.get(..7).unwrap_or(&compare.head_sha)}" } } }
-                                    div { dt { "Base" } dd { code { title: compare.base_sha.clone(), "{compare.base_sha.get(..7).unwrap_or(&compare.base_sha)}" } } }
+                                    div { dt { "Head" } dd { code { title: compare.head_sha.clone(), "{short_sha(&compare.head_sha)}" } } }
+                                    div { dt { "Base" } dd { code { title: compare.base_sha.clone(), "{short_sha(&compare.base_sha)}" } } }
                                 }
                             }
                             {review::reviewers_panel(repo, &url, reviewers, &requestable, &draft.reviewer, item.state == "open" && repo.can_write)}

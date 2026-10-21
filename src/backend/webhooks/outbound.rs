@@ -84,17 +84,33 @@ pub fn check_addresses(ips: &[IpAddr], allow_private: bool) -> Result<(), Refusa
 pub fn is_private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => is_private_v4(ip),
-        IpAddr::V6(ip) => {
-            if let Some(mapped) = ip.to_ipv4_mapped() {
-                return is_private_v4(mapped);
-            }
-            is_private_v6(ip)
-        }
+        IpAddr::V6(ip) => match embedded_v4(ip) {
+            Some(embedded) => is_private_v4(embedded),
+            None => is_private_v6(ip),
+        },
+    }
+}
+
+/// The IPv4 address an IPv6 address carries: IPv4-mapped, NAT64 (64:ff9b::/96) or 6to4
+/// (2002::/16). A gateway forwards these to that IPv4 address.
+fn embedded_v4(ip: Ipv6Addr) -> Option<Ipv4Addr> {
+    let s = ip.segments();
+    let v4 = |high: u16, low: u16| {
+        Ipv4Addr::new((high >> 8) as u8, high as u8, (low >> 8) as u8, low as u8)
+    };
+    if let Some(mapped) = ip.to_ipv4_mapped() {
+        Some(mapped)
+    } else if s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+        Some(v4(s[6], s[7]))
+    } else if s[0] == 0x2002 {
+        Some(v4(s[1], s[2]))
+    } else {
+        None
     }
 }
 
 fn is_private_v4(ip: Ipv4Addr) -> bool {
-    let [a, b, _, _] = ip.octets();
+    let [a, b, c, _] = ip.octets();
     ip.is_unspecified()
         || ip.is_loopback()
         || ip.is_private()
@@ -103,6 +119,10 @@ fn is_private_v4(ip: Ipv4Addr) -> bool {
         || ip.is_multicast()
         // Shared address space (carrier-grade NAT).
         || (a == 100 && (64..128).contains(&b))
+        // IETF protocol assignments, benchmarking and the reserved block.
+        || (a == 192 && b == 0 && c == 0)
+        || (a == 198 && (18..20).contains(&b))
+        || a >= 240
 }
 
 fn is_private_v6(ip: Ipv6Addr) -> bool {
@@ -134,6 +154,12 @@ mod tests {
             "http://[fd00::1]/hook",
             "http://[fe80::1]/hook",
             "http://[::ffff:10.0.0.1]/hook",
+            "http://198.18.0.1/hook",
+            "http://192.0.0.8/hook",
+            "http://240.0.0.1/hook",
+            "http://[64:ff9b::7f00:1]/hook",
+            "http://[64:ff9b::a00:1]/hook",
+            "http://[2002:7f00:1::]/hook",
         ] {
             assert_eq!(
                 validate_url(text, false).err(),
@@ -159,6 +185,7 @@ mod tests {
     #[test]
     fn public_addresses_and_names_are_allowed_at_save_time() {
         assert!(validate_url("https://93.184.216.34/hook", false).is_ok());
+        assert!(validate_url("https://[64:ff9b::5db8:d822]/hook", false).is_ok());
         assert!(validate_url("https://example.com/hook?x=1", false).is_ok());
     }
 

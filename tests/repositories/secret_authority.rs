@@ -3,6 +3,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 mod contention;
 use crate::support::database;
+use crate::support::organizations::applied;
 mod fixture;
 
 use codeyard::backend::{
@@ -10,7 +11,7 @@ use codeyard::backend::{
     db::{
         self,
         models::{AccessLevel, OrgRole},
-        organizations::{self as orgs, OrganizationOutcome},
+        organizations as orgs,
         secrets::{self, SecretsError},
     },
 };
@@ -20,12 +21,6 @@ const NAME: &str = "SENSITIVE_DEPLOY_TOKEN";
 const VALUE: &str = "owned-fixture-plaintext-never-in-metadata";
 fn encryptor() -> SecretEncryptor {
     SecretEncryptor::new(&[0x63; 32])
-}
-fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("expected Applied: {other:?}"),
-    }
 }
 fn denied<T>(result: Result<T, SecretsError>) {
     assert!(

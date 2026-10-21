@@ -11,7 +11,7 @@ use axum::{
 use serde::Serialize;
 use std::sync::Arc;
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct UserFileStatsResponse {
     pub total_files: i64,
     pub total_bytes: i64,
@@ -19,7 +19,7 @@ pub struct UserFileStatsResponse {
     pub last_24h: Last24hStats,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct ByReasonStats {
     pub avatar: i64,
     pub org_avatar: i64,
@@ -31,7 +31,7 @@ pub struct ByReasonStats {
     pub other: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 pub struct Last24hStats {
     pub uploads: i64,
     pub bytes: i64,
@@ -75,24 +75,6 @@ pub async fn get_my_file_stats(
                 downloads: stats.downloads_24h,
             },
         })),
-        None => Ok(Json(UserFileStatsResponse {
-            total_files: 0,
-            total_bytes: 0,
-            by_reason: ByReasonStats {
-                avatar: 0,
-                org_avatar: 0,
-                release_asset: 0,
-                issue_attachment: 0,
-                pr_attachment: 0,
-                readme_image: 0,
-                repo_asset: 0,
-                other: 0,
-            },
-            last_24h: Last24hStats {
-                uploads: 0,
-                bytes: 0,
-                downloads: 0,
-            },
-        })),
+        None => Ok(Json(UserFileStatsResponse::default())),
     }
 }

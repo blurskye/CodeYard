@@ -1,5 +1,6 @@
 //! Shared disposable fixtures only; no server listeners, executor or ambient installation.
 use super::{database::Database, native};
+pub use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{header, HeaderMap, Request, StatusCode},
@@ -143,7 +144,7 @@ impl Fixture {
         database
             .execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[outsider.id])
             .await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let org = applied(
             create_organization(
                 pool,
@@ -330,11 +331,5 @@ impl Fixture {
             .unwrap(),
         )
         .id
-    }
-}
-pub fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("required fixture operation: {other:?}"),
     }
 }

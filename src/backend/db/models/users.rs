@@ -91,6 +91,13 @@ pub struct NodeConfiguration {
     pub updated_at: DateTime<Utc>,
 }
 
+impl NodeConfiguration {
+    /// The schema allows only `public` and `private`.
+    pub fn is_private(&self) -> bool {
+        self.node_mode == "private"
+    }
+}
+
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct SignupRequest {
     pub id: i64,

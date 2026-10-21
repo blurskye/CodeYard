@@ -1,11 +1,5 @@
-.git
-.github
-target
-container_data
-repos
-data
-*.log
-.env
-**/.env
-**/.env.*
-host_key
+# The image build needs only the release output (see the Containerfile). Everything else
+# stays out of the build context, including .worktree checkouts and their target/ trees.
+# If RELEASE_DIR names another directory, allow it here too.
+*
+!dist/release

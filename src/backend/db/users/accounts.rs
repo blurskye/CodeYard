@@ -70,6 +70,9 @@ native_operation!(crate::backend::db::postgres::users::accounts::list_users,
 
 native_operation!(crate::backend::db::postgres::users::accounts::create_user_from_oauth,
     crate::backend::db::sqlite::users::accounts::create_user_from_oauth,
+    /// Creates a user from an OAuth profile. Avatars are uploaded files
+    /// (`users.avatar_file_id`), so none is set. The email is marked verified
+    /// when the provider gave one.
     fn create_user_from_oauth(
     pool: &DbPool,
     username: &str,
@@ -118,7 +121,7 @@ native_operation!(crate::backend::db::postgres::users::accounts::admin_totals,
 
 native_operation!(crate::backend::db::postgres::users::accounts::recent_admin_accounts,
     crate::backend::db::sqlite::users::accounts::recent_admin_accounts,
-    fn recent_admin_accounts(pool: &DbPool) -> Result<Vec<AdminAccountSummary>>);
+    fn recent_admin_accounts(pool: &DbPool) -> Result<Vec<(i64, String, chrono::DateTime<chrono::Utc>)>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::list_admin_account_summaries,
     crate::backend::db::sqlite::users::accounts::list_admin_account_summaries,

@@ -75,7 +75,7 @@ async fn real_openssh_push_ci_outlives_helper() {
 
 async fn real_fixture(act: Option<PathBuf>) {
     assert_ne!(
-        private_files::effective_uid().unwrap(),
+        private_files::effective_uid(),
         0,
         "unprivileged fixture user required"
     );

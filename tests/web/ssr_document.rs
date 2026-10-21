@@ -103,8 +103,4 @@ fn editor_initial_document_has_native_fallback_controls_and_safe_text() {
             );
         }
     }
-    // Optional generated evidence belongs only to the validator-selected artifact path.
-    if let Ok(path) = std::env::var("SSR_PROBE_OUTPUT") {
-        std::fs::write(path, html).expect("save static renderer evidence");
-    }
 }

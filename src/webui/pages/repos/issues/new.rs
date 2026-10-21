@@ -1,7 +1,5 @@
 use super::{
-    detail::{
-        csrf, label_chip, label_option_text, notice, picker_heading, PickerPopover, PickerRow,
-    },
+    detail::{label_chip, label_option_text, notice, picker_heading, PickerPopover, PickerRow},
     editor::MarkdownEditor,
     Kind, Label, Milestone, Repository,
 };
@@ -14,6 +12,7 @@ use crate::webui::{
     navigation::NavLink,
     pages::{
         repos,
+        repos::chrome::csrf,
         repos::pulls::diff::{diff_summary, diff_view, Diff},
     },
 };
@@ -166,6 +165,9 @@ pub fn new(
                     div { class: "collaboration-new-main",
                         form { id: NEW_FORM, method: "post", action: url, class: "collaboration-panel collaboration-editor",
                             {csrf(&repo.csrf)}
+                            // Enter in the title creates; without this, the Compare or Preview button
+                            // that comes first would take it.
+                            button { r#type: "submit", name: "intent", value: "create", class: "sr-only", tabindex: "-1", aria_hidden: "true" }
                             if kind == Kind::Issue {
                                 input { r#type: "hidden", name: "repository_id", value: draft.repository_id.clone() }
                                 input { r#type: "hidden", name: "template", value: draft.template.clone() }
@@ -235,6 +237,26 @@ fn form_field(index: usize, field: &FormField, revision: &str) -> Element {
     if field.kind == FieldKind::Markdown {
         return rsx! { div { class: "collaboration-muted collaboration-form-text collaboration-markdown", Markdown { content: field.text.clone() } } };
     }
+    // A group of checkboxes has no single control for a label to name, so a legend names it.
+    if field.kind == FieldKind::Checkboxes || (field.kind == FieldKind::Dropdown && field.multiple)
+    {
+        return rsx! {
+            fieldset { class: "collaboration-form-field collaboration-option-group",
+                legend { "{field.label}"
+                    if field.required { " " span { class: "collaboration-required", "Required" } }
+                }
+                if !field.description.is_empty() { p { class: "collaboration-muted collaboration-field-hint", "{field.description}" } }
+                div { class: "collaboration-form-checks",
+                    for option in field.options.iter() {
+                        label { key: "{option}", class: "collaboration-checkbox",
+                            DraftCheckbox { name: name.clone(), initial_checked: field.values.contains(option), submission_value: option.clone() }
+                            " {option}"
+                        }
+                    }
+                }
+            }
+        };
+    }
     rsx! {
         div { class: "collaboration-form-field",
             label { r#for: id.clone(), "{field.label}"
@@ -248,18 +270,8 @@ fn form_field(index: usize, field: &FormField, revision: &str) -> Element {
                 FieldKind::Textarea => rsx! {
                     DraftTextarea { id: id.clone(), name, revision: Some(revision.to_owned()), required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
-                FieldKind::Dropdown if !field.multiple => rsx! {
-                    DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone())).collect::<Vec<_>>() }
-                },
                 _ => rsx! {
-                    div { class: "collaboration-form-checks", id: id.clone(),
-                        for option in field.options.iter() {
-                            label { key: "{option}", class: "collaboration-checkbox",
-                                DraftCheckbox { name: name.clone(), initial_checked: field.values.contains(option), submission_value: option.clone() }
-                                " {option}"
-                            }
-                        }
-                    }
+                    DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone())).collect::<Vec<_>>() }
                 },
             }
         }

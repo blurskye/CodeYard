@@ -280,8 +280,8 @@ fn global_actions_and_notifications_have_no_repository_chrome() {
     assert!(!rendered.contains("/alice/repo/_forms/"));
     assert!(rendered.contains("/ci/dispatch"));
     let mut dom = VirtualDom::new_with_props(
-        render,
-        Page::Notifications(NotificationsPage {
+        crate::webui::app::render_body,
+        crate::webui::app::Page::Notifications(NotificationsPage {
             csrf_token: "test-token".into(),
             notifications: vec![],
             unread_count: 0,

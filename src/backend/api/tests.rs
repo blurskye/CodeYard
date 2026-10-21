@@ -341,6 +341,37 @@ async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
 }
 
 #[tokio::test]
+async fn small_bodies_take_no_slot_so_a_full_pool_cannot_block_them() {
+    let state = closed_state().await;
+    let _all_slots = state
+        .anonymous_form_reads
+        .clone()
+        .try_acquire_many_owned(8)
+        .unwrap();
+    let app = Router::new()
+        .route("/echo", axum::routing::post(|| async { "ok" }))
+        .layer(axum::middleware::from_fn(middleware::bounded_form_body))
+        .layer(Extension(Arc::new(state)));
+    let post = |body: Body| {
+        axum::http::Request::builder()
+            .method("POST")
+            .uri("/echo")
+            .body(body)
+            .unwrap()
+    };
+    let small = app.clone().oneshot(post(Body::from("a=1"))).await.unwrap();
+    assert_eq!(small.status(), StatusCode::OK);
+    // A body of unknown size could be large, so it needs a slot, and none is free.
+    let unknown = app
+        .oneshot(post(Body::from_stream(futures_util::stream::pending::<
+            Result<bytes::Bytes, std::io::Error>,
+        >())))
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
 async fn health_readiness_and_public_config_do_not_require_setup_or_a_session() {
     let app = create_router(closed_state().await);
     for (path, expected) in [

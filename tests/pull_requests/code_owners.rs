@@ -4,18 +4,15 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
 use pulls::{text, Client};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// `alice/proj`, a private repository. Bob and Carol have write access, Dave can only read, and
 /// Erin has no access. Alice owns `src/` with Carol, and `docs/` goes to Bob and Dave.
@@ -34,7 +31,7 @@ impl World {
     async fn new(pg: bool) -> Self {
         bundle::install();
         let database = Database::new(pg).await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let alice_id = database.actor("alice").await;
         let bob_id = database.actor("bob").await;
         let carol_id = database.actor("carol").await;
@@ -65,14 +62,7 @@ impl World {
             .await
             .unwrap();
         }
-        let router = create_router(AppState::new(
-            database.pool().clone(),
-            root.path().to_owned(),
-            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-            None,
-            CiConfig::default(),
-            None,
-        ));
+        let router = database.router(root.path()).await;
         let alice = Client::login(&router, database.pool(), alice_id).await;
         let bob = Client::login(&router, database.pool(), bob_id).await;
         let dave = Client::login(&router, database.pool(), dave_id).await;

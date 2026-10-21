@@ -3,7 +3,7 @@ use crate::backend::api::repos::pulls::diff::diff_model;
 use crate::backend::{
     api::{
         http::context::PageContext,
-        repos::pulls::pull::{branches, page, repository, RepositoryData, ResultPage},
+        repos::discussion::{branches, page, repository, RepositoryData, ResultPage},
     },
     app::AppState,
     db,
@@ -102,7 +102,7 @@ pub(crate) async fn native_compare_page(
     } else {
         (default.clone(), default.clone())
     };
-    let (names, refs) = branches(&ctx, &repo).await?;
+    let (names, refs) = branches(&ctx, &repo.record).await?;
     if !names.contains(&base) || !names.contains(&head) {
         return Err(ctx.repo_error(
             &repo.view.chrome,

@@ -3,10 +3,10 @@
 
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::http::session;
 use crate::backend::api::user::profile::settings_result;
-use crate::backend::api::user::responses::{field, mutation_guard, ApiFailure, Fields};
+use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::webui::pages::settings::AccountSession;

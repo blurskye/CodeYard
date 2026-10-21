@@ -59,6 +59,6 @@ pub fn CopyButton(
             }
         }
         // An icon has no room for "Copied." but a failure has to be seen.
-        span { role: "status", class: if icon_only && !notice().starts_with("Copy was") { "copy-button-status repo-sr-only" } else { "copy-button-status" }, "{notice}" }
+        span { role: "status", class: if icon_only && !notice().starts_with("Copy was") { "copy-button-status sr-only" } else { "copy-button-status" }, "{notice}" }
     }
 }

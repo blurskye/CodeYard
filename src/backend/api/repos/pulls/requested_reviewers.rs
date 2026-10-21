@@ -1,6 +1,7 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::pull_requests::reviews::RequestReviewerRequest;
@@ -35,17 +36,7 @@ pub async fn request_reviewer(
     } else {
         StatusCode::OK
     };
-    Ok((
-        status,
-        Json(RequestedReviewerResponse {
-            user_id: result.target.id,
-            username: result.target.username,
-            avatar_url: result
-                .target
-                .avatar_file_id
-                .map(|id| format!("/api/files/{}/download", id)),
-        }),
-    ))
+    Ok((status, Json(RequestedReviewerResponse::new(result.target))))
 }
 
 pub async fn remove_requested_reviewer(
@@ -74,42 +65,29 @@ pub struct RequestedReviewerResponse {
     pub username: String,
     pub avatar_url: Option<String>,
 }
+
+impl RequestedReviewerResponse {
+    fn new(user: db::models::User) -> Self {
+        Self {
+            user_id: user.id,
+            username: user.username,
+            avatar_url: user
+                .avatar_file_id
+                .map(|id| format!("/api/files/{id}/download")),
+        }
+    }
+}
+
 pub async fn list_requested_reviewers(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<RequestedReviewerResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let pull_request =
         db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Collaboration storage is temporarily unavailable",
-                    )),
-                )
-            })?
+            .map_err(|_| storage_unavailable())?
             .ok_or_else(|| {
                 (
                     StatusCode::NOT_FOUND,
@@ -120,26 +98,12 @@ pub async fn list_requested_reviewers(
     let users =
         db::pull_requests::reviews::list_pull_request_reviewers(&state.pool, pull_request.id)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Collaboration storage is temporarily unavailable",
-                    )),
-                )
-            })?;
+            .map_err(|_| storage_unavailable())?;
 
     Ok(Json(
         users
             .into_iter()
-            .map(|user| RequestedReviewerResponse {
-                user_id: user.id,
-                username: user.username,
-                avatar_url: user
-                    .avatar_file_id
-                    .map(|id| format!("/api/files/{}/download", id)),
-            })
+            .map(RequestedReviewerResponse::new)
             .collect(),
     ))
 }

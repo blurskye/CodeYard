@@ -2,7 +2,6 @@ use super::inbox::inbox_error;
 use super::inbox::native_action;
 use super::inbox::notification_session_denied;
 use super::inbox::notification_update;
-use super::inbox::require_notification_csrf;
 use super::inbox::NotificationUpdateResponse;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::extract_session_id;
@@ -34,7 +33,6 @@ pub async fn set_notification_saved(
     Json(request): Json<SaveRequest>,
 ) -> Result<Json<NotificationUpdateResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    require_notification_csrf(&state, &headers).await?;
 
     let session_id = extract_session_id(&headers).ok_or_else(notification_session_denied)?;
     let inbox = crate::backend::notifications::inbox::inbox(

@@ -38,11 +38,11 @@ pub fn RefSwitcher(
         .unwrap_or(&current);
     rsx! {
         details { class: "native-menu repo-menu repo-ref-menu",
-            summary { class: "btn btn-secondary", {icon("branches")} span { class: "repo-ref-name", "{display}" } {icon("chevron")} }
+            summary { class: "btn btn-secondary", {icon("branches")} span { class: "repo-ref-name", title: "{display}", "{display}" } {icon("chevron")} }
             div { class: "repo-menu-panel repo-ref-panel",
                 h2 { class: "repo-menu-heading", "Switch branches or tags" }
                 div { class: "repo-ref-filter-box",
-                    label { class: "repo-sr-only", r#for: "repo-ref-filter", "Find a branch or tag" }
+                    label { class: "sr-only", r#for: "repo-ref-filter", "Find a branch or tag" }
                     input { id: "repo-ref-filter", class: "repo-ref-filter", r#type: "search", placeholder: "Find a branch or tag", autocomplete: "off",
                         oninput: move |event| filter.set(event.value()) }
                 }
@@ -55,10 +55,11 @@ pub fn RefSwitcher(
     }
 }
 
-/// One option per name. Each option links to `path` on that ref, or to the ref's root when the
-/// path is missing there, so a ref switch keeps the reader where they are when it can.
+/// Most names the menu draws at once. The filter reaches the rest.
 const MAX_REF_OPTIONS: usize = 50;
 
+/// One option per name. Each option links to `path` on that ref, or to the ref's root when the
+/// path is missing there, so a ref switch keeps the reader where they are when it can.
 pub fn ref_options(
     base: &str,
     kind: &str,
@@ -68,7 +69,6 @@ pub fn ref_options(
 ) -> Vec<RefOption> {
     names
         .iter()
-        .take(MAX_REF_OPTIONS)
         .map(|name| RefOption {
             name: name.clone(),
             href: ref_switch_url(
@@ -124,7 +124,7 @@ fn ref_group(
                     li { key: "{option.name}",
                         NavLink { class: (if selected(&option.name) { "repo-menu-item repo-ref-selected" } else { "repo-menu-item" }).to_owned(), href: option.href.clone(),
                             span { class: "repo-ref-check", "aria-hidden": "true", if selected(&option.name) { {icon("check")} } }
-                            span { class: "repo-ref-option-name", "{option.name}" }
+                            span { class: "repo-ref-option-name", title: "{option.name}", "{option.name}" }
                             if default_branch == Some(option.name.as_str()) {
                                 span { class: "repo-label-neutral repo-ref-default", "default" }
                             }

@@ -10,7 +10,7 @@ mod sqlite;
 
 use super::{connection, init_db, run_migrations, DbPool};
 use anyhow::{bail, Result};
-use futures::{Stream, TryStreamExt};
+use futures_util::{Stream, TryStreamExt};
 use sqlx::{Postgres, Sqlite, Transaction};
 
 /// Rows the baseline migration inserts. A migrated destination that was never used

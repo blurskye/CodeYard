@@ -35,8 +35,7 @@ pub(crate) struct UnsupportedMerge(pub(crate) String);
 
 pub(crate) fn validate_merge_revision(branch: &str, sha: &str) -> Result<()> {
     if crate::backend::git::branch_ref(branch).is_none()
-        || sha.len() != 40
-        || !sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !crate::backend::git::is_full_commit_id(sha)
     {
         bail!("A valid branch and complete expected revision are required");
     }
@@ -71,7 +70,7 @@ pub(super) async fn command(
 
 fn oid_output(bytes: &[u8]) -> Result<String> {
     let text = std::str::from_utf8(bytes)?.trim();
-    if text.len() != 40 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if !crate::backend::git::is_full_commit_id(text) {
         bail!("Git returned an invalid object ID");
     }
     Ok(text.to_ascii_lowercase())
@@ -87,6 +86,11 @@ pub(crate) async fn commit_is_ancestor(path: &Path, base: &str, head: &str) -> R
         None,
     )
     .await?;
+    ancestry_answer(status)
+}
+
+/// `git merge-base --is-ancestor` exits 0 for yes and 1 for no. Anything else is a failure.
+fn ancestry_answer(status: std::process::ExitStatus) -> Result<bool> {
     match status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),
@@ -94,15 +98,16 @@ pub(crate) async fn commit_is_ancestor(path: &Path, base: &str, head: &str) -> R
     }
 }
 
-/// Git splits `GIT_ALTERNATE_OBJECT_DIRECTORIES` on `:`. Quoting the path as one C-style
-/// string keeps a repository path that contains `:` a single entry.
-fn quote_alternate(objects: &Path) -> std::ffi::OsString {
+/// Quotes a path as one C-style string, so Git reads it as a single entry both in
+/// `GIT_ALTERNATE_OBJECT_DIRECTORIES` (split on `:`) and in an `alternates` file (one entry
+/// per line).
+pub(super) fn quote_alternate(objects: &Path) -> std::ffi::OsString {
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
     let mut quoted = vec![b'"'];
     for &byte in objects.as_os_str().as_bytes() {
         match byte {
             b'\\' | b'"' => quoted.extend_from_slice(&[b'\\', byte]),
-            b'\n' => quoted.extend_from_slice(br"\n"),
+            0..=0x1f | 0x7f => quoted.extend_from_slice(format!("\\{byte:03o}").as_bytes()),
             _ => quoted.push(byte),
         }
     }
@@ -143,11 +148,7 @@ pub(crate) async fn quarantined_is_fast_forward(
     validate_merge_revision("main", new)?;
     let (status, _) =
         quarantined(path, quarantine, &["merge-base", "--is-ancestor", old, new]).await?;
-    match status.code() {
-        Some(0) => Ok(true),
-        Some(1) => Ok(false),
-        _ => bail!("Git ancestry check failed"),
-    }
+    ancestry_answer(status)
 }
 
 /// Whether `new` brings a merge commit that `old` does not have. A new branch checks

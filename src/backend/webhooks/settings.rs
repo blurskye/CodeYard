@@ -39,8 +39,8 @@ fn unavailable<E>(_: E) -> HookError {
     HookError::Unavailable
 }
 
-/// Repository admins manage a repository's hooks. Organization owners manage an
-/// organization's. Site administrators have no implicit access to either.
+/// Repository admins manage a repository's hooks, and so do site administrators on user-owned
+/// repositories. Only organization owners manage an organization's.
 pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<(), HookError> {
     let allowed = match owner {
         HookOwner::Repository(id) => {

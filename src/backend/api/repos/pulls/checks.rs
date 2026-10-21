@@ -1,7 +1,7 @@
 //! The Checks tab of a pull request: the workflow runs on its head commit.
-use crate::backend::api::ci::jobs::collection::map_run;
+use crate::backend::api::ci::responses::map_run;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::discussion::*;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::webui::pages::repos::issues::{self as view, Kind};

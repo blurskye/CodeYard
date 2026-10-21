@@ -89,12 +89,19 @@ pub(crate) fn repository_settings_error(
     (status, Json(ApiError::new(code, message)))
 }
 
+/// What a JSON handler returns when it refuses a request.
+pub(crate) type ApiFailure = (StatusCode, Json<ApiError>);
+
 impl ApiError {
     pub fn new(error: &str, message: &str) -> Self {
         Self {
             error: error.to_string(),
             message: message.to_string(),
         }
+    }
+
+    pub(crate) fn failure(status: StatusCode, code: &str, message: &str) -> ApiFailure {
+        (status, Json(Self::new(code, message)))
     }
 }
 

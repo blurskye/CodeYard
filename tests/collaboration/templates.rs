@@ -5,16 +5,13 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
-use pulls::Client;
+use pulls::{hidden_value, visible_text, Client};
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 mod reads;
 
@@ -24,7 +21,7 @@ const BUG_TEMPLATE: &str = "---\nname: Bug report\nabout: Something is broken\nt
 pub(super) async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -39,14 +36,7 @@ pub(super) async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Cli
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        database.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;
     let bob = Client::login(&router, database.pool(), bob_id).await;
     (database, root, alice, bob)
@@ -72,28 +62,6 @@ pub(super) async fn put(
     saved["sha"].as_str().unwrap().to_owned()
 }
 
-/// The page without Dioxus node-id comments, so text can be matched across its interpolations.
-fn plain(page: &str) -> String {
-    let mut out = String::new();
-    let mut rest = page;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(&rest[..start]);
-        rest = rest[start..].split_once("-->").map_or("", |(_, tail)| tail);
-    }
-    out.push_str(rest);
-    out
-}
-
-/// The value of the first form field called `name` in the page.
-pub(super) fn hidden_value(html: &str, name: &str) -> String {
-    let at = html
-        .find(&format!("name=\"{name}\""))
-        .unwrap_or_else(|| panic!("no {name} field: {html}"));
-    let rest = &html[at..];
-    let start = rest.find("value=\"").unwrap() + "value=\"".len();
-    rest[start..].split('"').next().unwrap().to_owned()
-}
-
 async fn body_of_issue(alice: &Client, number: i64) -> String {
     alice
         .expect(
@@ -109,7 +77,7 @@ async fn body_of_issue(alice: &Client, number: i64) -> String {
 }
 
 async fn chooser_and_prefill(pg: bool) {
-    let (_database, _root, alice, _bob) = setup(pg).await;
+    let (mut database, _root, alice, _bob) = setup(pg).await;
     let main = put(&alice, "main", "README.md", "# proj\n", "unborn").await;
     let main = put(
         &alice,
@@ -191,12 +159,13 @@ async fn chooser_and_prefill(pg: bool) {
         "{refused_blank}"
     );
     assert!(!refused_blank.contains("new-title"), "{refused_blank}");
+    database.finish().await;
 }
 
 const BUG_FORM: &str = "name: Crash report\ndescription: The app crashes\nlabels: [bug]\nbody:\n  - type: input\n    attributes:\n      label: Version\n    validations:\n      required: true\n  - type: dropdown\n    attributes:\n      label: Area\n      options: [Web, Git]\n  - type: checkboxes\n    attributes:\n      label: Checks\n      options:\n        - label: I searched first\n          required: true\n";
 
 async fn issue_forms_write_their_answers_into_the_body(pg: bool) {
-    let (_database, _root, alice, _bob) = setup(pg).await;
+    let (mut database, _root, alice, _bob) = setup(pg).await;
     let main = put(&alice, "main", "README.md", "# proj\n", "unborn").await;
     put(
         &alice,
@@ -215,7 +184,7 @@ async fn issue_forms_write_their_answers_into_the_body(pg: bool) {
         .page("/alice/proj/issues/new?template=.github%2FISSUE_TEMPLATE%2Fcrash.yml")
         .await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(plain(&page).contains("Version"), "{page}");
+    assert!(visible_text(&page).contains("Version"), "{page}");
     assert!(page.contains("name=\"form_0\""), "{page}");
     assert!(page.contains("name=\"form_2\""), "{page}");
     assert!(!page.contains("new-body"), "{page}");
@@ -234,7 +203,10 @@ async fn issue_forms_write_their_answers_into_the_body(pg: bool) {
         )
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{refused}");
-    assert!(plain(&refused).contains("Checks is required."), "{refused}");
+    assert!(
+        visible_text(&refused).contains("Checks is required."),
+        "{refused}"
+    );
     assert!(refused.contains("value=\"1.4\""), "{refused}");
 
     // With the answers given, the issue body is the answers as Markdown.
@@ -256,10 +228,11 @@ async fn issue_forms_write_their_answers_into_the_body(pg: bool) {
         body_of_issue(&alice, 1).await,
         "### Version\n\n1.4\n\n### Area\n\nGit\n\n### Checks\n\n- [x] I searched first"
     );
+    database.finish().await;
 }
 
 async fn pull_request_template_prefills_the_description(pg: bool) {
-    let (_database, _root, alice, _bob) = setup(pg).await;
+    let (mut database, _root, alice, _bob) = setup(pg).await;
     let main = put(&alice, "main", "README.md", "# proj\n", "unborn").await;
     put(
         &alice,
@@ -284,12 +257,13 @@ async fn pull_request_template_prefills_the_description(pg: bool) {
         .await;
     assert!(typed.contains("typed text"), "{typed}");
     assert!(!typed.contains("What changed?"), "{typed}");
+    database.finish().await;
 }
 
 /// A task box in a pull request's conversation comment ticks through the pull request's tasks
 /// form. The comment keeps the rest of its text.
 async fn pull_request_comment_task_ticks(pg: bool) {
-    let (database, _root, alice, _bob) = setup(pg).await;
+    let (mut database, _root, alice, _bob) = setup(pg).await;
     let main = put(&alice, "main", "README.md", "# proj\n", "unborn").await;
     alice.branch("topic", &main).await;
     put(&alice, "topic", "feature.txt", "feature\n", &main).await;
@@ -365,10 +339,11 @@ async fn pull_request_comment_task_ticks(pg: bool) {
             .body,
         saved.body
     );
+    database.finish().await;
 }
 
 async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
-    let (database, _root, alice, bob) = setup(pg).await;
+    let (mut database, _root, alice, bob) = setup(pg).await;
     let created = alice
         .expect(
             "POST",
@@ -385,7 +360,7 @@ async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
     let (_, page) = alice.page(&detail).await;
     assert!(page.contains("form=\"task-body\""), "{page}");
     assert!(page.contains("task-box task-box-done"), "{page}");
-    let (_, reader_page) = bob.page(&detail).await;
+    let reader_page = bob.page_ok(&detail).await;
     assert!(!reader_page.contains("form=\"task-body\""), "{reader_page}");
     assert!(reader_page.contains("disabled"), "{reader_page}");
 
@@ -495,7 +470,8 @@ async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
 
     // The list counts the ticked boxes of the body.
     let (_, list) = alice.page("/alice/proj/issues").await;
-    assert!(plain(&list).contains("2 of 2 tasks"), "{list}");
+    assert!(visible_text(&list).contains("2 of 2 tasks"), "{list}");
+    database.finish().await;
 }
 
 #[tokio::test]

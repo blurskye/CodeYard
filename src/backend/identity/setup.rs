@@ -96,15 +96,11 @@ pub async fn complete_setup(
     let existing = db::users::accounts::get_user_by_username(pool, input.account.username)
         .await
         .map_err(|_| SetupError::AccountUnavailable)?;
-    // Even installations with no configured bootstrap secret share admission. It is charged
-    // before the secret is compared, so guesses at the secret are bounded.
-    admission::admit_login(
-        pool,
-        existing.as_ref().map(|user| user.id),
-        input.account.username,
-    )
-    .await
-    .map_err(SetupError::Admission)?;
+    // Every setup attempt shares one budget, whatever name it submits, and is charged before the
+    // secret is compared, so guesses at the secret are bounded.
+    admission::admit_login(pool, session.client, None, "setup")
+        .await
+        .map_err(SetupError::Admission)?;
     if let Some(expected) = expected_admin_secret {
         let supplied = input.admin_secret.map(str::trim).unwrap_or("");
         if !bool::from(

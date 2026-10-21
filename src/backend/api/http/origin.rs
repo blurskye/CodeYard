@@ -50,7 +50,8 @@ fn same_origin_with_public_url(headers: &HeaderMap, public_url: Option<&str>) ->
 /// Restrict redirects to local absolute paths. Encoded delimiters are refused in the path;
 /// the query and fragment are data and pass through unchanged.
 pub fn safe_redirect_path(path: &str) -> bool {
-    if !path.starts_with('/')
+    if path.len() > 2048
+        || !path.starts_with('/')
         || path.starts_with("//")
         || path.chars().any(|c| c.is_control() || c == '\\')
     {

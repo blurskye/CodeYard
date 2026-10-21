@@ -1,11 +1,8 @@
-//! Safe Actions presentation shared by SSR and hydration. This is the Actions lane: the `/ci` page,
-//! the notifications page, and the dispatch recovery page, all rendered through one `Page` enum.
-use crate::webui::pages::{
-    notifications,
-    repos::{
-        actions::{recovery, ActionsPage, ActionsView, DispatchDraft, Workflow},
-        chrome::RepoChrome,
-    },
+//! Safe Actions presentation shared by SSR and hydration. This is the Actions lane: the `/ci` page
+//! and the dispatch recovery page, both rendered through one `Page` enum.
+use crate::webui::pages::repos::{
+    actions::{recovery, ActionsPage, ActionsView, DispatchDraft, Workflow},
+    chrome::RepoChrome,
 };
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -13,7 +10,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Page {
     Actions(Box<ActionsPage>),
-    Notifications(notifications::NotificationsPage),
     DispatchRecovery {
         // Box the optional chrome to keep the recovery variant bounded.
         #[serde(default)]
@@ -34,7 +30,6 @@ impl Page {
         match self {
             Page::Actions(model) => model.repo_chrome.as_ref(),
             Page::DispatchRecovery { repo_chrome, .. } => repo_chrome.as_deref(),
-            Page::Notifications(_) => None,
         }
     }
 }
@@ -50,7 +45,6 @@ pub fn render(page: Page) -> Element {
                 .unwrap_or_else(|| "list".into());
             rsx! { for (key, model) in [(key, model)] { ActionsView { key: "{key}", model } } }
         }
-        Page::Notifications(model) => rsx! { notifications::NotificationsView { model } },
         Page::DispatchRecovery {
             repo_chrome,
             base_path,

@@ -1,6 +1,7 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
+use crate::backend::api::repos::responses::repository_unavailable;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use axum::extract::{Path, State};
@@ -16,18 +17,6 @@ pub struct CollaboratorResponse {
     pub access_level: String,
 }
 
-fn access_level_name(level: db::models::AccessLevel) -> &'static str {
-    match level {
-        db::models::AccessLevel::None => "none",
-        db::models::AccessLevel::Read => "read",
-        db::models::AccessLevel::Triage => "triage",
-        db::models::AccessLevel::Write => "write",
-        db::models::AccessLevel::Maintain => "maintain",
-        db::models::AccessLevel::Admin => "admin",
-        db::models::AccessLevel::Owner => "owner",
-    }
-}
-
 #[derive(Deserialize)]
 pub struct AddCollaboratorRequest {
     pub username: String,
@@ -40,25 +29,8 @@ pub async fn list_collaborators(
     Path((owner, repo)): Path<(String, String)>,
 ) -> Result<Json<Vec<CollaboratorResponse>>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
     // Collaborator management remains personal-owner-only, not a new org/team policy.
     if !repository.is_personal_owner(user.id) {
         return Err((
@@ -70,28 +42,12 @@ pub async fn list_collaborators(
     let collaborators =
         db::repositories::access::list_repo_collaborators(&state.pool, repository.id)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Repository operation is unavailable",
-                    )),
-                )
-            })?;
+            .map_err(|_| repository_unavailable())?;
 
     let user_ids: Vec<i64> = collaborators.iter().map(|access| access.user_id).collect();
     let users = db::users::accounts::get_users_by_ids(&state.pool, &user_ids)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?;
+        .map_err(|_| repository_unavailable())?;
     let user_map: std::collections::HashMap<i64, db::models::User> =
         users.into_iter().map(|user| (user.id, user)).collect();
 
@@ -106,7 +62,7 @@ pub async fn list_collaborators(
                     avatar_url: user
                         .avatar_file_id
                         .map(|id| format!("/api/files/{}/download", id)),
-                    access_level: access_level_name(access.level()).to_string(),
+                    access_level: access.level().as_str().to_string(),
                 })
             })
             .collect(),
@@ -120,37 +76,19 @@ pub async fn add_collaborator(
     Json(req): Json<AddCollaboratorRequest>,
 ) -> Result<Json<CollaboratorResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
 
     let access_level = match req.access_level.as_deref() {
-        Some("admin") => db::models::AccessLevel::Admin,
-        Some("write") => db::models::AccessLevel::Write,
-        None | Some("read") => db::models::AccessLevel::Read,
-        Some(_) => {
-            return Err((
+        None => db::models::AccessLevel::Read,
+        Some(name) => db::models::AccessLevel::parse_collaborator(name).ok_or_else(|| {
+            (
                 StatusCode::BAD_REQUEST,
                 Json(ApiError::new(
                     "validation_error",
                     "Choose read, write or admin collaborator access.",
                 )),
-            ))
-        }
+            )
+        })?,
     };
     let target_user = crate::backend::repositories::access::change_collaborator(
         &state.pool,
@@ -168,7 +106,7 @@ pub async fn add_collaborator(
         avatar_url: target_user
             .avatar_file_id
             .map(|id| format!("/api/files/{}/download", id)),
-        access_level: access_level_name(access_level).to_string(),
+        access_level: access_level.as_str().to_string(),
     }))
 }
 
@@ -178,23 +116,7 @@ pub async fn remove_collaborator(
     Path((owner, repo, username)): Path<(String, String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
 
     crate::backend::repositories::access::change_collaborator(
         &state.pool,

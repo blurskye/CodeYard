@@ -2,6 +2,7 @@
 use crate::backend::db::{
     self,
     models::{Repository, User},
+    repositories::access::CollaboratorChange,
 };
 use anyhow::Result;
 
@@ -94,23 +95,6 @@ pub enum AccessError {
     WriteDenied,
     InvalidCollaboratorOwner,
     Unavailable,
-}
-
-pub(crate) enum CollaboratorChange {
-    Applied(Box<User>),
-    NotFound,
-    PasswordChangeRequired,
-    InvalidCollaboratorOwner,
-}
-
-pub(crate) trait CollaboratorAccessTransaction {
-    async fn change_personal_repository_collaborator(
-        &self,
-        actor: i64,
-        repo_id: i64,
-        username: &str,
-        permission: Option<db::models::AccessLevel>,
-    ) -> Result<CollaboratorChange>;
 }
 
 pub async fn current_repository(
@@ -206,18 +190,10 @@ pub async fn change_collaborator(
     username: &str,
     permission: Option<db::models::AccessLevel>,
 ) -> std::result::Result<User, AccessError> {
-    let change = match pool {
-        db::DbPool::Postgres(native) => {
-            native
-                .change_personal_repository_collaborator(actor, repo_id, username, permission)
-                .await
-        }
-        db::DbPool::Sqlite(native) => {
-            native
-                .change_personal_repository_collaborator(actor, repo_id, username, permission)
-                .await
-        }
-    }
+    let change = db::repositories::access::change_personal_repository_collaborator(
+        pool, actor, repo_id, username, permission,
+    )
+    .await
     .map_err(|_| AccessError::Unavailable)?;
     match change {
         CollaboratorChange::Applied(user) => Ok(*user),

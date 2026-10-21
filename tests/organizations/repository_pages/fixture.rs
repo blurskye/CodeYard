@@ -1,5 +1,6 @@
 //! Disposable native fixtures: the actual router, repository storage and Git initialization.
 use super::{database::Database, native};
+pub use crate::support::organizations::applied;
 use axum::{
     body::{to_bytes, Body},
     http::{header, HeaderMap, Request, StatusCode},
@@ -21,12 +22,6 @@ use std::{
 };
 use tower::ServiceExt;
 
-pub fn applied<T: std::fmt::Debug>(outcome: orgs::OrganizationOutcome<T>) -> T {
-    match outcome {
-        orgs::OrganizationOutcome::Applied(value) => value,
-        other => panic!("required fixture operation: {other:?}"),
-    }
-}
 pub struct Actor {
     pub id: i64,
     pub session: String,
@@ -119,7 +114,7 @@ impl Fixture {
         database
             .execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[staff.id])
             .await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let org = Self::organization(pool, owner.id, "canonical_org").await;
         for (actor, role) in [
             (&admin, OrgRole::Admin),

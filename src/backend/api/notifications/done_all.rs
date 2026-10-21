@@ -2,7 +2,6 @@ use super::inbox::inbox_error;
 use super::inbox::invalid_query;
 use super::inbox::native_action;
 use super::inbox::notification_session_denied;
-use super::inbox::require_notification_csrf;
 use super::inbox::BulkUpdateResponse;
 use super::inbox::ListParams;
 use crate::backend::api::http::error::ApiError;
@@ -29,7 +28,6 @@ pub async fn mark_all_notifications_done(
     Query(fields): Query<HashMap<String, String>>,
 ) -> Result<Json<BulkUpdateResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    require_notification_csrf(&state, &headers).await?;
 
     let params = ListParams::parse(&fields).map_err(invalid_query)?;
     let session_id = extract_session_id(&headers).ok_or_else(notification_session_denied)?;

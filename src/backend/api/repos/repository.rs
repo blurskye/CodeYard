@@ -2,22 +2,26 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::{repository_settings_error, ApiError};
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::{
-    check_repo_admin_access, check_repo_read_access, check_repo_write_access,
+    access_error, check_repo_admin_access, check_repo_read_access, check_repo_write_access,
+    find_repository, readable_repository,
 };
 use crate::backend::api::repos::chrome::ApiResult;
 use crate::backend::api::repos::chrome::{
-    git_unavailable_response, load_metadata, repository_default_branch_or_db, safe_error,
-    unavailable, Loaded,
+    git_unavailable_response, load_metadata, repository_default_branch_or_db, unavailable, Loaded,
 };
 use crate::backend::api::repos::code::contents::{
     delete_form, replaced_repository_editor, write_form,
 };
+use crate::backend::api::repos::forms::{checkbox, field, repeated, with_status};
+use crate::backend::api::repos::labels::{label_write_error, parse_label_color};
 use crate::backend::api::repos::responses::{
-    repository_owner, repository_topics, ForkParent, RepoResponse,
+    lifecycle_error, lifecycle_status, repository_owner, repository_topics, ForkParent,
+    RepoResponse,
 };
 use crate::backend::api::repos::settings::branch_protection;
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::lifecycle;
 use crate::backend::webhooks::{panel, settings::HookError};
 use crate::webui::pages::repos as view;
@@ -36,25 +40,7 @@ pub async fn get_repo(
     Path((owner, repo)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     repository_response(&state, &headers, &repository)
         .await
         .map(Json)
@@ -68,7 +54,7 @@ async fn repository_response(
     repository: &db::models::Repository,
 ) -> Result<RepoResponse, (StatusCode, Json<ApiError>)> {
     let owner = repository_owner(&state.pool, repository).await?;
-    let default_branch = repository_default_branch_or_db(state, repository).await?;
+    let default_branch = repository_default_branch_or_db(state, repository).await;
     let topics = repository_topics(&state.pool, &[repository.id])
         .await?
         .remove(&repository.id)
@@ -77,11 +63,8 @@ async fn repository_response(
     let forked_from = if let Some(parent_id) = repository.forked_from_id {
         match db::repositories::records::get_repository_by_id(&state.pool, parent_id)
             .await
-            .map_err(|_| {
-                crate::backend::api::repos::access::access_error(
-                    crate::backend::repositories::access::AccessError::Unavailable,
-                )
-            })? {
+            .map_err(|_| access_error(AccessError::Unavailable))?
+        {
             Some(parent) => match check_repo_read_access(&state.pool, &parent, headers).await {
                 Ok(()) => {
                     let parent_owner = repository_owner(&state.pool, &parent).await?;
@@ -101,28 +84,9 @@ async fn repository_response(
         None
     };
 
-    Ok(RepoResponse {
-        id: repository.id,
-        owner_id: repository.owner_id(),
-        owner: owner.clone(),
-        name: repository.name.clone(),
-        full_name: format!("{}/{}", owner, repository.name),
-        description: repository.description.clone(),
-        website: repository.website.clone(),
-        topics,
-        is_private: repository.is_private,
-        is_archived: repository.is_archived,
-        allow_merge_commit: repository.allow_merge_commit,
-        allow_squash_merge: repository.allow_squash_merge,
-        allow_rebase_merge: repository.allow_rebase_merge,
-        default_branch,
-        stars_count: repository.stars_count,
-        forks_count: repository.forks_count,
-        watchers_count: repository.watchers_count,
-        forked_from,
-        created_at: repository.created_at.to_rfc3339(),
-        updated_at: repository.updated_at.to_rfc3339(),
-    })
+    let mut response = RepoResponse::new(repository, &owner, topics, forked_from);
+    response.default_branch = default_branch;
+    Ok(response)
 }
 
 #[derive(Deserialize)]
@@ -146,49 +110,9 @@ pub async fn rename_repo(
     Json(req): Json<RenameRepoRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-
-    if req.new_name.is_empty() || req.new_name.len() > 100 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError::new(
-                "validation_error",
-                "Repository name must be 1-100 characters",
-            )),
-        ));
-    }
-
-    if !req
-        .new_name
-        .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError::new(
-                "validation_error",
-                "Repository name can only contain letters, numbers, hyphens, underscores, and dots",
-            )),
-        ));
-    }
-
-    if req.new_name == "." || req.new_name == ".." {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ApiError::new("validation_error", "Invalid repository name")),
-        ));
-    }
-
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    lifecycle::validate_name(&req.new_name).map_err(lifecycle_error)?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
 
     // Unique owner/name reservation is authoritative. A rename only changes the
     // DB alias; stable operation-owned storage is never moved or compensated.
@@ -216,19 +140,11 @@ pub async fn transfer_repo(
     Json(req): Json<TransferRepoRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
     let updated = lifecycle::transfer(&state.pool, user.id, repository.id, &req.new_owner)
         .await
-        .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+        .map_err(lifecycle_error)?;
     Ok(Json(repository_response(&state, &headers, &updated).await?))
 }
 
@@ -248,19 +164,11 @@ pub async fn about_repo(
     Path((owner, repo)): Path<(String, String)>,
     Json(req): Json<AboutRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-    let user = check_repo_write_access(&state.pool, &repository, &headers).await?;
+    let user = get_current_user(&state.pool, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_write_access(&state.pool, &repository, &user).await?;
     let description = req.description.unwrap_or_default();
-    lifecycle::validate_description(&description)
-        .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+    lifecycle::validate_description(&description).map_err(lifecycle_error)?;
     let website =
         db::repositories::topics::parse_website(req.website.as_deref().unwrap_or_default())
             .map_err(repository_settings_error)?;
@@ -295,25 +203,16 @@ pub async fn update_repo(
     Json(req): Json<UpdateRepoRequest>,
 ) -> Result<Json<RepoResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
     lifecycle::validate_description(req.description.as_deref().unwrap_or(""))
-        .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+        .map_err(lifecycle_error)?;
     if !req.is_private
         && lifecycle::visibility_locked(&state.pool, &repository)
             .await
             .map_err(|error| {
                 (
-                    crate::backend::api::repos::responses::lifecycle_status(&error),
+                    lifecycle_status(&error),
                     Json(ApiError::new("storage_unavailable", error.message)),
                 )
             })?
@@ -360,33 +259,13 @@ pub async fn delete_repo(
     headers: HeaderMap,
     Path((owner, repo)): Path<(String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(repository_settings_error)?
-        .ok_or_else(|| {
-            crate::backend::api::repos::access::access_error(
-                crate::backend::repositories::access::AccessError::NotFound,
-            )
-        })?;
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
     let actor = get_current_user(&state.pool, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &actor).await?;
     lifecycle::delete(&state.pool, state.cluster.as_ref(), actor.id, repository.id)
         .await
-        .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+        .map_err(lifecycle_error)?;
     Ok(StatusCode::NO_CONTENT)
-}
-
-/// The access level as the settings page names it.
-fn access_label(level: db::models::AccessLevel) -> &'static str {
-    match level {
-        db::models::AccessLevel::Read => "read",
-        db::models::AccessLevel::Triage => "triage",
-        db::models::AccessLevel::Write => "write",
-        db::models::AccessLevel::Maintain => "maintain",
-        db::models::AccessLevel::Admin => "admin",
-        db::models::AccessLevel::Owner => "owner",
-        db::models::AccessLevel::None => "none",
-    }
 }
 
 pub(super) async fn settings_model(
@@ -427,7 +306,7 @@ pub(super) async fn settings_model(
         .into_iter()
         .map(|(username, level)| view::settings::Collaborator {
             username,
-            access: access_label(level).into(),
+            access: level.as_str().into(),
         })
         .collect();
         settings.branch_rules = branch_rules(ctx, loaded).await?;
@@ -451,7 +330,9 @@ pub(super) async fn settings_model(
                 .ok_or_else(|| unavailable(ctx))?;
             settings.collaborators.push(view::settings::Collaborator {
                 username: user.username,
-                access: access_label(db::models::AccessLevel::from(access.access_level)).into(),
+                access: db::models::AccessLevel::from(access.access_level)
+                    .as_str()
+                    .into(),
             });
         }
     }
@@ -684,7 +565,7 @@ async fn protection_form(
     let pool = &ctx.state.pool;
     let repository = &loaded.repository;
     let section = view::settings::settings_section(action).unwrap_or("general");
-    let settings_url = format!("{}/settings?tab={section}", loaded.chrome.base());
+    let settings_url = settings_section_url(&loaded.chrome.base(), action);
     if action == "protection-delete" {
         let outcome = match confirmation(form) {
             Ok(()) => {
@@ -783,20 +664,6 @@ async fn webhook_form(
     }
 }
 
-pub(super) fn field(form: &HashMap<String, String>, name: &str) -> String {
-    form.get(name).cloned().unwrap_or_default()
-}
-
-/// The values a repeated form field was sent with, in the order they were sent.
-pub(super) fn repeated(pairs: &[(String, String)], name: &str) -> Vec<String> {
-    pairs
-        .iter()
-        .filter(|(key, _)| key == name)
-        .map(|(_, value)| value.clone())
-        .collect()
-}
-
-/// A native form sends a checked checkbox as "on" and an unchecked one not at all.
 /// The Stars list unstars in place: its form names its own address, so the action returns there.
 /// Any other `return_to` is ignored.
 fn stars_return(form: &HashMap<String, String>) -> Option<String> {
@@ -806,24 +673,12 @@ fn stars_return(form: &HashMap<String, String>) -> Option<String> {
         .cloned()
 }
 
-pub(super) fn checkbox(form: &HashMap<String, String>, name: &str) -> bool {
-    matches!(form.get(name).map(String::as_str), Some("on" | "true"))
-}
-
 fn confirmation(form: &HashMap<String, String>) -> Result<(), &'static str> {
     if form.get("confirm").map(String::as_str) == Some("yes") {
         Ok(())
     } else {
         Err("Explicit confirmation is required.")
     }
-}
-
-pub(super) fn with_status(mut response: Response, status: StatusCode) -> Response {
-    // Never turn a renderer/runtime 503 into a validation result or success.
-    if response.status() == StatusCode::OK {
-        *response.status_mut() = status;
-    }
-    response
 }
 
 /// Only declared non-secret form fields enter typed bootstrap/navigation state.
@@ -890,27 +745,79 @@ fn reject(
     )
 }
 
-/// The repository page that shows what a form action works on.
-fn form_page_suffix(action: &str) -> &'static str {
-    match action {
-        "create-branch" | "delete-branch" => "/branches",
-        "create-tag" | "delete-tag" => "/tags",
-        "settings"
-        | "merge-methods"
-        | "rename"
-        | "transfer"
-        | "delete"
-        | "archive"
-        | "unarchive"
-        | "default-branch"
-        | "collaborator"
-        | "remove-collaborator"
-        | "protection-save"
-        | "protection-delete" => "/settings",
-        "label" | "edit-label" | "delete-label" => "/labels",
-        "deploy-key-add" | "deploy-key-delete" => "/settings?tab=deploy-keys",
-        _ => "",
+/// What a repository form action needs. `post_form` reads this one table for every check.
+struct FormAction {
+    name: &'static str,
+    /// The repository page the action belongs to, shown again after a refusal.
+    page: &'static str,
+    flags: u8,
+}
+
+/// Reads Git metadata, so it needs readable storage.
+const GIT: u8 = 1;
+/// The form carries the id of the repository it was rendered for.
+const BOUND: u8 = 2;
+/// The form must send `confirm=yes`.
+const CONFIRM: u8 = 4;
+/// Needs write access.
+const WRITE: u8 = 8;
+/// Needs repository administration.
+const ADMIN: u8 = 16;
+
+const fn form_action(name: &'static str, page: &'static str, flags: u8) -> FormAction {
+    FormAction { name, page, flags }
+}
+
+// `write-file` has no GIT flag: with storage down it still opens its editor.
+#[rustfmt::skip]
+const FORM_ACTIONS: &[FormAction] = &[
+    form_action("star", "", 0),
+    form_action("unstar", "", BOUND),
+    form_action("watch", "", 0),
+    form_action("unwatch", "", 0),
+    form_action("watch-level", "", 0),
+    form_action("fork", "", GIT),
+    form_action("create-branch", "/branches", GIT | BOUND | WRITE),
+    form_action("delete-branch", "/branches", GIT | BOUND | WRITE | CONFIRM),
+    form_action("create-tag", "/tags", GIT | BOUND | WRITE),
+    form_action("delete-tag", "/tags", GIT | BOUND | WRITE | CONFIRM),
+    form_action("settings", "/settings", BOUND | ADMIN),
+    form_action("merge-methods", "/settings", BOUND | ADMIN),
+    form_action("rename", "/settings", BOUND | ADMIN | CONFIRM),
+    form_action("transfer", "/settings", BOUND | ADMIN),
+    form_action("delete", "/settings", BOUND | ADMIN),
+    form_action("collaborator", "/settings", BOUND | ADMIN),
+    form_action("remove-collaborator", "/settings", BOUND | ADMIN | CONFIRM),
+    form_action("label", "/labels", BOUND | ADMIN),
+    form_action("edit-label", "/labels", BOUND | ADMIN),
+    form_action("delete-label", "/labels", BOUND | ADMIN | CONFIRM),
+    form_action("about", "", BOUND | WRITE),
+    form_action("write-file", "", 0),
+    form_action("delete-file", "", GIT | BOUND),
+    form_action("protection-save", "/settings", BOUND | ADMIN),
+    form_action("protection-delete", "/settings", BOUND | ADMIN),
+    form_action("archive", "/settings", BOUND | ADMIN | CONFIRM),
+    form_action("unarchive", "/settings", BOUND | ADMIN | CONFIRM),
+    form_action("default-branch", "/settings", GIT | BOUND | ADMIN),
+    form_action("webhook-save", "", BOUND | ADMIN),
+    form_action("webhook-delete", "", BOUND | ADMIN),
+    form_action("webhook-ping", "", BOUND | ADMIN),
+    form_action("webhook-redeliver", "", BOUND | ADMIN),
+    form_action("deploy-key-add", "/settings?tab=deploy-keys", BOUND | ADMIN),
+    form_action("deploy-key-delete", "/settings?tab=deploy-keys", BOUND | ADMIN | CONFIRM),
+];
+
+impl FormAction {
+    fn has(&self, flag: u8) -> bool {
+        self.flags & flag != 0
     }
+}
+
+fn form_page_suffix(name: &str) -> &'static str {
+    FORM_ACTIONS
+        .iter()
+        .find(|row| row.name == name)
+        .map_or("", |row| row.page)
 }
 
 /// The editor or delete page a rejected save names in `from`, when it is a page of this repository
@@ -986,56 +893,10 @@ pub(super) async fn post_form(
     if let Err(response) = ctx.require_user() {
         return response;
     }
-    if ![
-        "star",
-        "unstar",
-        "watch",
-        "unwatch",
-        "watch-level",
-        "fork",
-        "create-branch",
-        "delete-branch",
-        "create-tag",
-        "delete-tag",
-        "settings",
-        "merge-methods",
-        "rename",
-        "transfer",
-        "delete",
-        "collaborator",
-        "remove-collaborator",
-        "label",
-        "edit-label",
-        "delete-label",
-        "about",
-        "write-file",
-        "delete-file",
-        "protection-save",
-        "protection-delete",
-        "archive",
-        "unarchive",
-        "default-branch",
-        "webhook-save",
-        "webhook-delete",
-        "webhook-ping",
-        "webhook-redeliver",
-        "deploy-key-add",
-        "deploy-key-delete",
-    ]
-    .contains(&action.as_str())
-    {
+    let Some(row) = FORM_ACTIONS.iter().find(|row| row.name == action.as_str()) else {
         return ctx.error(StatusCode::NOT_FOUND, "Repository action not found.");
-    }
-    let needs_git = [
-        "create-branch",
-        "delete-branch",
-        "default-branch",
-        "create-tag",
-        "delete-tag",
-        "delete-file",
-        "fork",
-    ];
-    let database_only = action != "write-file" && !needs_git.contains(&action.as_str());
+    };
+    let database_only = !row.has(GIT) && action != "write-file";
     let loaded = match if database_only {
         super::chrome::load_database(&ctx, owner, name).await
     } else {
@@ -1047,44 +908,7 @@ pub(super) async fn post_form(
     // A repository form names the repository it was rendered for. After a rename, another
     // repository can take the old owner and name, and the form must not reach that one.
     let repository_id = loaded.repository.id.to_string();
-    if [
-        "unstar",
-        "create-branch",
-        "delete-branch",
-        "create-tag",
-        "delete-tag",
-        "about",
-        "settings",
-        "merge-methods",
-        "rename",
-        "transfer",
-        "delete",
-        "collaborator",
-        "remove-collaborator",
-        "label",
-        "edit-label",
-        "delete-label",
-        "protection-save",
-        "protection-delete",
-        "delete-file",
-        "label",
-        "archive",
-        "unarchive",
-        "default-branch",
-        "webhook-save",
-        "webhook-delete",
-        "webhook-ping",
-        "webhook-redeliver",
-        "deploy-key-add",
-        "deploy-key-delete",
-        "create-branch",
-        "delete-branch",
-        "create-tag",
-        "delete-tag",
-    ]
-    .contains(&action.as_str())
-        && field(&form, "repository_id") != repository_id
-    {
+    if row.has(BOUND) && field(&form, "repository_id") != repository_id {
         return ctx.error(
             StatusCode::CONFLICT,
             "The repository changed. Reload the page and try again.",
@@ -1095,7 +919,7 @@ pub(super) async fn post_form(
         return replaced_repository_editor(ctx, &loaded, &form).await;
     }
     // Only actions that consume Git metadata need readable storage.
-    if loaded.git_unavailable && needs_git.contains(&action.as_str()) {
+    if loaded.git_unavailable && row.has(GIT) {
         return git_unavailable_response(&ctx);
     }
     if action == "write-file" {
@@ -1104,20 +928,10 @@ pub(super) async fn post_form(
     if action == "delete-file" {
         return delete_form(ctx, &loaded, &form).await;
     }
-    let required_confirm = [
-        "delete-branch",
-        "delete-tag",
-        "rename",
-        "remove-collaborator",
-        "delete-label",
-        "archive",
-        "unarchive",
-        "deploy-key-delete",
-    ];
     // Only a visibility change needs the confirmation. A description-only save does not.
     let changes_visibility = action == "settings"
         && (field(&form, "visibility") == "private") != loaded.repository.is_private;
-    if changes_visibility || required_confirm.contains(&action.as_str()) {
+    if changes_visibility || row.has(CONFIRM) {
         if let Err(message) = confirmation(&form) {
             return reject(
                 &ctx,
@@ -1149,30 +963,7 @@ pub(super) async fn post_form(
             "Type the repository name to confirm the transfer.",
         );
     }
-    let administration = [
-        "settings",
-        "merge-methods",
-        "rename",
-        "transfer",
-        "delete",
-        "label",
-        "edit-label",
-        "delete-label",
-        "collaborator",
-        "remove-collaborator",
-        "protection-save",
-        "protection-delete",
-        "archive",
-        "unarchive",
-        "default-branch",
-        "webhook-save",
-        "webhook-delete",
-        "webhook-ping",
-        "webhook-redeliver",
-        "deploy-key-add",
-        "deploy-key-delete",
-    ];
-    if administration.contains(&action.as_str()) && !loaded.chrome.can_admin {
+    if row.has(ADMIN) && !loaded.chrome.can_admin {
         return ctx.repo_error(&loaded.chrome, StatusCode::FORBIDDEN, REPO_ADMIN_REQUIRED);
     }
     if action.starts_with("protection-") {
@@ -1184,16 +975,7 @@ pub(super) async fn post_form(
     if action.starts_with("deploy-key-") {
         return super::deploy_keys::form(&ctx, &loaded, action, &form).await;
     }
-    if [
-        "create-branch",
-        "delete-branch",
-        "create-tag",
-        "delete-tag",
-        "about",
-    ]
-    .contains(&action.as_str())
-        && !loaded.chrome.can_write
-    {
+    if row.has(WRITE) && !loaded.chrome.can_write {
         return ctx.error(StatusCode::FORBIDDEN, "Write access is required.");
     }
     if action == "settings" && !matches!(field(&form, "visibility").as_str(), "public" | "private")
@@ -1207,33 +989,11 @@ pub(super) async fn post_form(
             "Choose public or private visibility.",
         );
     }
-    if action == "collaborator"
-        && !matches!(field(&form, "access").as_str(), "read" | "write" | "admin")
-    {
-        return reject(
-            &ctx,
-            &loaded,
-            action,
-            &form,
-            StatusCode::BAD_REQUEST,
-            "Choose a valid collaborator access level.",
-        );
-    }
     let repository = &loaded.repository;
     let result = mutate(&ctx, repository, owner, name, action, &form).await;
     match result {
         Ok(path) => ctx.redirect(&path),
-        Err((status, Json(error))) => {
-            let message = if matches!(
-                error.error.as_str(),
-                "followup_failed" | "storage_unavailable" | "validation_error" | "duplicate_label"
-            ) {
-                error.message.as_str()
-            } else {
-                safe_error(status)
-            };
-            reject(&ctx, &loaded, action, &form, status, message)
-        }
+        Err((status, Json(error))) => reject(&ctx, &loaded, action, &form, status, &error.message),
     }
 }
 
@@ -1242,21 +1002,22 @@ pub(super) async fn post_form(
 fn label_fields(form: &HashMap<String, String>) -> ApiResult<(String, String, String)> {
     let name = field(form, "name");
     let description = field(form, "description");
-    let color = field(form, "color");
-    let hex = color.trim_start_matches('#');
-    if crate::backend::issues::validate_label(&name, Some(description.as_str())).is_err()
-        || hex.len() != 6
-        || !hex.bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return Err((
+    let color = parse_label_color(&field(form, "color"));
+    match color {
+        Some(color)
+            if crate::backend::issues::validate_label(&name, Some(description.as_str()))
+                .is_ok() =>
+        {
+            Ok((name, color, description))
+        }
+        _ => Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Invalid label name or color",
             )),
-        ));
+        )),
     }
-    Ok((name, format!("#{hex}"), description))
 }
 
 /// The label that an edit or delete form names.
@@ -1267,11 +1028,6 @@ fn label_id(form: &HashMap<String, String>) -> ApiResult<i64> {
             Json(ApiError::new("validation_error", "Invalid label ID")),
         )
     })
-}
-
-/// A label write that the database refused or could not finish.
-fn label_mutation_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    super::labels::label_write_error(error)
 }
 
 async fn mutate(
@@ -1346,7 +1102,7 @@ async fn mutate(
                 owner,
             )
             .await
-            .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+            .map_err(lifecycle_error)?;
             Ok(format!(
                 "/{}/{}",
                 crate::webui::encode_component(&actor.username),
@@ -1371,7 +1127,7 @@ async fn mutate(
         "default-branch" => {
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
                 .await
-                .map_err(crate::backend::api::repos::access::access_error)?;
+                .map_err(access_error)?;
             crate::backend::repositories::refs::set_default_branch(
                 pool,
                 cluster,
@@ -1428,14 +1184,14 @@ async fn mutate(
         "settings" => {
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
                 .await
-                .map_err(crate::backend::api::repos::access::access_error)?;
+                .map_err(access_error)?;
             lifecycle::validate_description(&field(form, "description"))
-                .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+                .map_err(lifecycle_error)?;
             let private = field(form, "visibility") == "private";
             if !private
                 && lifecycle::visibility_locked(pool, repository)
                     .await
-                    .map_err(crate::backend::api::repos::responses::lifecycle_error)?
+                    .map_err(lifecycle_error)?
             {
                 return Err((
                     StatusCode::FORBIDDEN,
@@ -1485,8 +1241,7 @@ async fn mutate(
         }
         "about" => {
             let description = field(form, "description");
-            lifecycle::validate_description(&description)
-                .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+            lifecycle::validate_description(&description).map_err(lifecycle_error)?;
             let website = db::repositories::topics::parse_website(&field(form, "website"))
                 .map_err(repository_settings_error)?;
             // Topics are typed as a list, separated by commas or spaces.
@@ -1511,7 +1266,7 @@ async fn mutate(
         "rename" => {
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
                 .await
-                .map_err(crate::backend::api::repos::access::access_error)?;
+                .map_err(access_error)?;
             let updated = db::repositories::records::rename_repository(
                 pool,
                 actor.id,
@@ -1530,7 +1285,7 @@ async fn mutate(
             let updated =
                 lifecycle::transfer(pool, actor.id, repository.id, &field(form, "new_owner"))
                     .await
-                    .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+                    .map_err(lifecycle_error)?;
             let new_owner = repository_owner(pool, &updated).await?;
             Ok(format!(
                 "/{}/{}",
@@ -1541,7 +1296,7 @@ async fn mutate(
         "archive" | "unarchive" => {
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
                 .await
-                .map_err(crate::backend::api::repos::access::access_error)?;
+                .map_err(access_error)?;
             // Archiving an archived repository, or the reverse, changes nothing and is not an error.
             db::repositories::records::set_repository_archived(
                 pool,
@@ -1556,18 +1311,23 @@ async fn mutate(
         "delete" => {
             lifecycle::delete(pool, cluster, actor.id, repository.id)
                 .await
-                .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
+                .map_err(lifecycle_error)?;
             Ok(format!("/{}", crate::webui::encode_component(owner)))
         }
         "collaborator" | "remove-collaborator" => {
             let permission = if action == "remove-collaborator" {
                 None
             } else {
-                Some(match field(form, "access").as_str() {
-                    "admin" => db::models::AccessLevel::Admin,
-                    "write" => db::models::AccessLevel::Write,
-                    _ => db::models::AccessLevel::Read,
-                })
+                let level = db::models::AccessLevel::parse_collaborator(&field(form, "access"));
+                Some(level.ok_or_else(|| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(ApiError::new(
+                            "validation_error",
+                            "Choose a valid collaborator access level.",
+                        )),
+                    )
+                })?)
             };
             crate::backend::repositories::access::change_collaborator(
                 pool,
@@ -1577,7 +1337,7 @@ async fn mutate(
                 permission,
             )
             .await
-            .map_err(crate::backend::api::repos::access::access_error)?;
+            .map_err(access_error)?;
             Ok(settings_section_url(&base, action))
         }
         "label" => {
@@ -1591,7 +1351,7 @@ async fn mutate(
                 Some(&description),
             )
             .await
-            .map_err(label_mutation_error)?;
+            .map_err(label_write_error)?;
             Ok(format!("{base}/labels"))
         }
         "edit-label" => {
@@ -1609,14 +1369,14 @@ async fn mutate(
                 .then_some(description.as_str()),
             )
             .await
-            .map_err(label_mutation_error)?;
+            .map_err(label_write_error)?;
             Ok(format!("{base}/labels"))
         }
         "delete-label" => {
             let id = label_id(form)?;
             db::labels::delete_label(pool, actor.id, repository.id, id)
                 .await
-                .map_err(label_mutation_error)?;
+                .map_err(label_write_error)?;
             Ok(format!("{base}/labels"))
         }
         _ => Err((

@@ -1,5 +1,6 @@
 //! Node access and private representation middleware.
 use super::{
+    config::WebConfig,
     error::ApiError,
     session::{self, get_current_user},
 };
@@ -9,14 +10,69 @@ use crate::backend::api::{
 };
 use crate::backend::{app::AppState, db};
 use axum::{
-    extract::{MatchedPath, Request},
+    body::HttpBody,
+    extract::{ConnectInfo, MatchedPath, Request},
     http::{header, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Extension, Json,
 };
 use futures_util::{Stream, StreamExt};
-use std::{io, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    io,
+    net::{IpAddr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
+
+/// Sets the header that `session::client_address` reads, and drops any value the client sent.
+/// The address is the connection's, or, when the connection comes from a trusted proxy, the
+/// client that proxy forwarded for. IPv6 clients are told apart by their /64 network.
+pub(crate) async fn stamp_client_address(
+    Extension(config): Extension<Arc<WebConfig>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    request.headers_mut().remove(session::CLIENT_HEADER);
+    if let Some(Ok(value)) = client_key(&request, &config.trusted_proxies)
+        .map(|client| client.parse::<header::HeaderValue>())
+    {
+        request.headers_mut().insert(session::CLIENT_HEADER, value);
+    }
+    next.run(request).await
+}
+
+fn client_key(request: &Request, trusted_proxies: &HashSet<IpAddr>) -> Option<String> {
+    let ConnectInfo(peer) = request.extensions().get::<ConnectInfo<SocketAddr>>()?;
+    let mut client = peer.ip().to_canonical();
+    if trusted_proxies.contains(&client) {
+        let forwarded: Vec<&str> = request
+            .headers()
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .flat_map(|value| value.split(','))
+            .collect();
+        // Each proxy appends the address it saw, so the client is the last one that is not a
+        // trusted proxy itself.
+        for entry in forwarded.into_iter().rev() {
+            let Ok(address) = entry.trim().parse::<IpAddr>() else {
+                break;
+            };
+            client = address.to_canonical();
+            if !trusted_proxies.contains(&client) {
+                break;
+            }
+        }
+    }
+    Some(match client {
+        IpAddr::V4(address) => address.to_string(),
+        IpAddr::V6(address) => {
+            Ipv6Addr::from(u128::from(address) & !u128::from(u64::MAX)).to_string()
+        }
+    })
+}
 
 /// The upload routes are matched before this layer runs. A request without a matched path is
 /// not an upload route, so it is gated. Upload routes read their own bodies, with their own
@@ -32,9 +88,14 @@ fn streams_upload(request: &Request) -> bool {
         })
 }
 
-/// Reads the whole body of every POST, PUT, PATCH and DELETE request before its handler
-/// runs. Each of the authenticated and anonymous pools allows 8 buffered bodies, read
-/// within 4 MiB and 30 seconds. Slots stay held through the handler. Upload routes are exempt.
+/// Bodies up to this size are read without a slot: a client that stalls on one holds nothing
+/// that another client needs.
+const SMALL_BODY: u64 = 64 * 1024;
+const MAX_BODY: u64 = 4 * 1024 * 1024;
+
+/// Reads the whole body of every POST, PUT, PATCH and DELETE request before its handler runs,
+/// within 4 MiB and 30 seconds. A body that is not known to be small takes a slot from the
+/// authenticated or the anonymous pool, 8 each, while it is read. Upload routes are exempt.
 pub(crate) async fn bounded_form_body(
     Extension(state): Extension<Arc<AppState>>,
     mut request: Request,
@@ -54,24 +115,33 @@ pub(crate) async fn bounded_form_body(
     {
         return next.run(request).await;
     }
-    let authenticated = match session::get_optional_user(&state.pool, request.headers()).await {
-        Ok(user) => user.is_some(),
-        // Password-change forms still need to reach their own session check.
-        Err((StatusCode::PRECONDITION_REQUIRED, _)) => true,
-        Err(error) => return error.into_response(),
-    };
-    let reads = if authenticated {
-        &state.form_reads
+    let declared = request.body().size_hint().upper();
+    if declared.is_some_and(|size| size > MAX_BODY) {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
+    let permit = if declared.is_some_and(|size| size <= SMALL_BODY) {
+        None
     } else {
-        &state.anonymous_form_reads
-    };
-    let Ok(permit) = reads.try_acquire() else {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        let authenticated = match session::get_optional_user(&state.pool, request.headers()).await {
+            Ok(user) => user.is_some(),
+            // Password-change forms still need to reach their own session check.
+            Err((StatusCode::PRECONDITION_REQUIRED, _)) => true,
+            Err(error) => return error.into_response(),
+        };
+        let reads = if authenticated {
+            &state.form_reads
+        } else {
+            &state.anonymous_form_reads
+        };
+        let Ok(permit) = reads.try_acquire() else {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        };
+        Some(permit)
     };
     let (mut parts, body) = request.into_parts();
     let bytes = match tokio::time::timeout(
         Duration::from_secs(30),
-        axum::body::to_bytes(body, 4 * 1024 * 1024),
+        axum::body::to_bytes(body, MAX_BODY as usize),
     )
     .await
     {
@@ -79,6 +149,7 @@ pub(crate) async fn bounded_form_body(
         Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
+    drop(permit);
     if parts
         .headers
         .get(header::CONTENT_TYPE)
@@ -98,11 +169,8 @@ pub(crate) async fn bounded_form_body(
             }
         }
     }
-    let response = next
-        .run(Request::from_parts(parts, axum::body::Body::from(bytes)))
-        .await;
-    drop(permit);
-    response
+    next.run(Request::from_parts(parts, axum::body::Body::from(bytes)))
+        .await
 }
 
 pub(super) fn valid_submission_token(token: &str) -> bool {
@@ -203,10 +271,7 @@ pub(crate) async fn require_node_access(
     };
 
     let (setup_completed, private_mode) = match node_config {
-        Some(config) => (
-            config.setup_completed,
-            config.node_mode.eq_ignore_ascii_case("private"),
-        ),
+        Some(config) => (config.setup_completed, config.is_private()),
         None => (false, false),
     };
 
@@ -290,5 +355,50 @@ pub(crate) async fn private_api_response(request: Request, next: Next) -> Respon
         private_sensitive_response(request, next).await
     } else {
         next.run(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request(peer: &str, forwarded: &[&str]) -> Request {
+        let mut request = Request::new(axum::body::Body::empty());
+        request
+            .extensions_mut()
+            .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
+        for value in forwarded {
+            request
+                .headers_mut()
+                .append("x-forwarded-for", value.parse().unwrap());
+        }
+        request
+    }
+
+    #[test]
+    fn forwarded_for_is_believed_only_from_trusted_proxies() {
+        let trusted = HashSet::from(["10.0.0.1".parse().unwrap(), "10.0.0.2".parse().unwrap()]);
+        let key = |peer, forwarded: &[&str]| client_key(&request(peer, forwarded), &trusted);
+        assert_eq!(
+            key("203.0.113.5:1000", &["198.51.100.1"]).as_deref(),
+            Some("203.0.113.5")
+        );
+        assert_eq!(key("10.0.0.1:1000", &[]).as_deref(), Some("10.0.0.1"));
+        assert_eq!(
+            key("10.0.0.1:1000", &["198.51.100.9, 198.51.100.1, 10.0.0.2"]).as_deref(),
+            Some("198.51.100.1")
+        );
+    }
+
+    #[test]
+    fn ipv6_clients_share_one_budget_per_64() {
+        let key = client_key(&request("[2001:db8:1:2:3:4:5:6]:80", &[]), &HashSet::new());
+        assert_eq!(key.as_deref(), Some("2001:db8:1:2::"));
+    }
+
+    #[test]
+    fn a_request_without_a_socket_has_no_client() {
+        let request = Request::new(axum::body::Body::empty());
+        assert_eq!(client_key(&request, &HashSet::new()), None);
     }
 }

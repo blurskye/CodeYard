@@ -105,8 +105,8 @@ impl CiRuns {
     ) -> Result<db::models::CiRun, AdmissionError> {
         use super::admission::{
             is_safe_owner, is_safe_ref, is_safe_workflow_path, is_supported_event,
-            is_valid_sha1_hex,
         };
+        use crate::backend::git::is_full_commit_id;
         if !is_safe_owner(&request.repo_owner)
             || crate::backend::repositories::lifecycle::validate_name(&request.repo_name).is_err()
         {
@@ -132,7 +132,7 @@ impl CiRuns {
         if request
             .head_sha
             .as_deref()
-            .is_some_and(|sha| !is_valid_sha1_hex(sha))
+            .is_some_and(|sha| !is_full_commit_id(sha))
         {
             return Err(AdmissionError::InvalidRequest(
                 "head_sha must be a full 40-character hexadecimal commit id",
@@ -253,28 +253,15 @@ impl CiRuns {
         let Some(actor) = db::users::accounts::get_user_by_id(&self.pool, actor_id).await? else {
             return Ok(false);
         };
-        if actor.is_banned
-            || actor.must_change_password
-            || (!actor.is_admin && !self.config.trusted_actor_ids.contains(&actor.id))
-        {
-            return Ok(false);
-        }
         let Some(repository) =
             db::repositories::records::get_repository_by_id(&self.pool, repo_id).await?
         else {
             return Ok(false);
         };
-        if repository.is_archived {
-            return Ok(false);
-        }
         let access =
             db::repositories::access::get_user_repo_access(&self.pool, actor.id, repository.id)
                 .await?;
-        let personal_admin = actor.is_admin
-            && repository.owner_kind == "user"
-            && repository.owner_user_id.is_some()
-            && repository.owner_org_id.is_none();
-        Ok(personal_admin || access.can_write())
+        Ok(admission::check_actor(&self.config, &actor, &repository, access).is_ok())
     }
 
     pub fn config(&self) -> &CiConfig {

@@ -4,7 +4,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use codeyard::backend::{
     api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
@@ -30,7 +30,7 @@ struct World {
 async fn setup(pg: bool) -> World {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let carol_id = database.actor("carol").await;
@@ -1373,14 +1373,13 @@ async fn release_write_regressions(pg: bool) {
     .unwrap();
     assert_eq!(denied.status(), StatusCode::NOT_FOUND);
     drop(permits);
-    let timed_out = tokio::time::timeout(
-        std::time::Duration::from_secs(35),
+    // The read timeout is 15 minutes, so a stalled upload is cancelled by the client instead.
+    let stalled = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
         world.alice.router.clone().oneshot(request(&world.alice)),
     )
-    .await
-    .unwrap()
-    .unwrap();
-    assert_eq!(timed_out.status(), StatusCode::REQUEST_TIMEOUT);
+    .await;
+    assert!(stalled.is_err());
     assert_eq!(world.upload_reads.available_permits(), 4);
 
     let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")

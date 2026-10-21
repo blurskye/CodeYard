@@ -1,6 +1,6 @@
-//! The `cluster` subcommands as the executable runs them. None of these need
-//! PostgreSQL: they cover what works without a database and what must be refused
-//! on a SQLite installation.
+//! The `cluster` subcommands as the executable runs them: what works without a database,
+//! what must be refused on a SQLite installation, and (the first test) what the repository
+//! commands need on PostgreSQL.
 use codeyard::backend::cluster::NodeKey;
 use std::{
     path::Path,
@@ -49,9 +49,7 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
         ("NODE_NAME", "operator"),
     ];
     for role in ["storage", "web", "ssh"] {
-        let db::DbPool::Postgres(pool) = &database.pool else {
-            unreachable!()
-        };
+        let pool = &database.raw;
         sqlx::query("UPDATE nodes SET roles = $1 WHERE id = $2")
             .bind(vec![role.to_owned()])
             .bind(node.id)

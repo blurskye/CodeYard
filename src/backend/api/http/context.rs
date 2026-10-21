@@ -5,6 +5,7 @@ use super::session;
 use crate::{
     backend::{
         app::AppState,
+        crypto::is_hex_token,
         db::{self, models::User},
     },
     webui::document::{Chrome, Theme},
@@ -47,7 +48,7 @@ pub(crate) async fn csrf_token_for_existing_session(
     headers: &HeaderMap,
 ) -> Result<String, ExistingCsrfError> {
     let id = session::extract_session_id(headers)
-        .filter(|id| valid_random_token(id))
+        .filter(|id| is_hex_token(id, 64))
         .ok_or(ExistingCsrfError::Missing)?;
     let session = db::users::sessions::get_browser_session(&state.pool, &id)
         .await
@@ -56,7 +57,7 @@ pub(crate) async fn csrf_token_for_existing_session(
     csrf_token_for_session(state, &session)
         .await
         .map_err(|_| ExistingCsrfError::Unavailable)?
-        .filter(|token| valid_random_token(token))
+        .filter(|token| is_hex_token(token, 64))
         .ok_or(ExistingCsrfError::Missing)
 }
 
@@ -95,12 +96,10 @@ impl PageContext {
             .await
             .map_err(|_| unavailable())?;
         let setup_completed = config.as_ref().is_some_and(|c| c.setup_completed);
-        let private_mode = config
-            .as_ref()
-            .is_some_and(|c| c.node_mode.eq_ignore_ascii_case("private"));
+        let private_mode = config.as_ref().is_some_and(|c| c.is_private());
 
         // Do not treat a failed lookup as anonymous, or a missing setup row as an outage.
-        let supplied_id = session::extract_session_id(&headers).filter(|id| valid_random_token(id));
+        let supplied_id = session::extract_session_id(&headers).filter(|id| is_hex_token(id, 64));
         let existing_session = match supplied_id.as_deref() {
             Some(id) => db::users::sessions::get_browser_session(&state.pool, id)
                 .await
@@ -183,7 +182,7 @@ impl PageContext {
         let csrf_token = csrf_token_for_session(&state, &verified_session)
             .await
             .map_err(|_| unavailable())?
-            .filter(|token| valid_random_token(token))
+            .filter(|token| is_hex_token(token, 64))
             .ok_or_else(unavailable)?;
         let query = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
             .into_owned()
@@ -227,6 +226,13 @@ impl PageContext {
     )]
     pub fn require_user(&self) -> Result<&User, Response> {
         self.user.as_ref().ok_or_else(|| self.redirect("/login"))
+    }
+
+    /// The signed-in account when it may use administrator pages.
+    pub fn administrator(&self) -> Option<&User> {
+        self.user
+            .as_ref()
+            .filter(|user| user.is_admin && !user.is_banned && !user.must_change_password)
     }
 
     #[expect(
@@ -284,12 +290,9 @@ impl PageContext {
     }
 }
 
-fn valid_random_token(token: &str) -> bool {
-    token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit())
-}
 pub(crate) fn csrf_matches(expected: &str, supplied: Option<&str>) -> bool {
     supplied.is_some_and(|token| {
-        valid_random_token(token) && bool::from(expected.as_bytes().ct_eq(token.as_bytes()))
+        is_hex_token(token, 64) && bool::from(expected.as_bytes().ct_eq(token.as_bytes()))
     })
 }
 fn public_identity_path(path: &str) -> bool {
@@ -476,6 +479,7 @@ mod tests {
             "/alice/repo?tab=files",
             "/search?q=hello%20world",
             "/search?q=a%5Cb",
+            "/search?q=50%25",
             "/alice/repo/tree/feature%2Fbranch",
         ] {
             assert!(safe_redirect_path(path));

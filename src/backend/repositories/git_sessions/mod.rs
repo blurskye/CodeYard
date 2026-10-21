@@ -165,6 +165,8 @@ impl ReceiveCredential {
 pub(crate) struct ReceiveSession<'a> {
     pub repo_id: i64,
     pub path: &'a std::path::Path,
+    /// The application binary that runs as the pre-receive and post-receive hook.
+    pub executable: std::path::PathBuf,
     pub session: crate::backend::repositories::store::GitSession,
 }
 

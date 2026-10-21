@@ -1,5 +1,5 @@
 //! Repository form identity, bounded lists and effect-time authority on both databases.
-use crate::support::{database::Database, fake_webui_bundle as bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
 use codeyard::{
     backend::{
@@ -18,7 +18,7 @@ use std::sync::Arc;
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let upper = f.actor("Alice").await;

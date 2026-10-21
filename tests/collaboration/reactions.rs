@@ -5,33 +5,18 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
-use pulls::Client;
+use pulls::{visible_text, Client};
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 /// `alice/proj` is public and bob can read it. Alice owns it.
-/// The page without Dioxus node-id comments, so text can be matched next to its tag.
-fn plain(page: &str) -> String {
-    let mut out = String::new();
-    let mut rest = page;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(&rest[..start]);
-        rest = rest[start..].split_once("-->").map_or("", |(_, tail)| tail);
-    }
-    out.push_str(rest);
-    out
-}
-
 async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -46,14 +31,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        database.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;
     let bob = Client::login(&router, database.pool(), bob_id).await;
     (database, root, alice, bob)
@@ -112,10 +90,10 @@ async fn reactions_toggle_and_count(pg: bool) {
         Some(format!("/alice/proj/issues/1#comment-{comment}").as_str())
     );
     let (_, page) = bob.page("/alice/proj/issues/1").await;
-    let page = plain(&page);
+    let page = visible_text(&page);
     assert!(page.contains("aria-pressed=\"true\""));
     let (_, page) = alice.page("/alice/proj/issues/1").await;
-    let page = plain(&page);
+    let page = visible_text(&page);
     // Alice's heart is pressed and counted twice; the rocket is bob's and counted once.
     assert!(page.contains("aria-pressed=\"true\""));
     assert!(page.contains("aria-pressed=\"false\""));
@@ -127,8 +105,7 @@ async fn reactions_toggle_and_count(pg: bool) {
         .form_reply("/alice/proj/issues/1/react", &[("content", "heart")])
         .await;
     assert!(reply.status.is_redirection());
-    let (_, page) = alice.page("/alice/proj/issues/1").await;
-    let page = plain(&page);
+    let page = visible_text(&alice.page_ok("/alice/proj/issues/1").await);
     assert!(!page.contains("collaboration-reaction-count\">2<"));
 
     // Unknown reactions are refused, and a comment from another issue is not found.
@@ -153,17 +130,6 @@ async fn postgres_reactions_toggle_and_count() {
 #[tokio::test]
 async fn sqlite_reactions_toggle_and_count() {
     reactions_toggle_and_count(false).await;
-}
-
-/// The id a redirect names after `marker`, such as `#review-`.
-fn id_after(location: Option<&str>, marker: &str) -> i64 {
-    let location = location.expect("a redirect");
-    location
-        .rsplit_once(marker)
-        .unwrap_or_else(|| panic!("{marker} in {location}"))
-        .1
-        .parse()
-        .unwrap()
 }
 
 /// The reaction bar of the form that names `field` (`comment` or `review`) with `id`.
@@ -209,7 +175,7 @@ async fn reactions_on_reviews_and_diff_comments(pg: bool) {
         )
         .await;
     assert!(start.status.is_redirection(), "{}", start.text());
-    let root = id_after(start.location.as_deref(), "#thread-");
+    let root = start.id_after("#thread-");
     let submit = bob
         .form_reply(
             &format!("{page}/reviews"),
@@ -221,7 +187,7 @@ async fn reactions_on_reviews_and_diff_comments(pg: bool) {
         )
         .await;
     assert!(submit.status.is_redirection(), "{}", submit.text());
-    let review = id_after(submit.location.as_deref(), "#review-");
+    let review = submit.id_after("#review-");
 
     // Alice replies in the thread from the diff.
     let reply = alice
@@ -275,7 +241,7 @@ async fn reactions_on_reviews_and_diff_comments(pg: bool) {
         )
         .await;
     assert!(hidden.status.is_redirection(), "{}", hidden.text());
-    let hidden_id = id_after(hidden.location.as_deref(), "#thread-");
+    let hidden_id = hidden.id_after("#thread-");
 
     // Alice likes the review; Bob likes it too. From the diff, a reaction returns to the diff.
     let liked = alice
@@ -353,7 +319,7 @@ async fn reactions_on_reviews_and_diff_comments(pg: bool) {
     // The conversation shows the review and its inline comment with their counts, and the
     // diff shows the thread with its reply. Alice's pressed reactions are hers alone.
     let (_, conversation) = alice.page(&page).await;
-    let conversation = plain(&conversation);
+    let conversation = visible_text(&conversation);
     let review_bar = bar(&conversation, "review", review);
     assert!(review_bar.contains("aria-pressed=\"true\""), "{review_bar}");
     assert!(
@@ -364,15 +330,14 @@ async fn reactions_on_reviews_and_diff_comments(pg: bool) {
     assert!(bar(&conversation, "comment", reply_id).contains("collaboration-reaction-count\">1<"));
     assert!(!conversation.contains("Still private"));
     assert!(!conversation.contains(&format!("name=\"comment\" value=\"{hidden_id}\"")));
-    let (_, diff) = alice.page(&format!("{page}/diff")).await;
-    let diff = plain(&diff);
+    let diff = visible_text(&alice.page_ok(&format!("{page}/diff")).await);
     assert!(bar(&diff, "comment", root).contains("aria-pressed=\"true\""));
     assert!(bar(&diff, "comment", reply_id).contains("aria-pressed=\"false\""));
     assert!(!diff.contains("Still private"));
     assert!(!diff.contains(&format!("thread-{hidden_id}")));
     // Bob sees his own pending comment, without a bar, and his rocket on the reply.
     let (_, own) = bob.page(&format!("{page}/diff")).await;
-    let own = plain(&own);
+    let own = visible_text(&own);
     assert!(own.contains("Still private"));
     assert!(!own.contains(&format!("name=\"comment\" value=\"{hidden_id}\"")));
     assert!(bar(&own, "comment", reply_id).contains("aria-pressed=\"true\""));
@@ -389,7 +354,7 @@ async fn reactions_on_reviews_and_diff_comments(pg: bool) {
         .await;
     assert!(again.status.is_redirection(), "{}", again.text());
     let (_, conversation) = alice.page(&page).await;
-    let conversation = plain(&conversation);
+    let conversation = visible_text(&conversation);
     assert_eq!(
         bar(&conversation, "review", review)
             .matches("collaboration-reaction-count")
@@ -460,7 +425,7 @@ async fn timeline_shows_changes(pg: bool) {
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
     let (_, page) = alice.page("/alice/proj/issues/1").await;
-    let page = plain(&page);
+    let page = visible_text(&page);
     for expected in [
         "changed the title",
         "closed this",
@@ -708,7 +673,7 @@ async fn reaction_returns_to_its_discussion_page(pg: bool) {
     }
     let (_, second) = alice.page("/alice/proj/issues/1?page=2").await;
     assert!(
-        plain(&second).contains("action=\"/alice/proj/issues/1/react?page=2\""),
+        visible_text(&second).contains("action=\"/alice/proj/issues/1/react?page=2\""),
         "the reaction bars on page 2 name it"
     );
     let last = &comments[30];

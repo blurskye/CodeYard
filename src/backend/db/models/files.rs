@@ -25,6 +25,16 @@ pub struct File {
     pub updated_at: DateTime<Utc>,
 }
 
+impl File {
+    /// An upload that has not been confirmed and whose reservation has not lapsed.
+    pub fn is_pending(&self) -> bool {
+        !self.is_active
+            && self
+                .upload_expires_at
+                .is_some_and(|expires| expires > Utc::now())
+    }
+}
+
 /// Generic uploads have no repository/issue ACL. Only explicitly public avatars
 /// may be declassified here; other assets remain owner-only until scoped APIs exist.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

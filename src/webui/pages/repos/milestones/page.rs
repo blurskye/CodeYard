@@ -1,7 +1,8 @@
 //! Milestone pages: the list, a milestone's page with its issues, and the new-milestone form.
+use crate::webui::pages::repos::chrome::csrf;
 use crate::webui::pages::repos::issues::filter_menu::{Choice, FilterMenu};
 use crate::webui::pages::repos::issues::{
-    csrf, notice, rows, state_class, Item, Kind, ListCounts, Milestone, MilestoneDraft, Repository,
+    notice, rows, state_class, Item, Kind, ListCounts, Milestone, MilestoneDraft, Repository,
 };
 use crate::webui::{
     components::{confirm_dialog, DraftTextarea},
@@ -24,15 +25,15 @@ fn progress(milestone: &Milestone) -> Element {
 fn fields(draft: &MilestoneDraft) -> Element {
     rsx! {
         div { class: "collaboration-form-fields",
-            label { class: "collaboration-field", "Title"
+            label { class: "collaboration-form-field", "Title"
                 input { r#type: "text", name: "title", class: "collaboration-input", required: true, maxlength: "255", placeholder: "Milestone title", value: draft.title.clone() }
             }
-            label { class: "collaboration-field", "Description (optional)"
+            label { class: "collaboration-form-field", "Description (optional)"
                 // The shared textarea sets the text as its value. Text written as child nodes would
                 // show the rendering markers inside an empty description.
                 DraftTextarea { name: "description", initial_value: draft.description.clone(), rows: 5, class: "collaboration-textarea", placeholder: "What the milestone is for" }
             }
-            label { class: "collaboration-field", "Due date (optional)"
+            label { class: "collaboration-form-field", "Due date (optional)"
                 input { r#type: "date", name: "due_date", class: "collaboration-input", value: draft.due_date.clone() }
             }
         }
@@ -92,9 +93,9 @@ pub fn list(
                     header { class: "collaboration-panel-header collaboration-list-header",
                         nav { class: "collaboration-state-filters", aria_label: "Milestone state",
                             for (value, title, count) in [("open", "Open", counts.open), ("closed", "Closed", counts.closed)] {
-                                NavLink { href: format!("{url}/milestones?state={value}"), class: if state == value { "collaboration-filter-link collaboration-filter-active" } else { "collaboration-filter-link" },
+                                NavLink { href: format!("{url}/milestones?state={value}"), class: if state == value { "collaboration-filter-link collaboration-filter-active" } else { "collaboration-filter-link" }, aria_current: (state == value).then(|| "page".to_owned()),
                                     span { class: "collaboration-filter-count", "{count}" }
-                                    span { aria_current: if state == value { "page" } else { "false" }, "{title}" }
+                                    span { "{title}" }
                                 }
                             }
                         }
@@ -128,7 +129,7 @@ pub fn list(
                         }
                     }
                 }
-                nav { class: "collaboration-pagination", aria_label: "Milestone pages",
+                nav { class: "repo-pagination", aria_label: "Milestone pages",
                     if page_number > 1 { NavLink { class: "btn btn-secondary", href: format!("{url}/milestones?state={state}&sort={sort}&page={}", page_number - 1), "Previous" } }
                     if has_next { NavLink { class: "btn btn-secondary", href: format!("{url}/milestones?state={state}&sort={sort}&page={}", page_number + 1), "Next" } }
                 }
@@ -204,6 +205,7 @@ pub fn detail(
                                 summary { class: "btn btn-secondary btn-sm", "Edit" }
                                 form { method: "post", action: format!("{url}/edit"), class: "collaboration-panel collaboration-milestone-form",
                                     {csrf(&repo.csrf)}
+                                    input { r#type: "hidden", name: "repository_id", value: repo.chrome.id.to_string() }
                                     {fields(draft)}
                                     div { class: "collaboration-card-footer",
                                         button { r#type: "submit", class: "btn btn-primary", "Save milestone" }
@@ -212,13 +214,14 @@ pub fn detail(
                             }
                             form { method: "post", action: format!("{url}/{action}"), class: "collaboration-state-action",
                                 {csrf(&repo.csrf)}
+                                input { r#type: "hidden", name: "repository_id", value: repo.chrome.id.to_string() }
                                 button { r#type: "submit", class: "btn btn-secondary btn-sm", if action == "close" { "Close milestone" } else { "Reopen milestone" } }
                             }
                             details { class: "collaboration-edit native-menu repo-delete-menu",
                                 summary { class: "btn btn-danger btn-sm", "Delete milestone" }
                                 {confirm_dialog(None, &format!("Delete milestone {}", milestone.title), &url, &format!("{url}/delete"), rsx! {
                                     {csrf(&repo.csrf)}
-                                    input { r#type: "hidden", name: "repository_id", value: repo.chrome.id.to_string() }
+                                    {repos::chrome::repository_id(repo.chrome.id)}
                                     input { r#type: "hidden", name: "milestone_id", value: milestone.id.to_string() }
                                     strong { "Delete milestone {milestone.title}?" }
                                     label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Delete this milestone. Its issues stay open or closed and lose it." }
@@ -231,9 +234,9 @@ pub fn detail(
                     header { class: "collaboration-panel-header collaboration-list-header",
                         nav { class: "collaboration-state-filters", aria_label: "Milestone items",
                             for (value, title, count) in [("open", "Open", milestone.open_items), ("closed", "Closed", milestone.closed_items), ("all", "All", all)] {
-                                NavLink { href: format!("{url}?state={value}"), class: if state == value { "collaboration-filter-link collaboration-filter-active" } else { "collaboration-filter-link" },
+                                NavLink { href: format!("{url}?state={value}"), class: if state == value { "collaboration-filter-link collaboration-filter-active" } else { "collaboration-filter-link" }, aria_current: (state == value).then(|| "page".to_owned()),
                                     span { class: "collaboration-filter-count", "{count}" }
-                                    span { aria_current: if state == value { "page" } else { "false" }, "{title}" }
+                                    span { "{title}" }
                                 }
                             }
                         }

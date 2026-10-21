@@ -1,14 +1,14 @@
 //! Who can write to organization repositories (edit issues/PRs, merge, fork,
 //! run CI) as team grants, roles and account restrictions change.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
-use crate::support::native_database as native;
-use crate::support::production_ci as production;
+use crate::support::database::Database;
+use crate::support::organizations::applied;
 
 use codeyard::backend::db::{
     self,
     discussions::DiscussionEdit,
     models::{AccessLevel, CiRun, OrgRole, Repository},
-    organizations::{self as orgs, OrganizationOutcome},
+    organizations as orgs,
 };
 use db::repositories::{insert_repository, NewRepository};
 use uuid::Uuid;
@@ -16,51 +16,8 @@ use uuid::Uuid;
 const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DISK: &str = "/owned-dao-fixture/not-executed.git";
 
-enum Database {
-    Postgres(Box<production::Fixture>),
-    Sqlite(native::NativeDatabase),
-}
 impl Database {
-    async fn new(pg: bool) -> Self {
-        if pg {
-            Self::Postgres(Box::new(production::Fixture::new().await))
-        } else {
-            Self::Sqlite(native::NativeDatabase::new().await)
-        }
-    }
-    fn pool(&self) -> &db::DbPool {
-        match self {
-            Self::Postgres(f) => &f.pool,
-            Self::Sqlite(f) => &f.pool,
-        }
-    }
-    async fn execute(&self, sql: &str, ids: &[i64]) {
-        match self {
-            Self::Postgres(f) => {
-                let mut q = sqlx::query(sql);
-                for id in ids {
-                    q = q.bind(*id);
-                }
-                q.execute(&f.raw).await.expect("owned PG fixture mutation");
-            }
-            Self::Sqlite(f) => {
-                let mut q = sqlx::query(sql);
-                for id in ids {
-                    q = q.bind(*id);
-                }
-                q.execute(&f.raw)
-                    .await
-                    .expect("owned SQLite fixture mutation");
-            }
-        }
-    }
-    async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(self.pool(), name, None)
-            .await
-            .unwrap()
-            .id
-    }
-    async fn repo(&self, owner: i64, org: Option<i64>, name: &str) -> Repository {
+    async fn private_repo(&self, owner: i64, org: Option<i64>, name: &str) -> Repository {
         let repo = db::repositories::records::create_repository(
             self.pool(),
             owner,
@@ -78,18 +35,6 @@ impl Database {
             .await
             .unwrap()
             .unwrap()
-    }
-    async fn close(&mut self) {
-        match self {
-            Self::Postgres(f) => f.finish().await,
-            Self::Sqlite(f) => f.close().await,
-        }
-    }
-}
-fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("expected Applied: {other:?}"),
     }
 }
 async fn expect_writes(database: &Database, actor: i64, repo: i64, allowed: bool) {
@@ -297,8 +242,10 @@ async fn authority_contract(pg: bool) {
             .await
             .unwrap(),
     );
-    let repo = database.repo(owner, Some(org), "write_private").await;
-    let personal = database.repo(owner, None, "write_personal").await;
+    let repo = database
+        .private_repo(owner, Some(org), "write_private")
+        .await;
+    let personal = database.private_repo(owner, None, "write_personal").await;
     applied(
         orgs::grant_organization_team_repository(
             pool,
@@ -342,7 +289,7 @@ async fn authority_contract(pg: bool) {
     assert!(enqueue(pool, member, repo.id, true, &[member])
         .await
         .is_err()); // CD requires Admin
-    let cd_repo = database.repo(owner, Some(org), "write_cd").await;
+    let cd_repo = database.private_repo(owner, Some(org), "write_cd").await;
     assert!(enqueue(pool, admin, cd_repo.id, true, &[admin])
         .await
         .is_ok());
@@ -572,14 +519,16 @@ async fn authority_contract(pg: bool) {
             &[owner],
         )
         .await;
-    let collision = database.repo(owner, Some(700000), "write_collision").await;
+    let collision = database
+        .private_repo(owner, Some(700000), "write_collision")
+        .await;
     expect_writes(&database, 700000, collision.id, false).await;
     assert!(enqueue(pool, 700000, collision.id, false, &[700000])
         .await
         .is_err());
     assert!(fork(pool, 700000, collision.id).await.is_err());
     let collision_personal = database
-        .repo(700000, None, "write_collision_personal")
+        .private_repo(700000, None, "write_collision_personal")
         .await;
     expect_writes(&database, 700000, collision_personal.id, true).await;
     assert!(
@@ -587,7 +536,7 @@ async fn authority_contract(pg: bool) {
             .await
             .is_ok()
     );
-    database.close().await;
+    database.finish().await;
 }
 
 async fn team_cancellation_stays_with_its_repositories(pg: bool) {
@@ -643,7 +592,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
             .await
             .unwrap(),
         );
-        let repo = database.repo(owner, Some(org), slug).await;
+        let repo = database.private_repo(owner, Some(org), slug).await;
         applied(
             orgs::grant_organization_team_repository(
                 pool,
@@ -752,7 +701,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
             "cancelled"
         );
     }
-    database.close().await;
+    database.finish().await;
 }
 
 #[tokio::test]

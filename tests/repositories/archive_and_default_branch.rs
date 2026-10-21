@@ -4,21 +4,17 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests::Client;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, db::models::AccessLevel,
-    storage::ObjectStore,
-};
+use codeyard::backend::{db, db::models::AccessLevel};
 use database::Database;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 async fn contract(pg: bool) {
     // The native forms answer with a rendered page, which needs the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -37,14 +33,7 @@ async fn contract(pg: bool) {
     db::repositories::access::grant_repo_access(f.pool(), bob_id, proj, AccessLevel::Write)
         .await
         .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
     let repo = proj.to_string();
@@ -153,7 +142,7 @@ async fn contract(pg: bool) {
         "{}",
         unarchived.text()
     );
-    let (_, page) = bob.page("/alice/proj").await;
+    let page = bob.page_ok("/alice/proj").await;
     assert!(
         !page.contains("This repository is archived and read-only."),
         "{page}"

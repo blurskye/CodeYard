@@ -1,7 +1,7 @@
 //! Database-free workers reach the real core queue over encrypted loopback iroh.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::http_client as pulls;
 use crate::support::native_database as native;
-use crate::support::pull_requests as pulls;
 use crate::support::rpc_operations;
 
 use codeyard::backend::{
@@ -92,9 +92,7 @@ async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
         "{status}: {}",
         std::fs::read_to_string(log).unwrap()
     );
-    let db::DbPool::Postgres(pg) = &database.pool else {
-        unreachable!()
-    };
+    let pg = &database.raw;
     let withdrawn: bool =
         sqlx::query_scalar("SELECT last_seen IS NULL FROM nodes WHERE name='startup-stop'")
             .fetch_one(pg)
@@ -368,6 +366,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
             "stdout: {}\nstderr: {}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
+        );
+        // The name filter must have selected exactly this test, or the child passes without it.
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+            "the child did not run the test"
         );
         return;
     }
@@ -2185,7 +2188,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
         Some(context),
     ));
     let client =
-        crate::support::pull_requests::Client::login(&app, fixture.pool(), fixture.owner).await;
+        crate::support::http_client::Client::login(&app, fixture.pool(), fixture.owner).await;
     let (status, page) = tokio::time::timeout(
         Duration::from_secs(8),
         client.model(&format!("/ci_owner/project/actions?job={}", run.run_id)),
@@ -2275,7 +2278,6 @@ async fn workflow_discovery_keeps_http_workers_responsive() {
         body::Body,
         http::{Request, StatusCode},
     };
-    use codeyard::backend::{api::create_router, app::AppState, storage::ObjectStore};
     use std::{future::Future, time::Instant};
     use tower::ServiceExt;
 
@@ -2343,14 +2345,7 @@ async fn workflow_discovery_keeps_http_workers_responsive() {
         )
         .await
         .unwrap();
-        let app = create_router(AppState::new(
-            pool.clone(),
-            root.path().to_owned(),
-            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-            None,
-            CiConfig::default(),
-            None,
-        ));
+        let app = crate::support::database::router(pool, root.path()).await;
         let request = app.oneshot(
             Request::builder()
                 .uri("/api/ci/workflows?owner=workflow_owner&repo=workflows")
@@ -3163,14 +3158,7 @@ async fn a_run_whose_commit_is_missing_fails_and_frees_its_slot() {
             .await
             .unwrap();
             assert_eq!(finished.status, "failed");
-            assert!(
-                finished
-                    .error_message
-                    .as_deref()
-                    .is_some_and(|message| message.starts_with("CI could not run:")),
-                "{:?}",
-                finished.error_message
-            );
+            assert_eq!(finished.error_message.as_deref(), Some("CI could not run"));
         }
         tokio::time::timeout(Duration::from_secs(10), workers.shutdown())
             .await

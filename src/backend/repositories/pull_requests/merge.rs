@@ -1,4 +1,4 @@
-use super::OperationError;
+use super::{database_error, OperationError};
 use crate::backend::ci::CiRuns;
 use crate::backend::ci::RefUpdate;
 use crate::backend::db;
@@ -221,25 +221,18 @@ async fn merge_blockers(
                     message: reason.to_owned(),
                 }])
             }
-            Err(Refusal::Unavailable) => {
-                return Err(OperationError::Unavailable {
-                    code: "database_error",
-                    message: "Collaboration storage is temporarily unavailable".to_owned(),
-                })
-            }
+            Err(Refusal::Unavailable) => return Err(database_error(Refusal::Unavailable)),
         };
     let mut blockers = Vec::new();
     // Every rule judges the same reviews, so they are read once, when the first rule needs them.
     let mut reviews = None;
+    let mut changes_requested_reported = false;
     for rule in &rules {
         if reviews.is_none() {
             reviews = Some(
                 eligible_reviews(pool, pull_request, repository)
                     .await
-                    .map_err(|_| OperationError::Unavailable {
-                        code: "database_error",
-                        message: "Collaboration storage is temporarily unavailable".to_owned(),
-                    })?,
+                    .map_err(database_error)?,
             );
         }
         let decisions = reviews.as_deref().unwrap_or_default();
@@ -248,7 +241,8 @@ async fn merge_blockers(
             &pull_request.head_sha,
             rule.dismiss_stale_reviews,
         );
-        if has_changes_requested {
+        if has_changes_requested && !changes_requested_reported {
+            changes_requested_reported = true;
             blockers.push(OperationError::Conflict {
                 code: "branch_protection",
                 message: "Cannot merge while review state is changes_requested".to_owned(),
@@ -309,10 +303,7 @@ async fn merge_blockers(
             let unresolved =
                 db::pull_requests::reviews::count_unresolved_conversations(pool, pull_request.id)
                     .await
-                    .map_err(|_| OperationError::Unavailable {
-                        code: "database_error",
-                        message: "Collaboration storage is temporarily unavailable".to_owned(),
-                    })?;
+                    .map_err(database_error)?;
             if unresolved > 0 {
                 blockers.push(OperationError::Conflict {
                     code: "unresolved_conversations",
@@ -346,10 +337,7 @@ async fn merge_blockers(
                     &pull_request.head_sha,
                 )
                 .await
-                .map_err(|_| OperationError::Unavailable {
-                    code: "database_error",
-                    message: "Collaboration storage is temporarily unavailable".to_owned(),
-                })?;
+                .map_err(database_error)?;
                 let ci_runs = db::ci::latest_ci_runs_for_commit(
                     pool,
                     repository.id,
@@ -358,10 +346,7 @@ async fn merge_blockers(
                     target.0,
                 )
                 .await
-                .map_err(|_| OperationError::Unavailable {
-                    code: "database_error",
-                    message: "Collaboration storage is temporarily unavailable".to_owned(),
-                })?;
+                .map_err(database_error)?;
                 let failures = required_status_check_failures(
                     &pull_request.head_sha,
                     &required_status_checks,
@@ -514,10 +499,7 @@ pub(super) async fn open_chain(
 ) -> Result<Vec<db::models::PullRequest>, OperationError> {
     let chain = pull_requests::stacks::chain_below(pool, pull_request)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?;
+        .map_err(database_error)?;
     match chain {
         pull_requests::stacks::Chain::Open(layers) => Ok(layers),
         pull_requests::stacks::Chain::BelowClosed(number) => Err(OperationError::Conflict {
@@ -592,10 +574,7 @@ async fn refresh_chain(
         })?;
         let refreshed = db::pull_requests::records::get_pull_request_by_id(pool, layer.id)
             .await
-            .map_err(|_| OperationError::Unavailable {
-                code: "database_error",
-                message: "Collaboration storage is temporarily unavailable".to_owned(),
-            })?
+            .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
                 code: "not_found",
                 message: "Pull request not found".to_owned(),
@@ -710,7 +689,7 @@ async fn check_chain_policy(
 /// The refusal for an archived repository. The merge and the pull request page give this text.
 fn archived_refusal() -> OperationError {
     OperationError::Denied {
-        code: "archived",
+        code: "repository_archived",
         message: "Archived repositories cannot be merged.".to_owned(),
     }
 }
@@ -787,10 +766,7 @@ pub async fn prepare_pull_request_merge(
 ) -> Result<PreparedMerge, OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -801,10 +777,7 @@ pub async fn prepare_pull_request_merge(
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -826,10 +799,7 @@ pub async fn prepare_pull_request_merge(
     })?;
     let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -907,10 +877,7 @@ pub async fn prepare_pull_request_merge(
     let author = if request.merge_method == MergeMethod::Squash {
         db::users::accounts::get_user_by_id(pool, pull_request.author_id)
             .await
-            .map_err(|_| OperationError::Unavailable {
-                code: "database_error",
-                message: "Collaboration storage is temporarily unavailable".to_owned(),
-            })?
+            .map_err(database_error)?
     } else {
         None
     };
@@ -1003,10 +970,7 @@ pub async fn publish_prepared_merge(
     } = prepared;
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -1019,10 +983,7 @@ pub async fn publish_prepared_merge(
     super::require_write(pool, &user, &repository).await?;
     let current = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Conflict {
             code: "revision_conflict",
             message: "The pull request changed while merging. Reload and try again.".to_owned(),

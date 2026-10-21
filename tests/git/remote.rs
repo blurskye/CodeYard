@@ -2,7 +2,6 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::fake_webui_bundle as bundle;
 use crate::support::native_database as native;
-#[path = "../support/git_streaming.rs"]
 mod streaming;
 
 #[tokio::test]
@@ -326,9 +325,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
             )
             .await,
         );
-        let db::DbPool::Postgres(raw) = &database.pool else {
-            unreachable!()
-        };
+        let raw = &database.raw;
         let head: String = sqlx::query_scalar("SELECT head_sha FROM pull_requests WHERE id=$1")
             .bind(pull_id)
             .fetch_one(raw)
@@ -543,9 +540,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
             codeyard::backend::repositories::store::ErrorKind::Unavailable
         );
     }
-    let db::DbPool::Postgres(raw) = &database.pool else {
-        unreachable!()
-    };
+    let raw = &database.raw;
     sqlx::query("UPDATE nodes SET roles=ARRAY['actions-worker'] WHERE id=$1")
         .bind(caller.context.node_id)
         .execute(raw)

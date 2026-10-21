@@ -132,7 +132,10 @@ struct Ticket {
 
 impl Ticket {
     fn take(pool: &DbPool, owner: HookOwner, hook: Option<i64>, manual: bool) -> Option<Self> {
-        let slot = QUEUED.lock().unwrap().take(pool, owner, hook, manual)?;
+        let slot = QUEUED
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take(pool, owner, hook, manual)?;
         Some(Self {
             owner: (pool_id(pool), owner),
             hook,
@@ -143,7 +146,10 @@ impl Ticket {
 
 impl Drop for Ticket {
     fn drop(&mut self) {
-        QUEUED.lock().unwrap().release(self.owner, self.hook);
+        QUEUED
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .release(self.owner, self.hook);
     }
 }
 

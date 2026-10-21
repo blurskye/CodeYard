@@ -16,7 +16,7 @@ use serde::Serialize;
 use std::{io::Read, sync::Arc, time::Duration};
 use uuid::Uuid;
 
-use super::{failure, Failure};
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 
 #[derive(Serialize)]
 pub struct DownloadUrlResponse {
@@ -42,9 +42,9 @@ fn private_response(value: impl IntoResponse) -> Response {
     response
 }
 
-pub(super) fn parse_file_id(id: &str) -> Result<Uuid, Failure> {
+pub(super) fn parse_file_id(id: &str) -> Result<Uuid, ApiFailure> {
     Uuid::parse_str(id).map_err(|_| {
-        failure(
+        ApiError::failure(
             StatusCode::BAD_REQUEST,
             "invalid_file_id",
             "Invalid file ID",
@@ -67,7 +67,7 @@ pub async fn get_download_url(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(file_id): Path<String>,
-) -> Result<Response, Failure> {
+) -> Result<Response, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     let file_id = parse_file_id(&file_id)?;
     let download = files::download_for_user(&state.pool, &state.storage, user.id, file_id)
@@ -76,7 +76,10 @@ pub async fn get_download_url(
     Ok(download_response(download))
 }
 
-pub(crate) fn asset_response(download: AssetDownload, method: Method) -> Result<Response, Failure> {
+pub(crate) fn asset_response(
+    download: AssetDownload,
+    method: Method,
+) -> Result<Response, ApiFailure> {
     if method == Method::HEAD {
         let inline = download.inline_type.as_deref();
         let response = Response::builder()
@@ -99,7 +102,7 @@ pub(crate) fn asset_response(download: AssetDownload, method: Method) -> Result<
             )
             .body(axum::body::Body::empty())
             .map_err(|_| {
-                failure(
+                ApiError::failure(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "response_unavailable",
                     "Object response unavailable",
@@ -115,7 +118,7 @@ pub(crate) fn asset_response(download: AssetDownload, method: Method) -> Result<
             io_guard,
         } => {
             let reader = reader.try_into_std().map_err(|_| {
-                failure(
+                ApiError::failure(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "storage_unavailable",
                     "Object reader unavailable",
@@ -175,7 +178,7 @@ pub(crate) fn asset_response(download: AssetDownload, method: Method) -> Result<
                 )
                 .body(crate::backend::api::http::middleware::download_body(stream))
                 .map_err(|_| {
-                    failure(
+                    ApiError::failure(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "response_unavailable",
                         "Object response unavailable",
@@ -211,7 +214,7 @@ fn download_read(
     })
 }
 
-pub(super) fn download_failure(error: DownloadError) -> Failure {
+pub(super) fn download_failure(error: DownloadError) -> ApiFailure {
     let (status, code, message) = match error {
         DownloadError::MetadataUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -239,7 +242,7 @@ pub(super) fn download_failure(error: DownloadError) -> Failure {
             "Download accounting is unavailable",
         ),
     };
-    failure(status, code, message)
+    ApiError::failure(status, code, message)
 }
 
 #[cfg(test)]

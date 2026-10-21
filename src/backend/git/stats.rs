@@ -188,10 +188,12 @@ fn parse_language_stats(output: &[u8]) -> Result<Vec<LanguageStat>> {
     Ok(stats)
 }
 
-pub(crate) fn is_not_found(error: &anyhow::Error) -> bool {
-    error
-        .downcast_ref::<git2::Error>()
-        .is_some_and(|error| error.code() == git2::ErrorCode::NotFound)
+/// True when the branch does not exist. A branch that points at a missing object is
+/// a damaged repository and stays an error.
+fn is_not_found(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<git2::Error>().is_some_and(|error| {
+        error.code() == git2::ErrorCode::NotFound && error.class() == git2::ErrorClass::Reference
+    })
 }
 
 /// The commit `branch` points at, or `None` while the branch is unborn.
@@ -445,6 +447,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(get_contributors(root.path()).await.unwrap()[0].commits, 2);
+    }
+
+    #[tokio::test]
+    async fn only_a_missing_branch_is_unborn_not_a_missing_object() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init_bare(root.path()).unwrap();
+        let signature = git2::Signature::now("Test", "test@example.invalid").unwrap();
+        let tree = repo
+            .find_tree(repo.treebuilder(None).unwrap().write().unwrap())
+            .unwrap();
+        let tip = repo
+            .commit(
+                Some("refs/heads/main"),
+                &signature,
+                &signature,
+                "one",
+                &tree,
+                &[],
+            )
+            .unwrap()
+            .to_string();
+        assert_eq!(branch_tip(root.path(), "main").unwrap(), Some(tip.clone()));
+        assert_eq!(branch_tip(root.path(), "absent").unwrap(), None);
+        assert!(compute_language_stats(root.path(), "refs/heads/absent")
+            .await
+            .unwrap()
+            .is_empty());
+        std::fs::remove_file(root.path().join("objects").join(&tip[..2]).join(&tip[2..])).unwrap();
+        assert!(branch_tip(root.path(), "main").is_err());
+        assert!(compute_language_stats(root.path(), "refs/heads/main")
+            .await
+            .is_err());
     }
 
     #[test]

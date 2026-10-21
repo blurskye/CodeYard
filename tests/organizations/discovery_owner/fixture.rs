@@ -236,7 +236,7 @@ impl Fixture {
                 &[governor.id],
             )
             .await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let session = native::token();
         db::users::sessions::create_session(
             database.pool(),

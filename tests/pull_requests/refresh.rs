@@ -5,9 +5,9 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
+use codeyard::backend::{app::AppState, db, storage::ObjectStore};
 use database::Database;
 use pulls::{moved_forward, text, Client};
 use serde_json::{json, Value};
@@ -17,7 +17,7 @@ async fn contract(pg: bool) {
     // The HTML answers below render full pages, which need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
@@ -44,14 +44,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[carol_id])
         .await;
     let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
     let carol = Client::login(&router, f.pool(), carol_id).await;
@@ -805,7 +798,7 @@ async fn concurrent_refresh_converges(pg: bool) {
 /// another branch keeps the commits it recorded until its own branch moves.
 async fn refresh_touches_only_pull_requests_on_the_moved_branch(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -820,14 +813,7 @@ async fn refresh_touches_only_pull_requests_on_the_moved_branch(pg: bool) {
     .await
     .unwrap();
     let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
 
     let main0 = alice.save("main", "README.md", "unborn").await;
@@ -890,7 +876,7 @@ async fn postgres_refresh_touches_only_pull_requests_on_the_moved_branch() {
 async fn merge_names_the_base_branch_it_read(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -905,14 +891,7 @@ async fn merge_names_the_base_branch_it_read(pg: bool) {
     .await
     .unwrap();
     let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let tip_of = |branch: &str| {
         git.find_reference(&format!("refs/heads/{branch}"))

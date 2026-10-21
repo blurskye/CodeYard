@@ -2,13 +2,13 @@
 //! The store decides what is visible; this page renders only what it returns.
 
 use super::membership::project;
-use super::organization::{cursor_with_limit, invalid, unavailable};
+use super::organization::{cursor_with_limit, invalid, public_view, team_view, unavailable};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::users::profile::profile_repository;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::webui::app::Page;
-use crate::webui::pages::orgs::{Organization, OrganizationProfile, Team};
+use crate::webui::pages::orgs::{OrganizationProfile, Team};
 use axum::http::StatusCode;
 use axum::response::Response;
 
@@ -138,14 +138,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             let after = rows.last().map_or(after, |row| row.team.id);
             let teams: Vec<Team> = rows
                 .into_iter()
-                .map(|row| Team {
-                    id: row.team.id,
-                    name: row.team.name,
-                    slug: row.team.slug,
-                    description: row.team.description.unwrap_or_default(),
-                    privacy: row.team.privacy,
-                    member_count: row.member_count,
-                })
+                .map(|row| team_view(row.team, row.member_count))
                 .collect();
             (Vec::new(), teams, more, after)
         }
@@ -153,16 +146,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
     };
     let title = org.name.clone();
     let page = OrganizationProfile {
-        organization: Organization {
-            id: org.id,
-            name: org.name,
-            display_name: org.display_name,
-            description: org.description.unwrap_or_default(),
-            suspended: false,
-            avatar_url: org
-                .avatar_file_id
-                .map(|id| format!("/api/files/{id}/download")),
-        },
+        organization: public_view(org),
         repositories,
         repository_count,
         member_count,

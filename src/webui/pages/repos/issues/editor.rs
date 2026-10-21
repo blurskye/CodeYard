@@ -1,8 +1,9 @@
-use super::{detail::csrf, DetailDraft, Item};
+use super::{DetailDraft, Item};
 use crate::webui::components::{
     markdown_tab_class, references::References, DraftInput, DraftTextarea, Markdown,
     MarkdownToolbar,
 };
+use crate::webui::pages::repos::chrome::csrf;
 use dioxus::prelude::*;
 
 /// A normal native textarea and a Preview submit remain available before hydration; the server
@@ -85,6 +86,9 @@ pub(super) fn CommentEditForm(
         form { method: "post", action, class: "collaboration-comment-edit-form",
             {csrf(&csrf_token)}
             input { r#type: "hidden", name: "expected_body", value: token }
+            // Enter in a field saves, not the Preview button that comes first in the editor.
+            button { r#type: "submit", class: "sr-only", tabindex: "-1", aria_hidden: "true" }
+            label { r#for: format!("edit-comment-{id}"), class: "sr-only", "Edit comment (Markdown)" }
             MarkdownEditor { id: format!("edit-comment-{id}"), initial: body, rows: 8usize, required: true, initial_preview: preview, references, revision: Some(original) }
             div { class: "collaboration-form-actions",
                 button { class: "btn btn-primary", r#type: "submit", "Save changes" }
@@ -129,6 +133,7 @@ pub(super) fn DetailEditForm(
             {csrf(&csrf_token)}
             input { r#type: "hidden", name: "expected_state", value: snapshot.expected_state }
             input { r#type: "hidden", name: "expected_updated", value: expected_updated() }
+            button { r#type: "submit", name: "intent", value: "save", class: "sr-only", tabindex: "-1", aria_hidden: "true" }
             label { r#for: "edit-title", "Title" }
             DraftInput { id: "edit-title", name: "title", initial_value: snapshot.title, required: true, maxlength: Some(255), class: "collaboration-input" }
             label { r#for: "edit-body", "Description (Markdown)" }

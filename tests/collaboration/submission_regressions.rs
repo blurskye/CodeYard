@@ -1,4 +1,5 @@
-use super::templates::{hidden_value, put, setup};
+use super::templates::{put, setup};
+use crate::support::http_client::hidden_value;
 use axum::http::StatusCode;
 use base64::Engine;
 use codeyard::backend::db;
@@ -355,7 +356,7 @@ async fn comment_tasks_check_scope_and_original_body(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
-    let (_, page) = bob.page("/alice/proj/issues/1").await;
+    let page = bob.page_ok("/alice/proj/issues/1").await;
     assert!(!page.contains("form=\"task-body\""));
     let tip = alice.save("main", "README.md", "unborn").await;
     alice.branch("topic", &tip).await;

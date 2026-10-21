@@ -4,138 +4,12 @@ use crate::support::native_database as native;
 use codeyard::backend::db::DbPool;
 use uuid::Uuid;
 
-fn with_search_path(database_url: &str, schema: &str) -> String {
-    let separator = if database_url.contains('?') { '&' } else { '?' };
-    format!("{database_url}{separator}options=-csearch_path%3D{schema}",)
-}
-
-// Never load .env, use implicit developer credentials, or accept the application's DATABASE_URL.
-fn test_database_url() -> String {
-    let value = std::env::var("GITSERV_TEST_DATABASE_URL")
-        .expect("DB tests require explicit GITSERV_TEST_DATABASE_URL for gitserv_test");
-    assert!(
-        safe_test_database_url(&value),
-        "fixture URL must name the owned gitserv_test database, without connection options"
-    );
-    value
-}
-
-fn safe_test_database_url(value: &str) -> bool {
-    url::Url::parse(value).is_ok_and(|url| {
-        matches!(url.scheme(), "postgres" | "postgresql")
-            && url.path() == "/gitserv_test"
-            && url.query().is_none()
-            && url.fragment().is_none()
-    })
-}
-
-struct TestDatabase {
-    pool: DbPool,
-    raw: sqlx::PgPool,
-    schema: String,
-    database_url: String,
-}
-
-impl Drop for TestDatabase {
-    fn drop(&mut self) {
-        // This fixture's current-thread runtime is paused while Drop joins the
-        // cleanup thread, so connections it just used may not have rolled back
-        // yet. The cleanup ends this fixture's own connections instead.
-        drop(self.raw.close());
-        let schema = self.schema.clone();
-        let database_url = self.database_url.clone();
-        // A separate runtime permits synchronous, panic-safe cleanup even from
-        // within a tokio test. Only this fixture's randomly named schema is dropped.
-        let result = std::thread::spawn(move || {
-            tokio::runtime::Runtime::new()
-                .expect("fixture cleanup runtime")
-                .block_on(async move {
-                    let options: sqlx::postgres::PgConnectOptions = database_url.parse()?;
-                    let admin = sqlx::postgres::PgPoolOptions::new()
-                        .max_connections(1)
-                        .connect_with(
-                            options.options([("lock_timeout", "5s"), ("statement_timeout", "10s")]),
-                        )
-                        .await?;
-                    // Fixture connections are named after the schema (see setup_test_db).
-                    // Ending them rolls back any transaction a failed call left open,
-                    // which would otherwise block the DROP.
-                    sqlx::query(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name = $1 AND pid <> pg_backend_pid()",
-                    )
-                    .bind(&schema)
-                    .execute(&admin)
-                    .await?;
-                    let result = sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
-                        .execute(&admin)
-                        .await;
-                    admin.close().await;
-                    result.map(|_| ()).map_err(anyhow::Error::from)
-                })
-        })
-        .join();
-        if !matches!(result, Ok(Ok(()))) {
-            if std::thread::panicking() {
-                eprintln!("fixture schema cleanup failed: {}", self.schema);
-            } else {
-                panic!("fixture schema cleanup failed: {}", self.schema);
-            }
-        }
-    }
-}
-
-async fn setup_test_db() -> TestDatabase {
-    let database_url = test_database_url();
-    let schema = format!("test_{}", Uuid::new_v4().simple());
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .connect(&database_url)
-        .await
-        .expect("required disposable test database is unavailable");
-    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
-        .execute(&admin)
-        .await
-        .expect("create isolated fixture schema");
-    // Install the schema guard before scoped connection/migration so failures
-    // in required setup also remove this fixture's schema instead of leaking it.
-    let mut fixture = TestDatabase {
-        pool: admin.clone().into(),
-        raw: admin.clone(),
-        schema,
-        database_url,
-    };
-    admin.close().await;
-    fixture.raw = sqlx::postgres::PgPoolOptions::new()
-        .connect(&format!(
-            "{}&application_name={}",
-            with_search_path(&fixture.database_url, &fixture.schema),
-            fixture.schema
-        ))
-        .await
-        .expect("connect to isolated fixture schema");
-    fixture.pool = fixture.raw.clone().into();
-    codeyard::backend::db::run_migrations(&fixture.pool)
-        .await
-        .expect("required fixture migration failed");
-    fixture
+async fn setup_test_db() -> native::PostgresDatabase {
+    native::PostgresDatabase::new().await
 }
 
 fn unique_name(prefix: &str) -> String {
     format!("{}_{}", prefix, Uuid::new_v4().simple())
-}
-
-#[test]
-fn fixture_rejects_canonical_database_and_supplied_schema_options() {
-    assert!(safe_test_database_url(
-        "postgres://fixture@localhost/gitserv_test"
-    ));
-    for value in [
-        "postgres://fixture@localhost/gitserv",
-        "postgres://fixture@localhost/postgres",
-        "postgres://fixture@localhost/gitserv_test?options=-csearch_path=public",
-        "https://localhost/gitserv_test",
-    ] {
-        assert!(!safe_test_database_url(value));
-    }
 }
 
 #[tokio::test]
@@ -1233,11 +1107,9 @@ async fn test_repository_delete_removes_row_history_and_frees_name() {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::records::insert_repo_storage_snapshot(
-        &pool, repo.id, 2048,
-    )
-    .await
-    .unwrap();
+    codeyard::backend::db::repositories::records::update_repo_size(&pool, repo.id, 2048)
+        .await
+        .unwrap();
     let removed =
         codeyard::backend::db::repositories::records::delete_repository(&pool, owner.id, repo.id)
             .await

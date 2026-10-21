@@ -1,0 +1,16 @@
+# Compiled output
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+build/
+out/
+.gradle/
+.kotlin/
+
+# IDE files
+.idea/
+*.iml
+.vscode/
+
+# Local configuration
+local.properties

@@ -1,8 +1,7 @@
-use crate::support::{database::Database, fake_webui_bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::backend::{api::create_router, app::AppState, db, identity, storage::ObjectStore};
+use codeyard::backend::{db, identity};
 use codeyard::webui::{app::Page, pages::account};
-use std::sync::Arc;
 
 async fn bounded_administration(pg: bool) {
     fake_webui_bundle::install();
@@ -31,8 +30,8 @@ async fn bounded_administration(pg: bool) {
         .await
         .unwrap();
     assert_eq!(recent.len(), 5);
-    assert_eq!(recent[0].id, last);
-    assert!(recent.windows(2).all(|rows| rows[0].id > rows[1].id));
+    assert_eq!(recent[0].0, last);
+    assert!(recent.windows(2).all(|rows| rows[0].0 > rows[1].0));
     assert_eq!(
         db::users::accounts::list_admin_account_summaries(f.pool(), 1000, 0)
             .await
@@ -141,14 +140,7 @@ async fn bounded_administration(pg: bool) {
     );
 
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        Default::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = Client::login(&router, f.pool(), admin).await;
     let (status, page) = client.model("/admin").await;
     assert_eq!(status, StatusCode::OK);
@@ -156,8 +148,8 @@ async fn bounded_administration(pg: bool) {
         panic!("admin model")
     };
     assert_eq!(model.accounts.len(), 5);
-    assert_eq!(model.requests.len(), 5);
-    assert_eq!(model.pending_requests, 105);
+    assert_eq!(model.requests.len(), 30);
+    assert_eq!(model.requests_count, 105);
     assert_eq!(model.totals.2, before.2 + 1073741824 + 13);
     let (status, body) = client
         .send("GET", "/settings?tab=access", "text/html", String::new())
@@ -199,6 +191,7 @@ async fn account_writes(pg: bool) {
             initiating: identity::sessions::InitiatingSession::Missing,
             fresh_id: &"ab".repeat(32),
             user_agent: None,
+            client: None,
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
         },
     )
@@ -306,21 +299,12 @@ async fn account_writes(pg: bool) {
 async fn postgres_search_omits_badges_when_native_query_budget_expires() {
     fake_webui_bundle::install();
     let mut f = Database::new(true).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("search_budget_reader").await;
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        Default::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = Client::login(&router, f.pool(), actor).await;
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut gate = raw.begin().await.unwrap();
     sqlx::query("LOCK TABLE issues IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *gate)

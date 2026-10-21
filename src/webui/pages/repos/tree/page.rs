@@ -64,19 +64,27 @@ pub struct TreePage {
     pub references: Box<References>,
 }
 
+/// The entries of a folder as a listing shows them: folders first, then by name.
+pub(in crate::webui::pages::repos) fn sort_entries(entries: &[TreeEntry]) -> Vec<&TreeEntry> {
+    let mut sorted: Vec<&TreeEntry> = entries.iter().collect();
+    sorted.sort_by(|a, b| {
+        (a.kind != "tree")
+            .cmp(&(b.kind != "tree"))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    sorted
+}
+
 pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
     let base = repo.base();
     let home = page.path.is_empty();
-    let oversized_readme = page
+    let readme = page
         .entries
         .iter()
-        .find(|entry| entry.kind == "file" && entry.name.eq_ignore_ascii_case("readme.md"))
-        .filter(|entry| entry.size.is_some_and(|size| size > MAX_README_BYTES));
-    let readme_path = page
-        .entries
-        .iter()
-        .find(|entry| entry.kind == "file" && entry.name.eq_ignore_ascii_case("readme.md"))
-        .map(|entry| entry.path.clone());
+        .find(|entry| entry.kind == "file" && entry.name.eq_ignore_ascii_case("readme.md"));
+    let oversized_readme =
+        readme.filter(|entry| entry.size.is_some_and(|size| size > MAX_README_BYTES));
+    let readme_path = readme.map(|entry| entry.path.clone());
     let readme_html = page.readme.as_deref().map(|readme| {
         document_html(
             readme,
@@ -88,12 +96,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
         .as_deref()
         .map(outline_of_html)
         .unwrap_or_default();
-    let mut entries: Vec<_> = page.entries.iter().collect();
-    entries.sort_by(|a, b| {
-        (a.kind != "tree")
-            .cmp(&(b.kind != "tree"))
-            .then_with(|| a.name.cmp(&b.name))
-    });
+    let entries = sort_entries(&page.entries);
     // The repository home has its own toolbar and no Files panel. A folder keeps the title row.
     let top = if home {
         home_toolbar(repo, page)
@@ -126,8 +129,8 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
                 div { class: "repo-file-browser border border-border rounded-md bg-card",
                     if let Some(commit) = &page.latest_commit { {latest_commit_bar(&base, &page.reference, &page.path, commit)} }
                     table { class: "repo-file-table w-full border-collapse text-sm",
-                        caption { class: "repo-sr-only", if page.path.is_empty() { "Repository files" } else { "Files in {page.path}" } }
-                        thead { class: "repo-sr-only", tr { th { scope: "col", "Name" } th { scope: "col", "Last commit" } th { scope: "col", "Last updated" } } }
+                        caption { class: "sr-only", if page.path.is_empty() { "Repository files" } else { "Files in {page.path}" } }
+                        thead { class: "sr-only", tr { th { scope: "col", "Name" } th { scope: "col", "Last commit" } th { scope: "col", "Last updated" } } }
                         tbody {
                             if !page.path.is_empty() { tr { class: "repo-parent-row", td { colspan: "3", NavLink { href: file_url(&base, "tree", &page.reference, parent_of(&page.path)), ".." } } } }
                             for entry in entries {
@@ -196,7 +199,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
         rsx! {
             div { class: "repo-blob-layout",
                 if !page.empty {
-                    input { r#type: "checkbox", id: "repo-files-toggle", class: "repo-sr-only repo-files-toggle" }
+                    input { r#type: "checkbox", id: "repo-files-toggle", class: "sr-only repo-files-toggle" }
                     FilesPanel { base: base.clone(), reference: page.reference.clone(), path: page.path.clone(), directory: page.path.clone(), folders: page.folders.clone(), branches: branch_options, tags: tag_options, can_write: can_commit_on(repo, &page.reference, &page.branches), default_branch: repo.default_branch.clone() }
                 }
                 {main}
@@ -429,8 +432,8 @@ fn clone_choice(prefix: &str, http: &str, ssh: &str) -> Element {
     let https_id = format!("{prefix}-https");
     let ssh_id = format!("{prefix}-ssh");
     rsx! {
-        input { r#type: "radio", id: "{https_id}", name: "{prefix}-protocol", class: "repo-sr-only repo-clone-radio-https", checked: true }
-        input { r#type: "radio", id: "{ssh_id}", name: "{prefix}-protocol", class: "repo-sr-only repo-clone-radio-ssh" }
+        input { r#type: "radio", id: "{https_id}", name: "{prefix}-protocol", class: "sr-only repo-clone-radio-https", checked: true }
+        input { r#type: "radio", id: "{ssh_id}", name: "{prefix}-protocol", class: "sr-only repo-clone-radio-ssh" }
         nav { class: "repo-view-switch", "aria-label": "Clone protocol",
             label { class: "repo-view-option repo-view-option-https", r#for: "{https_id}", "HTTPS" }
             label { class: "repo-view-option repo-view-option-ssh", r#for: "{ssh_id}", "SSH" }

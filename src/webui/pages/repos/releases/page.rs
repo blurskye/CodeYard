@@ -2,8 +2,8 @@
 //! publishes a release or edits one, with its assets.
 use crate::webui::components::{compact_date, confirm_dialog, format_bytes, Markdown};
 use crate::webui::navigation::NavLink;
-use crate::webui::pages::repos::chrome::{chrome, csrf, icon, RepoChrome};
-use crate::webui::pages::repos::issues::editor::MarkdownEditor;
+use crate::webui::pages::repos::chrome::{chrome, csrf, icon, repository_id, RepoChrome};
+use crate::webui::pages::repos::issues::{editor::MarkdownEditor, notice};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -226,7 +226,7 @@ fn list(
                 }
             }
             if last > 1 {
-                nav { class: "releases-pager", aria_label: "Release pages",
+                nav { class: "repo-pagination", aria_label: "Release pages",
                     if page > 1 { NavLink { class: "btn btn-secondary btn-sm", href: format!("{base}/releases?page={}", page - 1), "Newer" } }
                     span { class: "collaboration-muted", "Page {page} of {last}" }
                     if page < last { NavLink { class: "btn btn-secondary btn-sm", href: format!("{base}/releases?page={}", page + 1), "Older" } }
@@ -357,23 +357,21 @@ fn form(
             header { class: "repo-page-heading",
                 h2 { "{title}" }
             }
-            if let Some(error) = error {
-                p { class: "collaboration-error", role: "alert", "{error}" }
-            }
+            {notice(error)}
             form { method: "post", action: action.clone(), class: "releases-form", id: "release-form",
                 {csrf(&repo.csrf_token)}
-                input { r#type: "hidden", name: "repository_id", value: repo.id.to_string() }
+                {repository_id(repo.id)}
                 if editing.is_some() { input { r#type: "hidden", name: "revision", value: draft.revision.clone() } }
                 div { class: "collaboration-form-fields",
                     if editing.is_some() {
                         p { class: "releases-tag-fixed", {icon("tags")} " Tag " code { "{draft.tag}" } }
                     } else {
-                        label { class: "collaboration-field", "Tag"
+                        label { class: "collaboration-form-field", "Tag"
                             input { r#type: "text", name: "tag", class: "collaboration-input", required: true, maxlength: "255", list: "release-tag-choices", placeholder: "v1.2.0", value: draft.tag.clone() }
                             datalist { id: "release-tag-choices", for tag in tags { option { value: tag.clone() } } }
                             small { class: "collaboration-muted", "An existing tag is published as it is. A new tag is created at the target." }
                         }
-                        label { class: "collaboration-field", "Target"
+                        label { class: "collaboration-form-field", "Target"
                             select { name: "target", class: "collaboration-input",
                                 for branch in branch_choices {
                                     option { value: branch.clone(), selected: branch == draft.target || (draft.target.is_empty() && branch == default_branch), "{branch}" }
@@ -381,10 +379,10 @@ fn form(
                             }
                         }
                     }
-                    label { class: "collaboration-field", "Title"
+                    label { class: "collaboration-form-field", "Title"
                         input { r#type: "text", name: "title", class: "collaboration-input", maxlength: "255", placeholder: "Release title (defaults to the tag)", value: draft.title.clone() }
                     }
-                    div { class: "collaboration-field", "Release notes"
+                    div { class: "collaboration-form-field", "Release notes"
                         MarkdownEditor { id: "release-body".to_owned(), initial: draft.body.clone(), rows: 12, required: false, initial_preview: draft.preview, placeholder: "Describe what changed".to_owned() }
                     }
                     div { class: "releases-flags",
@@ -424,7 +422,7 @@ fn form(
                     {confirm_dialog(
                         Some(&format!("delete-asset-{}", asset.id)),
                         "Remove asset",
-                        &format!("{base}/releases/edit/{id}"),
+                        &format!("{base}/releases/edit/{id}#release-form"),
                         &format!("{base}/releases/{id}/assets/{}/delete", asset.id),
                         rsx! { {csrf(&repo.csrf_token)} p { "Remove “{asset.name}” from this release?" } },
                         "Remove asset",

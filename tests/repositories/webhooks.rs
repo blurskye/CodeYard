@@ -5,7 +5,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use codeyard::backend::{
     api::create_router,
@@ -137,7 +137,7 @@ impl Receiver {
 async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -905,7 +905,7 @@ async fn webhooks_on_sqlite_and_postgres() {
 /// So a demoted owner, or a user with no right to the repository, is refused by the write itself.
 async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     let mut database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let owner = database.actor("hook_owner").await;
     let second = database.actor("hook_second").await;
     let outsider = database.actor("hook_outsider").await;

@@ -129,8 +129,8 @@ async fn fetch(
     Ok(())
 }
 
-/// Renames a copy that Git cannot open to the sibling `<name>.unusable-<millis>`. The name does
-/// is removed once a complete replacement exists, by `remove_aside_copies`, or when
+/// Renames a copy that Git cannot open to the sibling `<name>.unusable-<millis>`. The renamed
+/// copy is removed once a complete replacement exists, by `remove_aside_copies`, or when
 /// surplus cleanup finds this node no longer holds the repository.
 async fn move_aside(mirror: &Path) -> Result<()> {
     let name = mirror

@@ -34,7 +34,7 @@ pub fn commits_page(repo: &Repository, item: &Item, commits: &[Commit]) -> Eleme
                         }
                     }
                 }
-                if commits.len() >= MAX_LISTED_COMMITS {
+                if item.commit_count.is_some_and(|count| count as usize > MAX_LISTED_COMMITS) {
                     p { class: "collaboration-muted", "Only the newest {MAX_LISTED_COMMITS} commits are listed." }
                 }
             }

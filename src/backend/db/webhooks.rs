@@ -38,9 +38,6 @@ pub struct WebhookSummary {
     pub status_code: Option<i32>,
 }
 
-native_operation!(crate::backend::db::postgres::webhooks::list_webhook_summaries, crate::backend::db::sqlite::webhooks::list_webhook_summaries,
-    fn list_webhook_summaries(pool: &DbPool, owner: HookOwner, after: i64) -> Result<Vec<WebhookSummary>>);
-
 /// Settings a webhook form saves. The secret is sealed separately by the caller.
 #[derive(Debug, Clone)]
 pub struct WebhookFields {

@@ -1,9 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::{load, load_refs_from_repo, resolve};
 use crate::backend::app::AppState;
-use crate::backend::db;
 use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange, RepoError};
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -128,27 +127,9 @@ pub async fn get_raw_blob(
     Path((owner, repo, git_ref, path)): Path<(String, String, String, String)>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-
-    let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
+    let refs = load_refs_from_repo(&state, &repository).await?;
     if refs.is_empty() {
         return Err((
             StatusCode::NOT_FOUND,

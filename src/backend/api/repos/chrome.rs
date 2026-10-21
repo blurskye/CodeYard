@@ -1,17 +1,15 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::responses::rfc3339;
 use crate::backend::db;
+use crate::backend::repositories::access;
 use crate::backend::repositories::lifecycle;
-use crate::backend::repositories::store::{
-    repo_store, CommitInfo, ErrorKind, RepoError, MAX_COMMIT_PAGE_SIZE,
-};
+use crate::backend::repositories::store::{repo_store, CommitInfo, ErrorKind, RepoError};
 use crate::webui::pages::repos as view;
 use crate::webui::pages::repos::chrome::RepoChrome;
 use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
 use axum::http::StatusCode;
 use axum::response::Response;
-use chrono::TimeZone;
-use chrono::Utc;
 use std::collections::HashMap;
 pub(crate) struct Loaded {
     pub(crate) repository: db::models::Repository,
@@ -152,24 +150,25 @@ pub(crate) async fn load_database(
     .open;
     if let Some(user) = &ctx.user {
         chrome.is_owner = repository.is_personal_owner(user.id);
-        chrome.can_manage_collaborators = repository.is_personal_owner(user.id);
+        chrome.can_manage_collaborators = chrome.is_owner;
         chrome.fork_refusal =
             lifecycle::fork_refusal(&repository, user.id).map(|error| error.message.to_owned());
-        if chrome.is_owner || (user.is_admin && repository.owner_kind == "user") {
-            chrome.can_write = true;
-            chrome.can_admin = true;
-        } else {
-            let access = db::repositories::access::get_user_repo_access(
+        if !chrome.is_owner {
+            chrome.is_owner = db::repositories::access::get_user_repo_access(
                 &ctx.state.pool,
                 user.id,
                 repository.id,
             )
             .await
-            .map_err(|_| unavailable(ctx))?;
-            chrome.is_owner = access.is_owner();
-            chrome.can_write = access.can_write();
-            chrome.can_admin = access.can_admin();
+            .map_err(|_| unavailable(ctx))?
+            .is_owner();
         }
+        chrome.can_write = access::can_write(&ctx.state.pool, user, &repository)
+            .await
+            .map_err(|_| unavailable(ctx))?;
+        chrome.can_admin = access::can_admin(&ctx.state.pool, user, &repository)
+            .await
+            .map_err(|_| unavailable(ctx))?;
         chrome.starred =
             db::repositories::engagement::is_repo_starred(&ctx.state.pool, user.id, repository.id)
                 .await
@@ -222,19 +221,14 @@ pub(crate) async fn load_database(
             }
         }
     }
-    if repository.is_archived {
-        chrome.can_write = false;
-    }
-    let refs = HashMap::new();
     let default_branch = repository.default_branch.clone();
-    let git_unavailable = false;
     chrome.default_branch = default_branch.clone();
     Ok(Loaded {
         repository,
         chrome,
-        refs,
+        refs: HashMap::new(),
         default_branch,
-        git_unavailable,
+        git_unavailable: false,
     })
 }
 
@@ -249,13 +243,6 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
         .map(str::to_owned)
         .chain(loaded.refs.keys().cloned())
         .collect();
-    names.extend(
-        loaded
-            .refs
-            .keys()
-            .filter(|name| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
-            .cloned(),
-    );
     if loaded.refs.is_empty() {
         names.push(loaded.default_branch.clone());
         names.push(format!("refs/heads/{}", loaded.default_branch));
@@ -412,10 +399,7 @@ pub(crate) fn root_if_missing(
 }
 
 pub(crate) fn date(timestamp: i64) -> String {
-    Utc.timestamp_opt(timestamp, 0)
-        .single()
-        .map(|date| date.to_rfc3339())
-        .unwrap_or_else(|| "Unknown date".into())
+    rfc3339(timestamp).unwrap_or_else(|| "Unknown date".into())
 }
 
 pub(crate) fn commit(commit: CommitInfo) -> view::commits::Commit {
@@ -456,93 +440,6 @@ pub(crate) fn store_error(
     }
 }
 
-#[expect(
-    clippy::result_large_err,
-    reason = "HTML adapters preserve complete Axum responses under the PageContext contract."
-)]
-pub(crate) fn number(
-    ctx: &PageContext,
-    key: &str,
-    default: usize,
-    max: usize,
-) -> Result<usize, Response> {
-    match ctx.query.get(key) {
-        None => Ok(default),
-        Some(value) => value
-            .parse::<usize>()
-            .ok()
-            .filter(|value| *value <= max)
-            .ok_or_else(|| {
-                ctx.error(
-                    StatusCode::BAD_REQUEST,
-                    "Invalid pagination or preview offset.",
-                )
-            }),
-    }
-}
-
-/// Items per page for HTML lists and the default `per_page` for JSON lists.
-pub(crate) const DEFAULT_PER_PAGE: usize = 30;
-pub(crate) const MAX_PAGE: usize = 1_000;
-
-#[derive(serde::Deserialize)]
-pub(crate) struct PageQuery {
-    pub(crate) page: Option<u32>,
-    pub(crate) per_page: Option<u32>,
-}
-
-fn page_error() -> (
-    StatusCode,
-    axum::Json<crate::backend::api::http::error::ApiError>,
-) {
-    (
-        StatusCode::BAD_REQUEST,
-        axum::Json(crate::backend::api::http::error::ApiError::new(
-            "validation_error",
-            "Page must be between 1 and 1000",
-        )),
-    )
-}
-
-fn page_offset(page: usize, limit: usize) -> Option<usize> {
-    page.checked_sub(1)?.checked_mul(limit)
-}
-
-/// SQL offset and limit for a 1-based page. The limit is clamped to the store's
-/// page size.
-pub(crate) fn page_window(page: usize, per_page: usize) -> Option<(usize, usize)> {
-    if !(1..=MAX_PAGE).contains(&page) {
-        return None;
-    }
-    let limit = per_page.clamp(1, MAX_COMMIT_PAGE_SIZE);
-    Some((page_offset(page, limit)?, limit))
-}
-
-/// Whether a page after `page` exists. `fetched` is the row count read for `page`
-/// with one extra row, so a full extra row means more rows follow. The cap is the
-/// last page a URL can name, so it never offers a next page.
-pub(crate) fn has_next_page(page: usize, fetched: usize, per_page: usize, max_page: usize) -> bool {
-    fetched > per_page && page < max_page
-}
-
-/// JSON list paging: `page` is 1 through 1,000, `per_page` defaults to 30 and is
-/// clamped to 1 through 100. Returns the offset and limit.
-pub(crate) fn json_page(
-    page: Option<u32>,
-    per_page: Option<u32>,
-) -> Result<
-    (usize, usize),
-    (
-        StatusCode,
-        axum::Json<crate::backend::api::http::error::ApiError>,
-    ),
-> {
-    let page = usize::try_from(page.unwrap_or(1)).map_err(|_| page_error())?;
-    let per_page =
-        usize::try_from(per_page.unwrap_or(DEFAULT_PER_PAGE as u32)).map_err(|_| page_error())?;
-    page_window(page, per_page).ok_or_else(page_error)
-}
-
 pub(crate) type ApiResult<T> = Result<
     T,
     (
@@ -554,7 +451,6 @@ pub(crate) type ApiResult<T> = Result<
 pub(crate) async fn load_refs_from_repo(
     state: &crate::backend::app::AppState,
     repository: &db::models::Repository,
-    _repo_id: &str,
 ) -> ApiResult<HashMap<String, String>> {
     repo_store(repository, state.cluster.as_ref())
         .refs()
@@ -571,10 +467,10 @@ pub(crate) async fn load_refs_from_repo(
 pub(crate) async fn repository_default_branch_or_db(
     state: &crate::backend::app::AppState,
     repository: &db::models::Repository,
-) -> ApiResult<String> {
+) -> String {
     match repo_store(repository, state.cluster.as_ref()).info().await {
-        Ok(info) => Ok(info.default_branch),
-        Err(_) => Ok(repository.default_branch.clone()),
+        Ok(info) => info.default_branch,
+        Err(_) => repository.default_branch.clone(),
     }
 }
 
@@ -592,40 +488,4 @@ pub(crate) async fn repository_default_branch(
                 StatusCode::SERVICE_UNAVAILABLE,
             )
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pages_use_an_offset_and_clamp_page_size() {
-        assert_eq!(page_window(1, 30), Some((0, 30)));
-        assert_eq!(page_window(2, 30), Some((30, 30)));
-        assert_eq!(
-            page_window(2, MAX_COMMIT_PAGE_SIZE),
-            Some((MAX_COMMIT_PAGE_SIZE, MAX_COMMIT_PAGE_SIZE))
-        );
-        assert_eq!(
-            page_window(2, MAX_COMMIT_PAGE_SIZE + 1),
-            Some((MAX_COMMIT_PAGE_SIZE, MAX_COMMIT_PAGE_SIZE))
-        );
-        assert_eq!(page_window(1, 0), Some((0, 1)));
-    }
-
-    #[test]
-    fn pages_reject_out_of_range_and_overflowing_offsets() {
-        assert_eq!(page_window(0, 30), None);
-        assert_eq!(page_window(MAX_PAGE, 30), Some((29_970, 30)));
-        assert_eq!(page_window(MAX_PAGE + 1, 30), None);
-        assert_eq!(page_offset(usize::MAX, MAX_COMMIT_PAGE_SIZE), None);
-    }
-
-    #[test]
-    fn next_page_needs_an_extra_row_and_stops_at_the_cap() {
-        assert!(has_next_page(1, 31, 30, MAX_PAGE));
-        assert!(!has_next_page(1, 30, 30, MAX_PAGE));
-        assert!(has_next_page(MAX_PAGE - 1, 31, 30, MAX_PAGE));
-        assert!(!has_next_page(MAX_PAGE, 31, 30, MAX_PAGE));
-    }
 }

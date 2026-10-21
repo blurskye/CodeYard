@@ -13,17 +13,9 @@ pub mod references;
 pub mod tags;
 
 async fn repository_id(state: &AppState, owner: &str, name: &str) -> super::chrome::ApiResult<i64> {
-    crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+    super::access::find_repository(&state.pool, owner, name)
         .await
-        .map_err(|_| {
-            super::access::access_error(
-                crate::backend::repositories::access::AccessError::Unavailable,
-            )
-        })?
         .map(|repo| repo.id)
-        .ok_or_else(|| {
-            super::access::access_error(crate::backend::repositories::access::AccessError::NotFound)
-        })
 }
 
 pub fn json_router() -> Router<Arc<AppState>> {

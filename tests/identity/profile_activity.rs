@@ -3,24 +3,17 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 
 use crate::support::database;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, identity::activity, storage::ObjectStore,
-};
+use codeyard::backend::{db, identity::activity};
 use database::Database;
 use pulls::Client;
 use serde_json::Value;
-use std::sync::Arc;
 
 async fn contract(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let pool = f.pool().clone();
@@ -101,14 +94,7 @@ async fn contract(pg: bool) {
     }
 
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        pool.clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = crate::support::database::router(&pool, root.path()).await;
     let anonymous = Client::anonymous(&router);
     let outsider = Client::login(&router, &pool, bob).await;
     let owner = Client::login(&router, &pool, alice).await;
@@ -284,11 +270,7 @@ async fn sqlite_profile_activity_pages_and_hides_private_repositories() {
 /// older public issue, so the scan stops before it. Only the newest public issue is listed.
 async fn scan_stops_at_the_row_bound(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let alice = f.actor("alice").await;
     let pool = f.pool().clone();
     let public = db::repositories::records::create_repository(
@@ -324,14 +306,7 @@ async fn scan_stops_at_the_row_bound(pg: bool) {
         .unwrap();
 
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        pool.clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = crate::support::database::router(&pool, root.path()).await;
     let anonymous = Client::anonymous(&router);
     let (status, page) = anonymous
         .api("GET", "/api/users/alice/activity?page=1", Value::Null)

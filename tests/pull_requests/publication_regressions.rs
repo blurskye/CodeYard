@@ -1,5 +1,4 @@
 use super::*;
-use base64::Engine as _;
 use codeyard::backend::{
     ci::CiRuns,
     notifications::NotificationBroadcaster,
@@ -18,20 +17,6 @@ fn ci(w: &World) -> CiRuns {
         None,
         Arc::new(NotificationBroadcaster::new(w.database.pool())),
     )
-}
-
-async fn save_text(w: &World, branch: &str, path: &str, text: &str, old: &str) -> String {
-    let saved = w
-        .alice
-        .expect(
-            "POST",
-            &format!("/api/repos/alice/proj/contents/{path}"),
-            json!({"branch":branch,"message":"Add fixture", "expected_revision":old,
-            "content":base64::engine::general_purpose::STANDARD.encode(text)}),
-            StatusCode::CREATED,
-        )
-        .await;
-    saved["sha"].as_str().unwrap().to_owned()
 }
 
 async fn row(w: &World, number: i32) -> db::models::PullRequest {
@@ -211,8 +196,11 @@ async fn deleted_comment_notifications(pg: bool) {
 
 async fn recovery(pg: bool) {
     let mut w = World::new(pg).await;
-    let base = save_text(&w, "main", "CODEOWNERS", "* @bob\n", &w.base).await;
-    let base = save_text(&w, "main", ".github/workflows/ci.yml", "on: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n", &base).await;
+    let base = w
+        .alice
+        .save_text("main", "CODEOWNERS", "* @bob\n", &w.base)
+        .await;
+    let base = w.alice.save_text("main", ".github/workflows/ci.yml", "on: [pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n", &base).await;
     w.alice.branch("recover", &base).await;
     let head = w.alice.save("recover", "recovery.txt", &base).await;
     let pull = db::pull_requests::records::create_pull_request(
@@ -276,9 +264,15 @@ async fn recovery(pg: bool) {
 
 async fn stack_target(pg: bool) {
     let mut w = World::new(pg).await;
-    let base = save_text(&w, "main", "CODEOWNERS", "src/ @bob\n", &w.base).await;
+    let base = w
+        .alice
+        .save_text("main", "CODEOWNERS", "src/ @bob\n", &w.base)
+        .await;
     let workflow = "on:\n  pull_request:\n    branches: [main]\n    paths: ['src/**']\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
-    let base = save_text(&w, "main", ".github/workflows/ci.yml", workflow, &base).await;
+    let base = w
+        .alice
+        .save_text("main", ".github/workflows/ci.yml", workflow, &base)
+        .await;
     w.alice.branch("lower", &base).await;
     let lower = w.alice.save("lower", "src/code.rs", &base).await;
     w.alice.open_pull("Lower", "lower", "main").await;
@@ -327,7 +321,10 @@ async fn stack_target(pg: bool) {
     assert_eq!(snapshot.len(), 2);
     w.alice.branch("top", &head).await;
     let own = "on:\n  pull_request:\n    branches: [upper]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
-    let top = save_text(&w, "top", ".github/workflows/own.yml", own, &head).await;
+    let top = w
+        .alice
+        .save_text("top", ".github/workflows/own.yml", own, &head)
+        .await;
     // A new member joins after an earlier caller's membership read.
     let new = db::pull_requests::records::create_pull_request(
         w.database.pool(),
@@ -398,7 +395,10 @@ async fn stack_target(pg: bool) {
 
 async fn merge_followup(pg: bool) {
     let mut w = World::new(pg).await;
-    let head = save_text(&w, "topic", ".github/workflows/ci.yml", WORKFLOW, &w.head).await;
+    let head = w
+        .alice
+        .save_text("topic", ".github/workflows/ci.yml", WORKFLOW, &w.head)
+        .await;
     w.database
         .execute(
             "UPDATE pull_requests SET is_draft=FALSE WHERE id=$1",
@@ -459,7 +459,10 @@ async fn merge_followup(pg: bool) {
 
 async fn restack_followup(pg: bool) {
     let mut w = World::new(pg).await;
-    let head = save_text(&w, "topic", ".github/workflows/ci.yml", WORKFLOW, &w.head).await;
+    let head = w
+        .alice
+        .save_text("topic", ".github/workflows/ci.yml", WORKFLOW, &w.head)
+        .await;
     w.alice.branch("upper", &head).await;
     let upper_head = w.alice.save("upper", "upper.txt", &head).await;
     w.alice.open_draft("Upper", "upper", "topic").await;
@@ -520,7 +523,10 @@ async fn restack_followup(pg: bool) {
 async fn target_specific_checks(pg: bool) {
     let mut w = World::new(pg).await;
     let workflow = "on:\n  pull_request:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
-    let head = save_text(&w, "topic", ".github/workflows/ci.yml", workflow, &w.head).await;
+    let head = w
+        .alice
+        .save_text("topic", ".github/workflows/ci.yml", workflow, &w.head)
+        .await;
     w.database
         .execute(
             "UPDATE pull_requests SET is_draft=FALSE WHERE id=$1",
@@ -603,7 +609,10 @@ async fn target_specific_checks(pg: bool) {
 async fn refs_prefixed_base(pg: bool) {
     let mut w = World::new(pg).await;
     let workflow = "on:\n  pull_request:\n    branches: ['refs/**']\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
-    let base = save_text(&w, "main", ".github/workflows/ci.yml", workflow, &w.base).await;
+    let base = w
+        .alice
+        .save_text("main", ".github/workflows/ci.yml", workflow, &w.base)
+        .await;
     for (index, branch) in ["refs/topic", "refs/heads/nested"].into_iter().enumerate() {
         w.alice.branch(branch, &base).await;
         let head_branch = format!("ci-head-{index}");
@@ -653,23 +662,15 @@ async fn refs_prefixed_base(pg: bool) {
 
 async fn path_failure_keeps_unfiltered(pg: bool) {
     let mut w = World::new(pg).await;
-    let head = save_text(
-        &w,
-        "topic",
-        ".github/workflows/plain.yml",
-        WORKFLOW,
-        &w.head,
-    )
-    .await;
+    let head = w
+        .alice
+        .save_text("topic", ".github/workflows/plain.yml", WORKFLOW, &w.head)
+        .await;
     let filtered = "on:\n  pull_request:\n    paths: ['bulk/**']\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
-    let head = save_text(
-        &w,
-        "topic",
-        ".github/workflows/filtered.yml",
-        filtered,
-        &head,
-    )
-    .await;
+    let head = w
+        .alice
+        .save_text("topic", ".github/workflows/filtered.yml", filtered, &head)
+        .await;
     let big = {
         let git = git2::Repository::open_bare(&w.repository.disk_path).unwrap();
         let parent = git

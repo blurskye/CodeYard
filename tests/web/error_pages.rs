@@ -5,22 +5,18 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle::provision,
-    storage::ObjectStore,
-};
+use codeyard::backend::{db, repositories::lifecycle::provision};
 use database::Database;
 use pulls::Client;
-use std::sync::Arc;
 
 async fn contract(pg: bool) {
     // The answers below are HTML pages, which need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -37,14 +33,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     }
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
     let anonymous = Client::anonymous(&router);

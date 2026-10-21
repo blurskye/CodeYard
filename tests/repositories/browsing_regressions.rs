@@ -1,15 +1,11 @@
 //! Namespace-aware browsing and database-only repository pages on both engines.
-use crate::support::{database::Database, fake_webui_bundle as bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
 use codeyard::{
-    backend::{
-        api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle,
-        storage::ObjectStore,
-    },
+    backend::{db, repositories::lifecycle},
     webui::{app::Page, pages::repos as view},
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 fn commit(
     repo: &git2::Repository,
@@ -43,7 +39,7 @@ fn commit(
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let stranger = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -58,14 +54,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), owner).await;
     let bob = Client::login(&router, f.pool(), stranger).await;
     // A first commit on a new branch has no existing source to compare against.
@@ -147,14 +136,7 @@ async fn contract(pg: bool) {
         assert_eq!(form.branch, branch);
     }
 
-    // A stale database snapshot must not mask current Git contributors.
-    db::repository_stats::upsert_repo_contributors(
-        f.pool(),
-        repository.id,
-        &[("Obsolete".into(), "obsolete@example.test".into(), 900, None)],
-    )
-    .await
-    .unwrap();
+    // Contributors come from Git, so new commits show up immediately.
     let contributors = alice
         .expect(
             "GET",

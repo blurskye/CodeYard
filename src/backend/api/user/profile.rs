@@ -1,9 +1,9 @@
 use crate::backend::api::admin::signup_requests::load_requests;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::http::session::{self, get_current_user};
 use crate::backend::api::user::responses::{
-    field, mutation_guard, public_api_message, require_account, within_bounds, ApiFailure, Fields,
+    field, mutation_guard, public_api_message, require_account, within_bounds, Fields,
     PublicUserResponse,
 };
 use crate::backend::app::AppState;
@@ -95,7 +95,7 @@ pub(crate) async fn private_access(ctx: &PageContext) -> Result<bool, Response> 
                 "Complete node setup first.",
             )
         })?;
-    Ok(config.setup_completed && config.node_mode == "private")
+    Ok(config.setup_completed && config.is_private())
 }
 
 pub(crate) async fn load_settings(
@@ -185,7 +185,7 @@ pub(crate) async fn load_settings(
         Vec::new()
     };
     let (requests, requests_count, requests_page) = if tab == "access" {
-        load_requests(ctx, 30).await?
+        load_requests(ctx).await?
     } else {
         (Vec::new(), 0, 1)
     };

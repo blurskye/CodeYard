@@ -10,17 +10,16 @@ use axum::{
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::{failure, Failure};
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 
 pub async fn delete_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(file_id): Path<String>,
-) -> Result<StatusCode, Failure> {
+) -> Result<StatusCode, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::http::csrf::check(state.clone(), &headers).await?;
     let file_uuid = Uuid::parse_str(&file_id).map_err(|_| {
-        failure(
+        ApiError::failure(
             StatusCode::BAD_REQUEST,
             "invalid_file_id",
             "Invalid file ID format",
@@ -32,7 +31,7 @@ pub async fn delete_file(
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn deletion_failure(error: DeleteError) -> Failure {
+fn deletion_failure(error: DeleteError) -> ApiFailure {
     let (status, code, message) = match error {
         DeleteError::MetadataUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -61,5 +60,5 @@ fn deletion_failure(error: DeleteError) -> Failure {
             "This file is a release asset. Delete it from its release.",
         ),
     };
-    failure(status, code, message)
+    ApiError::failure(status, code, message)
 }

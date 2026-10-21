@@ -62,8 +62,6 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_avatar_file ON users(avatar_file_id) WHERE avatar_file_id IS NOT NULL;
 
 -- files is created before users, so its user foreign key is added here.
@@ -144,7 +142,6 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_id ON oauth_accounts(user_id);
-CREATE INDEX IF NOT EXISTS idx_oauth_accounts_provider ON oauth_accounts(provider, provider_user_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
     id VARCHAR(64) PRIMARY KEY,
@@ -228,7 +225,6 @@ CREATE TABLE IF NOT EXISTS gpg_keys (
 );
 
 CREATE INDEX IF NOT EXISTS idx_gpg_keys_user_id ON gpg_keys(user_id);
-CREATE INDEX IF NOT EXISTS idx_gpg_keys_key_id ON gpg_keys(key_id);
 
 --------------------------------------------------------------------------------
 -- PART 5: TWO-FACTOR AUTHENTICATION
@@ -266,7 +262,6 @@ CREATE TABLE IF NOT EXISTS organizations (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_organizations_name ON organizations(name);
 CREATE INDEX IF NOT EXISTS idx_organizations_avatar_file ON organizations(avatar_file_id) WHERE avatar_file_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS org_memberships (
@@ -278,7 +273,6 @@ CREATE TABLE IF NOT EXISTS org_memberships (
     UNIQUE(org_id, user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_org_memberships_org_id ON org_memberships(org_id);
 CREATE INDEX IF NOT EXISTS idx_org_memberships_user_id ON org_memberships(user_id);
 
 -- Organization invitations: a pending offer of membership. Membership starts only when the
@@ -311,7 +305,6 @@ CREATE TABLE IF NOT EXISTS teams (
     UNIQUE(org_id, slug)
 );
 
-CREATE INDEX IF NOT EXISTS idx_teams_org_id ON teams(org_id);
 
 CREATE TABLE IF NOT EXISTS team_memberships (
     id BIGSERIAL PRIMARY KEY,
@@ -322,12 +315,29 @@ CREATE TABLE IF NOT EXISTS team_memberships (
     UNIQUE(team_id, user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_team_memberships_team_id ON team_memberships(team_id);
 CREATE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user_id);
 
 --------------------------------------------------------------------------------
 -- PART 8: REPOSITORIES
 --------------------------------------------------------------------------------
+
+-- A cluster machine that stores repositories.
+CREATE TABLE IF NOT EXISTS nodes (
+    id BIGSERIAL PRIMARY KEY,
+    -- Lowercase hex of the node's ed25519 public key (its iroh endpoint id).
+    public_key TEXT NOT NULL UNIQUE CHECK (public_key ~ '^[0-9a-f]{64}$'),
+    name TEXT NOT NULL UNIQUE CHECK (name ~ '^[a-z0-9][a-z0-9._-]{0,62}$'),
+    -- Roles this node is allowed to run: web, ssh, storage, actions-worker.
+    roles TEXT[] NOT NULL CHECK (cardinality(roles) > 0 AND roles <@ ARRAY['web', 'ssh', 'storage', 'actions-worker']),
+    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, active, revoked
+    -- JSON with the addresses the node last reported.
+    addr_hint TEXT,
+    version TEXT,
+    disk_free BIGINT CHECK (disk_free IS NULL OR disk_free >= 0),
+    last_seen TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT nodes_status_check CHECK (status IN ('pending', 'active', 'revoked'))
+);
 
 CREATE TABLE IF NOT EXISTS repositories (
     id BIGSERIAL PRIMARY KEY,
@@ -345,7 +355,7 @@ CREATE TABLE IF NOT EXISTS repositories (
     default_branch VARCHAR(1024) NOT NULL DEFAULT 'main',
     milestone_number INTEGER NOT NULL DEFAULT 0 CHECK (milestone_number >= 0),
     disk_path TEXT NOT NULL,
-    storage_node_id BIGINT,
+    storage_node_id BIGINT REFERENCES nodes(id),
     size_bytes BIGINT NOT NULL DEFAULT 0,
     stars_count INTEGER NOT NULL DEFAULT 0,
     forks_count INTEGER NOT NULL DEFAULT 0,
@@ -372,11 +382,8 @@ CREATE TABLE IF NOT EXISTS repositories (
     CONSTRAINT repo_unique_org UNIQUE (owner_org_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_repositories_owner_user_id ON repositories(owner_user_id);
-CREATE INDEX IF NOT EXISTS idx_repositories_owner_org_id ON repositories(owner_org_id);
 CREATE INDEX IF NOT EXISTS idx_repositories_storage_node ON repositories(storage_node_id, id);
 CREATE INDEX IF NOT EXISTS idx_repositories_name ON repositories(name);
-CREATE INDEX IF NOT EXISTS idx_repositories_storage_node ON repositories(storage_node_id, id);
 CREATE INDEX IF NOT EXISTS idx_repositories_storage_uuid ON repositories (right(disk_path, 40));
 CREATE INDEX IF NOT EXISTS idx_repositories_is_private ON repositories(is_private);
 CREATE INDEX IF NOT EXISTS idx_repositories_forked_from_id ON repositories(forked_from_id);
@@ -398,7 +405,6 @@ CREATE TABLE IF NOT EXISTS repo_access (
     UNIQUE(user_id, repo_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_repo_access_user_id ON repo_access(user_id);
 CREATE INDEX IF NOT EXISTS idx_repo_access_repo_id ON repo_access(repo_id);
 
 -- Team-level repo access
@@ -411,7 +417,6 @@ CREATE TABLE IF NOT EXISTS team_repo_access (
     UNIQUE(team_id, repo_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_team_repo_access_team_id ON team_repo_access(team_id);
 CREATE INDEX IF NOT EXISTS idx_team_repo_access_repo_id ON team_repo_access(repo_id);
 
 -- Deploy keys (repo-specific SSH keys)
@@ -429,7 +434,6 @@ CREATE TABLE IF NOT EXISTS deploy_keys (
     UNIQUE(repo_id, fingerprint)
 );
 
-CREATE INDEX IF NOT EXISTS idx_deploy_keys_repo_id ON deploy_keys(repo_id);
 CREATE INDEX IF NOT EXISTS idx_deploy_keys_fingerprint ON deploy_keys(fingerprint);
 
 --------------------------------------------------------------------------------
@@ -455,7 +459,6 @@ CREATE TABLE IF NOT EXISTS repo_languages (
     UNIQUE(repo_id, language)
 );
 
-CREATE INDEX IF NOT EXISTS idx_repo_languages_repo_id ON repo_languages(repo_id);
 
 -- Topics group repositories on Explore. Writes keep at most 20 per repository, a count that a
 -- constraint cannot check.
@@ -467,23 +470,6 @@ CREATE TABLE IF NOT EXISTS repository_topics (
 
 CREATE INDEX IF NOT EXISTS idx_repository_topics_topic ON repository_topics(topic);
 
-CREATE TABLE IF NOT EXISTS repo_contributors (
-    id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    email VARCHAR(255) NOT NULL,
-    name VARCHAR(255) NOT NULL,
-    commits_count INTEGER NOT NULL DEFAULT 0,
-    additions INTEGER NOT NULL DEFAULT 0,
-    deletions INTEGER NOT NULL DEFAULT 0,
-    avatar_url TEXT,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(repo_id, email)
-);
-
-CREATE INDEX IF NOT EXISTS idx_repo_contributors_repo_id ON repo_contributors(repo_id);
-CREATE INDEX IF NOT EXISTS idx_repo_contributors_user_id ON repo_contributors(user_id);
-CREATE INDEX IF NOT EXISTS idx_repo_contributors_updated_at ON repo_contributors(updated_at);
 
 CREATE TABLE IF NOT EXISTS repo_storage_history (
     id BIGSERIAL PRIMARY KEY,
@@ -506,6 +492,7 @@ CREATE TABLE IF NOT EXISTS repository_pushes (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_repository_pushes_actor ON repository_pushes(actor_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_repository_pushes_repo ON repository_pushes(repo_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_repository_pushes_created_at ON repository_pushes(created_at);
 
 --------------------------------------------------------------------------------
@@ -537,23 +524,6 @@ CREATE TABLE IF NOT EXISTS branch_protection_rules (
     UNIQUE(repo_id, pattern)
 );
 
-CREATE INDEX IF NOT EXISTS idx_branch_protection_rules_repo_id ON branch_protection_rules(repo_id);
-
-CREATE TABLE IF NOT EXISTS commit_statuses (
-    id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    sha VARCHAR(40) NOT NULL,
-    context TEXT NOT NULL,
-    state VARCHAR(20) NOT NULL, -- pending, success, failure, error
-    description TEXT,
-    target_url TEXT,
-    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(repo_id, sha, context)
-);
-
-CREATE INDEX IF NOT EXISTS idx_commit_statuses_repo_sha ON commit_statuses(repo_id, sha);
 
 --------------------------------------------------------------------------------
 -- PART 11: LABELS & MILESTONES
@@ -569,7 +539,6 @@ CREATE TABLE IF NOT EXISTS labels (
     UNIQUE(repo_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_labels_repo_id ON labels(repo_id);
 
 CREATE TABLE IF NOT EXISTS milestones (
     id BIGSERIAL PRIMARY KEY,
@@ -586,7 +555,6 @@ CREATE TABLE IF NOT EXISTS milestones (
     UNIQUE(repo_id, number)
 );
 
-CREATE INDEX IF NOT EXISTS idx_milestones_repo_id ON milestones(repo_id);
 
 --------------------------------------------------------------------------------
 -- PART 12: ISSUES
@@ -611,7 +579,6 @@ CREATE TABLE IF NOT EXISTS issues (
     UNIQUE(repo_id, number)
 );
 
-CREATE INDEX IF NOT EXISTS idx_issues_repo_id ON issues(repo_id);
 CREATE INDEX IF NOT EXISTS idx_issues_author_id ON issues(author_id);
 CREATE INDEX IF NOT EXISTS idx_issues_state ON issues(state);
 CREATE INDEX IF NOT EXISTS idx_issues_repo_state ON issues(repo_id, state);
@@ -630,6 +597,8 @@ CREATE TABLE IF NOT EXISTS issue_assignees (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (issue_id, user_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_issue_assignees_user ON issue_assignees(user_id);
 
 CREATE TABLE IF NOT EXISTS issue_comments (
     id BIGSERIAL PRIMARY KEY,
@@ -681,7 +650,6 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     UNIQUE(repo_id, number)
 );
 
-CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_id ON pull_requests(repo_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id, merged_at) WHERE merged_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
@@ -691,7 +659,6 @@ CREATE INDEX IF NOT EXISTS idx_pull_requests_created_at ON pull_requests(created
 CREATE INDEX IF NOT EXISTS idx_pull_requests_updated_at ON pull_requests(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_stack ON pull_requests(repo_id, stack_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_milestone_id ON pull_requests(milestone_id);
-CREATE INDEX IF NOT EXISTS idx_pull_requests_merged_by ON pull_requests(merged_by_id, merged_at) WHERE merged_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_issue_labels_label ON issue_labels(label_id);
 
 CREATE TABLE IF NOT EXISTS pr_labels (
@@ -713,6 +680,9 @@ CREATE TABLE IF NOT EXISTS pr_reviewers (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     PRIMARY KEY (pull_request_id, user_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_pr_assignees_user ON pr_assignees(user_id);
+CREATE INDEX IF NOT EXISTS idx_pr_reviewers_user ON pr_reviewers(user_id);
 
 -- What changed on an issue or pull request, shown between its comments.
 CREATE TABLE IF NOT EXISTS timeline_events (
@@ -819,7 +789,6 @@ CREATE TABLE IF NOT EXISTS releases (
     UNIQUE(repo_id, tag_name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_releases_repo_id ON releases(repo_id);
 CREATE INDEX IF NOT EXISTS idx_releases_author_id ON releases(author_id);
 CREATE INDEX IF NOT EXISTS idx_releases_created_at ON releases(created_at);
 -- One latest release per repository.
@@ -838,7 +807,6 @@ CREATE TABLE IF NOT EXISTS release_assets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_release_assets_release_id ON release_assets(release_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_release_assets_name ON release_assets(release_id, name);
 CREATE INDEX IF NOT EXISTS idx_release_assets_file_id ON release_assets(file_id);
 
@@ -875,7 +843,6 @@ CREATE TABLE IF NOT EXISTS follows (
     CHECK (follower_id != following_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON follows(follower_id);
 CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id);
 
 --------------------------------------------------------------------------------
@@ -909,7 +876,6 @@ CREATE TABLE IF NOT EXISTS repo_secrets (
     UNIQUE(repo_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_repo_secrets_repo_id ON repo_secrets(repo_id);
 
 CREATE TABLE IF NOT EXISTS org_secrets (
     id BIGSERIAL PRIMARY KEY,
@@ -924,7 +890,6 @@ CREATE TABLE IF NOT EXISTS org_secrets (
     UNIQUE(org_id, name)
 );
 
-CREATE INDEX IF NOT EXISTS idx_org_secrets_org_id ON org_secrets(org_id);
 
 --------------------------------------------------------------------------------
 -- PART 18: AUDIT LOG
@@ -1092,66 +1057,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Cleanup expired data
-CREATE OR REPLACE FUNCTION cleanup_expired_data() RETURNS void AS $$
-BEGIN
-    DELETE FROM sessions WHERE expires_at < NOW();
-    DELETE FROM anonymous_sessions WHERE expires_at < NOW();
-    DELETE FROM oauth_states WHERE expires_at < NOW();
-END;
-$$ LANGUAGE plpgsql;
-
--- Cleanup function for old rate limit records
-CREATE OR REPLACE FUNCTION cleanup_old_rate_limits() RETURNS void AS $$
-BEGIN
-    DELETE FROM upload_rate_limit WHERE uploaded_at < NOW() - INTERVAL '30 days';
-    DELETE FROM download_rate_limit WHERE downloaded_at < NOW() - INTERVAL '30 days';
-END;
-$$ LANGUAGE plpgsql;
-
 --------------------------------------------------------------------------------
--- PART 22: FILE MANAGEMENT VIEWS AND LIMITS
+-- PART 22: FILE LIMITS
 --------------------------------------------------------------------------------
-
--- User file stats view for quick analytics
-CREATE OR REPLACE VIEW user_file_stats AS
-SELECT 
-    u.id as user_id,
-    u.username,
-    COUNT(DISTINCT f.id) as total_files,
-    COALESCE(SUM(f.file_size), 0) as total_bytes,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'avatar') as avatar_count,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'release_asset') as release_asset_count,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'issue_attachment') as issue_attachment_count,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'pr_attachment') as pr_attachment_count,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'readme_image') as readme_image_count,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'repo_asset') as repo_asset_count,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'org_avatar') as org_avatar_count,
-    COUNT(DISTINCT f.id) FILTER (WHERE f.reason = 'other') as other_count,
-    -- Last 24h stats
-    COUNT(DISTINCT ul.id) FILTER (WHERE ul.uploaded_at > NOW() - INTERVAL '24 hours') as uploads_24h,
-    COALESCE(SUM(ul.file_size) FILTER (WHERE ul.uploaded_at > NOW() - INTERVAL '24 hours'), 0) as bytes_24h,
-    COUNT(DISTINCT dl.id) FILTER (WHERE dl.downloaded_at > NOW() - INTERVAL '24 hours') as downloads_24h
-FROM users u
-LEFT JOIN files f ON f.user_id = u.id AND f.is_active = true
-LEFT JOIN upload_rate_limit ul ON ul.user_id = u.id
-LEFT JOIN download_rate_limit dl ON dl.user_id = u.id
-GROUP BY u.id, u.username;
-
--- Abuse detection: users with suspicious activity
-CREATE OR REPLACE VIEW suspicious_upload_activity AS
-SELECT 
-    user_id,
-    ip_address,
-    COUNT(*) as upload_count,
-    SUM(file_size) as total_bytes,
-    MIN(uploaded_at) as first_upload,
-    MAX(uploaded_at) as last_upload,
-    COUNT(DISTINCT reason) as reason_variety
-FROM upload_rate_limit
-WHERE uploaded_at > NOW() - INTERVAL '1 hour'
-GROUP BY user_id, ip_address
-HAVING COUNT(*) > 20 OR SUM(file_size) > 100 * 1024 * 1024; -- >20 uploads or >100MB/hour
 
 -- Per-reason rate limits (configurable abuse thresholds)
 CREATE TABLE IF NOT EXISTS file_reason_limits (
@@ -1226,6 +1134,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_requ
 CREATE INDEX IF NOT EXISTS idx_ci_runs_queue ON ci_runs(status, id) WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_created_at ON ci_runs(repo_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_head ON ci_runs(repo_id, head_sha, id);
+CREATE INDEX IF NOT EXISTS idx_ci_runs_pull_request ON ci_runs(pull_request_id) WHERE pull_request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_user_created_at ON ci_runs(triggered_by_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_status ON ci_runs(status);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_push_created_at ON ci_runs(created_at) WHERE event = 'push' AND triggered_by_id IS NOT NULL;
@@ -1272,8 +1181,22 @@ CREATE TABLE IF NOT EXISTS ci_deployments (
 CREATE INDEX IF NOT EXISTS idx_ci_deployments_repo_env ON ci_deployments(repo_id, environment, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_deployments_run ON ci_deployments(run_id);
 
--- commit_statuses is created before ci_runs, so its link to ci_runs is added here.
-ALTER TABLE commit_statuses ADD COLUMN ci_run_id BIGINT REFERENCES ci_runs(id) ON DELETE SET NULL;
+CREATE TABLE IF NOT EXISTS commit_statuses (
+    id BIGSERIAL PRIMARY KEY,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    sha VARCHAR(40) NOT NULL,
+    context TEXT NOT NULL,
+    state VARCHAR(20) NOT NULL, -- pending, success, failure, error
+    description TEXT,
+    target_url TEXT,
+    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ci_run_id BIGINT REFERENCES ci_runs(id) ON DELETE SET NULL,
+    UNIQUE(repo_id, sha, context)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commit_statuses_ci_run_id ON commit_statuses(ci_run_id) WHERE ci_run_id IS NOT NULL;
 
 -- Commits a push actually delivered, so CI can run them after a later force-push.
 CREATE TABLE IF NOT EXISTS ci_accepted_pushes (
@@ -1285,14 +1208,13 @@ CREATE TABLE IF NOT EXISTS ci_accepted_pushes (
     PRIMARY KEY(repo_id, actor_id, reference, sha)
 );
 
--- Per-account login throttling.
+-- Failed-login throttling, one row per client address ('ip:...') and per account.
 CREATE TABLE IF NOT EXISTS auth_login_limits (
     account_key VARCHAR(80) PRIMARY KEY,
     attempts INTEGER NOT NULL CHECK (attempts BETWEEN 0 AND 120),
     window_ends_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_auth_login_limits_expiry ON auth_login_limits (window_ends_at)
-    WHERE account_key <> 'global';
+CREATE INDEX IF NOT EXISTS idx_auth_login_limits_expiry ON auth_login_limits (window_ends_at);
 
 --------------------------------------------------------------------------------
 -- PART 23: CLUSTER MEMBERSHIP
@@ -1300,25 +1222,6 @@ CREATE INDEX IF NOT EXISTS idx_auth_login_limits_expiry ON auth_login_limits (wi
 -- Only PostgreSQL installations run more than one node; SQLite carries the same
 -- tables so both engines share one set of operations.
 --------------------------------------------------------------------------------
-
-CREATE TABLE IF NOT EXISTS nodes (
-    id BIGSERIAL PRIMARY KEY,
-    -- Lowercase hex of the node's ed25519 public key (its iroh endpoint id).
-    public_key TEXT NOT NULL UNIQUE CHECK (public_key ~ '^[0-9a-f]{64}$'),
-    name TEXT NOT NULL UNIQUE CHECK (name ~ '^[a-z0-9][a-z0-9._-]{0,62}$'),
-    -- Roles this node is allowed to run: web, ssh, storage, actions-worker.
-    roles TEXT[] NOT NULL CHECK (cardinality(roles) > 0 AND roles <@ ARRAY['web', 'ssh', 'storage', 'actions-worker']),
-    status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, active, revoked
-    -- JSON with the addresses the node last reported.
-    addr_hint TEXT,
-    version TEXT,
-    disk_free BIGINT CHECK (disk_free IS NULL OR disk_free >= 0),
-    last_seen TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT nodes_status_check CHECK (status IN ('pending', 'active', 'revoked'))
-);
-
-ALTER TABLE repositories ADD CONSTRAINT repository_storage_node FOREIGN KEY (storage_node_id) REFERENCES nodes(id);
 
 -- Only a hash of each invite secret is stored.
 CREATE TABLE IF NOT EXISTS join_tokens (

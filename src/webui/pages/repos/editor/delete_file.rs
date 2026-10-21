@@ -1,5 +1,5 @@
 use crate::webui::pages::repos::{
-    chrome::{chrome, csrf, icon, RepoChrome},
+    chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::commit_target,
     ref_path::file_url,
 };
@@ -31,7 +31,7 @@ pub fn delete_file(repo: &RepoChrome, file: &DeleteFile) -> Element {
     rsx! { DeleteFileView { repo: repo.clone(), file: file.clone() } }
 }
 
-// The page is a component, so its hooks run inside the renderer like the editor's.
+// A component, so the form's inputs are built inside the renderer, as they need to be.
 #[component]
 fn DeleteFileView(repo: RepoChrome, file: DeleteFile) -> Element {
     let cancel_url = file_url(&repo.base(), "blob", &file.branch, &file.path);
@@ -55,7 +55,7 @@ fn DeleteFileView(repo: RepoChrome, file: DeleteFile) -> Element {
                 if !file.saved {
                 form { method: "post", action: form_action, class: "repo-editor-form",
                     {csrf(&repo.csrf_token)}
-                    input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
+                    {repository_id(repo.id)}
                     input { r#type: "hidden", name: "branch", value: file.branch.clone() }
                     input { r#type: "hidden", name: "path", value: file.path.clone() }
                     input { r#type: "hidden", name: "expected_revision", value: file.expected_revision.clone() }

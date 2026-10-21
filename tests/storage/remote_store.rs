@@ -1,8 +1,8 @@
 //! Two real iroh nodes, one shared PostgreSQL database, and separate disks.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client as http;
 use crate::support::native_database as native;
-use crate::support::pull_requests as http;
 use crate::support::rpc_operations;
 
 use axum::http::StatusCode;
@@ -19,9 +19,8 @@ use codeyard::backend::{
     repositories::store::{
         repo_store, BlobRange, ErrorKind, FileWrite, GitService, GitSession, GitStreams,
         MergeMethod, MergeRequest, PreparedFile, RepoStore, MAX_ARCHIVE_RESPONSE_BYTES,
-        MAX_BLOB_RESPONSE_BYTES, MAX_CI_WORKFLOW_BYTES, MAX_COMMIT_METADATA_BYTES,
-        MAX_DIFF_FILE_PATCH_BYTES, MAX_EDITOR_BYTES, MAX_TREE_ENTRIES,
-        MAX_WORKFLOW_DIRECTORY_ENTRIES,
+        MAX_BLOB_RESPONSE_BYTES, MAX_CI_WORKFLOW_BYTES, MAX_DIFF_FILE_PATCH_BYTES,
+        MAX_EDITOR_BYTES, MAX_TREE_ENTRIES, MAX_WORKFLOW_DIRECTORY_ENTRIES,
     },
     storage::ObjectStore,
 };
@@ -590,9 +589,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     )
     .await
     .unwrap();
-    let db::DbPool::Postgres(pg) = &database.pool else {
-        unreachable!()
-    };
+    let pg = &database.raw;
     sqlx::query("UPDATE repositories SET storage_node_id=$1 WHERE id=$2")
         .bind(storage.context.node_id)
         .bind(repository.id)
@@ -1051,9 +1048,7 @@ async fn remote_workflow_discovery_uses_the_bounded_rpc() {
     )
     .await
     .unwrap();
-    let db::DbPool::Postgres(pg) = &database.pool else {
-        unreachable!()
-    };
+    let pg = &database.raw;
     sqlx::query("UPDATE repositories SET storage_node_id=$1 WHERE id=$2")
         .bind(storage.context.node_id)
         .bind(repository.id)
@@ -1535,7 +1530,7 @@ async fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
                 Some("refs/heads/large-commit"),
                 &signature,
                 &signature,
-                &"x".repeat(MAX_COMMIT_METADATA_BYTES),
+                &"x".repeat(codeyard::backend::git::MAX_COMMIT_OBJECT_BYTES),
                 &parent_tree,
                 &[&parent],
             )

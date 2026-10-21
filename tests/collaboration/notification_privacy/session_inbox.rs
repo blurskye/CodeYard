@@ -283,7 +283,7 @@ async fn contract(pg: bool) {
                 .expect("native SQL failure");
         assert!(error.downcast_ref::<sqlx::Error>().is_some());
     }
-    f.close().await;
+    f.finish().await;
 }
 
 async fn bounded_list(pg: bool) {
@@ -323,7 +323,7 @@ async fn bounded_list(pg: bool) {
         }
     }
     visible(&f, &original, user, &[second, first]).await;
-    f.close().await;
+    f.finish().await;
 }
 
 #[tokio::test]
@@ -377,10 +377,8 @@ async fn postgres_inbox_locks_source_before_newer_fork_notifications() {
             },
             other => other,
         };
-        let Fixture::Postgres(f) = &fixture else {
-            unreachable!()
-        };
-        let mut privacy = f.raw.begin().await.unwrap();
+        let raw = fixture.pg();
+        let mut privacy = raw.begin().await.unwrap();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *privacy)
             .await
@@ -390,12 +388,12 @@ async fn postgres_inbox_locks_source_before_newer_fork_notifications() {
             .fetch_one(&mut *privacy)
             .await
             .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let original = original.clone();
         let task = tokio::spawn(async move {
             db::notifications::records::notification_inbox(&pool, &original, user, action).await
         });
-        pg_waiter(&f.raw, pid, "FROM repositories").await;
+        pg_waiter(raw, pid, "FROM repositories").await;
         // The visibility trigger locks the fork while the inbox waits on the source.
         // Chronological locking instead holds the fork and forms a real deadlock.
         sqlx::query("UPDATE repositories SET is_private=TRUE WHERE id=$1")
@@ -413,7 +411,7 @@ async fn postgres_inbox_locks_source_before_newer_fork_notifications() {
         assert!(result.notifications.is_empty());
         assert_eq!((result.unread_count, result.updated), (0, 0));
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 // Poll the store's own clock, not host time or sleep-based ordering.
@@ -458,12 +456,10 @@ async fn postgres_concurrent_acknowledgments_serialize_without_lock_upgrades() {
     .await
     .unwrap();
     let original = session(fixture.pool(), user).await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
     for read_all in [false, true] {
         let notice = fixture.notify(user, Some(repo), "ack-payload").await;
-        let mut blocker = f.raw.begin().await.unwrap();
+        let mut blocker = raw.begin().await.unwrap();
         sqlx::query("SET LOCAL lock_timeout='3s'")
             .execute(&mut *blocker)
             .await
@@ -479,7 +475,7 @@ async fn postgres_concurrent_acknowledgments_serialize_without_lock_upgrades() {
             .unwrap();
         let tasks: Vec<_> = (0..2)
             .map(|_| {
-                let pool = f.pool.clone();
+                let pool = fixture.pool().clone();
                 let original = original.clone();
                 tokio::spawn(async move {
                     db::notifications::records::notification_inbox(
@@ -501,7 +497,7 @@ async fn postgres_concurrent_acknowledgments_serialize_without_lock_upgrades() {
         tokio::time::timeout(DEADLINE, async {
             loop {
                 let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)) AND query LIKE '%repositories%'")
-                    .bind(pid).fetch_one(&f.raw).await.unwrap();
+                    .bind(pid).fetch_one(raw).await.unwrap();
                 if waiting >= 2 { break; }
                 assert!(tasks.iter().all(|task| !task.is_finished()), "both acks must wait behind the repository");
                 tokio::task::yield_now().await;
@@ -529,7 +525,7 @@ async fn postgres_concurrent_acknowledgments_serialize_without_lock_upgrades() {
             .iter()
             .any(|row| row["id"] == notice && !row["read_at"].is_null()));
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -551,9 +547,7 @@ async fn postgres_notification_reads_do_not_lock_fork_notifications_before_the_f
     let user = fixture.actor("delete_recipient").await;
     let base = fixture.repo(owner, None, "delete_base").await;
     let original = session(fixture.pool(), user).await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
     for (number, operation) in [
         ForkDeleteRead::List,
         ForkDeleteRead::Count,
@@ -594,7 +588,7 @@ async fn postgres_notification_reads_do_not_lock_fork_notifications_before_the_f
             .into_iter()
             .find(|row| row["id"] == notice)
             .unwrap();
-        let mut deletion = f.raw.begin().await.unwrap();
+        let mut deletion = raw.begin().await.unwrap();
         sqlx::query("SET LOCAL lock_timeout='3s'")
             .execute(&mut *deletion)
             .await
@@ -615,7 +609,7 @@ async fn postgres_notification_reads_do_not_lock_fork_notifications_before_the_f
             .fetch_one(&mut *deletion)
             .await
             .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let original = original.clone();
         let task = tokio::spawn(async move {
             let hidden = match operation {
@@ -667,7 +661,7 @@ async fn postgres_notification_reads_do_not_lock_fork_notifications_before_the_f
             };
             Ok::<_, anyhow::Error>(hidden)
         });
-        pg_waiter(&f.raw, pid, "FROM repositories").await;
+        pg_waiter(raw, pid, "FROM repositories").await;
         assert!(
             !task.is_finished(),
             "{operation:?} must wait behind fork deletion"
@@ -721,7 +715,7 @@ async fn postgres_notification_reads_do_not_lock_fork_notifications_before_the_f
             .unwrap(),
         0
     );
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -733,10 +727,8 @@ async fn postgres_all_inbox_actions_wait_for_recipient_then_observe_original_ses
         let original = session(fixture.pool(), user).await;
         let replacement = session(fixture.pool(), user).await;
         let before = fixture.history(user).await;
-        let Fixture::Postgres(f) = &fixture else {
-            unreachable!()
-        };
-        let mut revoker = f.raw.begin().await.unwrap();
+        let raw = fixture.pg();
+        let mut revoker = raw.begin().await.unwrap();
         let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *revoker)
             .await
@@ -747,13 +739,13 @@ async fn postgres_all_inbox_actions_wait_for_recipient_then_observe_original_ses
             .fetch_one(&mut *revoker)
             .await
             .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let request_session = original.clone();
         let task = tokio::spawn(async move {
             db::notifications::records::notification_inbox(&pool, &request_session, user, action)
                 .await
         });
-        pg_waiter(&f.raw, blocker, "FROM users").await;
+        pg_waiter(raw, blocker, "FROM users").await;
         assert!(!task.is_finished());
         // While waiting for the recipient, no notification or session lock is held.
         sqlx::query("SELECT id FROM notifications WHERE id=$1 FOR UPDATE NOWAIT")
@@ -786,7 +778,7 @@ async fn postgres_all_inbox_actions_wait_for_recipient_then_observe_original_ses
                 .is_some()
         );
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -796,26 +788,24 @@ async fn postgres_inbox_final_expiry_rolls_back_staged_one_and_all_acknowledgmen
     let notice = fixture.notify(user, None, "pg-expiry-account").await;
     let original = session(fixture.pool(), user).await;
     let before = fixture.history(user).await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
     // Fixture-only AFTER UPDATE barrier proves read_at has been staged before
     // clock expiry, rather than merely delaying initial session admission.
     let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
-        .fetch_one(&f.raw)
+        .fetch_one(raw)
         .await
         .unwrap();
     sqlx::query(&format!("CREATE FUNCTION inbox_ack_pause() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock({blocker},NEW.id::integer); RETURN NEW; END; $$"))
-        .execute(&f.raw).await.unwrap();
+        .execute(raw).await.unwrap();
     sqlx::query("CREATE TRIGGER inbox_ack_pause AFTER UPDATE ON notifications FOR EACH ROW EXECUTE FUNCTION inbox_ack_pause()")
-        .execute(&f.raw).await.unwrap();
+        .execute(raw).await.unwrap();
     for action in [
         Action::Read {
             notification_id: notice,
         },
         Action::ReadAll,
     ] {
-        let mut blocker_tx = f.raw.begin().await.unwrap();
+        let mut blocker_tx = raw.begin().await.unwrap();
         // The actual backend may differ on reacquisition; the advisory key is
         // fixed to this fixture's earlier owned backend ID, not global test data.
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
@@ -832,19 +822,19 @@ async fn postgres_inbox_final_expiry_rolls_back_staged_one_and_all_acknowledgmen
             "UPDATE sessions SET expires_at=clock_timestamp()+interval '5 seconds' WHERE id=$1",
         )
         .bind(&original)
-        .execute(&f.raw)
+        .execute(raw)
         .await
         .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let request_session = original.clone();
         let task = tokio::spawn(async move {
             db::notifications::records::notification_inbox(&pool, &request_session, user, action)
                 .await
         });
-        pg_waiter(&f.raw, pid, "UPDATE notifications").await;
+        pg_waiter(raw, pid, "UPDATE notifications").await;
         assert!(!task.is_finished());
         // Original session remains locked FOR SHARE through the staged ack.
-        let mut probe = f.raw.begin().await.unwrap();
+        let mut probe = raw.begin().await.unwrap();
         let error = sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR UPDATE NOWAIT")
             .bind(&original)
             .fetch_one(&mut *probe)
@@ -869,7 +859,7 @@ async fn postgres_inbox_final_expiry_rolls_back_staged_one_and_all_acknowledgmen
             "expired staged acknowledgment rolls back"
         );
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 // SQLx 0.8.6 exposes the locked native handle but not sqlite3_busy_handler.
@@ -941,6 +931,7 @@ async fn sqlite_request_pool(url: &str) -> sqlx::SqlitePool {
 
 // A disabled progress handler owns the counters until connection teardown, including unwind.
 struct Trace {
+    total: std::sync::atomic::AtomicUsize,
     decisions: std::sync::atomic::AtomicUsize,
     candidates: std::sync::atomic::AtomicUsize,
 }
@@ -955,6 +946,9 @@ unsafe extern "C" fn sql_trace(
     let sql = unsafe { std::ffi::CStr::from_ptr(sql.cast()) }.to_bytes();
     // SAFETY: the connection's progress handler retains the heap allocation.
     let trace = unsafe { &*argument.cast::<Trace>() };
+    trace
+        .total
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if sql.starts_with(b"SELECT s.scope, EXISTS(") {
         trace
             .decisions
@@ -967,11 +961,12 @@ unsafe extern "C" fn sql_trace(
     0
 }
 
-/// Statements the operation ran on SQLite: the repository decisions of its transaction
-/// (`decisions`, one set-based statement) and candidate pages (`candidates`). PostgreSQL
-/// repository lookups do not reach sqlx's statement log in this harness, so a PostgreSQL run
-/// returns None and still checks every result.
+/// Statements the operation ran on SQLite: all of them (`total`, never zero), the repository
+/// decisions of its transaction (`decisions`, one set-based statement) and candidate pages
+/// (`candidates`). PostgreSQL repository lookups do not reach sqlx's statement log in this
+/// harness, so a PostgreSQL run returns None and still checks every result.
 struct Queries {
+    total: usize,
     decisions: usize,
     candidates: usize,
 }
@@ -986,6 +981,7 @@ async fn scope_queries(
         return None;
     };
     let trace = Arc::new(Trace {
+        total: AtomicUsize::new(0),
         decisions: AtomicUsize::new(0),
         candidates: AtomicUsize::new(0),
     });
@@ -1025,10 +1021,16 @@ async fn scope_queries(
         },
         0
     );
-    Some(Queries {
+    let queries = Queries {
+        total: trace.total.load(Ordering::SeqCst),
         decisions: trace.decisions.load(Ordering::SeqCst),
         candidates: trace.candidates.load(Ordering::SeqCst),
-    })
+    };
+    assert!(
+        queries.total > 0,
+        "the trace saw no statements, so its counts prove nothing"
+    );
+    Some(queries)
 }
 
 #[tokio::test]
@@ -1162,7 +1164,7 @@ async fn grouped_scope_work(pg: bool) {
     assert_eq!(title, "created-without-recount");
     assert_eq!(fixture.scalar("SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND scope_repository_id=$2 AND read_at IS NULL", &[user, hidden]).await, 256);
     pool.close().await;
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -1199,10 +1201,8 @@ async fn postgres_inbox_locks_ancestors_before_forks_without_source_notification
         .await;
     fixture.notify(user, Some(fork_a), "fork-a").await;
     fixture.notify(user, Some(fork_b), "fork-b").await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
-    let mut privacy = f.raw.begin().await.unwrap();
+    let raw = fixture.pg();
+    let mut privacy = raw.begin().await.unwrap();
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *privacy)
         .await
@@ -1215,7 +1215,7 @@ async fn postgres_inbox_locks_ancestors_before_forks_without_source_notification
             .await
             .unwrap();
     }
-    let pool = f.pool.clone();
+    let pool = fixture.pool().clone();
     let task = tokio::spawn(async move {
         db::notifications::records::notification_inbox(
             &pool,
@@ -1229,7 +1229,7 @@ async fn postgres_inbox_locks_ancestors_before_forks_without_source_notification
         )
         .await
     });
-    pg_waiter(&f.raw, pid, "FROM repositories").await;
+    pg_waiter(raw, pid, "FROM repositories").await;
     // The trigger then narrows the fork that the inbox has not locked.
     sqlx::query("UPDATE repositories SET is_private=TRUE WHERE id=$1")
         .bind(source)
@@ -1245,7 +1245,7 @@ async fn postgres_inbox_locks_ancestors_before_forks_without_source_notification
         .unwrap();
     assert!(result.notifications.is_empty());
     assert_eq!((result.unread_count, result.updated), (0, 0));
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 // A one-row page authorizes only what its walk reaches, and a hidden tail is skipped by
@@ -1311,13 +1311,13 @@ async fn page_walk_work(pg: bool) {
             "the page walk decides every repository in one statement"
         );
         assert!(
-            queries.candidates <= 3,
+            (1..=3).contains(&queries.candidates),
             "hidden history is skipped by repository, not batch by batch: {}",
             queries.candidates
         );
     }
     pool.close().await;
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 /// Marking a notification done changes the unread count, so subscribers hear the new count. A
@@ -1388,7 +1388,7 @@ async fn done_marks_are_announced(pg: bool) {
         announced(pool, &original, user, &mut events).await,
         (user, 0)
     );
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -1449,10 +1449,8 @@ async fn postgres_inbox_locks_source_organization_before_source_rows() {
         fixture.notify(user, Some(source), "source-note").await;
         fixture.notify(user, Some(fork), "fork-note").await;
         let original = session(fixture.pool(), user).await;
-        let Fixture::Postgres(f) = &fixture else {
-            unreachable!()
-        };
-        let mut change = f.raw.begin().await.unwrap();
+        let raw = fixture.pg();
+        let mut change = raw.begin().await.unwrap();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *change)
             .await
@@ -1462,7 +1460,7 @@ async fn postgres_inbox_locks_source_organization_before_source_rows() {
             .fetch_one(&mut *change)
             .await
             .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let task = tokio::spawn(async move {
             db::notifications::records::notification_inbox(
                 &pool,
@@ -1476,7 +1474,7 @@ async fn postgres_inbox_locks_source_organization_before_source_rows() {
             )
             .await
         });
-        pg_waiter(&f.raw, pid, "FROM organizations").await;
+        pg_waiter(raw, pid, "FROM organizations").await;
         sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
             .bind(source)
             .fetch_one(&mut *change)
@@ -1493,7 +1491,7 @@ async fn postgres_inbox_locks_source_organization_before_source_rows() {
         assert_eq!(result.notifications[0].title, "fork-note");
         assert_eq!((result.unread_count, result.updated), (1, 0));
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -1586,7 +1584,7 @@ async fn sqlite_all_inbox_actions_wait_reserved_writer_then_observe_original_ses
     }
     pool.close().await;
     raw.close().await;
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -1663,5 +1661,5 @@ async fn sqlite_inbox_final_expiry_rolls_back_staged_one_and_all_acknowledgments
     }
     pool.close().await;
     raw.close().await;
-    fixture.close().await;
+    fixture.finish().await;
 }

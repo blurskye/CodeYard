@@ -5,16 +5,13 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
 use pulls::{text, Client};
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 /// `alice/proj`, a private repository whose `main` holds one commit. Bob and Carol have
 /// write access, Dave can only read, and Erin has no access.
@@ -37,7 +34,7 @@ impl World {
     async fn new(pg: bool) -> Self {
         bundle::install();
         let database = Database::new(pg).await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let alice_id = database.actor("alice").await;
         let bob_id = database.actor("bob").await;
         let carol_id = database.actor("carol").await;
@@ -69,14 +66,7 @@ impl World {
             .await
             .unwrap();
         }
-        let router = create_router(AppState::new(
-            database.pool().clone(),
-            root.path().to_owned(),
-            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-            None,
-            CiConfig::default(),
-            None,
-        ));
+        let router = database.router(root.path()).await;
         let alice = Client::login(&router, database.pool(), alice_id).await;
         let bob = Client::login(&router, database.pool(), bob_id).await;
         let carol = Client::login(&router, database.pool(), carol_id).await;
@@ -769,9 +759,9 @@ async fn pending_review_is_private_until_submitted(pg: bool) {
     assert!(bob_files.contains("Discard review"));
     // Nobody else sees it: not the author, not a reader, and not the API.
     for viewer in [&world.alice, &world.dave] {
-        let (_, files) = viewer.page(&diff).await;
+        let files = viewer.page_ok(&diff).await;
         assert!(!files.contains("Pending thought"));
-        let (_, conversation) = viewer.page(&page).await;
+        let conversation = viewer.page_ok(&page).await;
         assert!(!conversation.contains("Pending thought"));
     }
     let (status, listed) = world
@@ -815,7 +805,7 @@ async fn pending_review_is_private_until_submitted(pg: bool) {
     assert!(!alice_page[review_at..comment_at].contains("</article>"));
     assert!(!alice_page.contains(">Pending</span>"));
     // Bob's review menu no longer offers to discard anything.
-    let (_, bob_files) = world.bob.page(&diff).await;
+    let bob_files = world.bob.page_ok(&diff).await;
     assert!(!bob_files.contains("Discard review"));
     assert!(!bob_files.contains(">Pending</span>"));
 
@@ -844,7 +834,7 @@ async fn discarding_a_pending_review_removes_its_comments(pg: bool) {
         "{:?}",
         discarded.location
     );
-    let (_, bob_files) = world.bob.page(&diff).await;
+    let bob_files = world.bob.page_ok(&diff).await;
     assert!(!bob_files.contains("Discard me"));
     assert!(!bob_files.contains("Discard review"));
 

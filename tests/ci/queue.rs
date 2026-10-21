@@ -9,15 +9,17 @@
 //! operations in a fixed order; PostgreSQL's own wait information says when the
 //! operation under test is really waiting, so the order never depends on sleeping.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::database::Database;
 use crate::support::native_database as native;
+use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
 use codeyard::backend::db::{
     self,
     models::{AccessLevel, CiRun, OrgRole},
     organizations::{
-        self as orgs, NewOrganization, NewTeam, OrganizationOutcome, OrganizationProfile,
-        TeamPrivacy, TeamProfile, TeamRepositoryPermission, TeamRole,
+        self as orgs, NewOrganization, NewTeam, OrganizationProfile, TeamPrivacy, TeamProfile,
+        TeamRepositoryPermission, TeamRole,
     },
 };
 use std::{
@@ -33,89 +35,7 @@ const WORKER: &str = "worker-1";
 const ACCESS_LOST: &str = db::ci::ACCESS_LOST_MESSAGE;
 const WORKFLOW: &str = ".github/workflows/ci.yml";
 
-enum Database {
-    Postgres(Box<production::Fixture>),
-    Sqlite(native::NativeDatabase),
-}
-
 impl Database {
-    async fn new(pg: bool) -> Self {
-        if pg {
-            Self::Postgres(Box::new(production::Fixture::new().await))
-        } else {
-            Self::Sqlite(native::NativeDatabase::new().await)
-        }
-    }
-
-    fn pool(&self) -> &db::DbPool {
-        match self {
-            Self::Postgres(f) => &f.pool,
-            Self::Sqlite(f) => &f.pool,
-        }
-    }
-
-    /// Fixture SQL that is the same on both engines, with numbered id parameters.
-    async fn execute(&self, sql: &str, ids: &[i64]) {
-        match self {
-            Self::Postgres(f) => {
-                let mut query = sqlx::query(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .execute(&f.raw)
-                    .await
-                    .expect("owned PG fixture mutation");
-            }
-            Self::Sqlite(f) => {
-                let mut query = sqlx::query(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .execute(&f.raw)
-                    .await
-                    .expect("owned SQLite fixture mutation");
-            }
-        }
-    }
-
-    async fn count(&self, sql: &str, ids: &[i64]) -> i64 {
-        match self {
-            Self::Postgres(f) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query.fetch_one(&f.raw).await.expect("owned PG observation")
-            }
-            Self::Sqlite(f) => {
-                let mut query = sqlx::query_scalar::<_, i64>(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .fetch_one(&f.raw)
-                    .await
-                    .expect("owned SQLite observation")
-            }
-        }
-    }
-
-    async fn close(&mut self) {
-        match self {
-            Self::Postgres(f) => f.finish().await,
-            Self::Sqlite(f) => f.close().await,
-        }
-    }
-
-    async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(self.pool(), name, None)
-            .await
-            .unwrap()
-            .id
-    }
-
     async fn site_admin(&self, name: &str) -> i64 {
         let id = self.actor(name).await;
         self.execute("UPDATE users SET is_admin = TRUE WHERE id = $1", &[id])
@@ -231,7 +151,7 @@ impl Database {
     }
 
     async fn notifications(&self, user: i64) -> i64 {
-        self.count(
+        self.scalar(
             "SELECT COUNT(*) FROM notifications WHERE user_id = $1 AND kind = 'ci_completed'",
             &[user],
         )
@@ -973,10 +893,6 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         body::Body,
         http::{Request, StatusCode},
     };
-    use codeyard::backend::{
-        api::create_router, app::AppState, ci::CiConfig, storage::ObjectStore,
-    };
-    use std::sync::Arc;
     use tower::ServiceExt;
 
     let w = world(db, "statuses").await;
@@ -985,16 +901,9 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         &[w.repo],
     )
     .await;
-    db.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    db.complete_setup().await;
     let root = tempfile::tempdir().unwrap();
-    let app = create_router(AppState::new(
-        db.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let app = db.router(root.path()).await;
 
     async fn enqueue(db: &Database, w: &World, sha: &str, workflow: &str) -> CiRun {
         db::ci::enqueue_ci_run(
@@ -1096,7 +1005,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         .await
         .unwrap();
     assert_eq!(statuses[0].state, "pending");
-    assert_eq!(db.count("SELECT COUNT(*) FROM commit_statuses WHERE ci_run_id = $1 AND context = 'gitserv/workflow/.github/workflows/test.yml'", &[newer.id]).await, 1);
+    assert_eq!(db.scalar("SELECT COUNT(*) FROM commit_statuses WHERE ci_run_id = $1 AND context = 'gitserv/workflow/.github/workflows/test.yml'", &[newer.id]).await, 1);
     db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
         .await
         .unwrap()
@@ -1109,7 +1018,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         .await
         .unwrap();
     assert_eq!(statuses[0].state, "failure");
-    assert_eq!(db.count("SELECT COUNT(*) FROM commit_statuses WHERE ci_run_id = $1 AND context = 'gitserv/workflow/.github/workflows/test.yml'", &[newer.id]).await, 1);
+    assert_eq!(db.scalar("SELECT COUNT(*) FROM commit_statuses WHERE ci_run_id = $1 AND context = 'gitserv/workflow/.github/workflows/test.yml'", &[newer.id]).await, 1);
 
     let multi = enqueue(
         db,
@@ -1276,13 +1185,6 @@ async fn ignoring_the_repository_silences_run_results(db: &Database) {
 }
 
 // ---- The global run list follows the repository read rule ----
-
-fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("expected the organization change to apply: {other:?}"),
-    }
-}
 
 async fn visible_repositories(db: &Database, user: i64, limit: i64) -> Vec<i64> {
     let runs = db::ci::list_ci_runs_for_user(db.pool(), user, limit)
@@ -1987,7 +1889,7 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
         .unwrap()
         .expect("the third attempt is finished");
     assert_eq!(
-        db.count(
+        db.scalar(
             "SELECT COUNT(*) FROM ci_runs WHERE pull_request_id = $1",
             &[pull.id]
         )
@@ -2162,7 +2064,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
         assert_eq!(stored.level, expected.level);
     }
     assert_eq!(
-        db.count("SELECT log_lines FROM ci_runs WHERE id=$1", &[run.id])
+        db.scalar("SELECT log_lines FROM ci_runs WHERE id=$1", &[run.id])
             .await,
         64
     );
@@ -2171,7 +2073,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
         .map(|line| line.stage.len() + line.line.len())
         .sum::<usize>() as i64;
     assert_eq!(
-        db.count("SELECT log_bytes FROM ci_runs WHERE id=$1", &[run.id])
+        db.scalar("SELECT log_bytes FROM ci_runs WHERE id=$1", &[run.id])
             .await,
         bytes
     );
@@ -2187,7 +2089,7 @@ async fn refused_claim(db: &Database, node_key: &str, run: i64, trusted: &[i64])
         .unwrap();
     assert!(claimed.is_none(), "{node_key} claimed a run it may not run");
     let queued = db
-        .count(
+        .scalar(
             "SELECT COUNT(*) FROM ci_runs WHERE id = $1 AND status = 'queued' AND worker IS NULL",
             &[run],
         )
@@ -2276,7 +2178,7 @@ macro_rules! on_both_engines {
                 async fn $name() {
                     let mut database = super::Database::new(false).await;
                     super::$name(&database).await;
-                    database.close().await;
+                    database.finish().await;
                 }
             )+
         }
@@ -2286,7 +2188,7 @@ macro_rules! on_both_engines {
                 async fn $name() {
                     let mut database = super::Database::new(true).await;
                     super::$name(&database).await;
-                    database.close().await;
+                    database.finish().await;
                 }
             )+
         }
@@ -2384,10 +2286,10 @@ async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
 async fn ci_lookup_indexes_and_one_deployment_per_run(db: &Database) {
     match db {
         Database::Postgres(_) => {
-            assert_eq!(db.count("WITH indexes AS MATERIALIZED (SELECT indexrelid FROM pg_index WHERE indrelid = 'ci_runs'::regclass) SELECT COUNT(*) FROM indexes WHERE pg_get_indexdef(indexrelid) LIKE '%(repo_id, head_sha, id)'", &[]).await, 1);
+            assert_eq!(db.scalar("WITH indexes AS MATERIALIZED (SELECT indexrelid FROM pg_index WHERE indrelid = 'ci_runs'::regclass) SELECT COUNT(*) FROM indexes WHERE pg_get_indexdef(indexrelid) LIKE '%(repo_id, head_sha, id)'", &[]).await, 1);
         }
         Database::Sqlite(_) => {
-            assert_eq!(db.count("SELECT COUNT(*) FROM pragma_index_info('idx_ci_runs_repo_head') WHERE (seqno = 0 AND name = 'repo_id') OR (seqno = 1 AND name = 'head_sha') OR (seqno = 2 AND name = 'id')", &[]).await, 3);
+            assert_eq!(db.scalar("SELECT COUNT(*) FROM pragma_index_info('idx_ci_runs_repo_head') WHERE (seqno = 0 AND name = 'repo_id') OR (seqno = 1 AND name = 'head_sha') OR (seqno = 2 AND name = 'id')", &[]).await, 3);
         }
     }
     let w = world(db, "ci_indexes").await;
@@ -2449,6 +2351,7 @@ on_both_engines!(
 
 mod interleaved {
     use super::*;
+    use crate::support::database::wait_until_blocked;
     use sqlx::{PgPool, Postgres, Transaction};
 
     /// A transaction that has locked the run row, and its backend process id.
@@ -2464,29 +2367,6 @@ mod interleaved {
             .await
             .unwrap();
         (tx, pid)
-    }
-
-    /// Waits until `waiters` statements are stuck behind the transaction of process
-    /// `holder`, directly or through each other.
-    async fn wait_until_blocked_by(raw: &PgPool, holder: i32, waiters: i64) {
-        for _ in 0..800 {
-            let blocked: i64 = sqlx::query_scalar(
-                "WITH RECURSIVE waiting(pid) AS (
-                     SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-                     UNION
-                     SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid = ANY(pg_blocking_pids(a.pid))
-                 ) SELECT COUNT(*) FROM waiting",
-            )
-            .bind(holder)
-            .fetch_one(raw)
-            .await
-            .unwrap();
-            if blocked >= waiters {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        panic!("nothing is waiting on the lock the test holds");
     }
 
     fn fixture(db: &Database) -> &production::Fixture {
@@ -2555,7 +2435,7 @@ mod interleaved {
         let pool = db.pool().clone();
         let claiming =
             tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[]).await });
-        wait_until_blocked_by(raw, holder, 1).await;
+        wait_until_blocked(raw, holder, 1).await;
         let released_at: chrono::DateTime<chrono::Utc> =
             sqlx::query_scalar("SELECT clock_timestamp()")
                 .fetch_one(raw)
@@ -2568,7 +2448,7 @@ mod interleaved {
             .unwrap()
             .unwrap();
         assert!(claimed.heartbeat_at.unwrap() >= released_at);
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2592,13 +2472,13 @@ mod interleaved {
             tokio::spawn(
                 async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner]).await },
             );
-        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         let pool = db.pool().clone();
         let retrying =
             tokio::spawn(
                 async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner]).await },
             );
-        wait_until_blocked_by(&fixture(&db).raw, holder, 2).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 2).await;
         gate.commit().await.unwrap();
         let claimed = promptly("first claim", claiming)
             .await
@@ -2613,7 +2493,7 @@ mod interleaved {
         assert_eq!(claimed.id, first.id);
         assert_eq!(retried.id, first.id);
         assert_eq!(db.run(second.run_id).await.status, "queued");
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2650,7 +2530,7 @@ mod interleaved {
             db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap(),
             (0, vec![])
         );
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2670,7 +2550,7 @@ mod interleaved {
         let finishing = tokio::spawn(async move {
             db::ci::finish_ci_run(&pool, run.id, WORKER, "success", None).await
         });
-        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         sweep.commit().await.unwrap();
 
         let result = promptly("the finish", finishing).await.unwrap().unwrap();
@@ -2683,7 +2563,7 @@ mod interleaved {
             0,
             "the lost finish announced nothing"
         );
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2706,7 +2586,7 @@ mod interleaved {
             tokio::spawn(
                 async move { db::ci::request_ci_cancellation(&pool, run.run_id, owner).await },
             );
-        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         claim.commit().await.unwrap();
 
         // The cancellation saw a running run and asked its worker to stop; it did not
@@ -2722,7 +2602,7 @@ mod interleaved {
         assert_eq!(after.status, "running");
         assert!(after.cancel_requested);
         assert_eq!(db.notifications(w.owner).await, 0);
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2747,7 +2627,7 @@ mod interleaved {
             .unwrap()
             .expect("the first run is free again");
         assert_eq!(claimed.id, first.id);
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2774,7 +2654,7 @@ mod interleaved {
         }
         claimed.sort();
         assert_eq!(claimed, queued, "every run went to exactly one worker");
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2838,7 +2718,7 @@ mod interleaved {
             db::users::accounts::update_user_password(&pool, second_owner, "temporary-hash", true)
                 .await
         });
-        wait_until_blocked_by(&fixture(&db).raw, holder, 2).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 2).await;
         gate.commit().await.unwrap();
 
         assert!(matches!(
@@ -2868,7 +2748,7 @@ mod interleaved {
                 .unwrap(),
             Some(true)
         );
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2891,7 +2771,7 @@ mod interleaved {
         let trusted = [w.collab];
         let enqueueing =
             tokio::spawn(async move { enqueue_once(&pool, w.repo, w.collab, &trusted).await });
-        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         revocation.commit().await.unwrap();
 
         let error = promptly("the waiting enqueue", enqueueing)
@@ -2905,14 +2785,14 @@ mod interleaved {
             ))
         ));
         assert_eq!(
-            db.count(
+            db.scalar(
                 "SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2",
                 &[w.repo, w.collab]
             )
             .await,
             0
         );
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2938,7 +2818,7 @@ mod interleaved {
             tokio::spawn(
                 async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted).await },
             );
-        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         revocation.commit().await.unwrap();
 
         assert!(promptly("the waiting claim", claiming)
@@ -2947,7 +2827,7 @@ mod interleaved {
             .unwrap()
             .is_none());
         assert_cancelled(&db.run(run.run_id).await, ACCESS_LOST);
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2984,7 +2864,7 @@ mod interleaved {
             tokio::spawn(
                 async move { enqueue_once(&pool, organization.repo, actor, &trusted).await },
             );
-        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         revocation.commit().await.unwrap();
 
         let error = promptly("the organization enqueue", enqueueing)
@@ -2997,7 +2877,7 @@ mod interleaved {
                 "CI repository execution permission denied"
             ))
         ));
-        db.close().await;
+        db.finish().await;
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -3023,13 +2903,13 @@ mod interleaved {
             tokio::spawn(
                 async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted).await },
             );
-        wait_until_blocked_by(&fixture(&db).raw, holder, 1).await;
+        wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         ban.commit().await.unwrap();
 
         // The claim did not start the run on the account as it was before the ban.
         let claimed = promptly("the claim", claiming).await.unwrap().unwrap();
         assert!(claimed.is_none());
         assert_cancelled(&db.run(run.run_id).await, ACCESS_LOST);
-        db.close().await;
+        db.finish().await;
     }
 }

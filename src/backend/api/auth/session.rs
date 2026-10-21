@@ -1,4 +1,4 @@
-use crate::backend::api::auth::errors::{database_failure, session_failure};
+use crate::backend::api::auth::errors::session_failure;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session;
 use crate::backend::api::http::session::{
@@ -6,7 +6,7 @@ use crate::backend::api::http::session::{
 };
 use crate::backend::app::AppState;
 use crate::backend::db::users::sessions as stored;
-use crate::backend::{db, identity};
+use crate::backend::identity;
 use axum::extract::State;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -15,9 +15,9 @@ use chrono::{Duration, Utc};
 use serde::Serialize;
 use std::sync::Arc;
 
+/// The id stays in the HttpOnly cookie; the body never repeats it.
 #[derive(Debug, Serialize)]
 pub struct SessionResponse {
-    pub session_id: String,
     pub authenticated: bool,
 }
 
@@ -30,14 +30,6 @@ pub async fn create_session(
             .await
             .map_err(|_| session_failure())?
         {
-            let authenticated = if let Some(user) = session.user_id {
-                db::users::accounts::get_user_by_id(&state.pool, user)
-                    .await
-                    .map_err(|_| database_failure())?
-                    .is_some_and(|user| !user.is_banned)
-            } else {
-                false
-            };
             let remaining = (session.expires_at - Utc::now()).num_seconds();
             return Ok((
                 StatusCode::OK,
@@ -46,8 +38,7 @@ pub async fn create_session(
                     session::build_session_cookie_for(&id, remaining),
                 )],
                 Json(SessionResponse {
-                    session_id: id,
-                    authenticated,
+                    authenticated: session.user_id.is_some(),
                 }),
             ));
         }
@@ -67,7 +58,6 @@ pub async fn create_session(
         StatusCode::CREATED,
         [(header::SET_COOKIE, cookie)],
         Json(SessionResponse {
-            session_id: id,
             authenticated: false,
         }),
     ))
@@ -78,6 +68,7 @@ pub(crate) struct LoginSessionRequest {
     invalid_initiator: bool,
     fresh: String,
     user_agent: Option<String>,
+    client: Option<String>,
 }
 
 impl LoginSessionRequest {
@@ -89,6 +80,7 @@ impl LoginSessionRequest {
             invalid_initiator,
             fresh: generate_session_id(),
             user_agent: extract_user_agent(headers),
+            client: session::client_address(headers).map(str::to_owned),
         }
     }
 
@@ -105,6 +97,7 @@ impl LoginSessionRequest {
             initiating,
             fresh_id: &self.fresh,
             user_agent: self.user_agent.as_deref(),
+            client: self.client.as_deref(),
             expires_at: Utc::now() + Duration::days(session::session_duration_days()),
         }
     }

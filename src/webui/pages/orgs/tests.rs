@@ -32,8 +32,6 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         more_repositories: false,
         selected_team: Some(TeamDetail {
             team: team(),
-            slug: "writers".into(),
-            description: String::new(),
             members: vec![],
             repositories: vec![RepositoryGrant {
                 repo_id: 7,
@@ -659,9 +657,11 @@ fn team_page_model(
             suspended: false,
             avatar_url: None,
         },
-        team: team(),
-        description: "Ships docs and copy.".into(),
-        member_count: 1,
+        team: Team {
+            description: "Ships docs and copy.".into(),
+            member_count: 1,
+            ..team()
+        },
         repository_count: 1,
         manage: true,
         show_repositories,

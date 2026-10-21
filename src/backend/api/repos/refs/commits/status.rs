@@ -1,9 +1,8 @@
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::chrome::{json_page, PageQuery};
-use crate::backend::api::repos::refs::commits::statuses::{
-    is_valid_sha1_hex, status_responses, CommitStatusResponse,
-};
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::refs::commits::statuses::{status_responses, CommitStatusResponse};
+use crate::backend::api::repos::responses::repository_unavailable;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use axum::extract::{Path, Query, State};
@@ -44,26 +43,8 @@ pub async fn get_combined_commit_status(
     headers: HeaderMap,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<CombinedCommitStatusResponse>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-    if !is_valid_sha1_hex(&sha) {
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
+    if !crate::backend::git::is_full_commit_id(&sha) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -83,15 +64,7 @@ pub async fn get_combined_commit_status(
         limit as i64,
     )
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::new(
-                "database_error",
-                "Repository operation is unavailable",
-            )),
-        )
-    })?;
+    .map_err(|_| repository_unavailable())?;
 
     let counts =
         db::repositories::protection::commit_status_counts(&state.pool, repository.id, &sha)

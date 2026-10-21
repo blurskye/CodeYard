@@ -1,9 +1,11 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::chrome::{json_page, PageQuery};
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::authorize_post;
+use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -40,19 +42,13 @@ pub async fn create_issue_comment(
     )
     .await
     .map_err(super::operation_error)?;
-    let user = current_actor;
 
     Ok((
         StatusCode::CREATED,
-        Json(CommentResponse {
-            id: comment.id,
-            issue_id: comment.issue_id,
-            author_id: comment.author_id,
-            author: UserResponse::from(user),
-            body: comment.body,
-            created_at: comment.created_at.to_rfc3339(),
-            updated_at: comment.updated_at.to_rfc3339(),
-        }),
+        Json(CommentResponse::new(
+            comment,
+            UserResponse::from(current_actor),
+        )),
     ))
 }
 
@@ -66,44 +62,33 @@ pub struct CommentResponse {
     pub created_at: String,
     pub updated_at: String,
 }
+
+impl CommentResponse {
+    fn new(comment: db::models::IssueComment, author: UserResponse) -> Self {
+        Self {
+            id: comment.id,
+            issue_id: comment.issue_id,
+            author_id: comment.author_id,
+            author,
+            body: comment.body,
+            created_at: comment.created_at.to_rfc3339(),
+            updated_at: comment.updated_at.to_rfc3339(),
+        }
+    }
+}
+
 pub async fn list_issue_comments(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, number)): Path<(String, String, i32)>,
     Query(query): Query<PageQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<CommentResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
 
     let issue = db::issues::get_issue(&state.pool, repository.id, number)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
+        .map_err(|_| storage_unavailable())?
         .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
@@ -114,29 +99,12 @@ pub async fn list_issue_comments(
     let comments =
         db::issues::list_issue_comments(&state.pool, issue.id, limit as i64, offset as i64)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Collaboration storage is temporarily unavailable",
-                    )),
-                )
-            })?;
+            .map_err(|_| storage_unavailable())?;
 
     let mut responses = Vec::with_capacity(comments.len());
     for entry in comments {
         let author = UserResponse::from_display(&entry.author);
-        let comment = entry.comment;
-        responses.push(CommentResponse {
-            id: comment.id,
-            issue_id: comment.issue_id,
-            author_id: comment.author_id,
-            author,
-            body: comment.body,
-            created_at: comment.created_at.to_rfc3339(),
-            updated_at: comment.updated_at.to_rfc3339(),
-        });
+        responses.push(CommentResponse::new(entry.comment, author));
     }
 
     Ok(Json(responses))
@@ -229,7 +197,7 @@ pub(crate) async fn native_edit_comment(
     authorize_post(&ctx, &form)?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, kind, number).await?;
+    let load = || item(&ctx, &repo, kind, number);
     let mut draft = submitted_detail(&form, "comment");
     draft.editing = Some(comment_id);
     let expected_body = serde_json::from_str::<String>(&draft.expected_body).ok();
@@ -238,7 +206,7 @@ pub(crate) async fn native_edit_comment(
             &ctx,
             &repo,
             kind,
-            &value,
+            &load().await?,
             &draft,
             Some("The original comment is required. Reload before saving."),
             StatusCode::CONFLICT,
@@ -246,7 +214,16 @@ pub(crate) async fn native_edit_comment(
         .await;
     }
     if draft.preview {
-        return render_detail(&ctx, &repo, kind, &value, &draft, None, StatusCode::OK).await;
+        return render_detail(
+            &ctx,
+            &repo,
+            kind,
+            &load().await?,
+            &draft,
+            None,
+            StatusCode::OK,
+        )
+        .await;
     }
     let result = crate::backend::issues::comments::edit_issue_comment(
         &ctx.state.pool,
@@ -275,7 +252,16 @@ pub(crate) async fn native_edit_comment(
         }
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
-            render_detail(&ctx, &repo, kind, &value, &draft, Some(&message), status).await
+            render_detail(
+                &ctx,
+                &repo,
+                kind,
+                &load().await?,
+                &draft,
+                Some(&message),
+                status,
+            )
+            .await
         }
     }
 }
@@ -292,7 +278,6 @@ pub(crate) async fn native_delete_comment(
     authorize_post(&ctx, &form)?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
-    let value = item(&ctx, &repo, kind, number).await?;
     let result = crate::backend::issues::comments::delete_issue_comment(
         &ctx.state.pool,
         ctx.require_user()?.id,
@@ -309,6 +294,7 @@ pub(crate) async fn native_delete_comment(
         Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
+            let value = item(&ctx, &repo, kind, number).await?;
             render_detail(
                 &ctx,
                 &repo,

@@ -1,5 +1,6 @@
 //! Bounded database-backed discussion pages and recoverable native submissions.
-use super::templates::{hidden_value, put, setup};
+use super::templates::{put, setup};
+use crate::support::http_client::hidden_value;
 use axum::http::StatusCode;
 use codeyard::{
     backend::db,
@@ -331,6 +332,11 @@ async fn label_submissions(pg: bool) {
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("Issue created, but some details could not be applied"));
     }
+    // A link cannot put its own text in the warning.
+    let (_, forged) = alice
+        .page("/alice/proj/issues/4?creation_warning=Sign%20in%20again%20at%20evil.example")
+        .await;
+    assert!(!forged.contains("Sign in again at evil.example"));
     assert_eq!(
         db::issues::count_repo_issues(database.pool(), repo.id, &Default::default())
             .await

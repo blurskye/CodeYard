@@ -1,5 +1,9 @@
 //! Account metadata, privileged mutations and enrollment retain their database authority.
-use crate::support::{database::Database, native_database::token, PASSWORD_WORK};
+use crate::support::{
+    database::{wait_until_blocked, Database},
+    native_database::token,
+    PASSWORD_WORK,
+};
 use chrono::{Duration, Utc};
 use codeyard::backend::{db, identity};
 
@@ -116,7 +120,7 @@ async fn postgres_account_metadata_and_privileged_audit() {
 async fn blank_email(pg: bool) {
     let _work = PASSWORD_WORK.lock().await;
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let fresh = token();
     let registered = identity::registration::register_password(
         f.pool(),
@@ -129,6 +133,7 @@ async fn blank_email(pg: bool) {
             initiating: identity::sessions::InitiatingSession::Missing,
             fresh_id: &fresh,
             user_agent: None,
+            client: None,
             expires_at: Utc::now() + Duration::hours(1),
         },
     )
@@ -157,24 +162,11 @@ async fn postgres_blank_registration_email_has_commit_identity() {
     blank_email(true).await;
 }
 
-async fn blocked(pool: &sqlx::PgPool, blocker: i32) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))")
-                .bind(blocker).fetch_one(pool).await.unwrap();
-            if waiting { break; }
-            tokio::task::yield_now().await;
-        }
-    }).await.unwrap();
-}
-
 #[tokio::test]
 async fn postgres_credential_enrollment_holds_the_original_session_until_commit() {
     let mut f = Database::new(true).await;
     let user = f.actor("enrollment").await;
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     sqlx::raw_sql("CREATE FUNCTION wait_enrollment() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_xact_lock(hashtext(current_schema()),737701); RETURN NEW; END $$;")
         .execute(raw).await.unwrap();
     for table in ["personal_access_tokens", "ssh_keys"] {
@@ -222,7 +214,7 @@ async fn postgres_credential_enrollment_holds_the_original_session_until_commit(
                 .is_some());
             }
         });
-        blocked(raw, blocker).await;
+        wait_until_blocked(raw, blocker, 1).await;
         let delete_pool = raw.clone();
         let revocation = tokio::spawn(async move {
             sqlx::query("DELETE FROM sessions WHERE id=$1")
@@ -248,7 +240,7 @@ async fn postgres_credential_enrollment_holds_the_original_session_until_commit(
 #[tokio::test]
 async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
     let mut f = Database::new(true).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("revoked_admin").await;
     let target = f.actor("reset_target").await;
     let session = token();
@@ -265,9 +257,7 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
     for reset in [false, true] {
         f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[actor])
             .await;
-        let db::DbPool::Postgres(raw) = f.pool() else {
-            unreachable!()
-        };
+        let raw = f.pg();
         let mut demotion = raw.begin().await.unwrap();
         let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *demotion)
@@ -300,7 +290,7 @@ async fn postgres_privileged_writes_observe_a_waited_for_demotion() {
                 );
             }
         });
-        blocked(raw, blocker).await;
+        wait_until_blocked(raw, blocker, 1).await;
         demotion.commit().await.unwrap();
         mutation.await.unwrap();
     }

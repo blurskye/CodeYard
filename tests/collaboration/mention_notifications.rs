@@ -5,16 +5,13 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 /// `alice/proj` is public and `alice/vault` is private, and alice owns both. Bob, Carol and Dave
 /// can read `proj` and nothing else.
@@ -36,7 +33,7 @@ impl World {
     async fn new(pg: bool) -> Self {
         bundle::install();
         let database = Database::new(pg).await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let alice_id = database.actor("alice").await;
         let bob_id = database.actor("bob").await;
         let carol_id = database.actor("carol").await;
@@ -70,14 +67,7 @@ impl World {
             .await
             .unwrap();
         }
-        let router = create_router(AppState::new(
-            database.pool().clone(),
-            root.path().to_owned(),
-            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-            None,
-            CiConfig::default(),
-            None,
-        ));
+        let router = database.router(root.path()).await;
         let alice = Client::login(&router, database.pool(), alice_id).await;
         let bob = Client::login(&router, database.pool(), bob_id).await;
         let carol = Client::login(&router, database.pool(), carol_id).await;

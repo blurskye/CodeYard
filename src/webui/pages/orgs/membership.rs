@@ -1,5 +1,5 @@
 use super::{
-    fields::{self, choice, controls, controls_as, field_value, input, select, FIELD},
+    fields::{self, controls, controls_as, field_value, input, select, FIELD},
     teams, Page,
 };
 use crate::webui::{
@@ -14,7 +14,7 @@ const ROLES: [(&str, &str); 3] = [("member", "Member"), ("admin", "Admin"), ("ow
 fn role_options() -> Vec<SelectOption> {
     ROLES
         .iter()
-        .map(|&(value, label)| choice(value, label))
+        .map(|&(value, label)| SelectOption::new(value, label))
         .collect()
 }
 
@@ -36,7 +36,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
         page.can_manage && !suspended && (page.is_owner || member.role == "member")
     };
     rsx! {
-        section { id: "organization-members", class: "org-section", hidden: page.tab != "members", aria_labelledby: "organization-members-title",
+        section { id: "organization-members", class: "org-section", aria_labelledby: "organization-members-title",
             div { class: "org-section-header",
                 div {
                     div { class: "title-with-count", h2 { id: "organization-members-title", "Members" } span { class: "count-badge", {count_label(page.members.len(), "member", "members")} } }

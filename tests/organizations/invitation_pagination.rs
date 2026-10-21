@@ -1,20 +1,13 @@
-use crate::support::{database::Database, fake_webui_bundle, pull_requests::Client};
-use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    db::{self, organizations::*},
-    storage::ObjectStore,
+use crate::support::organizations::applied;
+use crate::support::{
+    database::{wait_until_blocked, Database},
+    fake_webui_bundle,
+    http_client::Client,
 };
+use axum::http::StatusCode;
+use codeyard::backend::db::{self, organizations::*};
 use codeyard::webui::app::Page;
-use std::sync::Arc;
 
-fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("{other:?}"),
-    }
-}
 async fn organization(f: &Database, owner: i64, name: &str) -> i64 {
     applied(
         create_organization(
@@ -31,7 +24,7 @@ async fn organization(f: &Database, owner: i64, name: &str) -> i64 {
 async fn pages(pg: bool) {
     fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("invite_owner").await;
     let recipient = f.actor("invite_recipient").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[owner])
@@ -85,14 +78,7 @@ async fn pages(pg: bool) {
     assert_eq!(second.len(), 1);
     assert_eq!(second[0].org_id, organizations[100]);
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        Default::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let owner_client = Client::login(&router, f.pool(), owner).await;
     let recipient_client = Client::login(&router, f.pool(), recipient).await;
     let (status, page) = recipient_client.model("/settings/organizations").await;
@@ -264,13 +250,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
             tokio::spawn(
                 async move { delete_organization_repository(&pool, owner, org, id).await },
             );
-        tokio::time::timeout(std::time::Duration::from_secs(5),async {
-            loop {
-                let waiting:bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))").bind(holder).fetch_one(raw).await.unwrap();
-                if waiting { break; }
-                tokio::task::yield_now().await;
-            }
-        }).await.expect("deletion excludes notification readers before taking organization rows");
+        wait_until_blocked(raw, holder, 1).await;
         sqlx::query("SELECT id FROM organizations WHERE id=$1 FOR UPDATE NOWAIT")
             .bind(org)
             .fetch_one(&mut *reader)

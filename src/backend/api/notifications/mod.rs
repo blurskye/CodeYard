@@ -34,6 +34,9 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
             post(done_all::mark_all_notifications_done),
         )
         .route("/api/notifications/ws", get(ws::notifications_ws_handler))
+        .route_layer(axum::middleware::from_fn(
+            crate::backend::api::http::csrf::cookie_api_submission,
+        ))
         .layer(axum::middleware::from_fn(
             crate::backend::api::http::middleware::private_sensitive_response,
         ));

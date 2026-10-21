@@ -3,6 +3,7 @@ use crate::backend::{
         http::context::PageContext,
         http::origin::safe_redirect_path,
         http::render::{accepts_page_model, secure_html_headers},
+        http::session::secure_cookie,
     },
     app::AppState,
 };
@@ -63,12 +64,10 @@ pub(crate) async fn set_theme(
     } else {
         ctx.redirect(target)
     };
-    let secure = std::env::var("COOKIE_SECURE")
-        .is_ok_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"));
     let cookie = format!(
         "theme={}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax{}",
         theme.as_str(),
-        if secure { "; Secure" } else { "" }
+        if secure_cookie() { "; Secure" } else { "" }
     );
     response.headers_mut().append(
         header::SET_COOKIE,

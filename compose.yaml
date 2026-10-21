@@ -28,7 +28,6 @@ services:
     # S3_PUBLIC_ENDPOINT must reach it on a host outside the session cookie scope;
     # a different port on the forge host is not isolated. The console stays private.
     image: docker.io/rustfs/rustfs:1.0.1@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c
-    container_name: rustfs-service
     restart: unless-stopped
     # The image runs as uid 10001, which cannot write a data directory the engine
     # creates for it. Root in the container is the host user under rootless Podman.
@@ -81,7 +80,8 @@ services:
       COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       SESSION_DURATION_DAYS: ${SESSION_DURATION_DAYS:-30}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      HTTP_TRUSTED_PROXY_IPS: ${HTTP_TRUSTED_PROXY_IPS:-}
       # Browser bundle baked into the image.
       WEBUI_DIST: ${WEBUI_DIST:-/app/webui/dist}
       ADMIN_SECRET: ${ADMIN_SECRET:-}
@@ -113,6 +113,7 @@ services:
       NODE_KEY_FILE: ${NODE_KEY_FILE:-}
       CLUSTER_NODES: ${CLUSTER_NODES:-}
       CLUSTER_NODES_FILE: ${CLUSTER_NODES_FILE:-}
+      CLUSTER_PEERS: ${CLUSTER_PEERS:-}
       CLUSTER_JOIN_TOKEN: ${CLUSTER_JOIN_TOKEN:-}
       IROH_BIND: ${IROH_BIND:-}
       IROH_ADVERTISE: ${IROH_ADVERTISE:-}
@@ -140,8 +141,10 @@ services:
     security_opt:
       - label=disable
     depends_on:
-      - postgres
-      - rustfs-service
+      postgres:
+        condition: service_healthy
+      rustfs-service:
+        condition: service_started
     networks:
       - backend
 

@@ -39,8 +39,8 @@ fn chart_labels_the_first_last_and_evenly_spaced_days() {
     assert_eq!(date_tick_indices(180), vec![0, 44, 89, 134, 179]);
 }
 
-fn account(id: i64, username: &str, admin: bool, banned: bool) -> Account {
-    Account {
+fn account(id: i64, username: &str, admin: bool, banned: bool) -> AccountMetadata {
+    AccountMetadata {
         id,
         username: username.into(),
         email: format!("{username}@example.test"),
@@ -48,11 +48,6 @@ fn account(id: i64, username: &str, admin: bool, banned: bool) -> Account {
         banned,
         must_change_password: false,
         two_factor: false,
-        files: 0,
-        bytes: 0,
-        commits: 0,
-        pushes: 0,
-        contributions: 0,
         created: "today".into(),
     }
 }
@@ -62,8 +57,11 @@ fn overview_links_to_the_users_page_instead_of_listing_every_action() {
     let model = Admin {
         current_user_id: 1,
         ai_crawlers: "block".into(),
-        accounts: vec![account(42, "bob", false, false)],
-        pending_requests: 0,
+        accounts: vec![Account {
+            id: 42,
+            username: "bob".into(),
+            created: "today".into(),
+        }],
         totals: (1, 0, 0),
         activity: vec![],
         days: 30,
@@ -79,23 +77,16 @@ fn overview_links_to_the_users_page_instead_of_listing_every_action() {
     assert!(!output.contains("/admin/accounts/42/ban"));
 }
 
-fn users_model(accounts: Vec<Account>, search: &str, page: usize, pages: usize) -> AdminUsers {
+fn users_model(
+    accounts: Vec<AccountMetadata>,
+    search: &str,
+    page: usize,
+    pages: usize,
+) -> AdminUsers {
     AdminUsers {
         managed_accounts: true,
         current_user_id: 1,
-        accounts: accounts
-            .into_iter()
-            .map(|account| AccountMetadata {
-                id: account.id,
-                username: account.username,
-                email: account.email,
-                admin: account.admin,
-                banned: account.banned,
-                must_change_password: account.must_change_password,
-                two_factor: account.two_factor,
-                created: account.created,
-            })
-            .collect(),
+        accounts,
         search: search.into(),
         page,
         pages,
@@ -228,7 +219,6 @@ fn admin_overview_draws_labelled_columns_with_a_visible_data_table() {
         totals: (0, 0, 0),
         activity,
         days: 7,
-        pending_requests: 0,
         manage_access: false,
         requests: vec![],
         requests_count: 0,
@@ -276,7 +266,6 @@ fn the_daily_table_lists_only_the_newest_thirty_days() {
         totals: (0, 0, 0),
         activity,
         days: 180,
-        pending_requests: 0,
         manage_access: false,
         requests: vec![],
         requests_count: 0,
@@ -298,7 +287,6 @@ fn admin_overview_offers_the_ai_crawler_setting() {
         accounts: vec![],
         activity: vec![],
         days: 180,
-        pending_requests: 0,
         manage_access: false,
         requests: vec![],
         requests_count: 0,
@@ -321,7 +309,6 @@ fn accounts_and_requests_come_before_the_activity_chart() {
         totals: (0, 0, 0),
         activity: vec![],
         days: 7,
-        pending_requests: 0,
         manage_access: false,
         requests: vec![],
         requests_count: 0,

@@ -186,17 +186,12 @@ body {
   margin-inline: auto;
   padding-inline: 16px;
 }
-.panel, .panel-muted {
+.panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--card);
   box-shadow: 0 1px 0 color-mix(in srgb, var(--shadow-color) 4%, transparent);
 }
-.panel-muted { background: var(--muted); }
-.panel-header, .panel-footer { padding: 12px 16px; background: var(--muted); }
-.panel-header { border-bottom: 1px solid var(--border); }
-.panel-footer { border-top: 1px solid var(--border); }
-.panel-body { padding: 16px; }
 .btn {
   display: inline-flex;
   align-items: center;
@@ -248,18 +243,10 @@ body {
   background: color-mix(in srgb, var(--destructive) 85%, #000);
   color: var(--destructive-foreground);
 }
-.btn-invisible { border-color: transparent; background: transparent; color: var(--foreground); }
 .btn-sm { min-height: 28px; padding: 3px 10px; font-size: 12px; line-height: 18px; }
 /* A disabled button is dimmed and shows not-allowed. Unlayered, so it beats the base rules in @layer base,
    which lose to the browser's and Tailwind's own button opacity. The hover rules above skip disabled buttons. */
 .btn:disabled, .btn[disabled] { opacity: .5; cursor: not-allowed; }
-.form-field { display: grid; gap: 6px; }
-.form-label { font-size: 14px; font-weight: 600; }
-.form-control { width: 100%; min-width: 0; }
-.form-hint, .form-error { font-size: 12px; line-height: 18px; }
-.form-hint { color: var(--muted-foreground); }
-.form-error { color: var(--destructive); }
-.check-field { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; }
 .app-list {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -269,49 +256,6 @@ body {
 .app-list-row { display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; }
 .app-list-row + .app-list-row { border-top: 1px solid var(--border); }
 .app-list-row:hover { background: color-mix(in srgb, var(--muted) 72%, transparent); }
-.app-list-main { min-width: 0; flex: 1; }
-.app-list-actions { display: flex; flex: none; align-items: center; gap: 8px; }
-.app-badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 20px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted-foreground);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
-.app-flash {
-  padding: 12px 16px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--muted);
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-.app-flash-error {
-  border-color: color-mix(in srgb, var(--destructive) 55%, var(--border));
-  background: color-mix(in srgb, var(--destructive) 8%, var(--background));
-  color: var(--destructive);
-}
-.app-flash-success {
-  border-color: color-mix(in srgb, var(--success) 55%, var(--border));
-  background: color-mix(in srgb, var(--success) 8%, var(--background));
-}
-.app-empty { display: grid; place-items: center; gap: 8px; padding: 48px 24px; color: var(--muted-foreground); text-align: center; }
-.data-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-.data-table :is(th, td) { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
-.data-table th { background: var(--muted); color: var(--muted-foreground); font-size: 12px; font-weight: 600; }
-.data-table tbody tr:hover { background: color-mix(in srgb, var(--muted) 72%, transparent); }
-.data-table tbody tr:last-child td { border-bottom: 0; }
-.settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); align-items: start; gap: 24px; }
-.settings-nav { display: grid; gap: 2px; }
-.settings-nav-link { padding: 7px 10px; border-radius: var(--radius); color: var(--foreground); font-size: 14px; text-decoration: none; }
-.settings-nav-link:hover, .settings-nav-link[aria-current="page"] { background: var(--accent); }
-.settings-nav-link[aria-current="page"] { font-weight: 600; }
-.settings-content { min-width: 0; }
 
 .site-sr-only, .skip-link:not(:focus) {
   position: absolute;
@@ -704,7 +648,6 @@ body {
   font-size: 14px;
 }
 .page-navigation-error p { margin: 0 0 8px; }
-.syntax-code { white-space: pre; overflow-x: auto; }
 .markdown-body img { max-width: 100%; height: auto; }
 /* A heading's permalink is an empty link whose "#" glyph CSS draws; the CSP blocks inline images. It shows on hover or focus. */
 .markdown-body :is(h1, h2, h3, h4, h5, h6) { position: relative; scroll-margin-top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px) + 16px); }
@@ -717,21 +660,6 @@ body {
   .markdown-body .heading-permalink { right: 2px; left: auto; }
 }
 .markdown-body .heading-permalink::before { content: "#"; display: block; font-size: 16px; font-weight: 600; line-height: 16px; text-align: center; }
-.admin-ban-dialog {
-  width: min(32rem, calc(100vw - 2rem));
-  max-width: 100%;
-  margin: auto;
-  padding: 1.5rem;
-  border: 1px solid var(--border);
-  border-radius: .75rem;
-  background: var(--card);
-  color: var(--foreground);
-  box-shadow: 0 24px 70px #0009;
-  /* The dialog sits inside a right-aligned, non-wrapping table cell and inherits both. */
-  text-align: left;
-  white-space: normal;
-}
-.admin-ban-dialog::backdrop { background: #000a; }
 
 @media (min-width: 768px) {
   .page-shell { padding-inline: 24px; }
@@ -751,8 +679,6 @@ body {
   .site-search { flex: 1 1 180px; min-width: 120px; }
 }
 @media (max-width: 720px) {
-  .settings-layout { grid-template-columns: minmax(0, 1fr); }
-  .settings-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .app-list-row { padding-inline: 12px; }
 }
 @media (max-width: 640px) {
@@ -809,7 +735,6 @@ body {
   .site-header .site-auth-link { display: inline-flex; align-items: center; min-height: 44px; padding: 5px 6px; font-size: 12px; }
   .site-header .repo-tab-bar > .repo-engagement { display: none; }
   .page-navigation-error { top: 100px; }
-  .app-list-actions { width: 100%; flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
@@ -829,8 +754,6 @@ body {
   background: var(--muted); color: var(--muted-foreground); font-size: 12px; font-weight: 600;
 }
 .repo-ref-pill { padding: 1px 6px; border-radius: 4px; background: var(--muted); color: var(--foreground); }
-.repo-compact-form { display: flex; align-items: center; gap: 8px; }
-.repo-compact-form input { width: 220px; }
 .repo-history-page > * + *, .repo-refs-page > * + *, .repo-editor-page > * + *, .repo-settings-page > * + *, .repo-retry-page > * + * { margin-top: 16px; }
 /* The list does not clip, so the copy button's tooltip can show past its last row. The first and last
    rows take the list's corners, where a hovered row would otherwise square them off. */
@@ -985,10 +908,6 @@ body {
 .repo-settings-row-main p { color: var(--muted-foreground); font-size: 12px; overflow-wrap: anywhere; }
 .repo-list-empty { padding: 24px 16px; color: var(--muted-foreground); text-align: center; }
 .repo-add-row { grid-template-columns: minmax(160px, 1fr) minmax(120px, .4fr) auto; align-items: end; border-top: 1px solid var(--border); }
-.repo-label-row { align-items: flex-start; }
-.repo-label-preview { display: inline-flex; align-items: center; gap: 6px; max-width: 180px; padding: 1px 8px; border: 1px solid var(--border); border-radius: 2em; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
-.repo-label-row code { color: var(--muted-foreground); font-size: 11px; }
-.repo-label-create { grid-template-columns: minmax(140px, .7fr) minmax(120px, .3fr) minmax(180px, 1fr) auto; align-items: end; border-top: 1px solid var(--border); }
 .repo-danger-zone { border-color: var(--destructive) !important; }
 .repo-danger-action { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; }
 .repo-danger-action + .repo-danger-action { border-top: 1px solid var(--border); }
@@ -1030,8 +949,6 @@ body {
 .disclosure > summary::before { content: ""; flex: 0 0 auto; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .12s ease; }
 .disclosure[open] > summary::before { transform: rotate(45deg); }
 .disclosure > summary:is(:hover, :focus-visible) { color: var(--foreground); }
-.collaboration-revisions > summary { padding: 4px 0; }
-.collaboration-revisions > p { padding-left: 14px; }
 .collaboration-state-banner { padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); line-height: 1.8; }
 .collaboration-merge-sha { display: inline; margin: 0; padding: 1px 6px; border-radius: 4px; background: var(--secondary); color: var(--foreground); font-family: ui-monospace, monospace; font-size: 12px; text-decoration: none; }
 .collaboration-merge-sha:hover { text-decoration: underline; }
@@ -1109,17 +1026,13 @@ a.patch-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px;
   .repo-refs-layout { grid-template-columns: minmax(0, 1fr); }
   .repo-ref-create { position: static; }
   .repo-settings-layout { grid-template-columns: 176px minmax(0, 1fr); gap: 16px; }
-  .repo-label-create { grid-template-columns: 1fr 1fr; }
-  .repo-label-create .repo-field:nth-child(3) { grid-column: 1 / -1; }
 }
 @media (max-width: 767px) {
   .repo-page-heading { align-items: stretch; flex-direction: column; }
-  .repo-compact-form input { width: 100%; }
   .repo-commit-detail-meta { align-items: flex-start; flex-direction: column; }
   .repo-settings-layout { grid-template-columns: minmax(0, 1fr); }
   .repo-settings-nav { position: static; display: flex; overflow-x: auto; white-space: nowrap; }
-  .repo-add-row, .repo-label-create { grid-template-columns: 1fr; }
-  .repo-label-create .repo-field:nth-child(3) { grid-column: auto; }
+  .repo-add-row { grid-template-columns: 1fr; }
   .collaboration-detail-layout { grid-template-columns: minmax(0, 1fr); }
   .collaboration-timeline { padding-left: 28px; }
 }
@@ -1326,16 +1239,6 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 .error-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .error-search { width: 100%; max-width: 360px; margin: 0 auto 24px; }
 
-/* Pull request composer, file list and Viewed marks. The composer shows only the submit button
-   for the chosen review decision: Comment by default, Approve or Request changes when that radio
-   is checked. Without :has() support the Comment button stays, so a vote is never sent by mistake. */
-.collaboration-composer .btn.collaboration-submit-approve,
-.collaboration-composer .btn.collaboration-submit-changes { display: none; }
-.collaboration-composer:has(input[name="state"][value="approved"]:checked) .btn.collaboration-submit-comment,
-.collaboration-composer:has(input[name="state"][value="changes_requested"]:checked) .btn.collaboration-submit-comment { display: none; }
-.collaboration-composer:has(input[name="state"][value="approved"]:checked) .btn.collaboration-submit-approve,
-.collaboration-composer:has(input[name="state"][value="changes_requested"]:checked) .btn.collaboration-submit-changes { display: inline-flex; }
-
 /* Files changed list: one row per file, status first, the path links to its section and the
    counts sit at the end. Rows wrap on a phone instead of pushing the counts off the screen. */
 .collaboration-file-list { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; }
@@ -1414,18 +1317,14 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 /* Assignees, milestones and the list filter bar. The sidebar keeps its column on a wide screen
    and stacks under the conversation on a phone. The filter bar wraps, and its controls keep a
    full touch target. */
-.collaboration-toolbar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .collaboration-assignees { display: grid; gap: 8px; margin: 0 0 12px; padding: 0; list-style: none; }
 .collaboration-assignee { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 .collaboration-assignee .collaboration-author { min-width: 0; overflow-wrap: anywhere; }
 .collaboration-participants { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; padding: 0; list-style: none; }
 .collaboration-participant { display: inline-flex; border-radius: 50%; }
 .collaboration-participant .avatar { border-radius: 50%; }
-.collaboration-assignee-action,
 .collaboration-state-action { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
-.collaboration-assignee-form,
 .collaboration-milestone-form { display: grid; gap: 8px; margin-top: 12px; }
-.collaboration-assignee-form label,
 .collaboration-milestone-form label { display: grid; gap: 4px; min-width: 0; }
 .collaboration-progress { height: 8px; margin: 8px 0 4px; border-radius: 999px; background: var(--border); overflow: hidden; }
 .collaboration-progress-bar { display: block; height: 100%; border-radius: inherit; background: var(--success); }
@@ -1467,7 +1366,6 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .repo-color-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .repo-color-field > input { flex: 1 1 auto; width: auto; min-width: 0; }
 .repo-color-swatch { flex: none; width: 20px; height: 20px; border: 1px solid var(--border); border-radius: 50%; background: var(--muted); }
-.repo-label-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
 .repo-settings-row:hover, .repo-settings-row:has(:focus-visible) { background: color-mix(in srgb, var(--muted) 72%, transparent); }
 .repo-rule-header:focus-visible { background: var(--muted); }
 
@@ -1505,11 +1403,6 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 
 /* Pull request and issue polish: the issue sidebar pickers, the Markdown toolbar, the split diff,
    the stack list and the compare hint. Spacing follows the 4, 8, 12, 16 and 24 px scale. */
-.collaboration-choice-list { display: grid; gap: 4px; max-height: 240px; overflow-y: auto; }
-.collaboration-choice { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 8px; border-radius: 6px; cursor: pointer; font-weight: 400; }
-.collaboration-choice:hover { background: var(--accent); }
-.collaboration-choice input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: var(--primary); }
-.collaboration-choice-select { display: grid; gap: 4px; }
 .collaboration-compare-hint { margin: 12px 0 0; padding: 12px 16px; border-radius: 6px; }
 
 .collaboration-markdown-toolbar { display: flex; flex-wrap: nowrap; gap: 2px; padding: 4px; border: 1px solid var(--border); border-bottom: 0; border-radius: 6px 6px 0 0; overflow-x: auto; scrollbar-width: none; }
@@ -1527,7 +1420,7 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .collaboration-segment { display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 4px; color: var(--muted-foreground); text-decoration: none; }
 .collaboration-segment:hover { color: var(--foreground); background: var(--accent); }
 .collaboration-segment:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.collaboration-segment:has([aria-current="page"]) { color: var(--foreground); background: var(--accent); }
+.collaboration-segment[aria-current="page"] { color: var(--foreground); background: var(--accent); }
 
 .collaboration-split { display: block; border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 20px; }
 .collaboration-split-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -1648,7 +1541,6 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .admin-header h1 { margin: 0; font-size: 24px; line-height: 1.25; font-weight: 600; letter-spacing: -.025em; }
 .admin-header p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 14px; }
 .admin-header-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; }
-.admin-confirm-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin: 16px 0 0; }
 @media (max-width: 640px) { .admin-header { align-items: flex-start; flex-direction: column; } }
 
 /* Actions runs toolbar: the workflow version is a compact field before the run menu. */
@@ -1824,7 +1716,6 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
   .notification-filter-menu > .notification-filter-panel { position: fixed; top: auto; right: 8px; bottom: 8px; left: 8px; width: auto; max-width: none; max-height: 70dvh; }
 }
 .notification-filter-list { display: grid; gap: 2px; padding: 8px; }
-.notification-filter-heading { margin: 8px 8px 4px; color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .notification-filter-option { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--foreground); font-size: 14px; text-decoration: none; }
 .notification-filter-option:hover { background: var(--accent); }
 .notification-filter-option[aria-current="true"] { background: var(--accent); font-weight: 600; }

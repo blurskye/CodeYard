@@ -2,7 +2,7 @@
 //! for the page, and covers the stored kinds that the notifications were created with.
 
 /// Reason name, label and the stored kinds it covers, in menu order.
-pub const REASONS: [(&str, &str, &[&str]); 11] = [
+pub const REASONS: [(&str, &str, &[&str]); 13] = [
     ("mention", "Mentioned", &["mention"]),
     ("assigned", "Assigned", &["assigned"]),
     (
@@ -42,6 +42,12 @@ pub const REASONS: [(&str, &str, &[&str]); 11] = [
         &["release_published"],
     ),
     ("user_followed", "Followed", &["user_followed"]),
+    (
+        "repository_activity",
+        "Stars and watches",
+        &["repository_starred", "repository_watched"],
+    ),
+    ("invitation", "Invitations", &["organization_invitation"]),
 ];
 
 /// The stored kinds a reason covers, or None when the name is not a reason.

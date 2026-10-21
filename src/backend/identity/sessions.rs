@@ -13,6 +13,9 @@ pub struct SessionContext<'a> {
     pub initiating: InitiatingSession<'a>,
     pub fresh_id: &'a str,
     pub user_agent: Option<&'a str>,
+    /// The request's client address, when the transport knows it. Failed sign-ins are limited
+    /// per address.
+    pub client: Option<&'a str>,
     pub expires_at: DateTime<Utc>,
 }
 

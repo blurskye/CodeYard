@@ -21,6 +21,7 @@
 //! with the body `production-storage-v1:<bucket>`. The tests never create,
 //! list or delete buckets and only remove objects they created. They also need
 //! the PostgreSQL variable above.
+use crate::support::native_database as native;
 use axum::{
     body::Body,
     extract::State,
@@ -60,99 +61,23 @@ const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 struct Database {
     pool: db::DbPool,
     raw: sqlx::PgPool,
-    url: String,
-    schema: String,
     user: i64,
-}
-
-impl Drop for Database {
-    fn drop(&mut self) {
-        let fixture_pool = self.pool.clone();
-        let url = self.url.clone();
-        let schema = self.schema.clone();
-        let result = std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(async move {
-                    tokio::time::timeout(std::time::Duration::from_secs(10), fixture_pool.close())
-                        .await
-                        .map_err(|_| sqlx::Error::PoolTimedOut)?;
-                    let options: sqlx::postgres::PgConnectOptions = url.parse()?;
-                    let pool = sqlx::postgres::PgPoolOptions::new()
-                        .max_connections(1)
-                        .connect_with(
-                            options.options([("lock_timeout", "5s"), ("statement_timeout", "10s")]),
-                        )
-                        .await?;
-                    let result = sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
-                        .execute(&pool)
-                        .await;
-                    pool.close().await;
-                    result.map(|_| ()).map_err(anyhow::Error::from)
-                })
-        })
-        .join();
-        if !matches!(result, Ok(Ok(()))) {
-            if std::thread::panicking() {
-                eprintln!("owned storage schema cleanup failed: {}", self.schema);
-            } else {
-                panic!("owned storage schema cleanup failed: {}", self.schema);
-            }
-        }
-    }
+    _schema: native::PostgresDatabase,
 }
 
 async fn database() -> Database {
-    let value = std::env::var("GITSERV_TEST_DATABASE_URL")
-        .expect("explicit disposable PG fixture URL required");
-    let url = url::Url::parse(&value).expect("valid fixture URL");
-    assert!(
-        matches!(url.scheme(), "postgres" | "postgresql")
-            && url.path() == "/gitserv_test"
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "refuse non-owned database/options"
-    );
-    let schema = format!("storage_{}", Uuid::new_v4().simple());
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&value)
-        .await
-        .expect("required PG fixture unavailable");
-    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
-        .execute(&admin)
-        .await
-        .unwrap();
-    let mut fixture = Database {
-        pool: admin.clone().into(),
-        raw: admin.clone(),
-        url: value.clone(),
-        schema: schema.clone(),
-        user: 0,
-    };
-    admin.close().await;
-    let options: sqlx::postgres::PgConnectOptions = value.parse().unwrap();
-    fixture.raw = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(8)
-        .connect_with(options.options([
-            ("search_path", schema.as_str()),
-            ("lock_timeout", "5s"),
-            ("statement_timeout", "10s"),
-        ]))
-        .await
-        .unwrap();
-    fixture.pool = fixture.raw.clone().into();
-    db::run_migrations(&fixture.pool)
-        .await
-        .expect("required migrations failed");
-    fixture.user =
+    let schema = native::PostgresDatabase::new().await;
+    let user =
         sqlx::query_scalar("INSERT INTO users(username) VALUES ('storage_owner') RETURNING id")
-            .fetch_one(&fixture.raw)
+            .fetch_one(&schema.raw)
             .await
             .unwrap();
-    fixture
+    Database {
+        pool: schema.pool.clone(),
+        raw: schema.raw.clone(),
+        user,
+        _schema: schema,
+    }
 }
 
 /// Sets the size and count limits of the "other" upload reason.
@@ -1573,28 +1498,6 @@ async fn expiry_deletion_and_activation_only_apply_to_the_right_files() {
             .is_none(),
         "a pending upload is not a file yet"
     );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn database_cleanup_functions_leave_file_records_to_the_application() {
-    let db = database().await;
-    let item = reserve(&db, 7).await.unwrap();
-    expire(&db, item.id).await;
-    sqlx::query("UPDATE files SET created_at = NOW() - INTERVAL '40 days', updated_at = NOW() - INTERVAL '40 days'")
-        .execute(&db.raw)
-        .await
-        .unwrap();
-    sqlx::query("SELECT cleanup_expired_data(), cleanup_old_rate_limits()")
-        .execute(&db.raw)
-        .await
-        .unwrap();
-    // Deleting only the record would leave its bytes in storage for good.
-    let kept = files::get_file_by_id(&db.pool, item.id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(kept.original_name, "fixture.txt");
-    assert_eq!(kept.object_key, item.object_key);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

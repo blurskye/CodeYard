@@ -1,4 +1,4 @@
-use super::OperationError;
+use super::{database_error, OperationError};
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use crate::backend::issues::comments::CommentTarget;
@@ -31,10 +31,6 @@ pub struct CreatePullRequestCommentRequest {
 #[cfg(test)]
 mod tests;
 
-fn is_valid_sha1_hex(sha: &str) -> bool {
-    sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 /// The root of the thread that `parent` belongs to. A reply may name another reply as its
 /// parent, so the chain is followed up to its root. A chain that loops back on itself has no
 /// root and takes no reply.
@@ -54,10 +50,7 @@ async fn thread_root(
         }
         let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
             .await
-            .map_err(|_| OperationError::Unavailable {
-                code: "database_error",
-                message: "Collaboration storage is temporarily unavailable".to_owned(),
-            })?
+            .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
                 code: "not_found",
                 message: "Parent comment not found".to_owned(),
@@ -151,10 +144,7 @@ async fn in_pending_review(
     };
     let review = db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?;
+        .map_err(database_error)?;
     Ok(review.is_none_or(|review| review.state == "pending"))
 }
 
@@ -310,10 +300,7 @@ pub async fn create_pull_request_comment(
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -327,14 +314,11 @@ pub async fn create_pull_request_comment(
                     .into(),
         });
     }
-    super::require_read(pool, &super::actor(pool, actor_id).await?, &repository).await?;
+    super::require_read(pool, &user, &repository).await?;
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -385,10 +369,7 @@ pub async fn create_pull_request_comment(
         let parent_comment =
             db::pull_requests::reviews::get_pull_request_comment_by_id(pool, parent_id)
                 .await
-                .map_err(|_| OperationError::Unavailable {
-                    code: "database_error",
-                    message: "Collaboration storage is temporarily unavailable".to_owned(),
-                })?
+                .map_err(database_error)?
                 .ok_or_else(|| OperationError::Missing {
                     code: "not_found",
                     message: "Parent comment not found".to_owned(),
@@ -448,7 +429,7 @@ pub async fn create_pull_request_comment(
     }
 
     if let Some(ref sha) = commit_sha {
-        if !is_valid_sha1_hex(sha) {
+        if !crate::backend::git::is_full_commit_id(sha) {
             return Err(OperationError::Invalid {
                 code: "validation_error",
                 message: "commit_sha must be a 40-character hex SHA-1".to_owned(),
@@ -641,13 +622,9 @@ pub async fn set_comment_resolved(
     resolved: bool,
 ) -> Result<db::models::PullRequestComment, OperationError> {
     let user = super::actor(pool, actor_id).await?;
-    let unavailable = |_| OperationError::Unavailable {
-        code: "database_error",
-        message: "Collaboration storage is temporarily unavailable".to_owned(),
-    };
     let repository = db::repositories::records::get_repository(pool, owner, repo)
         .await
-        .map_err(unavailable)?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -655,7 +632,7 @@ pub async fn set_comment_resolved(
     super::require_read(pool, &user, &repository).await?;
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(unavailable)?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -670,7 +647,7 @@ pub async fn set_comment_resolved(
     if pull_request.author_id != user.id
         && !crate::backend::repositories::access::can_write(pool, &user, &repository)
             .await
-            .map_err(unavailable)?
+            .map_err(database_error)?
     {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
@@ -679,7 +656,7 @@ pub async fn set_comment_resolved(
     }
     let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
         .await
-        .map_err(unavailable)?
+        .map_err(database_error)?
         .filter(|comment| comment.pull_request_id == pull_request.id)
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
@@ -728,10 +705,7 @@ async fn conversation_comment_on_pull(
 > {
     let repository = db::repositories::records::get_repository(pool, owner, repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -739,20 +713,14 @@ async fn conversation_comment_on_pull(
     super::require_read(pool, user, &repository).await?;
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
     let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .filter(|comment| comment.pull_request_id == pull_request.id && comment.review_id.is_none())
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",

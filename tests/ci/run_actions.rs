@@ -5,7 +5,7 @@
 
 use crate::support::database::Database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests::Client;
+use crate::support::http_client::Client;
 use axum::http::StatusCode;
 use codeyard::backend::{
     api::create_router, app::AppState, ci::CiConfig, db, db::models::AccessLevel,
@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
 
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let dave_id = f.actor("dave").await;
@@ -131,9 +131,11 @@ async fn contract(pg: bool) {
     // The run page offers the cancel form to a writer, and nothing to a reader.
     let (_, page) = alice.page(&format!("/alice/proj/actions?job={job}")).await;
     assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
-    let (_, page) = dave.page(&format!("/alice/proj/actions?job={job}")).await;
+    let page = dave
+        .page_ok(&format!("/alice/proj/actions?job={job}"))
+        .await;
     assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
-    let (_, page) = bob.page(&format!("/alice/proj/actions?job={job}")).await;
+    let page = bob.page_ok(&format!("/alice/proj/actions?job={job}")).await;
     assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let logs = db::ci::list_ci_logs(f.pool(), run.id, 10).await.unwrap();
     let incremental = alice
@@ -385,7 +387,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
 
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let carol_id = f.actor("carol").await;
@@ -481,9 +483,11 @@ async fn pull_request_run_is_run_again(pg: bool) {
     let (_, page) = alice.page(&format!("/alice/proj/actions?job={job}")).await;
     assert!(page.contains(&format!("action=\"{rerun}\"")), "{page}");
 
-    let (_, page) = carol.page(&format!("/alice/proj/actions?job={job}")).await;
+    let page = carol
+        .page_ok(&format!("/alice/proj/actions?job={job}"))
+        .await;
     assert!(!page.contains(&format!("action=\"{rerun}\"")), "{page}");
-    let (_, page) = carol.page("/alice/proj/actions").await;
+    let page = carol.page_ok("/alice/proj/actions").await;
     assert!(!page.contains("Run workflow"), "{page}");
 
     // A reader cannot re-run it, and a writer who may not start runs is refused.

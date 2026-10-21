@@ -1,5 +1,5 @@
 use super::error::ApiError;
-use crate::backend::db;
+use crate::backend::{crypto::is_hex_token, db};
 use axum::{
     http::{header, HeaderMap, StatusCode},
     Json,
@@ -20,7 +20,7 @@ fn parse_bool_env(value: &str) -> bool {
     )
 }
 
-fn secure_cookie() -> bool {
+pub(crate) fn secure_cookie() -> bool {
     // A pinned HTTPS deployment origin cannot be downgraded by an accidental
     // COOKIE_SECURE=false setting. Never infer transport from forwarded headers.
     if std::env::var("PUBLIC_URL")
@@ -96,10 +96,7 @@ pub(crate) fn random_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
             if key != name {
                 continue;
             }
-            if found.is_some()
-                || value.len() != 64
-                || !value.bytes().all(|byte| byte.is_ascii_hexdigit())
-            {
+            if found.is_some() || !is_hex_token(value, 64) {
                 return None;
             }
             found = Some(value.to_owned());
@@ -143,6 +140,16 @@ pub(crate) fn build_oauth_browser_cookie(nonce: &str) -> String {
         cookie.push_str("; Secure");
     }
     cookie
+}
+
+/// Set by `middleware::stamp_client_address` on every request; a value sent by the client is
+/// dropped there.
+pub(crate) const CLIENT_HEADER: &str = "x-codeyard-client";
+
+/// The address the server saw for this request, used to limit failed sign-ins. `None` when the
+/// request did not come in over a socket.
+pub(crate) fn client_address(headers: &HeaderMap) -> Option<&str> {
+    headers.get(CLIENT_HEADER)?.to_str().ok()
 }
 
 pub(crate) fn extract_user_agent(headers: &HeaderMap) -> Option<String> {

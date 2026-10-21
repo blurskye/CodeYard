@@ -1,4 +1,4 @@
-//! Longest-known-ref resolver preserved from the former pure repo_ref_path helper.
+//! Splits the path of a repository address into the longest known ref and the path inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedRefPath {
     pub reference: String,

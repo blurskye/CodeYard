@@ -3,14 +3,15 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::organizations::applied;
 mod fixture;
-use crate::support::pull_requests as http;
+use crate::support::http_client as http;
 
 use codeyard::backend::{
     db::{
         self,
         models::{AccessLevel, OrgRole, Repository},
-        organizations::{self as orgs, OrganizationOutcome},
+        organizations as orgs,
         repositories::creation::{
             self as creation, NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal,
             RepositoryTarget,
@@ -22,12 +23,6 @@ use database::Database;
 
 fn owner(actor_id: i64, target: RepositoryTarget) -> RepositoryCreationOwner {
     RepositoryCreationOwner { actor_id, target }
-}
-fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("expected Applied: {other:?}"),
-    }
 }
 async fn actor(database: &Database, name: &str) -> i64 {
     db::users::accounts::create_user(database.pool(), name, None)

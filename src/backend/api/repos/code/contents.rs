@@ -1,10 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::chrome::{resolve, store_error, Loaded};
-use crate::backend::api::repos::refs::references::{
-    resolve_references, resolve_references_or_none,
-};
-use crate::backend::api::repos::repository::{field, with_status};
+use crate::backend::api::repos::forms::{field, with_status};
+use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
 use crate::backend::repositories::files;
@@ -20,26 +18,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 #[derive(Deserialize)]
-pub struct UpdateFileRequest {
+pub struct WriteFileRequest {
     pub content: String,
     pub message: String,
     pub branch: String,
-    /// Complete branch OID, not a blob SHA. Missing preconditions are rejected.
+    /// Complete branch OID, not a blob SHA, or `unborn` when a new file starts an absent branch.
+    /// Missing preconditions are rejected.
     pub expected_revision: String,
 }
 
 #[derive(Serialize)]
 pub struct UpdateFileResponse {
     pub commit: CommitResponse,
-}
-
-#[derive(Deserialize)]
-pub struct CreateFileRequest {
-    pub content: String,
-    pub message: String,
-    pub branch: String,
-    /// Complete branch OID, or `unborn` for an absent branch.
-    pub expected_revision: String,
 }
 
 #[derive(Deserialize)]
@@ -103,18 +93,20 @@ fn decode_content(content: &str) -> Result<Vec<u8>, Failure> {
     Ok(bytes)
 }
 
-pub async fn update_file_content(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path((owner, repo, path)): Path<(String, String, String)>,
-    Json(req): Json<UpdateFileRequest>,
-) -> Result<Json<UpdateFileResponse>, Failure> {
-    let actor = crate::backend::api::http::session::get_current_user(&state.pool, &headers).await?;
+/// Saves `req` as a new or changed file in one commit.
+async fn write_file(
+    state: &AppState,
+    headers: &HeaderMap,
+    (owner, repo, path): (String, String, String),
+    req: WriteFileRequest,
+    creating: bool,
+) -> Result<files::FileSave, Failure> {
+    let actor = crate::backend::api::http::session::get_current_user(&state.pool, headers).await?;
     files::ensure_readable(&state.pool, &actor, &owner, &repo)
         .await
         .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
     let content = decode_content(&req.content)?;
-    let saved = files::write_file_bytes(
+    files::write_file_bytes(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -126,13 +118,22 @@ pub async fn update_file_content(
             path,
             message: req.message,
             expected_revision: req.expected_revision,
-            creating: false,
+            creating,
             deleting: false,
         },
         content,
     )
     .await
-    .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
+    .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))
+}
+
+pub async fn update_file_content(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(target): Path<(String, String, String)>,
+    Json(req): Json<WriteFileRequest>,
+) -> Result<Json<UpdateFileResponse>, Failure> {
+    let saved = write_file(&state, &headers, target, req, false).await?;
     Ok(commit_response(saved))
 }
 
@@ -172,33 +173,11 @@ pub async fn delete_file_content(
 pub async fn create_file(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path((owner, repo, path)): Path<(String, String, String)>,
-    Json(req): Json<CreateFileRequest>,
+    Path(target): Path<(String, String, String)>,
+    Json(req): Json<WriteFileRequest>,
 ) -> Result<(StatusCode, Json<CreateFileResponse>), Failure> {
-    let actor = crate::backend::api::http::session::get_current_user(&state.pool, &headers).await?;
-    files::ensure_readable(&state.pool, &actor, &owner, &repo)
-        .await
-        .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
-    let content = decode_content(&req.content)?;
-    let saved = files::write_file_bytes(
-        &state.pool,
-        state.cluster.as_ref(),
-        &state.ci_runs,
-        actor.id,
-        &owner,
-        &repo,
-        FileWrite {
-            branch: req.branch,
-            path: path.clone(),
-            message: req.message,
-            expected_revision: req.expected_revision,
-            creating: true,
-            deleting: false,
-        },
-        content,
-    )
-    .await
-    .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;
+    let path = target.2.clone();
+    let saved = write_file(&state, &headers, target, req, true).await?;
     Ok((
         StatusCode::CREATED,
         Json(CreateFileResponse {
@@ -335,19 +314,9 @@ async fn editor_references_or_none(
     text: &str,
     creating: bool,
 ) -> References {
-    if !creating && !is_markdown_path(path) {
-        return References::default();
-    }
-    resolve_references_or_none(
-        ctx,
-        &loaded.repository,
-        &loaded.chrome.owner,
-        &loaded.chrome.name,
-        &[text],
-        // The editor's preview renders the file as a document.
-        true,
-    )
-    .await
+    editor_references(ctx, loaded, path, text, creating)
+        .await
+        .unwrap_or_default()
 }
 
 pub(in crate::backend::api::repos) fn editor_from(
@@ -692,8 +661,7 @@ mod tests {
     #[test]
     fn json_requires_a_branch_precondition_and_bounds_binary_input() {
         let request = serde_json::json!({"branch":"main","content":"YQ==","message":"save"});
-        assert!(serde_json::from_value::<CreateFileRequest>(request.clone()).is_err());
-        assert!(serde_json::from_value::<UpdateFileRequest>(request).is_err());
+        assert!(serde_json::from_value::<WriteFileRequest>(request).is_err());
         assert_eq!(decode_content("AP8=").unwrap(), vec![0, 255]);
         assert!(decode_content(&"a".repeat(MAX_EDITOR_BYTES.div_ceil(3) * 4 + 1)).is_err());
     }

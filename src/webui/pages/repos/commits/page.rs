@@ -8,7 +8,7 @@ use crate::webui::pages::repos::{
     ref_switcher::{RefOption, RefSwitcher},
 };
 use crate::webui::{
-    components::{compact_date, current_time, relative_date, Avatar, CopyButton},
+    components::{compact_date, current_time, relative_date, short_sha, Avatar, CopyButton},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -67,7 +67,7 @@ pub(in crate::webui::pages::repos) fn latest_commit_bar(
                 }
             }
             div { class: "repo-commit-meta",
-                NavLink { class: "repo-short-sha".to_owned(), href: url, "{commit.sha.get(..7).unwrap_or(&commit.sha)}" }
+                NavLink { class: "repo-short-sha".to_owned(), href: url, "{short_sha(&commit.sha)}" }
                 {commit_date(&commit.author_date)}
                 NavLink { class: "repo-history-link".to_owned(), href: history_url(base, reference, path), {icon("commits")} span { "History" } }
             }
@@ -134,7 +134,7 @@ pub(in crate::webui::pages::repos) fn commit_row(base: &str, commit: &Commit) ->
                 p { class: "repo-history-author", Avatar { name: commit.author.clone(), size: 20 } strong { "{commit.author}" } " committed " {commit_date(&commit.committer_date)} }
             }
             div { class: "repo-commit-row-actions",
-                NavLink { class: "repo-short-sha".to_owned(), href, "{commit.sha.get(..7).unwrap_or(&commit.sha)}" }
+                NavLink { class: "repo-short-sha".to_owned(), href, "{short_sha(&commit.sha)}" }
                 CopyButton { text: commit.sha.clone(), label: "Copy SHA".to_owned(), icon_only: true }
                 NavLink { class: "repo-icon-button".to_owned(), href: browse, title: Some("Browse files".to_owned()), aria_label: Some("Browse files".to_owned()), {icon("code")} }
             }
@@ -300,6 +300,14 @@ fn history_filters(
             filter_query(&change)
         )
     };
+    let option_class = |chosen: bool| {
+        if chosen {
+            "repo-filter-option repo-filter-chosen"
+        } else {
+            "repo-filter-option"
+        }
+    };
+    let current = |chosen: bool| chosen.then(|| "true".to_owned());
     let mut people: Vec<&str> = Vec::new();
     for commit in rows {
         if !people.contains(&commit.author.as_str()) {
@@ -315,14 +323,14 @@ fn history_filters(
                 div { class: "native-menu-panel repo-filter-panel repo-filter-popover",
                     h3 { class: "repo-filter-heading", "Filter by author" }
                     label { class: "repo-field",
-                        span { class: "repo-sr-only", "Name or email" }
+                        span { class: "sr-only", "Name or email" }
                         input { r#type: "search", name: "author", value: filter.author.clone(), placeholder: "Name or email" }
                     }
                     button { class: "btn btn-primary btn-sm", r#type: "submit", "Apply" }
                     div { class: "repo-filter-list",
-                        NavLink { class: if filter.author.is_empty() { "repo-filter-option repo-filter-chosen" } else { "repo-filter-option" }, href: link(HistoryFilter { author: String::new(), ..filter.clone() }), "All users" }
+                        NavLink { class: option_class(filter.author.is_empty()), aria_current: current(filter.author.is_empty()), href: link(HistoryFilter { author: String::new(), ..filter.clone() }), "All users" }
                         for name in people {
-                            NavLink { class: if filter.author == name { "repo-filter-option repo-filter-chosen" } else { "repo-filter-option" }, href: link(HistoryFilter { author: name.to_owned(), ..filter.clone() }),
+                            NavLink { class: option_class(filter.author == name), aria_current: current(filter.author == name), href: link(HistoryFilter { author: name.to_owned(), ..filter.clone() }),
                                 Avatar { name: name.to_owned(), size: 16 }
                                 span { "{name}" }
                             }
@@ -335,7 +343,7 @@ fn history_filters(
                 div { class: "native-menu-panel repo-filter-panel repo-filter-popover",
                     h3 { class: "repo-filter-heading", "Filter by date" }
                     div { class: "repo-filter-list",
-                        NavLink { class: if filter.since.is_empty() && filter.until.is_empty() { "repo-filter-option repo-filter-chosen" } else { "repo-filter-option" }, href: link(HistoryFilter { since: String::new(), until: String::new(), ..filter.clone() }), "All time" }
+                        NavLink { class: option_class(filter.since.is_empty() && filter.until.is_empty()), aria_current: current(filter.since.is_empty() && filter.until.is_empty()), href: link(HistoryFilter { since: String::new(), until: String::new(), ..filter.clone() }), "All time" }
                         for (value, title) in DATE_PRESETS {
                             NavLink { class: "repo-filter-option".to_owned(), href: link(HistoryFilter { since: value.to_owned(), until: String::new(), ..filter.clone() }), "{title}" }
                         }
@@ -364,19 +372,20 @@ pub fn commit_detail(
 ) -> Element {
     let base = repo.base();
     let browse = file_url(&base, "tree", &commit.sha, "");
+    let body = commit_body(&commit.message);
     chrome(
         repo,
         rsx! {
             article { class: "repo-commit-detail panel",
                 header { class: "repo-commit-detail-header",
                     h2 { "{commit.message.lines().next().unwrap_or(\"Commit\")}" }
-                    if commit.message.lines().count() > 1 { pre { "{commit.message}" } }
+                    if !body.is_empty() { pre { "{body}" } }
                 }
                 div { class: "repo-commit-detail-meta",
                     div { {icon("commits")} p { strong { "{commit.author}" } " authored and " strong { "{commit.committer}" } " committed " {commit_date(&commit.committer_date)} } }
                     div { class: "repo-commit-ids",
                         if !commit.parents.is_empty() {
-                            span { class: "repo-commit-parents", "Parents " for parent in &commit.parents { NavLink { class: "repo-short-sha".to_owned(), href: format!("{base}/commit/{}", crate::webui::encode_component(parent)), "{parent.get(..7).unwrap_or(parent)}" } } }
+                            span { class: "repo-commit-parents", "Parents " for parent in &commit.parents { NavLink { class: "repo-short-sha".to_owned(), href: format!("{base}/commit/{}", crate::webui::encode_component(parent)), "{short_sha(parent)}" } } }
                         }
                         div { class: "repo-full-sha-row",
                             code { class: "repo-full-sha", "{commit.sha}" }

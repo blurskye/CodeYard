@@ -1,6 +1,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::{
     date, default_ref, load_refs_from_repo, repository_default_branch, store_error, Loaded,
 };
@@ -37,26 +37,8 @@ pub async fn list_branches(
     Path((owner, repo)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<BranchResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-    let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
+    let refs = load_refs_from_repo(&state, &repository).await?;
     let mut branches: Vec<String> = refs
         .keys()
         .filter_map(|name| {

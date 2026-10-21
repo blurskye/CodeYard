@@ -20,7 +20,6 @@ pub async fn me(
     } else {
         None
     };
-    let user = user.filter(|user| !user.is_banned);
     Ok(Json(AuthResponse {
         success: user.is_some(),
         user: user.map(UserResponse::from),

@@ -1,7 +1,7 @@
 //! Use the DB/session-bound synchronizer and origin policy of native forms.
 use super::{
     context::{self, ExistingCsrfError},
-    error::ApiError,
+    error::{ApiError, ApiFailure},
     origin, session,
 };
 use crate::backend::app::AppState;
@@ -10,17 +10,11 @@ use axum::{
     http::{header, HeaderMap, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
-    Extension, Json,
+    Extension,
 };
 use std::sync::Arc;
 
-type Failure = (StatusCode, Json<ApiError>);
-
-fn failure(status: StatusCode, code: &str, message: &str) -> Failure {
-    (status, Json(ApiError::new(code, message)))
-}
-
-pub(crate) async fn check(state: Arc<AppState>, headers: &HeaderMap) -> Result<(), Failure> {
+pub(crate) async fn check(state: Arc<AppState>, headers: &HeaderMap) -> Result<(), ApiFailure> {
     let mut supplied = headers.get_all("x-csrf-token").iter();
     let token = supplied
         .next()
@@ -34,7 +28,7 @@ pub(crate) async fn check(state: Arc<AppState>, headers: &HeaderMap) -> Result<(
         .await
         .map_err(|error| match error {
             ExistingCsrfError::Missing => denied(),
-            ExistingCsrfError::Unavailable => failure(
+            ExistingCsrfError::Unavailable => ApiError::failure(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "csrf_unavailable",
                 "Session protection unavailable",
@@ -102,8 +96,8 @@ pub(crate) async fn auth_submission(
     next.run(request).await
 }
 
-fn denied() -> Failure {
-    failure(
+fn denied() -> ApiFailure {
+    ApiError::failure(
         StatusCode::FORBIDDEN,
         "csrf_error",
         "Reload the page and supply its session-bound CSRF token",

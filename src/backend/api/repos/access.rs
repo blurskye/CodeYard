@@ -1,6 +1,6 @@
 //! Browser session decoding and repository authority HTTP responses.
 use crate::backend::{
-    api::{http::error::ApiError, http::session},
+    api::{http::error::ApiError, http::session, repos::chrome::ApiResult},
     db::{
         self,
         models::{Repository, User},
@@ -11,8 +11,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
-
-type AccessResult<T> = Result<T, (StatusCode, Json<ApiError>)>;
 
 pub(crate) fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
     let (status, code, message) = match error {
@@ -41,7 +39,7 @@ pub(crate) fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
     (status, Json(ApiError::new(code, message)))
 }
 
-async fn current_repository(pool: &db::DbPool, id: i64) -> AccessResult<Repository> {
+async fn current_repository(pool: &db::DbPool, id: i64) -> ApiResult<Repository> {
     access::current_repository(pool, id).await.map_err(|error| {
         if error == AccessError::Unavailable {
             (
@@ -57,18 +55,50 @@ async fn current_repository(pool: &db::DbPool, id: i64) -> AccessResult<Reposito
     })
 }
 
+/// The repository at `owner/repo`: 404 when there is none, 503 when the lookup fails.
+pub(crate) async fn find_repository(
+    pool: &db::DbPool,
+    owner: &str,
+    repo: &str,
+) -> ApiResult<Repository> {
+    db::repositories::records::get_repository(pool, owner, repo)
+        .await
+        .map_err(|_| access_error(AccessError::Unavailable))?
+        .ok_or_else(|| access_error(AccessError::NotFound))
+}
+
+/// The repository at `owner/repo`, once the caller is known to be allowed to read it.
+pub(crate) async fn readable_repository(
+    pool: &db::DbPool,
+    owner: &str,
+    repo: &str,
+    headers: &HeaderMap,
+) -> ApiResult<Repository> {
+    let repository = find_repository(pool, owner, repo).await?;
+    read_access(pool, &repository, headers).await?;
+    Ok(repository)
+}
+
 pub(crate) async fn check_repo_read_access(
     pool: &db::DbPool,
     repository: &Repository,
     headers: &HeaderMap,
-) -> AccessResult<()> {
+) -> ApiResult<()> {
     let repository = current_repository(pool, repository.id).await?;
+    read_access(pool, &repository, headers).await
+}
+
+async fn read_access(
+    pool: &db::DbPool,
+    repository: &Repository,
+    headers: &HeaderMap,
+) -> ApiResult<()> {
     // Public reads do not require browser authentication.
     if !repository.is_private {
         return Ok(());
     }
     let user = session::get_optional_user(pool, headers).await?;
-    if access::can_read(pool, user.as_ref(), &repository)
+    if access::can_read(pool, user.as_ref(), repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
@@ -78,17 +108,17 @@ pub(crate) async fn check_repo_read_access(
     }
 }
 
+/// Checks that `user` administers the repository.
 pub(crate) async fn check_repo_admin_access(
     pool: &db::DbPool,
     repository: &Repository,
-    headers: &HeaderMap,
-) -> AccessResult<()> {
+    user: &User,
+) -> ApiResult<()> {
     let repository = current_repository(pool, repository.id).await?;
-    let user = session::get_current_user(pool, headers).await?;
     if user.must_change_password {
         return Err(access_error(AccessError::PasswordChangeRequired));
     }
-    if access::can_admin(pool, &user, &repository)
+    if access::can_admin(pool, user, &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
@@ -98,20 +128,20 @@ pub(crate) async fn check_repo_admin_access(
     }
 }
 
+/// Checks that `user` may write to the repository.
 pub(crate) async fn check_repo_write_access(
     pool: &db::DbPool,
     repository: &Repository,
-    headers: &HeaderMap,
-) -> AccessResult<User> {
+    user: &User,
+) -> ApiResult<()> {
     let repository = current_repository(pool, repository.id).await?;
-    let user = session::get_current_user(pool, headers).await?;
-    if access::can_write(pool, &user, &repository)
+    if access::can_write(pool, user, &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
-        return Ok(user);
+        return Ok(());
     }
-    if !access::can_read(pool, Some(&user), &repository)
+    if !access::can_read(pool, Some(user), &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {

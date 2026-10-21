@@ -15,8 +15,6 @@ use serde::{Deserialize, Serialize};
 pub struct TeamPage {
     pub organization: Organization,
     pub team: Team,
-    pub description: String,
-    pub member_count: i64,
     pub repository_count: i64,
     /// Owners and admins get a link to the management panel, which checks again.
     pub manage: bool,
@@ -42,8 +40,6 @@ pub fn team_page(page: TeamPage) -> Element {
     let TeamPage {
         organization: org,
         team,
-        description,
-        member_count,
         repository_count,
         manage,
         show_repositories,
@@ -73,7 +69,7 @@ pub fn team_page(page: TeamPage) -> Element {
         "/settings/organizations/{}?tab=teams&team={}",
         org.id, team.id
     );
-    let members_label = count_label(member_count.max(0) as usize, "member", "members");
+    let members_label = count_label(team.member_count.max(0) as usize, "member", "members");
     let repositories_label = count_label(
         repository_count.max(0) as usize,
         "repository",
@@ -92,7 +88,7 @@ pub fn team_page(page: TeamPage) -> Element {
                         NavLink { href: org_path.clone(), class: "org-row-link", "{org_label}" }
                     }
                     h1 { "{team.name}" }
-                    if !description.is_empty() { p { class: "org-team-description", "{description}" } }
+                    if !team.description.is_empty() { p { class: "org-team-description", "{team.description}" } }
                     p { class: "org-team-counts",
                         span { class: "org-label", {privacy_label(&team.privacy)} }
                         span { "{members_label}" }

@@ -63,10 +63,6 @@ pub fn is_safe_owner(value: &str) -> bool {
         || crate::backend::repositories::lifecycle::validate_name(value).is_ok()
 }
 
-pub fn is_valid_sha1_hex(value: &str) -> bool {
-    value.len() == 40 && value.bytes().all(|c| c.is_ascii_hexdigit())
-}
-
 pub(super) struct AdmittedRevision {
     pub request: CiRunRequest,
     pub blobs: serde_json::Value,
@@ -75,6 +71,41 @@ pub(super) struct AdmittedRevision {
 /// The events a run can be queued for.
 pub fn is_supported_event(event: &str) -> bool {
     matches!(event, "push" | "pull_request" | "workflow_dispatch")
+}
+
+/// An instance admin acts as the owner of personal repositories only, not of organization ones.
+pub(super) fn is_personal_admin(actor: &db::models::User, repo: &db::models::Repository) -> bool {
+    actor.is_admin
+        && repo.owner_kind == "user"
+        && repo.owner_user_id.is_some()
+        && repo.owner_org_id.is_none()
+}
+
+/// Whether `actor`, with `access` to `repo`, may start CI there. Used before workflows are
+/// read and again when a run is admitted.
+pub(super) fn check_actor(
+    config: &CiConfig,
+    actor: &db::models::User,
+    repo: &db::models::Repository,
+    access: db::models::AccessLevel,
+) -> Result<(), AdmissionError> {
+    if actor.is_banned || actor.must_change_password {
+        return Err(AdmissionError::Denied("CI actor is restricted"));
+    }
+    if !actor.is_admin && !config.trusted_actor_ids.contains(&actor.id) {
+        return Err(AdmissionError::Denied(
+            "CI host execution is not approved for this actor",
+        ));
+    }
+    if repo.is_archived {
+        return Err(AdmissionError::Conflict("CI repository is archived"));
+    }
+    if !is_personal_admin(actor, repo) && !access.can_write() {
+        return Err(AdmissionError::Denied(
+            "CI repository execution permission denied",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) async fn resolve(
@@ -122,33 +153,18 @@ pub(super) async fn resolve(
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
-    if actor.is_banned || actor.must_change_password {
-        return Err(AdmissionError::Denied("CI actor is restricted"));
-    }
-    if !actor.is_admin && !config.trusted_actor_ids.contains(&actor.id) {
-        return Err(AdmissionError::Denied(
-            "CI host execution is not approved for this actor",
-        ));
-    }
     let repo = tokio::time::timeout(
         lookup_timeout,
         db::repositories::records::get_repository_by_id(pool, request.repo_id),
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
-    if repo.is_archived {
-        return Err(AdmissionError::Conflict("CI repository is archived"));
-    }
     let access = tokio::time::timeout(
         lookup_timeout,
         db::repositories::access::get_user_repo_access(pool, actor.id, repo.id),
     )
     .await??;
-    if !actor.is_admin && !access.can_write() {
-        return Err(AdmissionError::Denied(
-            "CI repository execution permission denied",
-        ));
-    }
+    check_actor(config, &actor, &repo, access)?;
     // Never trust the caller's repository name.
     request.repo_name = repo.name.clone();
     request.repo_owner =
@@ -191,7 +207,7 @@ pub(super) async fn resolve(
     {
         request.pipeline = CiPipelineKind::Full;
     }
-    if request.pipeline.includes_cd() && !actor.is_admin && !access.can_admin() {
+    if request.pipeline.includes_cd() && !is_personal_admin(&actor, &repo) && !access.can_admin() {
         return Err(AdmissionError::Denied("CI deployment permission denied"));
     }
     // Recorded pushes and runs keep their ref kind even after the ref is deleted.

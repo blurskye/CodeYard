@@ -1,6 +1,8 @@
 //! Collaborator access changes and PostgreSQL bans while CI is finishing.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::database::wait_until_blocked;
 use crate::support::native_database as native;
+use crate::support::organizations::applied;
 
 use codeyard::backend::db::{
     self,
@@ -162,36 +164,10 @@ async fn postgres_grant_changes_stop_ci_only_on_reduction() {
     grant_changes(&fixture.pool).await;
 }
 
-async fn wait_until_blocked_by(raw: &sqlx::PgPool, holder: i32, waiters: i64) {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        loop {
-            let blocked: i64 = sqlx::query_scalar(
-                "WITH RECURSIVE waiting(pid) AS (
-                     SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-                     UNION
-                     SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid = ANY(pg_blocking_pids(a.pid))
-                 ) SELECT COUNT(*) FROM waiting",
-            )
-            .bind(holder)
-            .fetch_one(raw)
-            .await
-            .unwrap();
-            if blocked >= waiters {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .expect("the operations must be waiting on the held row lock");
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     let (admin, writer, repo) = repository_with_writer(&fixture.pool, "ban_finish").await;
     sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1")
         .bind(admin)
@@ -243,12 +219,12 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
         )
         .await
     });
-    wait_until_blocked_by(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     let pool = fixture.pool.clone();
     let banning = tokio::spawn(async move {
         db::users::transitions::change_ban(&pool, admin, writer, true).await
     });
-    wait_until_blocked_by(raw, holder, 2).await;
+    wait_until_blocked(raw, holder, 2).await;
 
     // The ban holds the admin and target user locks while waiting for the writer's
     // run. Notifications for either user must still be able to take FK key-share.
@@ -326,9 +302,7 @@ async fn claimed_run_behind_repository_lock(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_repository_lock_holder_takes_run_while_ci_finish_waits() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     let (run_id, mut gate, holder) =
         claimed_run_behind_repository_lock(&fixture.pool, raw, "finish_repo_lock").await;
     let pool = fixture.pool.clone();
@@ -336,7 +310,7 @@ async fn postgres_repository_lock_holder_takes_run_while_ci_finish_waits() {
         tokio::spawn(
             async move { db::ci::finish_ci_run(&pool, run_id, WORKER, "success", None).await },
         );
-    wait_until_blocked_by(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     sqlx::query("SELECT id FROM ci_runs WHERE id = $1 FOR UPDATE")
         .bind(run_id)
         .execute(&mut *gate)
@@ -356,15 +330,13 @@ async fn postgres_repository_lock_holder_takes_run_while_ci_finish_waits() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_repository_lock_holder_takes_run_while_stale_sweep_waits() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     let (run_id, mut gate, holder) =
         claimed_run_behind_repository_lock(&fixture.pool, raw, "sweep_repo_lock").await;
     let pool = fixture.pool.clone();
     // Zero seconds: the claimed run's heartbeat is already older than now.
     let sweeping = tokio::spawn(async move { db::ci::fail_stale_ci_runs(&pool, 0).await });
-    wait_until_blocked_by(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     sqlx::query("SELECT id FROM ci_runs WHERE id = $1 FOR UPDATE")
         .bind(run_id)
         .execute(&mut *gate)
@@ -389,9 +361,7 @@ async fn postgres_repository_lock_holder_takes_run_while_stale_sweep_waits() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_repository_lock_holder_takes_run_while_cancellation_waits() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     let (owner, writer, repo) = repository_with_writer(&fixture.pool, "cancel_repo_lock").await;
     let queued = enqueue(&fixture.pool, repo, writer, &[owner, writer])
         .await
@@ -410,7 +380,7 @@ async fn postgres_repository_lock_holder_takes_run_while_cancellation_waits() {
     let run_uuid = queued.run_id;
     let cancelling =
         tokio::spawn(async move { db::ci::request_ci_cancellation(&pool, run_uuid, writer).await });
-    wait_until_blocked_by(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     sqlx::query("SELECT id FROM ci_runs WHERE id = $1 FOR UPDATE")
         .bind(queued.id)
         .execute(&mut *gate)
@@ -434,9 +404,7 @@ async fn postgres_repository_lock_holder_takes_run_while_cancellation_waits() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_cancellation_retains_admin_authority_while_waiting() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     for lock in ["repository", "run"] {
         let (owner, admin, repo) = repository_with_writer(&fixture.pool, lock).await;
         sqlx::query("UPDATE users SET is_admin=TRUE WHERE id IN ($1,$2)")
@@ -463,13 +431,13 @@ async fn postgres_cancellation_retains_admin_authority_while_waiting() {
             tokio::spawn(
                 async move { db::ci::request_ci_cancellation(&pool, run_id, admin).await },
             );
-        wait_until_blocked_by(raw, holder, 1).await;
+        wait_until_blocked(raw, holder, 1).await;
         let pool = fixture.pool.clone();
         let banning = tokio::spawn(async move {
             db::users::transitions::change_ban(&pool, owner, admin, true).await
         });
         // A ban cannot commit while the cancellation retains that actor's authority.
-        wait_until_blocked_by(raw, holder, 2).await;
+        wait_until_blocked(raw, holder, 2).await;
         assert!(!banning.is_finished());
         gate.commit().await.unwrap();
         assert!(
@@ -502,9 +470,7 @@ async fn postgres_cancellation_retains_admin_authority_while_waiting() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_cancellation_rechecks_admin_after_waiting() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     for restriction in [
         "is_banned=TRUE",
         "must_change_password=TRUE",
@@ -541,7 +507,7 @@ async fn postgres_cancellation_rechecks_admin_after_waiting() {
             tokio::spawn(
                 async move { db::ci::request_ci_cancellation(&pool, run_id, admin).await },
             );
-        wait_until_blocked_by(raw, holder, 1).await;
+        wait_until_blocked(raw, holder, 1).await;
         gate.commit().await.unwrap();
         let error = tokio::time::timeout(Duration::from_secs(30), cancelling)
             .await
@@ -625,13 +591,6 @@ async fn sqlite_starter_can_cancel_after_access_loss() {
 async fn postgres_starter_can_cancel_after_access_loss() {
     let fixture = native::PostgresDatabase::new().await;
     cancellation_after_access_loss(&fixture.pool).await;
-}
-
-fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("expected applied, got {other:?}"),
-    }
 }
 
 /// An organization repository that a team member can write only through the team's
@@ -737,9 +696,7 @@ async fn team_writer_repository(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     let (owner, member, org, team, repo) =
         team_writer_repository(&fixture.pool, raw, "team_grant_claim").await;
     let trusted = [owner, member];
@@ -774,11 +731,11 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
     let revoking = tokio::spawn(async move {
         organizations::revoke_organization_team_repository(&pool, owner, org, team, repo).await
     });
-    wait_until_blocked_by(raw, holder, 1).await;
+    wait_until_blocked(raw, holder, 1).await;
     let pool = fixture.pool.clone();
     let claiming =
         tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted).await });
-    wait_until_blocked_by(raw, holder, 2).await;
+    wait_until_blocked(raw, holder, 2).await;
     gate.commit().await.unwrap();
 
     let revoked = tokio::time::timeout(Duration::from_secs(30), revoking)
@@ -816,9 +773,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_owner_ban_and_collaborator_write_do_not_deadlock() {
     let fixture = native::PostgresDatabase::new().await;
-    let db::DbPool::Postgres(raw) = &fixture.pool else {
-        unreachable!("PostgreSQL fixture");
-    };
+    let raw = &fixture.raw;
     let (owner, writer, repo) = repository_with_writer(&fixture.pool, "owner_ban_write").await;
     sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1")
         .bind(owner)

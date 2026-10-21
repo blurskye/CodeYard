@@ -4,14 +4,16 @@
 //! Comments cannot be updated or deleted, so those are not covered; do not
 //! substitute issue or PR editing to test them.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::database::{wait_until_blocked, Database};
 use crate::support::native_database as native;
+use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
 use codeyard::backend::db::{
     self,
     discussions::DiscussionEdit,
     models::{AccessLevel, Issue, OrgRole, PullRequest, Repository},
-    organizations::{self as orgs, OrganizationOutcome},
+    organizations as orgs,
 };
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,49 +23,14 @@ const SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const DENIED: &str = "discussion_authority_denied";
 static NEXT_PR_BRANCH: AtomicU64 = AtomicU64::new(1);
 
-enum Database {
-    Postgres(Box<production::Fixture>),
-    Sqlite(native::NativeDatabase),
-}
 impl Database {
-    async fn new(pg: bool) -> Self {
-        if pg {
-            Self::Postgres(Box::new(production::Fixture::new().await))
-        } else {
-            Self::Sqlite(native::NativeDatabase::new().await)
-        }
-    }
-    fn pool(&self) -> &db::DbPool {
-        match self {
-            Self::Postgres(f) => &f.pool,
-            Self::Sqlite(f) => &f.pool,
-        }
-    }
-    async fn execute(&self, sql: &str, ids: &[i64]) {
-        match self {
-            Self::Postgres(f) => {
-                let mut q = sqlx::query(sql);
-                for id in ids {
-                    q = q.bind(*id);
-                }
-                q.execute(&f.raw).await.expect("owned PG mutation");
-            }
-            Self::Sqlite(f) => {
-                let mut q = sqlx::query(sql);
-                for id in ids {
-                    q = q.bind(*id);
-                }
-                q.execute(&f.raw).await.expect("owned SQLite mutation");
-            }
-        }
-    }
-    async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(self.pool(), name, None)
-            .await
-            .unwrap()
-            .id
-    }
-    async fn repo(&self, owner: i64, org: Option<i64>, name: &str, private: bool) -> Repository {
+    async fn new_repo(
+        &self,
+        owner: i64,
+        org: Option<i64>,
+        name: &str,
+        private: bool,
+    ) -> Repository {
         let repo = db::repositories::records::create_repository(
             self.pool(),
             owner,
@@ -132,18 +99,6 @@ impl Database {
                     .unwrap();
             }
         }
-    }
-    async fn close(&mut self) {
-        match self {
-            Self::Postgres(f) => f.finish().await,
-            Self::Sqlite(f) => f.close().await,
-        }
-    }
-}
-fn applied<T: std::fmt::Debug>(outcome: OrganizationOutcome<T>) -> T {
-    match outcome {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("expected Applied: {other:?}"),
     }
 }
 fn refusal<T: std::fmt::Debug>(result: anyhow::Result<T>) {
@@ -336,10 +291,14 @@ async fn contract(pg: bool) {
                 .unwrap(),
         );
     }
-    let public = d.repo(owner, Some(org), "contribution_public", false).await;
-    let private = d.repo(owner, Some(org), "contribution_private", true).await;
-    let personal = d.repo(owner, None, "contribution_personal", true).await;
-    let foreign = d.repo(other, None, "contribution_foreign", true).await;
+    let public = d
+        .new_repo(owner, Some(org), "contribution_public", false)
+        .await;
+    let private = d
+        .new_repo(owner, Some(org), "contribution_private", true)
+        .await;
+    let personal = d.new_repo(owner, None, "contribution_personal", true).await;
+    let foreign = d.new_repo(other, None, "contribution_foreign", true).await;
     let issue = db::issues::create_issue(d.pool(), private.id, owner, "Original", "Fixture")
         .await
         .unwrap();
@@ -863,7 +822,7 @@ async fn contract(pg: bool) {
     )
     .await;
     // A deleted repository takes no contributions either.
-    let doomed = d.repo(owner, None, "contribution_deleted", true).await;
+    let doomed = d.new_repo(owner, None, "contribution_deleted", true).await;
     let doomed_issue = db::issues::create_issue(d.pool(), doomed.id, owner, "Original", "Fixture")
         .await
         .unwrap();
@@ -931,7 +890,7 @@ async fn contract(pg: bool) {
             "unrelated {key} changed"
         );
     }
-    d.close().await;
+    d.finish().await;
 }
 
 async fn file_comment(pool: &db::DbPool, pr: i64, author: i64) -> i64 {
@@ -982,7 +941,7 @@ async fn comment_resolution_contract(pg: bool) {
     let author = d.actor("resolve_author").await;
     let writer = d.actor("resolve_writer").await;
     let revoked = d.actor("resolve_revoked").await;
-    let personal = d.repo(owner, None, "resolve_personal", true).await;
+    let personal = d.new_repo(owner, None, "resolve_personal", true).await;
     for (actor, level) in [
         (author, AccessLevel::Read),
         (writer, AccessLevel::Write),
@@ -1046,7 +1005,7 @@ async fn comment_resolution_contract(pg: bool) {
         .unwrap(),
     )
     .id;
-    let shared = d.repo(owner, Some(org), "resolve_shared", true).await;
+    let shared = d.new_repo(owner, Some(org), "resolve_shared", true).await;
     db::repositories::access::grant_repo_access(d.pool(), author, shared.id, AccessLevel::Read)
         .await
         .unwrap();
@@ -1062,7 +1021,7 @@ async fn comment_resolution_contract(pg: bool) {
     assert!(!still_open(d.pool(), shared_thread).await);
     // Finish the fixture on this runtime. Without it, the drop backstop runs cleanup on a thread
     // that blocks this runtime, so connections still queued for return here are never released.
-    d.close().await;
+    d.finish().await;
 }
 
 #[tokio::test]
@@ -1081,42 +1040,6 @@ async fn postgres_organization_contributions() {
 #[tokio::test]
 async fn sqlite_organization_contributions() {
     contract(false).await;
-}
-
-// Poll an actual server wait edge; elapsed time is not concurrency evidence.
-async fn wait_for_lock(raw: &sqlx::PgPool, blocker: i32) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND wait_event_type='Lock')")
-                .bind(blocker).fetch_one(raw).await.unwrap();
-            if waiting { break; }
-            tokio::task::yield_now().await;
-        }
-    }).await.expect("actual lock wait edge");
-}
-
-async fn wait_for_lock_chain(raw: &sqlx::PgPool, blocker: i32, waiters: i64) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let waiting: i64 = sqlx::query_scalar(
-                "WITH RECURSIVE waiting(pid) AS (
-                    SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
-                    UNION
-                    SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))
-                ) SELECT COUNT(*) FROM waiting",
-            )
-            .bind(blocker)
-            .fetch_one(raw)
-            .await
-            .unwrap();
-            if waiting >= waiters {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("actual transitive lock wait edges");
 }
 
 #[tokio::test]
@@ -1230,7 +1153,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
                 .map(|_| ()),
             }
         });
-        wait_for_lock(&f.raw, pid).await;
+        wait_until_blocked(&f.raw, pid, 1).await;
         sqlx::query("SET LOCAL lock_timeout='1s'")
             .execute(&mut *revoke)
             .await
@@ -1302,14 +1225,14 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     let effect = tokio::spawn(async move {
         db::issues::add_issue_comment(&pool, issue_id, actor, "Accepted before revocation").await
     });
-    wait_for_lock(&f.raw, blocker).await;
+    wait_until_blocked(&f.raw, blocker, 1).await;
 
     let pool = f.pool.clone();
     let repo = f.repo.id;
     let revocation = tokio::spawn(async move {
         db::repositories::access::revoke_repo_access(&pool, actor, repo).await
     });
-    wait_for_lock_chain(&f.raw, blocker, 2).await;
+    wait_until_blocked(&f.raw, blocker, 2).await;
     assert!(!revocation.is_finished());
     parent.commit().await.unwrap();
 
@@ -1404,7 +1327,7 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
         let task = tokio::spawn(async move {
             db::issues::add_issue_comment(&pool, issue_id, actor, "Denied").await
         });
-        wait_for_lock(&f.raw, pid).await;
+        wait_until_blocked(&f.raw, pid, 1).await;
         revoke.commit().await.unwrap();
         refusal(
             tokio::time::timeout(Duration::from_secs(10), task)

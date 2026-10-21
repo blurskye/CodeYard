@@ -238,9 +238,15 @@ pub async fn admin_totals(pool: &SqlitePool) -> Result<(i64, i64, i64)> {
         .fetch_one(pool).await?)
 }
 
-pub async fn recent_admin_accounts(pool: &SqlitePool) -> Result<Vec<AdminAccountSummary>> {
-    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at,0 AS total_files,0 AS total_bytes,0 AS commits_total,0 AS pushes_total,0 AS contributions_total FROM users ORDER BY created_at DESC,id DESC LIMIT 5")
-        .fetch_all(pool).await?)
+/// The five newest accounts as (id, username, created).
+pub async fn recent_admin_accounts(
+    pool: &SqlitePool,
+) -> Result<Vec<(i64, String, chrono::DateTime<chrono::Utc>)>> {
+    Ok(sqlx::query_as(
+        "SELECT id,username,created_at FROM users ORDER BY created_at DESC,id DESC LIMIT 5",
+    )
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn list_admin_account_summaries(

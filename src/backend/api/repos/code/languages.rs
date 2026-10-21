@@ -1,9 +1,8 @@
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::repository_default_branch;
-use crate::backend::api::repos::responses::repo_store_error;
+use crate::backend::api::repos::responses::{repo_store_error, repository_unavailable};
 use crate::backend::app::AppState;
-use crate::backend::db;
 use crate::backend::repositories::languages as repo_languages;
 use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, State};
@@ -24,36 +23,10 @@ pub async fn get_repo_languages(
     Path((owner, repo)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<LanguageStatResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let mut languages = repo_languages::stored(&state.pool, repository.id)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?;
+        .map_err(|_| repository_unavailable())?;
     // Nothing is stored until the default branch first moves, so the first reader computes it.
     if languages.is_empty() {
         let default_branch = repository_default_branch(&state, &repository).await?;

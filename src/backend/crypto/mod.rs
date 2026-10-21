@@ -1,4 +1,5 @@
-//! Repository-secret AES-256-GCM only; S3 objects do not use this encryptor.
+//! Repository-secret AES-256-GCM; S3 objects do not use this encryptor. Also the shared check for
+//! the random hex tokens used as session ids, CSRF tokens and operation tokens.
 //! Availability: absent key disables secret operations; a configured malformed
 //! key is a startup error, not equivalent to absence. Recovery requires the exact
 //! original master key plus ciphertext AND nonce backups. Losing it is irreversible.
@@ -12,15 +13,16 @@ use aes_gcm::{
 };
 use rand::RngCore;
 
+/// True when `value` is exactly `len` hex digits.
+pub fn is_hex_token(value: &str, len: usize) -> bool {
+    value.len() == len && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
 pub struct SecretEncryptor {
     cipher: Aes256Gcm,
 }
 
 impl SecretEncryptor {
-    pub fn from_env() -> Result<Self, SecretError> {
-        Self::configured_from_env()?.ok_or(SecretError::MissingMasterKey)
-    }
-
     /// Startup must propagate Err. Only NotPresent legitimately disables secrets.
     pub fn configured_from_env() -> Result<Option<Self>, SecretError> {
         match std::env::var("SECRETS_MASTER_KEY") {
@@ -71,8 +73,6 @@ impl SecretEncryptor {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SecretError {
-    #[error("SECRETS_MASTER_KEY environment variable not set")]
-    MissingMasterKey,
     #[error("Invalid master key format (must be 64 hex chars = 32 bytes)")]
     InvalidMasterKey,
     #[error("Encryption failed")]

@@ -1,5 +1,5 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::http::session::{extract_session_id, get_current_user};
 use crate::backend::api::user::profile::{load_settings, settings_response, settings_result};
 use crate::backend::api::user::responses::{field, mutation_guard, Fields};
@@ -17,8 +17,6 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-type Failure = (StatusCode, Json<ApiError>);
-
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateTokenRequest {
@@ -34,7 +32,7 @@ pub struct CreatedToken {
     pub value: String,
 }
 
-pub(crate) fn token_failure(error: TokenError) -> Failure {
+pub(crate) fn token_failure(error: TokenError) -> ApiFailure {
     let (status, code) = match error {
         TokenError::Invalid => (StatusCode::BAD_REQUEST, "validation_error"),
         TokenError::Denied => (StatusCode::FORBIDDEN, "forbidden"),
@@ -47,7 +45,7 @@ pub(crate) fn token_failure(error: TokenError) -> Failure {
 pub async fn list_tokens(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Result<Json<Vec<PersonalAccessToken>>, Failure> {
+) -> Result<Json<Vec<PersonalAccessToken>>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     Ok(Json(
         stored::list_tokens(&state.pool, user.id)
@@ -60,7 +58,7 @@ pub async fn create_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(request): Json<CreateTokenRequest>,
-) -> Result<(StatusCode, Json<CreatedToken>), Failure> {
+) -> Result<(StatusCode, Json<CreatedToken>), ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     let session_id = extract_session_id(&headers);
     let created = tokens::create(
@@ -88,7 +86,7 @@ pub async fn delete_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
-) -> Result<StatusCode, Failure> {
+) -> Result<StatusCode, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     tokens::delete(&state.pool, user.id, id)
         .await

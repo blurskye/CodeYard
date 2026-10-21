@@ -2,14 +2,15 @@ use super::issue::{load_issue_response, IssueResponse};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::chrome;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::{authorize_post, field, repeated, with_status};
 use crate::backend::api::repos::issues::assignees::user_id;
 use crate::backend::api::repos::milestones::milestone_choice_view;
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::paging;
 use crate::backend::api::repos::refs::compare::comparison;
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
-use crate::backend::api::repos::repository::repeated;
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -110,25 +111,7 @@ pub async fn list_issues(
     Query(query): Query<IssueQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<IssueResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let issue_state = match query.state.as_deref() {
         Some("open") | Some("closed") => query.state.as_deref(),
@@ -151,7 +134,7 @@ pub async fn list_issues(
             )
         })?;
 
-    let (offset, limit) = chrome::json_page(query.page, Some(query.per_page.unwrap_or(100)))?;
+    let (offset, limit) = paging::json_page(query.page, Some(query.per_page.unwrap_or(100)))?;
     let issues = db::issues::list_repo_issues(
         &state.pool,
         repository.id,
@@ -164,15 +147,7 @@ pub async fn list_issues(
         limit as i64,
     )
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::new(
-                "database_error",
-                "Collaboration storage is temporarily unavailable",
-            )),
-        )
-    })?;
+    .map_err(|_| storage_unavailable())?;
 
     let ids = issues
         .iter()
@@ -180,10 +155,10 @@ pub async fn list_issues(
         .collect::<Vec<_>>();
     let mut labels = db::labels::get_issues_labels(&state.pool, &ids)
         .await
-        .map_err(crate::backend::api::http::error::discussion_write_error)?;
+        .map_err(|_| storage_unavailable())?;
     let mut comments: HashMap<i64, i64> = db::issues::count_issue_comments(&state.pool, &ids)
         .await
-        .map_err(crate::backend::api::http::error::discussion_write_error)?
+        .map_err(|_| storage_unavailable())?
         .into_iter()
         .collect();
     let mut responses = Vec::with_capacity(issues.len());
@@ -388,8 +363,8 @@ pub(crate) async fn native_index(
             .chain(search_labels.iter().map(String::as_str)),
     )
     .map_err(|message| ctx.error(StatusCode::BAD_REQUEST, message))?;
-    let page_number = chrome::number(&ctx, "page", 1, chrome::MAX_PAGE)?;
-    let (offset, _) = chrome::page_window(page_number, 100)
+    let page_number = paging::number(&ctx, "page", 1, 1..=paging::MAX_PAGE)?;
+    let (offset, _) = paging::page_window(page_number, 100)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid issue page."))?;
     let list = ListFilter {
         offset: offset as i64,
@@ -417,7 +392,7 @@ pub(crate) async fn native_index(
                     .await
                     .map_err(|_| unavailable(&ctx))?;
             filters.has_more =
-                chrome::has_next_page(page_number, entries.len(), 100, chrome::MAX_PAGE);
+                paging::has_next_page(page_number, entries.len(), 100, paging::MAX_PAGE);
             entries.truncate(100);
             add_row_milestones(
                 &ctx,
@@ -473,7 +448,7 @@ pub(crate) async fn native_index(
             .await
             .map_err(|_| unavailable(&ctx))?;
             filters.has_more =
-                chrome::has_next_page(page_number, pulls.len(), 100, chrome::MAX_PAGE);
+                paging::has_next_page(page_number, pulls.len(), 100, paging::MAX_PAGE);
             pulls.truncate(100);
             add_row_milestones(
                 &ctx,
@@ -553,7 +528,6 @@ pub(crate) async fn native_index(
                 } else {
                     totals.closed
                 },
-                all: totals.all,
             },
             items,
             filters,
@@ -737,10 +711,6 @@ async fn apply_issue_choices(
             .await?;
     }
     Ok(())
-}
-
-fn issue_choices_warning(draft: &view::NewDraft) -> String {
-    format!("Issue created, but some details could not be applied. Check the sidebar and retry these selections: assignees [{}], label IDs [{}], milestone [{}].", draft.assignees.join(", "), draft.labels.join(", "), draft.milestone)
 }
 
 /// The repository's issue templates on its default branch.
@@ -1069,96 +1039,62 @@ pub(crate) async fn native_create(
         _ => Ok(()),
     });
     let preview = field(&form, "intent") == "preview";
-    if let Err(message) = validation {
-        return Ok(with_status(
+    // The form as it stands, shown again with a result.
+    let new_page = |title: &str, status, diff, error, preview| {
+        with_status(
             ctx.page_model(
-                "Check your submission",
+                title,
                 page(view::Page::New {
-                    repository: repo.view,
+                    repository: repo.view.clone(),
                     kind,
-                    draft,
-                    branches,
-                    choices,
-                    diff: None,
-                    error: Some(message.to_owned()),
+                    draft: draft.clone(),
+                    branches: branches.clone(),
+                    choices: choices.clone(),
+                    diff,
+                    error,
                     preview,
-                    references,
+                    references: references.clone(),
                 }),
             ),
+            status,
+        )
+    };
+    if let Err(message) = validation {
+        return Ok(new_page(
+            "Check your submission",
             StatusCode::UNPROCESSABLE_ENTITY,
+            None,
+            Some(message),
+            preview,
         ));
     }
     if compare_only {
-        return match comparison(&ctx, &repo, &head_repo, &refs, &draft).await {
-            Ok(diff) => Ok(ctx.page_model(
-                "Branch comparison",
-                page(view::Page::New {
-                    repository: repo.view,
-                    kind,
-                    draft,
-                    branches,
-                    choices,
-                    diff: Some(diff),
-                    error: None,
-                    preview: false,
-                    references,
-                }),
-            )),
-            Err(response) => Ok(with_status(
-                ctx.page_model(
+        return Ok(
+            match comparison(&ctx, &repo, &head_repo, &refs, &draft).await {
+                Ok(diff) => new_page("Branch comparison", StatusCode::OK, Some(diff), None, false),
+                Err(response) => new_page(
                     "Comparison unavailable",
-                    page(view::Page::New {
-                        repository: repo.view,
-                        kind,
-                        draft,
-                        branches,
-                        choices,
-                        diff: None,
-                        error: Some(
-                            "Git could not load the selected comparison. Your draft is preserved."
-                                .to_owned(),
-                        ),
-                        preview: false,
-                        references,
-                    }),
+                    response.status(),
+                    None,
+                    Some(
+                        "Git could not load the selected comparison. Your draft is preserved."
+                            .to_owned(),
+                    ),
+                    false,
                 ),
-                response.status(),
-            )),
-        };
+            },
+        );
     }
     if preview {
-        return Ok(ctx.page_model(
-            "Preview",
-            page(view::Page::New {
-                repository: repo.view,
-                kind,
-                draft,
-                branches,
-                choices,
-                diff: None,
-                error: None,
-                preview: true,
-                references,
-            }),
-        ));
+        return Ok(new_page("Preview", StatusCode::OK, None, None, true));
     }
     if intent != "create" {
-        return Ok(with_status(
-            ctx.page_model(
-                "Check your submission",
-                page(view::Page::New {
-                    repository: repo.view,
-                    kind,
-                    draft,
-                    branches,
-                    choices,
-                    diff: None,
-                    error: Some("Choose Create, Preview or Compare.".to_owned()),
-                    preview: false,
-                    references,
-                }),
-            ),
+        return Ok(new_page(
+            "Check your submission",
             StatusCode::UNPROCESSABLE_ENTITY,
+            None,
+            Some("Choose Create, Preview or Compare.".to_owned()),
+            false,
         ));
     }
     let result: Result<i32, ApiFailure> = match kind {
@@ -1202,12 +1138,7 @@ pub(crate) async fn native_create(
                 .await
                 {
                     tracing::warn!(number = issue.number, %error, "a new issue lost its assignees, labels or milestone");
-                    let warning = issue_choices_warning(&draft);
-                    let warning: String = warning.chars().take(1500).collect();
-                    return Ok(ctx.redirect(&format!(
-                        "{link}?creation_warning={}",
-                        crate::webui::encode_component(&warning)
-                    )));
+                    return Ok(ctx.redirect(&format!("{link}?creation_warning=1")));
                 }
             }
             created.map(|value| value.number)
@@ -1236,22 +1167,12 @@ pub(crate) async fn native_create(
         Ok(number) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
-            Ok(with_status(
-                ctx.page_model(
-                    "Submission failed",
-                    page(view::Page::New {
-                        repository: repo.view,
-                        kind,
-                        draft,
-                        branches,
-                        choices,
-                        diff: None,
-                        error: Some(message),
-                        preview: false,
-                        references,
-                    }),
-                ),
+            Ok(new_page(
+                "Submission failed",
                 status,
+                None,
+                Some(message),
+                false,
             ))
         }
     }
@@ -1259,7 +1180,7 @@ pub(crate) async fn native_create(
 
 #[cfg(test)]
 mod tests {
-    use super::{check_state, issue_choices_warning, review_state};
+    use super::{check_state, review_state};
 
     #[test]
     fn markdown_template_identity_survives_preview_and_refused_submissions() {
@@ -1286,26 +1207,6 @@ mod tests {
         assert_eq!(submitted.template_revision, draft.template_revision);
         assert_eq!(submitted.body, "unsent private text");
         assert!(submitted.form.is_empty());
-    }
-
-    #[test]
-    fn partial_creation_warning_keeps_the_selections_for_retry() {
-        let draft = crate::webui::pages::repos::issues::NewDraft {
-            assignees: vec!["alice".into(), "bob".into()],
-            labels: vec!["10".into(), "20".into()],
-            milestone: "3".into(),
-            ..Default::default()
-        };
-        let warning = issue_choices_warning(&draft);
-        for text in [
-            "Issue created",
-            "could not be applied",
-            "alice, bob",
-            "10, 20",
-            "milestone [3]",
-        ] {
-            assert!(warning.contains(text));
-        }
     }
 
     #[test]

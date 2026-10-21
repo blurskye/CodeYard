@@ -25,15 +25,14 @@ pub(super) async fn recover(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let actor = match ctx.require_user() {
-        Ok(user) if user.is_admin && !user.is_banned && !user.must_change_password => user.id,
-        Ok(_) => {
-            return ctx.error(
+    let Some(actor) = ctx.administrator().map(|user| user.id) else {
+        return match ctx.require_user() {
+            Ok(_) => ctx.error(
                 StatusCode::FORBIDDEN,
                 "Organization recovery is not permitted.",
-            )
-        }
-        Err(response) => return response,
+            ),
+            Err(response) => response,
+        };
     };
     let form =
         match form {

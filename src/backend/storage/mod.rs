@@ -18,9 +18,6 @@ const IO_SLOTS: usize = 32;
 /// Concurrent local file downloads; more are refused as busy, not queued, so
 /// slow readers can't hold up uploads.
 const DOWNLOAD_SLOTS: usize = 64;
-/// Picture forms read at once. Each may buffer up to 2 MiB before it is stored, so this
-/// bounds the memory that slow senders can hold.
-const PICTURE_SLOTS: usize = 8;
 
 /// What a client declared about an upload; checked when the bytes arrive.
 pub struct Upload<'a> {
@@ -71,7 +68,6 @@ pub struct ObjectStore {
     backend: Backend,
     io: Arc<Semaphore>,
     downloads: Arc<Semaphore>,
-    pictures: Arc<Semaphore>,
     file_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -85,7 +81,6 @@ impl ObjectStore {
             backend,
             io: Arc::new(Semaphore::new(IO_SLOTS)),
             downloads: Arc::new(Semaphore::new(DOWNLOAD_SLOTS)),
-            pictures: Arc::new(Semaphore::new(PICTURE_SLOTS)),
             file_locks: Mutex::new(HashMap::new()),
         })
     }
@@ -154,11 +149,6 @@ impl ObjectStore {
     /// A download slot, or `None` when this node is serving too many already.
     pub fn try_acquire_download(&self) -> Option<OwnedSemaphorePermit> {
         self.downloads.clone().try_acquire_owned().ok()
-    }
-
-    /// A slot for reading one picture form, or `None` when this node is reading as many.
-    pub fn try_acquire_picture(&self) -> Option<OwnedSemaphorePermit> {
-        self.pictures.clone().try_acquire_owned().ok()
     }
 
     /// For local storage the client uploads to `local_url` on this server.

@@ -12,7 +12,7 @@ use crate::backend::{
     repositories::store::{repo_store, RepoError, RepoStore},
 };
 use crate::webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
-use futures::{stream, StreamExt};
+use futures_util::{stream, StreamExt};
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
 

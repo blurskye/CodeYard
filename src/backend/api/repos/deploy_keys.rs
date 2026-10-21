@@ -3,10 +3,11 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::{extract_session_id, get_current_user};
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::Loaded;
-use crate::backend::api::repos::repository::{checkbox, field, settings_model, settings_response};
+use crate::backend::api::repos::forms::{checkbox, field};
+use crate::backend::api::repos::repository::{settings_model, settings_response};
 use crate::backend::app::AppState;
-use crate::backend::db;
 use crate::backend::db::models::{DeployKey, Repository, User};
 use crate::backend::db::users::ssh_keys::SshKeyWriteRefusal;
 use crate::backend::repositories::deploy_keys as keys;
@@ -86,25 +87,7 @@ async fn repository_for(
     repo: &str,
     headers: &axum::http::HeaderMap,
 ) -> Result<Repository, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, owner, repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ApiError::new(
-                    "database_unavailable",
-                    "Repository storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-    super::access::check_repo_read_access(&state.pool, &repository, headers).await?;
-    Ok(repository)
+    readable_repository(&state.pool, owner, repo, headers).await
 }
 
 pub async fn list_keys(

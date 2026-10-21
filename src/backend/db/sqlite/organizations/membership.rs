@@ -151,7 +151,6 @@ pub async fn remove_organization_member(
     if !administers(actor_role) {
         return Ok(Denied);
     }
-    active(&mut tx, target).await?;
     let Some(old) = membership_role(&mut tx, org, target).await? else {
         return Ok(Missing);
     };

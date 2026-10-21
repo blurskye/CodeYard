@@ -1442,6 +1442,42 @@ fn commit_summary_shows_parents_the_full_id_and_refs_at_the_commit() {
 }
 
 #[test]
+fn commit_page_prints_the_subject_once_and_the_rest_of_the_message_below_it() {
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        ..Default::default()
+    };
+    let commit = Commit {
+        sha: "c".repeat(40),
+        message: "Fix bug\n\nDetails here".into(),
+        author: "Alice".into(),
+        author_date: "2026-10-02T00:00:00Z".into(),
+        committer: "Alice".into(),
+        committer_date: "2026-10-02T00:00:00Z".into(),
+        parents: vec![],
+    };
+    let render = |commit: &Commit| {
+        dioxus_ssr::render_element(commit_detail(
+            &repo,
+            commit,
+            &Diff::default(),
+            &[],
+            &[],
+            false,
+        ))
+    };
+    let html = render(&commit);
+    assert_eq!(html.matches("Fix bug").count(), 1, "{html}");
+    assert!(html.contains("<pre>Details here</pre>"), "{html}");
+    let one_line = Commit {
+        message: "Fix bug".into(),
+        ..commit
+    };
+    assert!(!render(&one_line).contains("<pre>"));
+}
+
+#[test]
 fn branch_list_searches_by_name_and_shows_divergence_and_delete_icons() {
     let repo = RepoChrome {
         owner: "alice".into(),
@@ -2196,7 +2232,7 @@ fn branch_menu_marks_the_default_branch_and_no_other() {
             .find("class=\"repo-label-neutral repo-ref-default\"")
             .expect("the default badge");
         assert!(
-            html.find("repo-ref-option-name\">main<")
+            html.find("repo-ref-option-name\" title=\"main\">main<")
                 .is_some_and(|main| main < badge),
             "{html}"
         );
@@ -2489,7 +2525,7 @@ fn restored_file_browser_integrates_commit_rows_and_repository_description() {
                 .unwrap()
                 < table.find("/blob/refs/heads/feature/x/z-last.txt").unwrap()
         );
-        assert!(table.contains("repo-sr-only"));
+        assert!(table.contains("sr-only"));
         assert!(table.contains("title=\"2026-10-02T00:00:00Z\""));
         assert!(table.contains("datetime=\"2026-10-02T00:00:00Z\""));
         assert!(!table.contains("▸"));
@@ -3262,15 +3298,6 @@ fn upload_links_are_offered_to_writers_only() {
     assert!(!reader.contains("/upload/"));
 }
 #[test]
-fn path_filter_needs_every_term_and_ignores_case() {
-    use super::find::path_matches;
-    assert!(path_matches("docs/Guide.md", ""));
-    assert!(path_matches("docs/Guide.md", "  guide   DOCS "));
-    assert!(path_matches("src/lib.rs", "lib.rs"));
-    assert!(!path_matches("docs/Guide.md", "guide readme"));
-    assert!(!path_matches("src/lib.rs", "lib.rs.bak"));
-}
-#[test]
 fn go_to_file_filters_the_listing_and_marks_the_first_match() {
     let repo = RepoChrome {
         owner: "alice".into(),
@@ -3292,7 +3319,7 @@ fn go_to_file_filters_the_listing_and_marks_the_first_match() {
     assert!(html.contains("href=\"/alice/project/blob/refs/heads/main/docs/guide.md\""));
     assert!(!html.contains("src/lib.rs"));
     assert!(html.contains("class=\"repo-find-first\""));
-    assert!(html.contains("Showing the first 10,000 files."));
+    assert!(html.contains("Showing the first 10000 files."));
     let unfiltered = FindPage {
         query: String::new(),
         truncated: false,
@@ -3340,6 +3367,28 @@ fn go_to_file_names_its_ref_counts_the_matches_and_says_when_none_match() {
     assert!(html.contains("class=\"repo-empty"), "{html}");
     assert!(html.contains("No files match"), "{html}");
     assert!(!html.contains("<tbody"), "{html}");
+}
+#[test]
+fn go_to_file_draws_only_the_first_matches_and_says_so() {
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        current_path: "/alice/project/find/main".into(),
+        ..Default::default()
+    };
+    let page = FindPage {
+        reference: "main".into(),
+        paths: (0..150)
+            .map(|index| format!("src/file-{index:03}.rs"))
+            .collect(),
+        truncated: false,
+        query: String::new(),
+    };
+    let html = dioxus_ssr::render_element(find(&repo, &page));
+    assert!(html.contains(">150 files<"), "{html}");
+    assert!(html.contains("src/file-099.rs"), "{html}");
+    assert!(!html.contains("src/file-100.rs"), "{html}");
+    assert!(html.contains("Showing the first 100 matches"), "{html}");
 }
 #[test]
 fn repository_root_bar_counts_refs_and_opens_go_to_file() {

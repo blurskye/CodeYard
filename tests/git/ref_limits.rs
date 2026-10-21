@@ -8,35 +8,12 @@ use crate::support::native_database as native;
 use codeyard::backend::db;
 use codeyard::backend::repositories::lifecycle;
 use codeyard::backend::repositories::store::MAX_REPOSITORY_REFS;
-use git_server::{git, success, Server};
+use git_server::{git, success, write_token, Server};
 use reqwest::{Client, StatusCode};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 use std::{path::Path, process::Output};
 
 const LIMIT_MESSAGE: &str = "A repository holds at most 10000 branches and tags";
-
-/// Writes a token for `owner` that can push, stored the way the server looks tokens up.
-async fn write_token(pool: &db::DbPool, owner: i64) -> String {
-    let token = native::token();
-    let stored = hex::encode(Sha256::digest(token.as_bytes()));
-    let session = native::token();
-    db::users::sessions::create_session(
-        pool,
-        &session,
-        owner,
-        None,
-        None,
-        chrono::Utc::now() + chrono::Duration::hours(1),
-    )
-    .await
-    .unwrap();
-    db::users::tokens::create_token(pool, owner, &session, "push", &stored, "write", None)
-        .await
-        .unwrap()
-        .unwrap();
-    token
-}
 
 /// A running server with one owner, one write token and one repository named `name`.
 struct Hosted {
@@ -203,8 +180,9 @@ async fn ref_limit_over_http_sqlite() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ref_limit_over_http_postgres() {
-    let database = native::PostgresDatabase::new().await;
+    let mut database = native::PostgresDatabase::new().await;
     ref_limit_over_http(&database.pool, &database.connection_url()).await;
+    database.finish().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -216,6 +194,7 @@ async fn unicode_branch_over_http_sqlite() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unicode_branch_over_http_postgres() {
-    let database = native::PostgresDatabase::new().await;
+    let mut database = native::PostgresDatabase::new().await;
     unicode_branch_over_http(&database.pool, &database.connection_url()).await;
+    database.finish().await;
 }

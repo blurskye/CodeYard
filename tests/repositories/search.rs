@@ -4,7 +4,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as http;
+use crate::support::http_client as http;
 
 use axum::http::StatusCode;
 use codeyard::backend::{
@@ -103,7 +103,7 @@ fn code_hit(owner: &str, name: &str) -> String {
 async fn visibility_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice = f.actor("search_alice").await;
     let bob = f.actor("search_bob").await;
     let carol = f.actor("search_carol").await;
@@ -239,7 +239,7 @@ async fn postgres_search_follows_repository_visibility() {
 async fn paging_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_pager").await;
     let root = tempfile::tempdir().unwrap();
     for number in 0..35 {
@@ -292,7 +292,7 @@ async fn postgres_code_search_pages_through_every_repository() {
 async fn budget_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_budget").await;
     let root = tempfile::tempdir().unwrap();
     for name in ["budget-a", "budget-b", "budget-c"] {
@@ -353,25 +353,6 @@ async fn postgres_code_search_reports_a_stopped_walk() {
     budget_contract(true).await;
 }
 
-/// The page without the comment markers that hydration leaves between text nodes, so a badge's
-/// number reads as one piece of text.
-fn visible(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(&rest[..start]);
-        match rest[start..].find("-->") {
-            Some(end) => rest = &rest[start + end + 3..],
-            None => {
-                rest = "";
-                break;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
 /// Repositories a viewer can read, each as a card on the repositories tab.
 fn repository_links(html: &str, owner: &str) -> Vec<String> {
     html.match_indices(&format!("href=\"/{owner}/bucket-"))
@@ -388,7 +369,7 @@ fn repository_links(html: &str, owner: &str) -> Vec<String> {
 async fn buckets_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_bucket").await;
     let root = tempfile::tempdir().unwrap();
     let mut first_repo = None;
@@ -465,7 +446,7 @@ async fn buckets_contract(pg: bool) {
         .page("/search?q=bucket&type=repos&sort=forks")
         .await;
     assert_eq!(status, StatusCode::OK, "{first}");
-    assert!(visible(&first).contains(">35</span>"), "{first}");
+    assert!(http::visible_text(&first).contains(">35</span>"), "{first}");
     let page_one = repository_links(&first, "search_bucket");
     assert_eq!(page_one.len(), 30, "{page_one:?}");
     assert_eq!(page_one.first().map(String::as_str), Some("bucket-34"));
@@ -482,7 +463,7 @@ async fn buckets_contract(pg: bool) {
     // The owner also reads the private repository, so the total and the first page change.
     let (status, own) = owner_client.page("/search?q=bucket&type=repos").await;
     assert_eq!(status, StatusCode::OK, "{own}");
-    assert!(visible(&own).contains(">36</span>"), "{own}");
+    assert!(http::visible_text(&own).contains(">36</span>"), "{own}");
     assert!(
         own.contains("href=\"/search_bucket/bucket-private\""),
         "{own}"
@@ -501,7 +482,10 @@ async fn buckets_contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{oldest}");
     assert!(oldest.contains("bucket issue 01") && oldest.contains("bucket issue 30"));
     assert!(!oldest.contains("bucket issue 31"), "{oldest}");
-    assert!(visible(&oldest).contains(">35</span>"), "{oldest}");
+    assert!(
+        http::visible_text(&oldest).contains(">35</span>"),
+        "{oldest}"
+    );
     let (status, rest) = anonymous
         .page("/search?q=bucket&type=issues&sort=oldest&page=2")
         .await;
@@ -527,7 +511,10 @@ async fn buckets_contract(pg: bool) {
     // People: the names are ordered, and the badge counts all of them.
     let (status, people) = anonymous.page("/search?q=bucket_person&type=users").await;
     assert_eq!(status, StatusCode::OK, "{people}");
-    assert!(visible(&people).contains(">35</span>"), "{people}");
+    assert!(
+        http::visible_text(&people).contains(">35</span>"),
+        "{people}"
+    );
     assert!(people.contains("href=\"/bucket_person_30\""));
     assert!(!people.contains("href=\"/bucket_person_31\""), "{people}");
     let (status, people) = anonymous
@@ -557,7 +544,7 @@ async fn postgres_search_buckets_page_and_count_every_match() {
 async fn unreadable_repository_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_unreadable").await;
     let root = tempfile::tempdir().unwrap();
     repository(
@@ -594,7 +581,7 @@ async fn unreadable_repository_contract(pg: bool) {
         "{html}"
     );
     assert!(
-        visible(&html).contains("1 repository could not be searched."),
+        http::visible_text(&html).contains("1 repository could not be searched."),
         "{html}"
     );
     f.finish().await;
@@ -614,7 +601,7 @@ async fn postgres_unreadable_repository_is_reported_and_the_rest_show() {
 async fn empty_repository_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_empty").await;
     let root = tempfile::tempdir().unwrap();
     repository(
@@ -670,7 +657,7 @@ async fn postgres_empty_repository_is_not_reported_as_unreadable() {
 async fn budget_cuts_the_least_recent_repository_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_recent").await;
     let root = tempfile::tempdir().unwrap();
     for name in ["recent-old", "recent-mid", "recent-new"] {
@@ -764,7 +751,7 @@ async fn repository_with_files(
 async fn exact_repository_scope_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_scope").await;
     let root = tempfile::tempdir().unwrap();
     repository(
@@ -812,7 +799,7 @@ async fn postgres_repo_scope_names_one_repository() {
 async fn repository_scope_paging_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_pages").await;
     let root = tempfile::tempdir().unwrap();
     let files: Vec<(String, String)> = (0..16)
@@ -866,7 +853,7 @@ async fn postgres_repo_scope_pages_through_every_hit() {
 async fn one_file_and_unrelated_tables_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let contributions_before = db::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap()
@@ -944,7 +931,7 @@ async fn postgres_one_file_pages_and_content_search_skips_other_counts() {
 async fn truncation_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_trunc").await;
     let root = tempfile::tempdir().unwrap();
     let files: Vec<(String, String)> = (0..3)
@@ -996,7 +983,7 @@ async fn postgres_code_search_says_when_a_repository_has_more_matches() {
 async fn long_match_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_wide").await;
     let root = tempfile::tempdir().unwrap();
     let long_line = format!("wide-token {}", "x".repeat(100 * 1024));
@@ -1033,7 +1020,7 @@ async fn postgres_code_search_returns_hits_from_very_long_lines() {
 async fn count_cap_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("search_cap").await;
     let root = tempfile::tempdir().unwrap();
     for number in 0..5 {

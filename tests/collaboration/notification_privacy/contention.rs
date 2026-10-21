@@ -1,4 +1,5 @@
 use super::{db, Fixture};
+use crate::support::database::wait_until_blocked;
 use std::{str::FromStr, time::Duration};
 
 #[derive(Clone, Copy, Debug)]
@@ -16,50 +17,6 @@ const OPERATIONS: [Operation; 5] = [
     Operation::All,
     Operation::Delivery,
 ];
-
-async fn wait_for_lock(raw: &sqlx::PgPool, blocker: i32) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let waiting: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))",
-            )
-            .bind(blocker)
-            .fetch_one(raw)
-            .await
-            .unwrap();
-            if waiting {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("observe real lock waiter, no sleep-based inference");
-}
-
-async fn wait_for_lock_chain(raw: &sqlx::PgPool, blocker: i32, waiters: i64) {
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let waiting: i64 = sqlx::query_scalar(
-                "WITH RECURSIVE waiting(pid) AS (
-                    SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
-                    UNION
-                    SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))
-                ) SELECT COUNT(*) FROM waiting",
-            )
-            .bind(blocker)
-            .fetch_one(raw)
-            .await
-            .unwrap();
-            if waiting >= waiters {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("actual transitive notification lock wait edges");
-}
 
 async fn invisible(
     pool: &db::DbPool,
@@ -114,12 +71,10 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
     )
     .await
     .unwrap();
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
     for op in OPERATIONS {
         db::repositories::access::grant_repo_access(
-            &f.pool,
+            fixture.pool(),
             recipient,
             repo,
             db::models::repositories::AccessLevel::Read,
@@ -127,7 +82,7 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
         .await
         .unwrap();
         let before = fixture.history(recipient).await;
-        let mut revoker = f.raw.begin().await.unwrap();
+        let mut revoker = raw.begin().await.unwrap();
         let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *revoker)
             .await
@@ -139,9 +94,9 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
             .fetch_one(&mut *revoker)
             .await
             .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let task = tokio::spawn(async move { invisible(&pool, recipient, notice, op).await });
-        wait_for_lock(&f.raw, blocker).await;
+        wait_until_blocked(raw, blocker, 1).await;
         assert!(!task.is_finished(), "operation must wait: {op:?}");
         // Prove no repository or notification row was acquired while waiting.
         for (table, id) in [
@@ -175,7 +130,7 @@ async fn postgres_notification_operations_wait_for_recipient_row_then_recheck() 
             "revoked {op:?} cannot ack history"
         );
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -187,12 +142,10 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
     let notice = fixture
         .notify(recipient, Some(repo), "grant-private-payload")
         .await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
     // Delivery returns early without a live session, so the probe needs one.
     db::users::sessions::create_session(
-        &f.pool,
+        fixture.pool(),
         &"00".repeat(32),
         recipient,
         None,
@@ -204,7 +157,7 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
 
     for op in OPERATIONS {
         db::repositories::access::grant_repo_access(
-            &f.pool,
+            fixture.pool(),
             recipient,
             repo,
             db::models::repositories::AccessLevel::Read,
@@ -218,7 +171,7 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
             )
             .await;
         let before = fixture.history(recipient).await;
-        let mut revoke = f.raw.begin().await.unwrap();
+        let mut revoke = raw.begin().await.unwrap();
         let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *revoke)
             .await
@@ -229,9 +182,9 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
             .execute(&mut *revoke)
             .await
             .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let task = tokio::spawn(async move { invisible(&pool, recipient, notice, op).await });
-        wait_for_lock(&f.raw, blocker).await;
+        wait_until_blocked(raw, blocker, 1).await;
         revoke.commit().await.unwrap();
         assert!(tokio::time::timeout(Duration::from_secs(5), task)
             .await
@@ -240,7 +193,7 @@ async fn postgres_notification_operations_wait_for_uncommitted_grant_revocation(
             .unwrap());
         assert_eq!(fixture.history(recipient).await, before);
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -260,11 +213,9 @@ async fn postgres_notification_write_keeps_its_grant_until_commit() {
     let notice = fixture
         .notify(recipient, Some(repo), "commit-private-payload")
         .await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
 
-    let mut notification = f.raw.begin().await.unwrap();
+    let mut notification = raw.begin().await.unwrap();
     let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *notification)
         .await
@@ -274,17 +225,17 @@ async fn postgres_notification_write_keeps_its_grant_until_commit() {
         .fetch_one(&mut *notification)
         .await
         .unwrap();
-    let pool = f.pool.clone();
+    let pool = fixture.pool().clone();
     let effect = tokio::spawn(async move {
         db::notifications::records::mark_notification_read(&pool, recipient, notice).await
     });
-    wait_for_lock(&f.raw, blocker).await;
+    wait_until_blocked(raw, blocker, 1).await;
 
-    let pool = f.pool.clone();
+    let pool = fixture.pool().clone();
     let revocation = tokio::spawn(async move {
         db::repositories::access::revoke_repo_access(&pool, recipient, repo).await
     });
-    wait_for_lock_chain(&f.raw, blocker, 2).await;
+    wait_until_blocked(raw, blocker, 2).await;
     assert!(!revocation.is_finished());
     notification.commit().await.unwrap();
 
@@ -300,7 +251,7 @@ async fn postgres_notification_write_keeps_its_grant_until_commit() {
     .unwrap()
     .is_empty());
     assert!(fixture.history(recipient).await[0]["read_at"].is_string());
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -379,7 +330,7 @@ async fn sqlite_notification_operations_require_reserved_writer_then_recheck() {
     }
     second.close().await;
     raw.close().await;
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 async fn missing_table_is_error(pg: bool) {
@@ -406,7 +357,7 @@ async fn missing_table_is_error(pg: bool) {
             "no fabricated zero/success"
         );
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -444,7 +395,7 @@ async fn delete_fork_during_read(
     let deletion = tokio::spawn(async move {
         db::repositories::records::delete_repository(&deletion_pool, owner, fork).await
     });
-    wait_for_lock(raw, holder_pid).await;
+    wait_until_blocked(raw, holder_pid, 1).await;
     let deletion_pid: i32 = sqlx::query_scalar(
         "SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid))",
     )
@@ -462,7 +413,7 @@ async fn delete_fork_during_read(
             db::notifications::records::count_unread_notifications(&read_pool, reader).await
         }
     });
-    wait_for_lock(raw, deletion_pid).await;
+    wait_until_blocked(raw, deletion_pid, 1).await;
     holder.commit().await.unwrap();
     let deleted = tokio::time::timeout(Duration::from_secs(5), deletion)
         .await
@@ -486,9 +437,7 @@ async fn delete_fork_during_read(
 async fn postgres_fork_deletion_and_notification_reads_take_the_source_first() {
     let mut fixture = Fixture::new(true).await;
     let owner = fixture.actor("fork_order_owner").await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
     for round in 0..100 {
         for acknowledge in [false, true] {
             // A reader per case: notices that an earlier case left unread would be counted.
@@ -530,13 +479,13 @@ async fn postgres_fork_deletion_and_notification_reads_take_the_source_first() {
                 .notify(reader, Some(fork), "order-fork-notice")
                 .await;
             let (deleted, answer) =
-                delete_fork_during_read(fixture.pool(), &f.raw, owner, reader, fork, acknowledge)
+                delete_fork_during_read(fixture.pool(), raw, owner, reader, fork, acknowledge)
                     .await;
             assert_eq!(deleted, fork, "round {round} acknowledge={acknowledge}");
             assert_eq!(answer, 1, "round {round} acknowledge={acknowledge}");
         }
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 /// A personal fork's rename locks the owner's account, then the organization that owns the
@@ -579,10 +528,8 @@ async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
     .await
     .unwrap()
     .id;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
-    let mut ban = f.raw.begin().await.unwrap();
+    let raw = fixture.pg();
+    let mut ban = raw.begin().await.unwrap();
     let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *ban)
         .await
@@ -596,11 +543,11 @@ async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
         .fetch_one(&mut *ban)
         .await
         .unwrap();
-    let pool = f.pool.clone();
+    let pool = fixture.pool().clone();
     let rename = tokio::spawn(async move {
         db::repositories::records::rename_repository(&pool, owner, fork, "fork_ban_renamed").await
     });
-    wait_for_lock(&f.raw, blocker).await;
+    wait_until_blocked(raw, blocker, 1).await;
     // The ban's next lock is the owner's account. A rename that already holds it while it
     // waits for the organization is the cycle this test covers.
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
@@ -614,5 +561,5 @@ async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
         .expect("fork rename finishes once the ban commits")
         .unwrap()
         .expect("fork rename must not deadlock with the ban");
-    fixture.close().await;
+    fixture.finish().await;
 }

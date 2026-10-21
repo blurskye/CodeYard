@@ -176,10 +176,6 @@ pub async fn list_users(pool: &PgPool) -> Result<Vec<User>> {
     Ok(users)
 }
 
-/// Port of the Node `createUserFromOAuth`, minus the avatar: this schema models
-/// avatars as uploaded files (`users.avatar_file_id`), so there is no
-/// `users.avatar_url` column to set. `display_name` comes straight from the
-/// provider and the email is marked verified when one was provided.
 pub async fn create_user_from_oauth(
     pool: &PgPool,
     username: &str,
@@ -310,9 +306,15 @@ pub async fn admin_totals(pool: &PgPool) -> Result<(i64, i64, i64)> {
         .fetch_one(pool).await?)
 }
 
-pub async fn recent_admin_accounts(pool: &PgPool) -> Result<Vec<AdminAccountSummary>> {
-    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at,0::BIGINT AS total_files,0::BIGINT AS total_bytes,0::BIGINT AS commits_total,0::BIGINT AS pushes_total,0::BIGINT AS contributions_total FROM users ORDER BY created_at DESC,id DESC LIMIT 5")
-        .fetch_all(pool).await?)
+/// The five newest accounts as (id, username, created).
+pub async fn recent_admin_accounts(
+    pool: &PgPool,
+) -> Result<Vec<(i64, String, chrono::DateTime<chrono::Utc>)>> {
+    Ok(sqlx::query_as(
+        "SELECT id,username,created_at FROM users ORDER BY created_at DESC,id DESC LIMIT 5",
+    )
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn list_admin_account_summaries(

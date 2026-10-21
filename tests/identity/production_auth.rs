@@ -1,4 +1,5 @@
 //! Required PostgreSQL-only auth fixtures. No .env fallback and no silent skips.
+use crate::support::native_database as native;
 use chrono::{Duration, Utc};
 use codeyard::backend::{
     db::{
@@ -22,11 +23,8 @@ use codeyard::backend::{
     },
 };
 use sha2::{Digest, Sha256};
-use sqlx::{
-    postgres::{PgConnectOptions, PgPoolOptions},
-    Postgres, Transaction,
-};
-use std::{str::FromStr, time::Duration as StdDuration};
+use sqlx::{postgres::PgPoolOptions, Postgres, Transaction};
+use std::time::Duration as StdDuration;
 use uuid::Uuid;
 
 /// The password step of a sign-in that has no second factor. Two-factor accounts are not used here.
@@ -65,8 +63,6 @@ fn shared_identity_inputs_keep_key_profile_token_and_oauth_bounds() {
         ..profile
     };
     assert!(profiles::validate(&profile).is_ok());
-    assert!(!profiles::visible_on_profile(true, false));
-    assert!(profiles::visible_on_profile(true, true));
 
     let now = Utc::now();
     let mut token = tokens::TokenInput {
@@ -119,108 +115,17 @@ fn session_context<'a>(fresh: &'a str, old: Option<&'a str>) -> SessionContext<'
         initiating: old.map_or(InitiatingSession::Missing, InitiatingSession::Supplied),
         fresh_id: fresh,
         user_agent: Some("owned identity fixture"),
+        client: None,
         expires_at: Utc::now() + Duration::days(1),
     }
 }
-fn test_database_url() -> String {
-    let value = std::env::var("GITSERV_TEST_DATABASE_URL")
-        .expect("auth tests require GITSERV_TEST_DATABASE_URL");
-    let parsed = url::Url::parse(&value).expect("fixture URL");
-    assert!(
-        matches!(parsed.scheme(), "postgres" | "postgresql")
-            && parsed.path() == "/gitserv_test"
-            && parsed.query().is_none()
-            && parsed.fragment().is_none(),
-        "fixture must use owned gitserv_test, no supplied options"
-    );
-    value
-}
-
-struct Database {
-    pool: db::DbPool,
-    raw: sqlx::PgPool,
-    schema: String,
-    url: String,
-}
-impl Drop for Database {
-    fn drop(&mut self) {
-        let fixture_pool = self.pool.clone();
-        let schema = self.schema.clone();
-        let url = self.url.clone();
-        let result = std::thread::spawn(move || {
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(async move {
-                    tokio::time::timeout(std::time::Duration::from_secs(10), fixture_pool.close())
-                        .await
-                        .map_err(|_| sqlx::Error::PoolTimedOut)?;
-                    let options: sqlx::postgres::PgConnectOptions = url.parse()?;
-                    let pool = sqlx::postgres::PgPoolOptions::new()
-                        .max_connections(1)
-                        .connect_with(
-                            options.options([("lock_timeout", "5s"), ("statement_timeout", "10s")]),
-                        )
-                        .await?;
-                    let result = sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
-                        .execute(&pool)
-                        .await;
-                    pool.close().await;
-                    result.map(|_| ())
-                })
-        })
-        .join();
-        if !matches!(result, Ok(Ok(()))) {
-            if std::thread::panicking() {
-                eprintln!("owned auth schema cleanup failed: {}", self.schema);
-            } else {
-                panic!("owned auth schema cleanup failed: {}", self.schema);
-            }
-        }
-    }
-}
+type Database = native::PostgresDatabase;
 impl Database {
-    async fn new() -> Self {
-        let url = test_database_url();
-        let admin = PgPoolOptions::new()
-            .max_connections(1)
-            .connect(&url)
-            .await
-            .expect("required PostgreSQL unavailable");
-        let schema = format!("auth_{}", Uuid::new_v4().simple());
-        sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
-            .execute(&admin)
-            .await
-            .expect("owned schema");
-        let mut fixture = Self {
-            pool: admin.clone().into(),
-            raw: admin.clone(),
-            schema,
-            url,
-        };
-        admin.close().await;
-        let options = PgConnectOptions::from_str(&fixture.url)
-            .unwrap()
-            .application_name(&fixture.schema)
-            .options([("search_path", fixture.schema.as_str())]);
-        fixture.raw = PgPoolOptions::new()
-            .max_connections(8)
-            .connect_with(options)
-            .await
-            .expect("owned schema pool");
-        fixture.pool = fixture.raw.clone().into();
-        db::run_migrations(&fixture.pool)
-            .await
-            .expect("required baseline migrations");
-        fixture
-    }
+    /// A second pool on the same schema, as a restarted server would open.
     async fn reconnect(&self) -> db::DbPool {
-        let options = PgConnectOptions::from_str(&self.url)
-            .unwrap()
-            .application_name(&self.schema)
-            .options([("search_path", self.schema.as_str())]);
         PgPoolOptions::new()
             .max_connections(8)
-            .connect_with(options)
+            .connect(&self.connection_url())
             .await
             .expect("reconnect owned schema")
             .into()
@@ -664,99 +569,60 @@ async fn rotation_rejects_collisions_and_rebind_persists_across_pools_and_revoke
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn authentication_state_persists_in_fresh_processes() {
-    // The same compiled test is restarted twice in separate OS processes. This
-    // proves auth-store restart persistence, not full HTTP/CI service lifecycle.
-    if let Ok(schema) = std::env::var("GITSERV_AUTH_CHILD_SCHEMA") {
-        assert!(
-            schema.starts_with("auth_")
-                && schema.len() == 37
-                && schema[5..].bytes().all(|byte| byte.is_ascii_hexdigit())
-        );
-        let url = test_database_url();
-        let options = PgConnectOptions::from_str(&url)
-            .unwrap()
-            .options([("search_path", schema.as_str())]);
-        let pool = PgPoolOptions::new()
-            .max_connections(2)
-            .connect_with(options)
+async fn authentication_state_persists_in_fresh_pools() {
+    let fixture = Database::new().await;
+    let user = fixture.setup("public").await;
+    let id = random_id();
+    let token = random_id();
+    stored::rotate_authenticated_session(
+        &fixture.pool,
+        None,
+        &id,
+        user.id,
+        Some(PHC),
+        None,
+        Utc::now() + Duration::days(1),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    stored::get_or_create_csrf_token(&fixture.pool, &id, Some(user.id), &token, 7200)
+        .await
+        .unwrap()
+        .unwrap();
+    for _ in 0..10 {
+        admission::admit_login(&fixture.pool, None, Some(user.id), "username")
             .await
             .unwrap();
-        let pool: db::DbPool = pool.into();
-        let id = std::env::var("GITSERV_AUTH_CHILD_ID").expect("parent fixture session");
-        let token = std::env::var("GITSERV_AUTH_CHILD_CSRF").expect("parent fixture CSRF");
-        let user: i64 = std::env::var("GITSERV_AUTH_CHILD_USER")
-            .expect("parent fixture identity")
-            .parse()
-            .unwrap();
+    }
+    // A restart keeps nothing in memory, so a new pool on the same schema sees all of it.
+    for _ in 0..2 {
+        let restarted = fixture.reconnect().await;
         assert_eq!(
-            stored::get_browser_session(&pool, &id)
+            stored::get_browser_session(&restarted, &id)
                 .await
                 .unwrap()
                 .unwrap()
                 .user_id,
-            Some(user)
+            Some(user.id)
         );
         assert_eq!(
-            stored::get_or_create_csrf_token(&pool, &id, Some(user), &random_id(), 7200)
+            stored::get_or_create_csrf_token(&restarted, &id, Some(user.id), &random_id(), 7200)
                 .await
                 .unwrap(),
-            Some(token)
+            Some(token.clone())
         );
         assert_eq!(
-            admission::admit_login(&pool, Some(user), "alias-does-not-reset-admission").await,
+            admission::admit_login(
+                &restarted,
+                None,
+                Some(user.id),
+                "alias-does-not-reset-admission"
+            )
+            .await,
             Err(admission::AdmissionError::Limited)
         );
-        pool.close().await;
-    } else {
-        let fixture = Database::new().await;
-        let user = fixture.setup("public").await;
-        let id = random_id();
-        let token = random_id();
-        stored::rotate_authenticated_session(
-            &fixture.pool,
-            None,
-            &id,
-            user.id,
-            Some(PHC),
-            None,
-            Utc::now() + Duration::days(1),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        stored::get_or_create_csrf_token(&fixture.pool, &id, Some(user.id), &token, 7200)
-            .await
-            .unwrap()
-            .unwrap();
-        for _ in 0..10 {
-            admission::admit_login(&fixture.pool, Some(user.id), "username")
-                .await
-                .unwrap();
-        }
-        for _ in 0..2 {
-            let output = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "production_auth::authentication_state_persists_in_fresh_processes",
-                    "--test-threads=1",
-                ])
-                .env("GITSERV_AUTH_CHILD_SCHEMA", &fixture.schema)
-                .env("GITSERV_AUTH_CHILD_ID", &id)
-                .env("GITSERV_AUTH_CHILD_CSRF", &token)
-                .env("GITSERV_AUTH_CHILD_USER", user.id.to_string())
-                .output()
-                .expect("restart owned auth fixture process");
-            assert!(
-                output.status.success(),
-                "auth child fixture failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            assert!(
-                String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-                "child must actually execute its auth assertions"
-            );
-        }
+        restarted.close().await;
     }
 }
 
@@ -1506,14 +1372,16 @@ async fn public_oauth_parallel_enrollment_has_no_orphan_user_or_second_link() {
 async fn login_admission_is_shared_atomic_alias_safe_bounded_and_fail_closed() {
     let fixture = Database::new().await;
     let second = fixture.reconnect().await;
+    // Two attempts wait on the account's row, then are counted one after the other.
     let mut blocker = fixture.raw.begin().await.unwrap();
-    sqlx::query("INSERT INTO auth_login_limits (account_key,attempts,window_ends_at) VALUES ('global',0,NOW())").execute(&mut *blocker).await.unwrap();
+    sqlx::query("INSERT INTO auth_login_limits (account_key,attempts,window_ends_at) VALUES ('user:42',0,NOW())").execute(&mut *blocker).await.unwrap();
     let p = fixture.pool.clone();
     let q = second.clone();
-    let a = tokio::spawn(async move { admission::admit_login(&p, Some(42), "username").await });
-    let b = tokio::spawn(
-        async move { admission::admit_login(&q, Some(42), "alias@example.com").await },
-    );
+    let a =
+        tokio::spawn(async move { admission::admit_login(&p, None, Some(42), "username").await });
+    let b = tokio::spawn(async move {
+        admission::admit_login(&q, None, Some(42), "alias@example.com").await
+    });
     fixture.wait_for_blocked(2).await;
     blocker.commit().await.unwrap();
     a.await.unwrap().unwrap();
@@ -1528,6 +1396,7 @@ async fn login_admission_is_shared_atomic_alias_safe_bounded_and_fail_closed() {
         tasks.push(tokio::spawn(async move {
             admission::admit_login(
                 &pool,
+                None,
                 Some(42),
                 if attempt % 2 == 0 {
                     "username"
@@ -1541,20 +1410,22 @@ async fn login_admission_is_shared_atomic_alias_safe_bounded_and_fail_closed() {
     let mut admitted = 2;
     for task in tasks {
         match task.await.unwrap() {
-            Ok(()) => admitted += 1,
+            Ok(_) => admitted += 1,
             Err(admission::AdmissionError::Limited) => {}
             other => panic!("unexpected fixture limiter: {other:?}"),
         }
     }
     assert_eq!(admitted, 10);
-    for account in 0..100 {
-        admission::admit_login(&fixture.pool, None, &format!("unknown-{account}"))
+    // One client address may make 30 attempts. The 31st is refused before any account row is made.
+    let client = Some("203.0.113.9");
+    for account in 0..30 {
+        admission::admit_login(&fixture.pool, client, None, &format!("unknown-{account}"))
             .await
             .unwrap();
     }
     let identity = "never-allocate-this-key";
     assert_eq!(
-        admission::admit_login(&second, None, identity).await,
+        admission::admit_login(&second, client, None, identity).await,
         Err(admission::AdmissionError::Limited)
     );
     let nonexistent: bool =
@@ -1565,14 +1436,28 @@ async fn login_admission_is_shared_atomic_alias_safe_bounded_and_fail_closed() {
             .unwrap();
     assert!(
         !nonexistent,
-        "global denial must not allocate identity state"
+        "client denial must not allocate identity state"
+    );
+    // Another client address is not affected by the first, but still meets the account's limit.
+    admission::admit_login(&second, Some("203.0.113.10"), None, identity)
+        .await
+        .unwrap();
+    assert_eq!(
+        admission::admit_login(&second, Some("203.0.113.10"), Some(42), "username").await,
+        Err(admission::AdmissionError::Limited)
     );
     let bounded: bool = sqlx::query_scalar("SELECT attempts=10 AND window_ends_at<=clock_timestamp()+INTERVAL '300 seconds' FROM auth_login_limits WHERE account_key='user:42'").fetch_one(&fixture.raw).await.unwrap();
     assert!(bounded);
-    // Prove bounded cleanup touches only expired new limiter rows, never current state.
+    // A right password gives its attempt back, from the client and the account alike.
+    let attempt = admission::admit_login(&second, Some("203.0.113.11"), Some(43), "other")
+        .await
+        .unwrap();
+    admission::forgive_login(&second, &attempt).await;
+    let spent: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(attempts),0)::BIGINT FROM auth_login_limits WHERE account_key IN ('ip:203.0.113.11','user:43')").fetch_one(&fixture.raw).await.unwrap();
+    assert_eq!(spent, 0);
+    // Bounded cleanup removes expired limiter rows only, never current state.
     sqlx::query("INSERT INTO auth_login_limits (account_key,attempts,window_ends_at) SELECT 'expired:' || n,1,NOW()-INTERVAL '1 second' FROM generate_series(1,40) n").execute(&fixture.raw).await.unwrap();
-    sqlx::query("UPDATE auth_login_limits SET window_ends_at=NOW()-INTERVAL '1 second' WHERE account_key='global'").execute(&fixture.raw).await.unwrap();
-    admission::admit_login(&fixture.pool, None, "after-window")
+    admission::admit_login(&fixture.pool, None, None, "after-window")
         .await
         .unwrap();
     let remaining: i64 = sqlx::query_scalar(
@@ -1590,7 +1475,7 @@ async fn login_admission_is_shared_atomic_alias_safe_bounded_and_fail_closed() {
     assert_eq!(current, 1);
     second.close().await;
     assert_eq!(
-        admission::admit_login(&second, Some(42), "ignored").await,
+        admission::admit_login(&second, None, Some(42), "ignored").await,
         Err(admission::AdmissionError::Unavailable)
     );
 }
@@ -1652,14 +1537,15 @@ async fn identity_login_owns_alias_admission_and_anonymous_csrf_rotation() {
             .unwrap()
             .is_none()
     );
-    // The operation charged the durable account rather than the email spelling.
+    // The attempt was counted against the durable account rather than the email spelling, and a
+    // right password gave it back.
     let attempts: i32 =
         sqlx::query_scalar("SELECT attempts FROM auth_login_limits WHERE account_key=$1")
             .bind(format!("user:{}", user.id))
             .fetch_one(&fixture.raw)
             .await
             .unwrap();
-    assert_eq!(attempts, 1);
+    assert_eq!(attempts, 0);
     let other = random_id();
     assert!(matches!(
         signed_in(

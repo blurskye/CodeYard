@@ -1,4 +1,4 @@
-use crate::support::{database::Database, fake_webui_bundle as bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
 use codeyard::backend::{
     api::create_router,
@@ -14,7 +14,7 @@ use std::sync::Arc;
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -337,184 +337,192 @@ async fn postgres_repository_audit_regressions() {
     contract(true).await;
 }
 
-#[tokio::test]
-async fn language_cache_rejects_old_primaries_and_versions_including_empty_results() {
-    for pg in [false, true] {
-        let mut f = Database::new(pg).await;
-        let owner = f.actor("cache_owner").await;
-        let root = tempfile::tempdir().unwrap();
-        let repository = lifecycle::provision(
-            (f.pool(), None),
-            root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner),
-            "cache",
-            None,
-            false,
-            None,
-        )
+async fn language_cache_rejects_old_primaries_and_versions_including_empty_results(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let owner = f.actor("cache_owner").await;
+    let root = tempfile::tempdir().unwrap();
+    let repository = lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "cache",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let source = db::repository_stats::language_source(f.pool(), repository.id)
         .await
+        .unwrap()
         .unwrap();
-        let source = db::repository_stats::language_source(f.pool(), repository.id)
+    assert!(
+        !db::repository_stats::languages_computed(f.pool(), &source, "empty")
             .await
             .unwrap()
-            .unwrap();
-        assert!(
-            !db::repository_stats::languages_computed(f.pool(), &source, "empty")
-                .await
-                .unwrap()
-        );
-        assert!(
-            db::repository_stats::upsert_repo_languages(f.pool(), &source, "empty", &[])
-                .await
-                .unwrap()
-        );
-        assert!(
-            db::repository_stats::languages_computed(f.pool(), &source, "empty")
-                .await
-                .unwrap()
-        );
-        assert!(
-            !db::repository_stats::languages_computed(f.pool(), &source, "another")
-                .await
-                .unwrap()
-        );
-        let tree_id = {
-            let bare = git2::Repository::open_bare(&repository.disk_path).unwrap();
-            let mut builder = bare.treebuilder(None).unwrap();
-            builder
-                .insert("image.png", bare.blob(b"image bytes").unwrap(), 0o100644)
-                .unwrap();
-            let tree_id = builder.write().unwrap();
-            let tree = bare.find_tree(tree_id).unwrap();
-            let signature = git2::Signature::now("Fixture", "fixture@example.invalid").unwrap();
-            bare.commit(
-                Some("refs/heads/main"),
-                &signature,
-                &signature,
-                "Assets only",
-                &tree,
-                &[],
-            )
-            .unwrap();
-            tree_id.to_string()
-        };
-        let store = repo_store(&repository, None);
-        assert!(
-            languages::compute_and_store(f.pool(), &store, &repository, "main")
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        // Removing the tree makes a repeated scan fail, but a cached empty result needs no scan.
-        std::fs::remove_file(
-            std::path::Path::new(&repository.disk_path)
-                .join("objects")
-                .join(&tree_id[..2])
-                .join(&tree_id[2..]),
-        )
-        .unwrap();
-        assert!(
-            languages::compute_and_store(f.pool(), &store, &repository, "main")
-                .await
-                .unwrap()
-                .is_empty()
-        );
-        f.execute(
-            "UPDATE repositories SET write_version=write_version+1 WHERE id=$1",
-            &[repository.id],
-        )
-        .await;
-        let mut current = db::repository_stats::language_source(f.pool(), repository.id)
+    );
+    assert!(
+        db::repository_stats::upsert_repo_languages(f.pool(), &source, "empty", &[])
             .await
             .unwrap()
+    );
+    assert!(
+        db::repository_stats::languages_computed(f.pool(), &source, "empty")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db::repository_stats::languages_computed(f.pool(), &source, "another")
+            .await
+            .unwrap()
+    );
+    let tree_id = {
+        let bare = git2::Repository::open_bare(&repository.disk_path).unwrap();
+        let mut builder = bare.treebuilder(None).unwrap();
+        builder
+            .insert("image.png", bare.blob(b"image bytes").unwrap(), 0o100644)
             .unwrap();
-        let python = vec![("Python".into(), 100, 100.0, "#123456".into())];
-        assert!(
-            db::repository_stats::upsert_repo_languages(f.pool(), &current, "python", &python)
-                .await
-                .unwrap()
-        );
-        assert!(!db::repository_stats::upsert_repo_languages(
-            f.pool(),
-            &source,
-            "old-version",
-            &[]
+        let tree_id = builder.write().unwrap();
+        let tree = bare.find_tree(tree_id).unwrap();
+        let signature = git2::Signature::now("Fixture", "fixture@example.invalid").unwrap();
+        bare.commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            "Assets only",
+            &tree,
+            &[],
         )
+        .unwrap();
+        tree_id.to_string()
+    };
+    let store = repo_store(&repository, None);
+    assert!(
+        languages::compute_and_store(f.pool(), &store, &repository, "main")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // Removing the tree makes a repeated scan fail, but a cached empty result needs no scan.
+    std::fs::remove_file(
+        std::path::Path::new(&repository.disk_path)
+            .join("objects")
+            .join(&tree_id[..2])
+            .join(&tree_id[2..]),
+    )
+    .unwrap();
+    assert!(
+        languages::compute_and_store(f.pool(), &store, &repository, "main")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    f.execute(
+        "UPDATE repositories SET write_version=write_version+1 WHERE id=$1",
+        &[repository.id],
+    )
+    .await;
+    let mut current = db::repository_stats::language_source(f.pool(), repository.id)
         .await
-        .unwrap());
-        current.storage_node_id = Some(999);
-        assert!(!db::repository_stats::upsert_repo_languages(
-            f.pool(),
-            &current,
-            "old-primary",
-            &[]
-        )
-        .await
-        .unwrap());
-        assert_eq!(
-            languages::stored(f.pool(), repository.id).await.unwrap()[0].language,
-            "Python"
-        );
+        .unwrap()
+        .unwrap();
+    let python = vec![("Python".into(), 100, 100.0, "#123456".into())];
+    assert!(
+        db::repository_stats::upsert_repo_languages(f.pool(), &current, "python", &python)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !db::repository_stats::upsert_repo_languages(f.pool(), &source, "old-version", &[])
+            .await
+            .unwrap()
+    );
+    current.storage_node_id = Some(999);
+    assert!(
+        !db::repository_stats::upsert_repo_languages(f.pool(), &current, "old-primary", &[])
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        languages::stored(f.pool(), repository.id).await.unwrap()[0].language,
+        "Python"
+    );
 
-        // Size accounting changes only size, never a concurrently selected default branch.
-        db::repositories::records::set_repository_default_branch(
-            f.pool(),
-            owner,
-            repository.id,
-            "topic",
-        )
+    // Size accounting changes only size, never a concurrently selected default branch.
+    db::repositories::records::set_repository_default_branch(
+        f.pool(),
+        owner,
+        repository.id,
+        "topic",
+    )
+    .await
+    .unwrap();
+    db::repositories::records::update_repo_size(f.pool(), repository.id, 123)
         .await
         .unwrap();
-        db::repositories::records::update_repo_size(f.pool(), repository.id, 123)
-            .await
-            .unwrap();
-        assert_eq!(f.repository(repository.id).await.default_branch, "topic");
-        f.finish().await;
-    }
+    assert_eq!(f.repository(repository.id).await.default_branch, "topic");
+    f.finish().await;
 }
 
 #[tokio::test]
-async fn completed_fork_survives_accounting_failure() {
-    for pg in [false, true] {
-        let mut f = Database::new(pg).await;
-        let owner = f.actor("fork_owner").await;
-        let actor = f.actor("fork_actor").await;
-        let root = tempfile::tempdir().unwrap();
-        let source = lifecycle::provision(
-            (f.pool(), None),
-            root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(owner),
-            "source",
-            None,
-            false,
-            None,
-        )
-        .await
-        .unwrap();
-        if pg {
-            f.execute("CREATE FUNCTION refuse_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture accounting failure'; END $$", &[]).await;
-            f.execute("CREATE TRIGGER refuse_snapshot BEFORE INSERT ON repo_storage_history FOR EACH ROW EXECUTE FUNCTION refuse_snapshot()", &[]).await;
-        } else {
-            f.execute("CREATE TRIGGER refuse_snapshot BEFORE INSERT ON repo_storage_history BEGIN SELECT RAISE(ABORT,'fixture accounting failure'); END", &[]).await;
-        }
-        let fork = lifecycle::provision(
-            (f.pool(), None),
-            root.path(),
-            db::repositories::creation::RepositoryCreationOwner::personal(actor),
-            "fork",
-            None,
-            false,
-            Some(&source),
-        )
-        .await
-        .unwrap();
-        assert!(
-            db::repositories::records::get_repository_by_id(f.pool(), fork.id)
-                .await
-                .unwrap()
-                .is_some()
-        );
-        assert!(repo_store(&fork, None).info().await.is_ok());
-        f.finish().await;
+async fn sqlite_language_cache_rejects_old_primaries_and_versions_including_empty_results() {
+    language_cache_rejects_old_primaries_and_versions_including_empty_results(false).await;
+}
+
+#[tokio::test]
+async fn postgres_language_cache_rejects_old_primaries_and_versions_including_empty_results() {
+    language_cache_rejects_old_primaries_and_versions_including_empty_results(true).await;
+}
+
+async fn completed_fork_survives_accounting_failure(pg: bool) {
+    let mut f = Database::new(pg).await;
+    let owner = f.actor("fork_owner").await;
+    let actor = f.actor("fork_actor").await;
+    let root = tempfile::tempdir().unwrap();
+    let source = lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "source",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    if pg {
+        f.execute("CREATE FUNCTION refuse_snapshot() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture accounting failure'; END $$", &[]).await;
+        f.execute("CREATE TRIGGER refuse_snapshot BEFORE INSERT ON repo_storage_history FOR EACH ROW EXECUTE FUNCTION refuse_snapshot()", &[]).await;
+    } else {
+        f.execute("CREATE TRIGGER refuse_snapshot BEFORE INSERT ON repo_storage_history BEGIN SELECT RAISE(ABORT,'fixture accounting failure'); END", &[]).await;
     }
+    let fork = lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        "fork",
+        None,
+        false,
+        Some(&source),
+    )
+    .await
+    .unwrap();
+    assert!(
+        db::repositories::records::get_repository_by_id(f.pool(), fork.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(repo_store(&fork, None).info().await.is_ok());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_completed_fork_survives_accounting_failure() {
+    completed_fork_survives_accounting_failure(false).await;
+}
+
+#[tokio::test]
+async fn postgres_completed_fork_survives_accounting_failure() {
+    completed_fork_survives_accounting_failure(true).await;
 }

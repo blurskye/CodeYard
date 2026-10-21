@@ -12,7 +12,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, sync::Arc};
 
-use super::{failure, Failure};
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,9 +54,8 @@ pub async fn create_upload_url(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<CreateUploadUrlRequest>,
-) -> Result<Json<CreateUploadUrlResponse>, Failure> {
+) -> Result<Json<CreateUploadUrlResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::http::csrf::check(state.clone(), &headers).await?;
     let reservation = files::reserve_and_sign_upload(
         &state.pool,
         &state.storage,
@@ -85,7 +84,7 @@ pub async fn create_upload_url(
     }))
 }
 
-fn upload_failure(error: UploadError) -> Failure {
+fn upload_failure(error: UploadError) -> ApiFailure {
     let (status, code, message) = match error {
         UploadError::Invalid => (
             StatusCode::BAD_REQUEST,
@@ -118,7 +117,7 @@ fn upload_failure(error: UploadError) -> Failure {
             "Upload storage is unavailable",
         ),
     };
-    failure(status, code, message)
+    ApiError::failure(status, code, message)
 }
 
 #[cfg(test)]

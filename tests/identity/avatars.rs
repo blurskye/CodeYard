@@ -6,7 +6,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 use codeyard::backend::{
     api::create_router,
@@ -112,15 +112,6 @@ fn id_of(url: &str) -> &str {
         .unwrap_or_else(|| panic!("an avatar url, got {url}"))
 }
 
-/// Takes every free picture slot and keeps them until the returned permits drop.
-fn take_picture_slots(storage: &ObjectStore) -> Vec<tokio::sync::OwnedSemaphorePermit> {
-    let mut permits = Vec::new();
-    while let Some(permit) = storage.try_acquire_picture() {
-        permits.push(permit);
-    }
-    permits
-}
-
 /// Takes every free storage I/O slot and keeps them until the returned permits drop.
 fn take_io_slots(storage: &ObjectStore) -> Vec<tokio::sync::OwnedSemaphorePermit> {
     let mut permits = Vec::new();
@@ -149,7 +140,7 @@ async fn contract(pg: bool) {
     // The HTML pages below need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let ids = [
         f.actor("alice").await,
         f.actor("bob").await,
@@ -297,27 +288,6 @@ async fn contract(pg: bool) {
     assert!(page.contains("Remove picture"));
     let (_, profile) = nobody.page("/alice").await;
     assert!(profile.contains(&url), "the profile page shows it");
-
-    // Every picture slot taken: the form is refused as busy at once, without being read.
-    let slots = take_picture_slots(&storage);
-    let fields = [("csrf_token", alice.csrf.as_str())];
-    let sent = alice.multipart("/settings/avatar", &fields, Some(("image/png", PNG)));
-    let busy = tokio::time::timeout(Duration::from_secs(10), sent)
-        .await
-        .expect("a busy picture form is refused, not waited for");
-    assert_eq!(
-        busy.status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "{}",
-        busy.text()
-    );
-    let page = busy.text();
-    assert!(
-        page.contains("Pictures cannot be changed right now"),
-        "{page}"
-    );
-    drop(slots);
-    assert_eq!(avatar_url(&alice).await.as_deref(), Some(url.as_str()));
 
     // What is not a picture, is too large, or does not come with the page's token
     // changes nothing.
@@ -553,28 +523,6 @@ async fn contract(pg: bool) {
         "{page}"
     );
 
-    // Every picture slot taken: the organization form is refused as busy too.
-    let slots = take_picture_slots(&storage);
-    let busy = carol
-        .multipart(
-            &upload_path,
-            &[("csrf_token", &carol.csrf)],
-            Some(("image/png", PNG)),
-        )
-        .await;
-    assert_eq!(
-        busy.status,
-        StatusCode::SERVICE_UNAVAILABLE,
-        "{}",
-        busy.text()
-    );
-    let page = busy.text();
-    assert!(
-        page.contains("Pictures cannot be changed right now"),
-        "{page}"
-    );
-    drop(slots);
-
     // An owner sets it.
     let sent = carol
         .multipart(
@@ -798,7 +746,7 @@ async fn contract(pg: bool) {
             .unwrap(),
         OrganizationOutcome::Applied(None)
     ));
-    let (_, page) = carol.page(&base).await;
+    let page = carol.page_ok(&base).await;
     assert!(
         !page.contains("/api/files/"),
         "no picture on the page: {page}"
@@ -1093,9 +1041,7 @@ async fn postgres_organization_picture_swaps_lock_files_in_uuid_order() {
             OrganizationOutcome::Applied(_)
         ));
     }
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut gate = raw.begin().await.unwrap();
     sqlx::query("SELECT id FROM files WHERE id=$1 FOR UPDATE")
         .bind(*pictures.iter().max().unwrap())

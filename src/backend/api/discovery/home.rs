@@ -69,7 +69,7 @@ pub(super) async fn home(
     };
     let public = match db::repositories::records::list_public_repositories(
         &ctx.state.pool,
-        RepositorySort::Recent,
+        RepositorySort::Stars,
         100,
     )
     .await
@@ -90,6 +90,7 @@ pub(super) async fn home(
     let public: Vec<_> = public
         .into_iter()
         .filter(|repo| !repo.is_personal_owner(user.id) && matches(repo))
+        .take(5)
         .collect();
     let repositories = match dashboard_cards(&ctx.state, own).await {
         Ok(cards) => cards,
@@ -111,12 +112,10 @@ pub(super) async fn home(
             role: role_name(level).to_owned(),
         })
         .collect();
-    let mut trending = match dashboard_cards(&ctx.state, public).await {
+    let trending = match dashboard_cards(&ctx.state, public).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_trending_owners"),
     };
-    trending.sort_by_key(|repo| std::cmp::Reverse(repo.stars));
-    trending.truncate(5);
     let assigned_issues = match db::issues::count_viewer_issues(
         &ctx.state.pool,
         user.id,
@@ -141,9 +140,6 @@ pub(super) async fn home(
         "Dashboard",
         AppPage::Discovery(view::Page::Home(HomeModel {
             username: Some(username),
-            avatar_url: user
-                .avatar_file_id
-                .map(|id| format!("/api/files/{id}/download")),
             assigned_issues,
             open_pull_requests,
             repositories,

@@ -349,8 +349,8 @@ fn auth_text_defaults_stay_uncontrolled_and_styles_stay_compact_and_scoped() {
         .split_once("pub fn logout_page(")
         .unwrap()
         .0;
-    assert!(auth_source.contains("\"value\": values.get(\"username\")"));
-    assert!(auth_source.contains("\"value\": values.get(\"email\")"));
+    assert!(auth_source.contains("\"value\": values.username.clone()"));
+    assert!(auth_source.contains("\"value\": values.email.clone()"));
     assert!(!auth_source.contains("oninput:"));
     assert!(!auth_source.contains("onmount:"));
     let css = include_str!("../account.css");

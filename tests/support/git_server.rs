@@ -1,9 +1,11 @@
 //! The `codeyard` server as a child process, and a Git client that sends a token, for tests
 //! that speak smart HTTP the way a real client does.
-// Each integration crate uses a different subset of these shared test fixtures.
-#![allow(dead_code)]
+use crate::support::native_database as native;
+use crate::support::server::spawn_on_free_ports;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard::backend::db;
 use reqwest::Client;
+use sha2::{Digest, Sha256};
 use std::{
     path::Path,
     process::{Child, Command, Output, Stdio},
@@ -34,62 +36,49 @@ impl Server {
         slots: usize,
         wait_seconds: u64,
     ) -> Self {
-        let socket = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = socket.local_addr().unwrap();
-        drop(socket);
         let log = root.join("server.log");
-        let output = std::fs::File::create(&log).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_codeyard"))
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap())
-            .env("HOME", root)
-            .env("WEBUI_DIST", std::env::var_os("WEBUI_DIST").unwrap())
-            .env("RUST_LOG", "info")
-            .env("GIT_SESSION_LIMIT", slots.to_string())
-            .env("GIT_SESSION_WAIT_SECONDS", wait_seconds.to_string())
-            .env("COOKIE_SECURE", "false")
-            .env("DATABASE_URL", url)
-            .env("GITSERV_STATE_DIR", root.join("state"))
-            .env("REPOS_PATH", root.join("repos"))
-            .env("PUBLIC_URL", format!("http://{address}"))
-            .args([
-                "serve",
-                "--roles",
-                "web,storage",
-                "--ssh-mode",
-                "disabled",
-                "--http-addr",
-                &address.to_string(),
-            ])
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .stdout(output.try_clone().unwrap())
-            .stderr(output)
-            .spawn()
-            .unwrap();
-        let mut server = Self {
-            child,
-            base: format!("http://{address}"),
-            log,
-        };
         let client = Client::new();
-        for _ in 0..100 {
-            if client
-                .get(format!("{}/health", server.base))
-                .send()
-                .await
-                .is_ok_and(|reply| reply.status().is_success())
-            {
-                return server;
-            }
-            assert!(
-                server.child.try_wait().unwrap().is_none(),
-                "server exited: {}",
-                std::fs::read_to_string(&server.log).unwrap()
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let (child, addresses) = spawn_on_free_ports(
+            &log,
+            1,
+            |addresses| {
+                let address = addresses[0].to_string();
+                let mut command = Command::new(env!("CARGO_BIN_EXE_codeyard"));
+                command
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").unwrap())
+                    .env("HOME", root)
+                    .env("WEBUI_DIST", std::env::var_os("WEBUI_DIST").unwrap())
+                    .env("RUST_LOG", "info")
+                    .env("GIT_SESSION_LIMIT", slots.to_string())
+                    .env("GIT_SESSION_WAIT_SECONDS", wait_seconds.to_string())
+                    .env("COOKIE_SECURE", "false")
+                    .env("DATABASE_URL", url)
+                    .env("GITSERV_STATE_DIR", root.join("state"))
+                    .env("REPOS_PATH", root.join("repos"))
+                    .env("PUBLIC_URL", format!("http://{address}"))
+                    .args(["serve", "--roles", "web,storage", "--ssh-mode", "disabled"])
+                    .args(["--http-addr", &address])
+                    .current_dir(root);
+                command
+            },
+            |addresses| {
+                let client = &client;
+                async move {
+                    client
+                        .get(format!("http://{}/health", addresses[0]))
+                        .send()
+                        .await
+                        .is_ok_and(|reply| reply.status().is_success())
+                }
+            },
+        )
+        .await;
+        Self {
+            child,
+            base: format!("http://{}", addresses[0]),
+            log,
         }
-        panic!("server did not start");
     }
 }
 
@@ -127,4 +116,26 @@ pub fn success(output: Output) {
         "git failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// Writes a token for `owner` that can push, stored the way the server looks tokens up.
+pub async fn write_token(pool: &db::DbPool, owner: i64) -> String {
+    let token = native::token();
+    let stored = hex::encode(Sha256::digest(token.as_bytes()));
+    let session = native::token();
+    db::users::sessions::create_session(
+        pool,
+        &session,
+        owner,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    db::users::tokens::create_token(pool, owner, &session, "push", &stored, "write", None)
+        .await
+        .unwrap()
+        .unwrap();
+    token
 }

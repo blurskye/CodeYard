@@ -1,8 +1,6 @@
+use crate::backend::db::models::{AccessLevel, RepoAccess, Repository, User};
 use crate::backend::db::postgres::users::transitions::lock_membership_shared;
-use crate::backend::{
-    db::models::{AccessLevel, RepoAccess, Repository, User},
-    repositories::access::{CollaboratorAccessTransaction, CollaboratorChange},
-};
+use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
@@ -359,66 +357,63 @@ async fn revoke_repo_access_in_transaction(
     Ok(removed)
 }
 
-impl CollaboratorAccessTransaction for PgPool {
-    async fn change_personal_repository_collaborator(
-        &self,
-        actor: i64,
-        repo_id: i64,
-        username: &str,
-        permission: Option<AccessLevel>,
-    ) -> Result<CollaboratorChange> {
-        let mut tx = self.begin().await?;
-        lock_membership_shared(&mut tx).await?;
-        let actor_state: Option<(bool, bool)> = sqlx::query_as(
-            "SELECT is_banned,must_change_password FROM users WHERE id=$1 FOR SHARE",
-        )
-        .bind(actor)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some((is_banned, must_change_password)) = actor_state else {
-            return Ok(CollaboratorChange::NotFound);
-        };
-        if must_change_password {
-            return Ok(CollaboratorChange::PasswordChangeRequired);
-        }
-        if is_banned {
-            return Ok(CollaboratorChange::NotFound);
-        }
-        let target = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username=$1 FOR SHARE")
-            .bind(username)
+pub async fn change_personal_repository_collaborator(
+    pool: &PgPool,
+    actor: i64,
+    repo_id: i64,
+    username: &str,
+    permission: Option<AccessLevel>,
+) -> Result<CollaboratorChange> {
+    let mut tx = pool.begin().await?;
+    lock_membership_shared(&mut tx).await?;
+    let actor_state: Option<(bool, bool)> =
+        sqlx::query_as("SELECT is_banned,must_change_password FROM users WHERE id=$1 FOR SHARE")
+            .bind(actor)
             .fetch_optional(&mut *tx)
             .await?;
-        let Some(target) = target else {
-            return Ok(CollaboratorChange::NotFound);
-        };
-        if permission.is_some() && (target.is_banned || target.must_change_password) {
-            return Ok(CollaboratorChange::NotFound);
-        }
-        let owned = sqlx::query_scalar::<_, i64>(
-            "SELECT id FROM repositories WHERE id=$1 AND owner_kind='user' AND owner_user_id=$2 AND owner_org_id IS NULL FOR UPDATE",
-        )
-        .bind(repo_id)
-        .bind(actor)
-        .fetch_optional(&mut *tx)
-        .await?
-        .is_some();
-        if !owned {
-            return Ok(CollaboratorChange::NotFound);
-        }
-        if permission.is_some() && target.id == actor {
-            return Ok(CollaboratorChange::InvalidCollaboratorOwner);
-        }
-        match permission {
-            Some(level) => {
-                grant_repo_access_in_transaction(&mut tx, target.id, repo_id, level).await?;
-            }
-            None => {
-                revoke_repo_access_in_transaction(&mut tx, target.id, repo_id).await?;
-            }
-        }
-        tx.commit().await?;
-        Ok(CollaboratorChange::Applied(Box::new(target)))
+    let Some((is_banned, must_change_password)) = actor_state else {
+        return Ok(CollaboratorChange::NotFound);
+    };
+    if must_change_password {
+        return Ok(CollaboratorChange::PasswordChangeRequired);
     }
+    if is_banned {
+        return Ok(CollaboratorChange::NotFound);
+    }
+    let target = sqlx::query_as::<_, User>("SELECT * FROM users WHERE username=$1 FOR SHARE")
+        .bind(username)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(target) = target else {
+        return Ok(CollaboratorChange::NotFound);
+    };
+    if permission.is_some() && (target.is_banned || target.must_change_password) {
+        return Ok(CollaboratorChange::NotFound);
+    }
+    let owned = sqlx::query_scalar::<_, i64>(
+        "SELECT id FROM repositories WHERE id=$1 AND owner_kind='user' AND owner_user_id=$2 AND owner_org_id IS NULL FOR UPDATE",
+    )
+    .bind(repo_id)
+    .bind(actor)
+    .fetch_optional(&mut *tx)
+    .await?
+    .is_some();
+    if !owned {
+        return Ok(CollaboratorChange::NotFound);
+    }
+    if permission.is_some() && target.id == actor {
+        return Ok(CollaboratorChange::InvalidCollaboratorOwner);
+    }
+    match permission {
+        Some(level) => {
+            grant_repo_access_in_transaction(&mut tx, target.id, repo_id, level).await?;
+        }
+        None => {
+            revoke_repo_access_in_transaction(&mut tx, target.id, repo_id).await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(CollaboratorChange::Applied(Box::new(target)))
 }
 
 pub async fn grant_repo_access(

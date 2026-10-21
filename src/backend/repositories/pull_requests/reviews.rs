@@ -1,4 +1,4 @@
-use super::OperationError;
+use super::{database_error, OperationError};
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use crate::backend::db::pull_requests::reviews::DiscussionRef;
@@ -33,10 +33,6 @@ pub struct RequestReviewerResult {
     pub created: bool,
 }
 
-fn is_valid_sha1_hex(sha: &str) -> bool {
-    sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 /// Review bodies and dismissal reasons use the discussion text limit. Leaving one
 /// out, or sending an empty one, is fine.
 fn check_optional_text(text: Option<&str>) -> Result<(), OperationError> {
@@ -61,10 +57,7 @@ pub async fn create_pull_request_review(
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -86,10 +79,7 @@ pub async fn create_pull_request_review(
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -145,7 +135,7 @@ pub async fn create_pull_request_review(
         .map(str::to_string)
         .unwrap_or_else(|| pull_request.head_sha.clone());
 
-    if !is_valid_sha1_hex(&commit_sha) {
+    if !crate::backend::git::is_full_commit_id(&commit_sha) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "commit_sha must be a 40-character hex SHA-1".to_owned(),
@@ -340,10 +330,7 @@ async fn has_pending_comments(
     db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, author_id)
         .await
         .map(|comments| !comments.is_empty())
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })
+        .map_err(database_error)
 }
 
 pub async fn dismiss_pull_request_review(
@@ -359,18 +346,15 @@ pub async fn dismiss_pull_request_review(
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
 
-    super::require_read(pool, &super::actor(pool, actor_id).await?, &repository).await?;
+    super::require_read(pool, &actor, &repository).await?;
 
-    super::require_admin(pool, &super::actor(pool, actor_id).await?, &repository).await?;
+    super::require_admin(pool, &actor, &repository).await?;
     if repository.owner_kind == "user" && !actor.is_admin && !repository.is_personal_owner(actor.id)
     {
         return Err(OperationError::Missing {
@@ -381,10 +365,7 @@ pub async fn dismiss_pull_request_review(
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -392,10 +373,7 @@ pub async fn dismiss_pull_request_review(
 
     let review = db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Review not found".to_owned(),
@@ -469,22 +447,17 @@ pub async fn request_reviewer(
 ) -> Result<RequestReviewerResult, OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
 
-    super::require_write(pool, &super::actor(pool, actor_id).await?, &repository).await?;
+    let requester = super::actor(pool, actor_id).await?;
+    super::require_write(pool, &requester, &repository).await?;
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -492,10 +465,7 @@ pub async fn request_reviewer(
 
     let target = db::users::accounts::get_user_by_username(pool, &req.username)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "User not found".to_owned(),
@@ -508,7 +478,6 @@ pub async fn request_reviewer(
         });
     }
 
-    let requester = super::actor(pool, actor_id).await?;
     let created = add_review_request(
         pool,
         broadcaster,
@@ -609,22 +578,17 @@ pub async fn remove_requested_reviewer(
 ) -> Result<(), OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
         })?;
 
-    super::require_write(pool, &super::actor(pool, actor_id).await?, &repository).await?;
+    let actor = super::actor(pool, actor_id).await?;
+    super::require_write(pool, &actor, &repository).await?;
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -632,16 +596,12 @@ pub async fn remove_requested_reviewer(
 
     let target = db::users::accounts::get_user_by_username(pool, &username)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "User not found".to_owned(),
         })?;
 
-    let actor = super::actor(pool, actor_id).await?;
     let removed = db::pull_requests::reviews::remove_pull_request_reviewer(
         pool,
         pull_request.id,
@@ -671,10 +631,7 @@ pub async fn discard_pending_review(
 ) -> Result<(), OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -683,10 +640,7 @@ pub async fn discard_pending_review(
     super::require_read(pool, &super::actor(pool, actor_id).await?, &repository).await?;
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Collaboration storage is temporarily unavailable".to_owned(),
-        })?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),

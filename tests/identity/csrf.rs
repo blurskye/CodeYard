@@ -100,14 +100,7 @@ async fn contract(pg: bool) {
     fixture.execute("DELETE FROM repositories", &[]).await;
     fixture.execute("DELETE FROM users", &[]).await;
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        fixture.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = fixture.router(root.path()).await;
 
     // The setup page owns an anonymous synchronizer before node admission exists.
     let (setup_session, setup_csrf) = session_with_csrf(fixture.pool(), None).await;
@@ -681,6 +674,7 @@ async fn setup_secret_guesses_are_limited(pg: bool) {
                 initiating: InitiatingSession::Missing,
                 fresh_id: &fresh,
                 user_agent: None,
+                client: None,
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             },
         )

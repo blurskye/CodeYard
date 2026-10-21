@@ -67,9 +67,7 @@ async fn sqlite_repository_notification_deletion_uses_child_key_index() {
 #[tokio::test]
 async fn postgres_repository_notification_child_key_is_indexed() {
     let database = PostgresDatabase::new().await;
-    let DbPool::Postgres(pool) = &database.pool else {
-        unreachable!()
-    };
+    let pool = &database.raw;
     let definition: String = sqlx::query_scalar(
         "SELECT indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_notifications_repo_id'",
     ).fetch_one(pool).await.unwrap();

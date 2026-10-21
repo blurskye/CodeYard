@@ -3,9 +3,9 @@
 //! for a branch. Runs are queued here, not executed.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client as requests;
 use crate::support::native_database as native;
 use crate::support::production_ci as production;
-use crate::support::pull_requests as requests;
 use codeyard::backend::ci::{CiConfig, CiPipelineKind, CiRunRequest, CiRuns};
 use codeyard::backend::db;
 use std::collections::BTreeSet;
@@ -108,14 +108,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
             ("root_admin".to_owned(), "r".repeat(101)),
         ] {
             let root = tempfile::tempdir().unwrap();
-            let router = create_router(AppState::new(
-                pool.clone(),
-                root.path().to_owned(),
-                Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-                None,
-                CiConfig::default(),
-                None,
-            ));
+            let router = crate::support::database::router(pool, root.path()).await;
             let admin = db::users::accounts::get_user_by_username(pool, "root_admin")
                 .await
                 .unwrap()

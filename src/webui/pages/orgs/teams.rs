@@ -1,5 +1,5 @@
 use super::{
-    fields::{self, choice, controls, controls_as, field_value, input, select, FIELD},
+    fields::{self, controls, controls_as, field_value, input, select, FIELD},
     privacy_label, team_page, Page, REPOSITORY_CHOICE_LIMIT,
 };
 use crate::webui::{
@@ -73,27 +73,27 @@ pub(super) fn permission_name(permission: i16) -> &'static str {
 
 fn privacy_options() -> Vec<SelectOption> {
     vec![
-        choice("visible", privacy_label("visible")),
-        choice("secret", privacy_label("secret")),
+        SelectOption::new("visible", privacy_label("visible")),
+        SelectOption::new("secret", privacy_label("secret")),
     ]
 }
 fn role_options() -> Vec<SelectOption> {
     vec![
-        choice("member", "Member"),
-        choice("maintainer", "Maintainer"),
+        SelectOption::new("member", "Member"),
+        SelectOption::new("maintainer", "Maintainer"),
     ]
 }
 fn permission_options() -> Vec<SelectOption> {
     (1..=5)
-        .map(|level| choice(&level.to_string(), permission_name(level)))
+        .map(|level| SelectOption::new(level.to_string(), permission_name(level)))
         .collect()
 }
 fn repository_options(page: &Page) -> Vec<SelectOption> {
-    std::iter::once(choice("", "Choose a repository"))
+    std::iter::once(SelectOption::new("", "Choose a repository"))
         .chain(page.repositories.iter().map(|repo| {
-            choice(
-                &repo.repo_id.to_string(),
-                &format!("{}/{}", repo.owner, repo.name),
+            SelectOption::new(
+                repo.repo_id.to_string(),
+                format!("{}/{}", repo.owner, repo.name),
             )
         }))
         .collect()
@@ -124,7 +124,7 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
         }
     };
     rsx! {
-        section { id: "organization-teams", class: "org-section", hidden: page.tab != "teams", aria_labelledby: "organization-teams-title",
+        section { id: "organization-teams", class: "org-section", aria_labelledby: "organization-teams-title",
             div { class: "org-section-header",
                 div {
                     div { class: "title-with-count", h2 { id: "organization-teams-title", "Teams" } span { class: "count-badge", {count_label(page.teams.len(), "team", "teams")} } }
@@ -164,11 +164,11 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
                     header { class: "org-panel-header org-team-detail-header",
                         div {
                             h3 { id: "team-detail-title", "{detail.team.name}" }
-                            p { "@{detail.slug} · " {privacy_label(&detail.team.privacy)} }
-                            if !detail.description.is_empty() { p { "{detail.description}" } }
+                            p { "@{detail.team.slug} · " {privacy_label(&detail.team.privacy)} }
+                            if !detail.team.description.is_empty() { p { "{detail.team.description}" } }
                         }
                         div { class: "org-team-detail-actions",
-                            NavLink { href: team_page::href(&org_name, &detail.slug), class: "btn btn-sm", "View team page" }
+                            NavLink { href: team_page::href(&org_name, &detail.team.slug), class: "btn btn-sm", "View team page" }
                             NavLink { href: navigation(page, page.members_cursor, page.teams_cursor, None), class: "btn btn-sm", "Close" }
                         }
                     }

@@ -1,11 +1,17 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::{check_repo_read_access, check_repo_write_access};
-use crate::backend::api::repos::chrome::{json_page, ApiResult, PageQuery};
-use crate::backend::api::repos::responses::map_commit_status_response;
+use crate::backend::api::repos::access::{
+    check_repo_write_access, find_repository, readable_repository,
+};
+use crate::backend::api::repos::chrome::ApiResult;
+use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::responses::{
+    map_commit_status_response, repo_store_error, repository_unavailable,
+};
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -33,10 +39,6 @@ pub struct CreateCommitStatusRequest {
     pub target_url: Option<String>,
 }
 
-pub(super) fn is_valid_sha1_hex(sha: &str) -> bool {
-    sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 fn is_valid_commit_status_state(state: &str) -> bool {
     matches!(state, "pending" | "success" | "failure" | "error")
 }
@@ -47,26 +49,8 @@ pub async fn list_commit_statuses(
     headers: HeaderMap,
     Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<CommitStatusResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-    if !is_valid_sha1_hex(&sha) {
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
+    if !crate::backend::git::is_full_commit_id(&sha) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -86,15 +70,7 @@ pub async fn list_commit_statuses(
         limit as i64,
     )
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::new(
-                "database_error",
-                "Repository operation is unavailable",
-            )),
-        )
-    })?;
+    .map_err(|_| repository_unavailable())?;
 
     Ok(Json(status_responses(&state.pool, statuses).await?))
 }
@@ -140,26 +116,10 @@ pub async fn create_commit_status(
     Json(req): Json<CreateCommitStatusRequest>,
 ) -> Result<(StatusCode, Json<CommitStatusResponse>), (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
 
-    check_repo_write_access(&state.pool, &repository, &headers).await?;
-    if !is_valid_sha1_hex(&sha) {
+    check_repo_write_access(&state.pool, &repository, &user).await?;
+    if !crate::backend::git::is_full_commit_id(&sha) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -211,6 +171,12 @@ pub async fn create_commit_status(
         .as_deref()
         .map(str::trim)
         .filter(|v| !v.is_empty());
+
+    // A status belongs to a commit of this repository.
+    repo_store(&repository, state.cluster.as_ref())
+        .commit(&sha)
+        .await
+        .map_err(|error| repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE))?;
 
     let status = db::repositories::protection::upsert_commit_status(
         &state.pool,

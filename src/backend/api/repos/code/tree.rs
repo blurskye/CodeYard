@@ -1,6 +1,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::{
     branch_name, commit, default_ref, load_refs_from_repo, ref_names_under, resolve,
     root_if_missing, store_error, Loaded,
@@ -8,7 +8,6 @@ use crate::backend::api::repos::chrome::{
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::api::repos::responses::CommitResponse;
 use crate::backend::app::AppState;
-use crate::backend::db;
 use crate::backend::repositories::languages as repo_languages;
 use crate::backend::repositories::releases;
 use crate::backend::repositories::store::{repo_store, RepoStore, TreeEntry};
@@ -69,44 +68,7 @@ pub async fn get_tree(
     Path((owner, repo, git_ref, path)): Path<(String, String, String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<TreeEntryResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-
-    let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
-    if refs.is_empty() {
-        return Ok(Json(Vec::new()));
-    }
-
-    let tree = repo_store(&repository, state.cluster.as_ref())
-        .tree(&git_ref, &path)
-        .await
-        .map_err(|e| {
-            crate::backend::api::repos::responses::repo_store_error(
-                e,
-                StatusCode::INTERNAL_SERVER_ERROR,
-            )
-        })?;
-
-    Ok(Json(
-        tree.into_iter().map(TreeEntryResponse::from).collect(),
-    ))
+    tree_entries(&state, &headers, (&owner, &repo), &git_ref, &path).await
 }
 
 pub async fn get_tree_root(
@@ -114,33 +76,26 @@ pub async fn get_tree_root(
     Path((owner, repo, git_ref)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<TreeEntryResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
+    tree_entries(&state, &headers, (&owner, &repo), &git_ref, "").await
+}
 
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+/// The entries of the folder at `path`, or none for a repository without refs.
+async fn tree_entries(
+    state: &AppState,
+    headers: &HeaderMap,
+    (owner, repo): (&str, &str),
+    git_ref: &str,
+    path: &str,
+) -> Result<Json<Vec<TreeEntryResponse>>, (StatusCode, Json<ApiError>)> {
+    let repository = readable_repository(&state.pool, owner, repo, headers).await?;
 
-    let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
+    let refs = load_refs_from_repo(state, &repository).await?;
     if refs.is_empty() {
         return Ok(Json(Vec::new()));
     }
 
     let tree = repo_store(&repository, state.cluster.as_ref())
-        .tree(&git_ref, "")
+        .tree(git_ref, path)
         .await
         .map_err(|e| {
             crate::backend::api::repos::responses::repo_store_error(

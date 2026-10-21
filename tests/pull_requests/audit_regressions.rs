@@ -1,6 +1,6 @@
 //! PR read budgets, revision checks and metadata projections on both databases.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
-use crate::support::{database::Database, fake_webui_bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
@@ -42,7 +42,7 @@ impl World {
     async fn new(pg: bool) -> Self {
         fake_webui_bundle::install();
         let database = Database::new(pg).await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let alice_id = database.actor("alice").await;
         let bob_id = database.actor("bob").await;
         let root = tempfile::tempdir().unwrap();

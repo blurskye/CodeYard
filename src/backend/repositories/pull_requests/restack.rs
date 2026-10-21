@@ -3,7 +3,7 @@
 //! transaction after all layers have replayed, so a conflict or a failed check moves nothing.
 
 use super::merge::{open_chain, prepare_error};
-use super::{actor, branches_moved, require_write, OperationError};
+use super::{actor, branches_moved, database_error, require_write, OperationError};
 use crate::backend::ci::{CiRuns, RefUpdate};
 use crate::backend::db;
 use crate::backend::db::models::PullRequest;
@@ -46,7 +46,7 @@ pub async fn rebase_stack(
     require_write(pool, &user, &repository).await?;
     if repository.is_archived {
         return Err(OperationError::Denied {
-            code: "archived",
+            code: "repository_archived",
             message: "Archived repositories cannot be restacked.".into(),
         });
     }
@@ -482,13 +482,6 @@ fn publish_failure(error: RepoError) -> OperationError {
         }
     } else {
         git_unavailable(error)
-    }
-}
-
-fn database_error<E>(_error: E) -> OperationError {
-    OperationError::Unavailable {
-        code: "database_error",
-        message: "Collaboration storage is temporarily unavailable".into(),
     }
 }
 

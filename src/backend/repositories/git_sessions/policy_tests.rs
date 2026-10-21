@@ -361,6 +361,10 @@ mod fixture {
                     super::super::super::ReceiveSession {
                         repo_id,
                         path: &path,
+                        // Unit tests are not the application, so CI names the built binary.
+                        executable: std::env::var_os("GITSERV_TEST_OPENSSH_HELPER")
+                            .expect("set GITSERV_TEST_OPENSSH_HELPER to the integrated application")
+                            .into(),
                         session,
                     },
                     GitStreams {
@@ -1857,7 +1861,11 @@ mod fixture {
             if matches!(change, "delete" | "recreate") {
                 fixture.request = request(&fixture.path, &first.to_string(), ZERO_SHA);
                 let output = fixture.receive().await.unwrap().unwrap();
-                assert!(String::from_utf8_lossy(&output).contains("ok refs/heads/topic"));
+                assert!(
+                    String::from_utf8_lossy(&output).contains("ok refs/heads/topic"),
+                    "{}",
+                    String::from_utf8_lossy(&output)
+                );
             }
             if change != "delete" {
                 let old = if matches!(change, "recreate" | "accepted-delete") {

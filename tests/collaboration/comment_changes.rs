@@ -6,16 +6,12 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, db::models::AccessLevel,
-    storage::ObjectStore,
-};
+use codeyard::backend::{db, db::models::AccessLevel};
 use database::Database;
 use pulls::Client;
 use serde_json::json;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// `alice/proj` is public and alice owns it. bob has write access, carol maintains the repository
@@ -32,7 +28,7 @@ struct World {
 async fn setup(pg: bool) -> World {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let carol_id = database.actor("carol").await;
@@ -61,14 +57,7 @@ async fn setup(pg: bool) -> World {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        database.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;
     let bob = Client::login(&router, database.pool(), bob_id).await;
     let carol = Client::login(&router, database.pool(), carol_id).await;
@@ -81,17 +70,6 @@ async fn setup(pg: bool) -> World {
         carol,
         dave,
     }
-}
-
-/// The id of the comment a redirect points at, from the `marker` in its location.
-fn id_after(location: Option<&str>, marker: &str) -> i64 {
-    let location = location.expect("a redirect");
-    location
-        .rsplit_once(marker)
-        .unwrap_or_else(|| panic!("{marker} in {location}"))
-        .1
-        .parse()
-        .unwrap()
 }
 
 async fn comment(client: &Client, path: &str, body: &str) -> i64 {
@@ -205,7 +183,7 @@ async fn edit_and_delete_rules(pg: bool) {
         "{}",
         own_removed.text()
     );
-    let (_, page) = bob.page(issue).await;
+    let page = bob.page_ok(issue).await;
     assert!(!page.contains(&format!("comment-{theirs}")), "{page}");
     assert!(!page.contains(&format!("comment-{own}")), "{page}");
 
@@ -303,7 +281,7 @@ async fn pull_request_comment_rules(pg: bool) {
         )
         .await;
     assert!(ours.status.is_redirection(), "{}", ours.text());
-    let alices = id_after(ours.location.as_deref(), "#comment-");
+    let alices = ours.id_after("#comment-");
     let theirs = world
         .bob
         .form_reply(
@@ -312,7 +290,7 @@ async fn pull_request_comment_rules(pg: bool) {
         )
         .await;
     assert!(theirs.status.is_redirection(), "{}", theirs.text());
-    let bobs = id_after(theirs.location.as_deref(), "#comment-");
+    let bobs = theirs.id_after("#comment-");
 
     refused(
         &world.bob,

@@ -311,87 +311,8 @@ async fn up_to_date_merge_makes_a_merge_commit_and_conflicts_are_honest() {
     database.close().await;
 }
 
-struct TestDb {
-    pool: db::DbPool,
-    raw: sqlx::PgPool,
-    schema: String,
-    url: String,
-}
-impl Drop for TestDb {
-    fn drop(&mut self) {
-        let fixture_pool = self.pool.clone();
-        let schema = self.schema.clone();
-        let url = self.url.clone();
-        let result = std::thread::spawn(move || {
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(async move {
-                    tokio::time::timeout(std::time::Duration::from_secs(10), fixture_pool.close())
-                        .await
-                        .map_err(|_| sqlx::Error::PoolTimedOut)?;
-                    let options: sqlx::postgres::PgConnectOptions = url.parse()?;
-                    let pool = sqlx::postgres::PgPoolOptions::new()
-                        .max_connections(1)
-                        .connect_with(
-                            options.options([("lock_timeout", "5s"), ("statement_timeout", "10s")]),
-                        )
-                        .await?;
-                    let result = sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
-                        .execute(&pool)
-                        .await;
-                    pool.close().await;
-                    result.map(|_| ()).map_err(anyhow::Error::from)
-                })
-        })
-        .join();
-        if !matches!(result, Ok(Ok(()))) {
-            if std::thread::panicking() {
-                eprintln!("production_git fixture cleanup failed");
-            } else {
-                panic!("production_git fixture cleanup failed");
-            }
-        }
-    }
-}
-async fn database() -> TestDb {
-    let url = std::env::var("GITSERV_TEST_DATABASE_URL")
-        .expect("required disposable PostgreSQL fixture URL");
-    let parsed = url::Url::parse(&url).expect("valid fixture URL");
-    assert!(
-        matches!(parsed.scheme(), "postgres" | "postgresql")
-            && parsed.path() == "/gitserv_test"
-            && parsed.query().is_none()
-            && parsed.fragment().is_none(),
-        "only explicitly owned gitserv_test DB is allowed"
-    );
-    let schema = format!("production_git_{}", Uuid::new_v4().simple());
-    let admin = sqlx::postgres::PgPoolOptions::new()
-        .connect(&url)
-        .await
-        .expect("required disposable PostgreSQL is unavailable");
-    sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
-        .execute(&admin)
-        .await
-        .unwrap();
-    let mut fixture = TestDb {
-        pool: admin.clone().into(),
-        raw: admin.clone(),
-        schema,
-        url,
-    };
-    admin.close().await;
-    fixture.raw = sqlx::postgres::PgPoolOptions::new()
-        .connect(&format!(
-            "{}?options=-csearch_path%3D{}",
-            fixture.url, fixture.schema
-        ))
-        .await
-        .unwrap();
-    fixture.pool = fixture.raw.clone().into();
-    db::run_migrations(&fixture.pool)
-        .await
-        .expect("required fixture migrations");
-    fixture
+async fn database() -> native::PostgresDatabase {
+    native::PostgresDatabase::new().await
 }
 async fn user(pool: &db::DbPool, label: &str) -> db::models::User {
     db::users::accounts::create_user(pool, &format!("{label}_{}", Uuid::new_v4().simple()), None)

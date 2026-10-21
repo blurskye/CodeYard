@@ -4,22 +4,17 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 
 use crate::support::database;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
+use codeyard::backend::db;
 use database::Database;
 use pulls::Client;
 use serde_json::Value;
-use std::sync::Arc;
 
 async fn contract(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let admin_id = f.actor("admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin_id])
         .await;
@@ -49,14 +44,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let admin = Client::login(&router, f.pool(), admin_id).await;
     let (status, accounts) = admin
         .api("GET", "/api/auth/admin/accounts", Value::Null)

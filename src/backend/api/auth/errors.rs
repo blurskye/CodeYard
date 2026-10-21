@@ -1,6 +1,6 @@
 //! HTTP projection of concrete identity operation failures. No driver text escapes.
 
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::identity::accounts::{
     BanError, EmailChangeError, ManagedAccountError, PasswordChangeError, RoleError,
     SignupReviewError,
@@ -14,33 +14,26 @@ use crate::backend::identity::sessions::{AccountAuthorityError, SessionIssueErro
 use crate::backend::identity::setup::SetupError;
 use crate::backend::identity::two_factor::TwoFactorError;
 use axum::http::StatusCode;
-use axum::Json;
 
-type Failure = (StatusCode, Json<ApiError>);
-
-fn failure(status: StatusCode, code: &str, message: &str) -> Failure {
-    (status, Json(ApiError::new(code, message)))
-}
-
-pub(crate) fn database_failure() -> Failure {
-    failure(
+pub(crate) fn database_failure() -> ApiFailure {
+    ApiError::failure(
         StatusCode::SERVICE_UNAVAILABLE,
         "database_unavailable",
         "Account storage is temporarily unavailable",
     )
 }
 
-pub(crate) fn session_failure() -> Failure {
-    failure(
+pub(crate) fn session_failure() -> ApiFailure {
+    ApiError::failure(
         StatusCode::SERVICE_UNAVAILABLE,
         "session_unavailable",
         "Session storage is temporarily unavailable",
     )
 }
 
-pub(crate) fn admission_failure(error: AdmissionError) -> Failure {
+pub(crate) fn admission_failure(error: AdmissionError) -> ApiFailure {
     match error {
-        AdmissionError::Limited => failure(
+        AdmissionError::Limited => ApiError::failure(
             StatusCode::TOO_MANY_REQUESTS,
             "rate_limited",
             "Too many attempts. Try again later.",
@@ -49,17 +42,17 @@ pub(crate) fn admission_failure(error: AdmissionError) -> Failure {
     }
 }
 
-fn authentication_unavailable() -> Failure {
-    failure(
+fn authentication_unavailable() -> ApiFailure {
+    ApiError::failure(
         StatusCode::SERVICE_UNAVAILABLE,
         "authentication_unavailable",
         "Authentication is temporarily unavailable",
     )
 }
 
-fn password_failure(error: PasswordError) -> Failure {
+fn password_failure(error: PasswordError) -> ApiFailure {
     match error {
-        PasswordError::InvalidInput => failure(
+        PasswordError::InvalidInput => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "Password exceeds supported bounds",
@@ -68,7 +61,7 @@ fn password_failure(error: PasswordError) -> Failure {
     }
 }
 
-fn input_failure(error: AccountInputError) -> Failure {
+fn input_failure(error: AccountInputError) -> ApiFailure {
     let message = match error {
         AccountInputError::UsernameBounds => {
             "Username must be at least 3 bytes and at most 255 characters"
@@ -80,33 +73,33 @@ fn input_failure(error: AccountInputError) -> Failure {
         AccountInputError::PasswordBounds => "Password must be between 8 and 1024 bytes",
         AccountInputError::EmailBounds => "Email exceeds supported bounds",
     };
-    failure(StatusCode::BAD_REQUEST, "validation_error", message)
+    ApiError::failure(StatusCode::BAD_REQUEST, "validation_error", message)
 }
 
-fn invalid_credentials() -> Failure {
-    failure(
+fn invalid_credentials() -> ApiFailure {
+    ApiError::failure(
         StatusCode::UNAUTHORIZED,
         "unauthorized",
         "Invalid username or password",
     )
 }
 
-pub(crate) fn session_issue_failure(error: SessionIssueError) -> Failure {
+pub(crate) fn session_issue_failure(error: SessionIssueError) -> ApiFailure {
     match error {
-        SessionIssueError::InvalidInitiator => failure(StatusCode::BAD_REQUEST, "invalid_session_cookie", "Clear malformed or duplicate session cookies before signing in"),
-        SessionIssueError::Unavailable => failure(StatusCode::SERVICE_UNAVAILABLE, "session_unavailable", "Session storage is temporarily unavailable; completed setup or registration remains committed"),
-        SessionIssueError::Denied => failure(StatusCode::CONFLICT, "session_error", "Could not issue session; sign out of an active session or retry signing in"),
+        SessionIssueError::InvalidInitiator => ApiError::failure(StatusCode::BAD_REQUEST, "invalid_session_cookie", "Clear malformed or duplicate session cookies before signing in"),
+        SessionIssueError::Unavailable => ApiError::failure(StatusCode::SERVICE_UNAVAILABLE, "session_unavailable", "Session storage is temporarily unavailable; completed setup or registration remains committed"),
+        SessionIssueError::Denied => ApiError::failure(StatusCode::CONFLICT, "session_error", "Could not issue session; sign out of an active session or retry signing in"),
     }
 }
 
-pub(crate) fn login_failure(error: LoginError) -> Failure {
+pub(crate) fn login_failure(error: LoginError) -> ApiFailure {
     match error {
-        LoginError::CredentialsBounds => failure(
+        LoginError::CredentialsBounds => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "Credentials exceed supported bounds",
         ),
-        LoginError::SetupRequired => failure(
+        LoginError::SetupRequired => ApiError::failure(
             StatusCode::PRECONDITION_REQUIRED,
             "setup_required",
             "Node setup is required before signing in",
@@ -115,19 +108,21 @@ pub(crate) fn login_failure(error: LoginError) -> Failure {
         LoginError::Admission(error) => admission_failure(error),
         LoginError::Password(error) => password_failure(error),
         LoginError::InvalidCredentials => invalid_credentials(),
-        LoginError::Banned => failure(StatusCode::FORBIDDEN, "forbidden", "Account is banned"),
+        LoginError::Banned => {
+            ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "Account is banned")
+        }
         LoginError::Session(error) => session_issue_failure(error),
-        LoginError::TwoFactorUnavailable => failure(
+        LoginError::TwoFactorUnavailable => ApiError::failure(
             StatusCode::SERVICE_UNAVAILABLE,
             "two_factor_unavailable",
             "Two-factor sign-in is unavailable on this node",
         ),
-        LoginError::PendingLoginExpired => failure(
+        LoginError::PendingLoginExpired => ApiError::failure(
             StatusCode::UNAUTHORIZED,
             "two_factor_expired",
             "Your sign-in expired. Sign in again.",
         ),
-        LoginError::InvalidTwoFactorCode => failure(
+        LoginError::InvalidTwoFactorCode => ApiError::failure(
             StatusCode::UNAUTHORIZED,
             "invalid_two_factor_code",
             "That code does not match. Check your app and try again.",
@@ -136,17 +131,17 @@ pub(crate) fn login_failure(error: LoginError) -> Failure {
 }
 
 /// The JSON API does not complete two-factor sign-in, so a password is not enough for it.
-pub(crate) fn two_factor_required_failure() -> Failure {
-    failure(
+pub(crate) fn two_factor_required_failure() -> ApiFailure {
+    ApiError::failure(
         StatusCode::FORBIDDEN,
         "two_factor_required",
         "This account signs in with two-factor authentication on the web. Sign in on the web for the API; use an access token for Git.",
     )
 }
 
-pub(crate) fn two_factor_failure(error: TwoFactorError) -> Failure {
+pub(crate) fn two_factor_failure(error: TwoFactorError) -> ApiFailure {
     match error {
-        TwoFactorError::KeyUnavailable => failure(
+        TwoFactorError::KeyUnavailable => ApiError::failure(
             StatusCode::SERVICE_UNAVAILABLE,
             "two_factor_unavailable",
             "Two-factor authentication needs the secrets master key on this node",
@@ -154,32 +149,32 @@ pub(crate) fn two_factor_failure(error: TwoFactorError) -> Failure {
         TwoFactorError::Unavailable => database_failure(),
         TwoFactorError::Admission(error) => admission_failure(error),
         TwoFactorError::Password(error) => password_failure(error),
-        TwoFactorError::InvalidPassword => failure(
+        TwoFactorError::InvalidPassword => ApiError::failure(
             StatusCode::UNAUTHORIZED,
             "invalid_password",
             "Current password is incorrect",
         ),
-        TwoFactorError::PasswordRequired => failure(
+        TwoFactorError::PasswordRequired => ApiError::failure(
             StatusCode::FORBIDDEN,
             "password_required",
             "Two-factor enrollment requires an account password",
         ),
-        TwoFactorError::InvalidCode => failure(
+        TwoFactorError::InvalidCode => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "invalid_two_factor_code",
             "That code does not match. Check your app and try again.",
         ),
-        TwoFactorError::AlreadyEnabled => failure(
+        TwoFactorError::AlreadyEnabled => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "Two-factor authentication is already on",
         ),
-        TwoFactorError::NotEnabled => failure(
+        TwoFactorError::NotEnabled => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "Two-factor authentication is not on",
         ),
-        TwoFactorError::SetupExpired => failure(
+        TwoFactorError::SetupExpired => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "This setup expired. Start again.",
@@ -188,23 +183,23 @@ pub(crate) fn two_factor_failure(error: TwoFactorError) -> Failure {
     }
 }
 
-pub(crate) fn registration_failure(error: RegistrationError) -> Failure {
+pub(crate) fn registration_failure(error: RegistrationError) -> ApiFailure {
     match error {
         RegistrationError::Input(error) => input_failure(error),
         RegistrationError::Admission(error) => admission_failure(error),
         RegistrationError::Password(error) => password_failure(error),
         RegistrationError::AccountUnavailable => database_failure(),
-        RegistrationError::SetupRequired => failure(
+        RegistrationError::SetupRequired => ApiError::failure(
             StatusCode::PRECONDITION_REQUIRED,
             "setup_required",
             "Node setup is required before creating accounts",
         ),
-        RegistrationError::Conflict => failure(
+        RegistrationError::Conflict => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "Account or pending request already exists",
         ),
-        RegistrationError::Denied => failure(
+        RegistrationError::Denied => ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
             "Account creation denied",
@@ -213,48 +208,52 @@ pub(crate) fn registration_failure(error: RegistrationError) -> Failure {
     }
 }
 
-pub(crate) fn setup_failure(error: SetupError) -> Failure {
+pub(crate) fn setup_failure(error: SetupError) -> ApiFailure {
     match error {
         SetupError::Input(error) => input_failure(error),
-        SetupError::InputBounds => failure(StatusCode::BAD_REQUEST, "validation_error", "Setup input exceeds supported bounds"),
-        SetupError::InvalidNodeMode => failure(StatusCode::BAD_REQUEST, "validation_error", "Node mode must be either 'public' or 'private'"),
-        SetupError::InvalidAdminSecret => failure(StatusCode::FORBIDDEN, "forbidden", "Invalid admin setup secret"),
+        SetupError::InputBounds => ApiError::failure(StatusCode::BAD_REQUEST, "validation_error", "Setup input exceeds supported bounds"),
+        SetupError::InvalidNodeMode => ApiError::failure(StatusCode::BAD_REQUEST, "validation_error", "Node mode must be either 'public' or 'private'"),
+        SetupError::InvalidAdminSecret => ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "Invalid admin setup secret"),
         SetupError::Admission(error) => admission_failure(error),
         SetupError::Password(error) => password_failure(error),
         SetupError::AccountUnavailable => database_failure(),
-        SetupError::AlreadyCompleted => failure(StatusCode::CONFLICT, "conflict", "Node setup has already been completed; sign in with the account created by setup"),
-        SetupError::ExistingAccounts => failure(StatusCode::CONFLICT, "conflict", "Existing accounts prevent setup; recovery requires the sole active administrator's original credentials"),
+        SetupError::AlreadyCompleted => ApiError::failure(StatusCode::CONFLICT, "conflict", "Node setup has already been completed; sign in with the account created by setup"),
+        SetupError::ExistingAccounts => ApiError::failure(StatusCode::CONFLICT, "conflict", "Existing accounts prevent setup; recovery requires the sole active administrator's original credentials"),
         SetupError::Session(error) => session_issue_failure(error),
     }
 }
 
-fn admin_authority_failure(error: AccountAuthorityError) -> Failure {
+fn admin_authority_failure(error: AccountAuthorityError) -> ApiFailure {
     match error {
-        AccountAuthorityError::NotAuthenticated | AccountAuthorityError::SessionExpired => failure(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "Session expired or not authenticated",
-        ),
+        AccountAuthorityError::NotAuthenticated | AccountAuthorityError::SessionExpired => {
+            ApiError::failure(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Session expired or not authenticated",
+            )
+        }
         AccountAuthorityError::SessionUnavailable => session_failure(),
-        AccountAuthorityError::PasswordChangeRequired => failure(
+        AccountAuthorityError::PasswordChangeRequired => ApiError::failure(
             StatusCode::PRECONDITION_REQUIRED,
             "password_change_required",
             "Change your temporary password before accessing account resources",
         ),
         AccountAuthorityError::AdminRequired => {
-            failure(StatusCode::FORBIDDEN, "forbidden", "Admin access required")
+            ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "Admin access required")
         }
     }
 }
 
-pub(crate) fn password_change_failure(error: PasswordChangeError) -> Failure {
+pub(crate) fn password_change_failure(error: PasswordChangeError) -> ApiFailure {
     match error {
-        PasswordChangeError::Authority(AccountAuthorityError::NotAuthenticated) => failure(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "Not authenticated",
-        ),
-        PasswordChangeError::Authority(AccountAuthorityError::SessionExpired) => failure(
+        PasswordChangeError::Authority(AccountAuthorityError::NotAuthenticated) => {
+            ApiError::failure(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Not authenticated",
+            )
+        }
+        PasswordChangeError::Authority(AccountAuthorityError::SessionExpired) => ApiError::failure(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
             "Session expired or revoked",
@@ -264,13 +263,13 @@ pub(crate) fn password_change_failure(error: PasswordChangeError) -> Failure {
         PasswordChangeError::Admission(error) => admission_failure(error),
         PasswordChangeError::Password(error) => password_failure(error),
         PasswordChangeError::InvalidCredentials => invalid_credentials(),
-        PasswordChangeError::UnchangedPassword => failure(
+        PasswordChangeError::UnchangedPassword => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "Choose a password different from the temporary password",
         ),
         PasswordChangeError::AccountUnavailable => database_failure(),
-        PasswordChangeError::CredentialsChanged => failure(
+        PasswordChangeError::CredentialsChanged => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "Account credentials changed; sign in again",
@@ -278,24 +277,23 @@ pub(crate) fn password_change_failure(error: PasswordChangeError) -> Failure {
     }
 }
 
-pub(crate) fn managed_account_failure(error: ManagedAccountError) -> Failure {
+pub(crate) fn managed_account_failure(error: ManagedAccountError) -> ApiFailure {
     match error {
         ManagedAccountError::Authority(error) => admin_authority_failure(error),
-        ManagedAccountError::PrivateNodeRequired => failure(
+        ManagedAccountError::PrivateNodeRequired => ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
             "Admin user creation is available only in private node mode",
         ),
         ManagedAccountError::Input(error) => input_failure(error),
-        ManagedAccountError::Admission(error) => admission_failure(error),
         ManagedAccountError::Password(error) => password_failure(error),
         ManagedAccountError::AccountUnavailable => database_failure(),
-        ManagedAccountError::Conflict => failure(
+        ManagedAccountError::Conflict => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "Account identity already exists",
         ),
-        ManagedAccountError::Denied => failure(
+        ManagedAccountError::Denied => ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
             "Account creation is no longer authorized",
@@ -303,57 +301,59 @@ pub(crate) fn managed_account_failure(error: ManagedAccountError) -> Failure {
     }
 }
 
-pub(crate) fn signup_review_failure(error: SignupReviewError) -> Failure {
+pub(crate) fn signup_review_failure(error: SignupReviewError) -> ApiFailure {
     match error {
         SignupReviewError::Authority(error) => admin_authority_failure(error),
-        SignupReviewError::PrivateNodeRequired => failure(
+        SignupReviewError::PrivateNodeRequired => ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
             "Signup request review is available only in private node mode",
         ),
-        SignupReviewError::InvalidDecision => failure(
+        SignupReviewError::InvalidDecision => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "Action must be either 'approve' or 'reject'",
         ),
-        SignupReviewError::Denied => failure(
+        SignupReviewError::Denied => ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
             "Current administrator authority required",
         ),
-        SignupReviewError::Missing => failure(
+        SignupReviewError::Missing => ApiError::failure(
             StatusCode::NOT_FOUND,
             "not_found",
             "Signup request not found",
         ),
-        SignupReviewError::Processed => failure(
+        SignupReviewError::Processed => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "Signup request already processed",
         ),
-        SignupReviewError::Conflict => failure(
+        SignupReviewError::Conflict => ApiError::failure(
             StatusCode::CONFLICT, "conflict", "Account identity is already in use; reject this request and ask the applicant to register again",
         ),
         SignupReviewError::AccountUnavailable => database_failure(),
     }
 }
 
-pub(crate) fn ban_failure(error: BanError) -> Failure {
+pub(crate) fn ban_failure(error: BanError) -> ApiFailure {
     match error {
         BanError::Authority(error) => admin_authority_failure(error),
         BanError::AccountUnavailable => database_failure(),
-        BanError::Denied => failure(
+        BanError::Denied => ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
             "Current administrator authority required",
         ),
-        BanError::Missing => failure(StatusCode::NOT_FOUND, "not_found", "User not found"),
-        BanError::SelfBan => failure(
+        BanError::Missing => {
+            ApiError::failure(StatusCode::NOT_FOUND, "not_found", "User not found")
+        }
+        BanError::SelfBan => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "You cannot ban your own account",
         ),
-        BanError::LastAdmin => failure(
+        BanError::LastAdmin => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "Cannot ban the last active admin",
@@ -361,24 +361,24 @@ pub(crate) fn ban_failure(error: BanError) -> Failure {
     }
 }
 
-pub(crate) fn email_failure(error: EmailChangeError) -> Failure {
+pub(crate) fn email_failure(error: EmailChangeError) -> ApiFailure {
     match error {
         EmailChangeError::Authority(error) => {
             password_change_failure(PasswordChangeError::Authority(error))
         }
-        EmailChangeError::InvalidEmail => failure(
+        EmailChangeError::InvalidEmail => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "Enter a valid email address",
         ),
         EmailChangeError::Admission(error) => admission_failure(error),
         EmailChangeError::Password(error) => password_failure(error),
-        EmailChangeError::InvalidCredentials => failure(
+        EmailChangeError::InvalidCredentials => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "invalid_credentials",
             "Current password is incorrect",
         ),
-        EmailChangeError::Taken => failure(
+        EmailChangeError::Taken => ApiError::failure(
             StatusCode::CONFLICT,
             "conflict",
             "That email address is already used by another account",
@@ -387,17 +387,19 @@ pub(crate) fn email_failure(error: EmailChangeError) -> Failure {
     }
 }
 
-pub(crate) fn role_failure(error: RoleError) -> Failure {
+pub(crate) fn role_failure(error: RoleError) -> ApiFailure {
     match error {
         RoleError::Authority(error) => admin_authority_failure(error),
         RoleError::AccountUnavailable => database_failure(),
-        RoleError::Denied => failure(
+        RoleError::Denied => ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
             "Current administrator authority required",
         ),
-        RoleError::Missing => failure(StatusCode::NOT_FOUND, "not_found", "User not found"),
-        RoleError::SelfChange => failure(
+        RoleError::Missing => {
+            ApiError::failure(StatusCode::NOT_FOUND, "not_found", "User not found")
+        }
+        RoleError::SelfChange => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",
             "You cannot change your own administrator role",
@@ -408,6 +410,7 @@ pub(crate) fn role_failure(error: RoleError) -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Json;
 
     #[test]
     fn deliberate_identity_errors_keep_their_http_meaning() {

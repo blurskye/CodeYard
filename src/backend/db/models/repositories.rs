@@ -160,20 +160,6 @@ pub struct RepoLanguage {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct RepoContributor {
-    pub id: i64,
-    pub repo_id: i64,
-    pub user_id: Option<i64>,
-    pub email: String,
-    pub name: String,
-    pub commits_count: i32,
-    pub additions: i32,
-    pub deletions: i32,
-    pub avatar_url: Option<String>,
-    pub updated_at: DateTime<Utc>,
-}
-
 #[derive(Debug, Clone, FromRow)]
 pub struct RepoSecret {
     pub id: i64,
@@ -209,9 +195,6 @@ impl AccessLevel {
     pub fn can_read(&self) -> bool {
         *self >= AccessLevel::Read
     }
-    pub fn can_triage(&self) -> bool {
-        *self >= AccessLevel::Triage
-    }
     pub fn can_write(&self) -> bool {
         *self >= AccessLevel::Write
     }
@@ -223,6 +206,27 @@ impl AccessLevel {
     }
     pub fn is_owner(&self) -> bool {
         *self == AccessLevel::Owner
+    }
+    /// The name the API and the settings pages show for the level.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AccessLevel::None => "none",
+            AccessLevel::Read => "read",
+            AccessLevel::Triage => "triage",
+            AccessLevel::Write => "write",
+            AccessLevel::Maintain => "maintain",
+            AccessLevel::Admin => "admin",
+            AccessLevel::Owner => "owner",
+        }
+    }
+    /// The level a collaborator can be given, from its name.
+    pub fn parse_collaborator(name: &str) -> Option<Self> {
+        match name {
+            "read" => Some(AccessLevel::Read),
+            "write" => Some(AccessLevel::Write),
+            "admin" => Some(AccessLevel::Admin),
+            _ => None,
+        }
     }
 }
 

@@ -107,16 +107,6 @@ pub async fn list_user_repositories(pool: &SqlitePool, user_id: i64) -> Result<V
     Ok(repos)
 }
 
-pub async fn list_profile_repositories(
-    pool: &SqlitePool,
-    user_id: i64,
-    include_private: bool,
-    offset: i64,
-) -> Result<Vec<Repository>> {
-    Ok(sqlx::query_as("SELECT * FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND (?2 OR NOT is_private) ORDER BY name,id LIMIT 30 OFFSET ?3")
-        .bind(user_id).bind(include_private).bind(offset).fetch_all(pool).await?)
-}
-
 /// How many repositories `user_id` owns that a profile lists. Private ones are counted only when
 /// `include_private` is set, which is the owner's own view.
 pub async fn count_user_repositories(
@@ -411,38 +401,6 @@ pub async fn update_repo_size(pool: &SqlitePool, repo_id: i64, size: i64) -> Res
     Ok(())
 }
 
-pub async fn update_repo_default_branch_and_size(
-    pool: &SqlitePool,
-    repo_id: i64,
-    default_branch: &str,
-    size_bytes: i64,
-) -> Result<()> {
-    sqlx::query(
-        "UPDATE repositories SET default_branch = ?1, size_bytes = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?3",
-    )
-    .bind(default_branch)
-    .bind(size_bytes)
-    .bind(repo_id)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-pub async fn insert_repo_storage_snapshot(
-    pool: &SqlitePool,
-    repo_id: i64,
-    size_bytes: i64,
-) -> Result<()> {
-    sqlx::query("INSERT INTO repo_storage_history (repo_id, size_bytes) VALUES (?1, ?2)")
-        .bind(repo_id)
-        .bind(size_bytes)
-        .execute(pool)
-        .await?;
-
-    Ok(())
-}
-
 /// Deletes the repository row (child rows cascade) and returns the row as it was
 /// deleted, so the caller removes the files where that row says they are.
 pub async fn delete_repository(
@@ -466,7 +424,8 @@ pub async fn delete_repository(
             .await?;
     let deleted = deleted.ok_or(Refusal::Denied)?;
     for file in files {
-        crate::backend::db::sqlite::files::delete_unlinked_release_file(&mut tx, file).await?;
+        crate::backend::db::sqlite::files::delete_unreferenced_file_in_transaction(&mut tx, file)
+            .await?;
     }
     tx.commit().await?;
     Ok(deleted)
@@ -554,6 +513,11 @@ pub async fn transfer_repository(
             .await?;
     }
     if changed {
+        // Team grants belong to the former owner's teams and must not come back later.
+        sqlx::query("DELETE FROM team_repo_access WHERE repo_id=?1")
+            .bind(repo_id)
+            .execute(&mut *tx)
+            .await?;
         let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE repo_id=?1 AND status IN ('queued','running') ORDER BY id")
             .bind(repo_id).fetch_all(&mut *tx).await?;
         super::super::ci::stop_ci_runs(&mut tx, &runs).await?;

@@ -4,8 +4,8 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client as pulls;
 use crate::support::native_database as native;
-use crate::support::pull_requests as pulls;
 use axum::{
     body::{to_bytes, Body},
     http::{header, HeaderMap, Request, StatusCode},
@@ -50,7 +50,7 @@ async fn contract(pg: bool) {
     // The HTML answers below render full pages, which need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let carol_id = f.actor("carol").await;
     let dave_id = f.actor("dave").await;
@@ -281,7 +281,7 @@ async fn request_with_headers(
 async fn cookie_bound_mutations(pg: bool) {
     bundle::install();
     let mut fixture = Database::new(pg).await;
-    fixture.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    fixture.complete_setup().await;
     let alice = fixture.actor("alice").await;
     let bob_id = fixture.actor("bob").await;
     let newcomer = fixture.actor("newcomer").await;
@@ -303,14 +303,7 @@ async fn cookie_bound_mutations(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        fixture.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = fixture.router(root.path()).await;
     let alice = Client::login(&router, fixture.pool(), alice).await;
     let mut bob = Client::login(&router, fixture.pool(), bob_id).await;
     let head = alice.save("main", "README.md", "unborn").await;

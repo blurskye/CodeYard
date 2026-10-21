@@ -1,11 +1,12 @@
-use crate::support::native_database::{NativeDatabase, PostgresDatabase};
+use crate::support::database::Database;
 use codeyard::backend::db::{
     self, files,
     models::{FileReason, FileVisibility},
-    DbPool,
 };
 
-async fn restricted_account_cannot_delete(pool: &DbPool) {
+async fn restricted_account_cannot_delete(pg: bool) {
+    let mut database = Database::new(pg).await;
+    let pool = database.pool();
     let user = db::users::accounts::create_user(pool, "owner", None)
         .await
         .unwrap();
@@ -24,36 +25,18 @@ async fn restricted_account_cannot_delete(pool: &DbPool) {
     .await
     .unwrap();
     for restriction in ["is_banned", "must_change_password"] {
-        match pool {
-            DbPool::Postgres(raw) => {
-                sqlx::query(
-                    "UPDATE users SET is_banned=false,must_change_password=false WHERE id=$1",
-                )
-                .bind(user.id)
-                .execute(raw)
-                .await
-                .unwrap();
-                sqlx::query(&format!("UPDATE users SET {restriction}=true WHERE id=$1"))
-                    .bind(user.id)
-                    .execute(raw)
-                    .await
-                    .unwrap();
-            }
-            DbPool::Sqlite(raw) => {
-                sqlx::query(
-                    "UPDATE users SET is_banned=false,must_change_password=false WHERE id=?",
-                )
-                .bind(user.id)
-                .execute(raw)
-                .await
-                .unwrap();
-                sqlx::query(&format!("UPDATE users SET {restriction}=true WHERE id=?"))
-                    .bind(user.id)
-                    .execute(raw)
-                    .await
-                    .unwrap();
-            }
-        }
+        database
+            .execute(
+                "UPDATE users SET is_banned=false,must_change_password=false WHERE id=$1",
+                &[user.id],
+            )
+            .await;
+        database
+            .execute(
+                &format!("UPDATE users SET {restriction}=true WHERE id=$1"),
+                &[user.id],
+            )
+            .await;
         assert!(matches!(
             files::delete_file(pool, file.id, user.id).await.unwrap(),
             files::DeleteFileOutcome::Denied
@@ -63,16 +46,15 @@ async fn restricted_account_cannot_delete(pool: &DbPool) {
             .unwrap()
             .is_some());
     }
+    database.finish().await;
 }
 
 #[tokio::test]
 async fn deletion_rechecks_account_restrictions_on_sqlite() {
-    let db = NativeDatabase::new().await;
-    restricted_account_cannot_delete(&db.pool).await;
+    restricted_account_cannot_delete(false).await;
 }
 
 #[tokio::test]
 async fn deletion_rechecks_account_restrictions_on_postgres() {
-    let db = PostgresDatabase::new().await;
-    restricted_account_cannot_delete(&db.pool).await;
+    restricted_account_cannot_delete(true).await;
 }

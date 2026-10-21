@@ -1,11 +1,12 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::{access_error, readable_repository};
 use crate::backend::api::repos::chrome::{commit, hex_revision, store_error, Loaded};
 use crate::backend::api::repos::pulls::diff::diff_model;
 use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::store::{repo_store, DiffInfo};
 use crate::webui::pages::repos as view;
 use axum::extract::{Path, State};
@@ -25,25 +26,7 @@ pub async fn get_commit(
     Path((owner, repo, sha)): Path<(String, String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<CommitDetailResponse>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let store = repo_store(&repository, state.cluster.as_ref());
     let commit_info = store.commit(&sha).await.map_err(|e| {
@@ -61,8 +44,7 @@ pub async fn get_commit(
 
     let author = db::users::accounts::get_user_by_email(&state.pool, &commit_info.author_email)
         .await
-        .ok()
-        .flatten()
+        .map_err(|_| access_error(AccessError::Unavailable))?
         .map(|user| AuthorInfo {
             id: Some(user.id),
             username: Some(user.username),

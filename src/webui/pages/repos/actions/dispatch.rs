@@ -5,7 +5,7 @@ use super::{
 use crate::webui::{
     components::{DraftCheckbox, DraftSelect, DraftTextarea, SelectOption},
     navigation::NavLink,
-    pages::repos::chrome::RepoChrome,
+    pages::repos::chrome::{csrf, RepoChrome},
 };
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -171,7 +171,7 @@ pub(super) fn dispatch_menu(menu: DispatchMenu<'_>) -> Element {
                 div { class: "actions-dispatch-menu", p { class: "actions-dispatch-note", "No workflows can be run manually from this branch or tag." } }
             } else {
                 form { method: "post", action: format!("{}/dispatch", menu.base_path), class: "actions-dispatch-menu",
-                    input { r#type: "hidden", name: "csrf_token", value: menu.csrf_token.to_owned() }
+                    {csrf(menu.csrf_token)}
                     if let Some(return_query) = menu.return_query.clone() {
                         input { r#type: "hidden", name: "return_query", value: return_query }
                     }
@@ -240,7 +240,7 @@ pub(super) fn manual_dispatch_form(
             summary { class: "actions-button", "New run" span { " ▾" } }
             form { method: "post", action: format!("{base_path}/dispatch"), class: "actions-dispatch-menu",
                 p { class: "actions-dispatch-note", "Choose a repository and workflow to run." }
-                input { r#type: "hidden", name: "csrf_token", value: csrf_token }
+                {csrf(csrf_token)}
                 label { "Repository owner" input { name: "repo_owner", "value": draft.owner.clone(), required: true } }
                 label { "Repository name" input { name: "repo_name", "value": draft.repository.clone(), required: true, maxlength: "100" } }
                 label { "Branch" input { name: "branch", "value": draft.branch.clone(), required: true, maxlength: "255" } }

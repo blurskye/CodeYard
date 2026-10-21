@@ -3,18 +3,14 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::{db, repositories::lifecycle};
 use codeyard::webui::{app::Page, pages::discovery as view};
 use database::Database;
 use pulls::Client;
 use std::path::Path;
-use std::sync::Arc;
 
 async fn provision(
     pool: &db::DbPool,
@@ -40,7 +36,7 @@ async fn provision(
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -80,14 +76,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
 
     let (status, html) = alice.page("/").await;
@@ -113,20 +102,13 @@ async fn contract(pg: bool) {
 async fn bounded_repository_pages(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("page_owner").await;
     let viewer = f.actor("page_viewer").await;
     f.execute("WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM numbers WHERE n<35) INSERT INTO repositories(owner_kind,owner_user_id,name,is_private,disk_path) SELECT 'user',$1,'bulk-' || n,FALSE,'fixture' FROM numbers", &[owner]).await;
     f.execute("INSERT INTO repositories(owner_kind,owner_user_id,name,is_private,disk_path) VALUES('user',$1,'secret',TRUE,'fixture-secret')", &[owner]).await;
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), owner).await;
     let bob = Client::login(&router, f.pool(), viewer).await;
     let first = home(&alice, "/").await;
@@ -212,7 +194,7 @@ async fn home(client: &Client, path: &str) -> view::HomeModel {
 async fn filter_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -243,14 +225,7 @@ async fn filter_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let own_names = |model: &view::HomeModel| {
         let mut names: Vec<String> = model

@@ -2,17 +2,10 @@
 
 use crate::support::native_database as native;
 
-use codeyard::backend::db::{self, DbPool};
+use codeyard::backend::db;
 use native::{NativeDatabase, PostgresDatabase};
 use sqlx::{PgPool, SqlitePool};
 use uuid::Uuid;
-
-fn postgres(database: &PostgresDatabase) -> &PgPool {
-    match &database.pool {
-        DbPool::Postgres(pool) => pool,
-        DbPool::Sqlite(_) => unreachable!("PostgreSQL fixture"),
-    }
-}
 
 /// Application tables, read from the catalog so a table added later is covered too.
 async fn sqlite_tables(source: &SqlitePool) -> Vec<String> {
@@ -195,7 +188,7 @@ async fn copies_repository_with_a_deleted_creator_to_postgres() {
         .unwrap();
     let copied: i64 =
         sqlx::query_scalar("SELECT created_by_id FROM repositories WHERE name = 'kept'")
-            .fetch_one(postgres(&target))
+            .fetch_one(&target.raw)
             .await
             .unwrap();
     assert_eq!(copied, creator.id);
@@ -223,7 +216,7 @@ async fn copies_every_table_and_value_to_postgres() {
     for table in &tables {
         let expected = sqlite_count(&source.raw, table).await;
         assert_eq!(
-            postgres_count(postgres(&target), table).await,
+            postgres_count(&target.raw, table).await,
             expected,
             "rows in {table}"
         );
@@ -231,7 +224,7 @@ async fn copies_every_table_and_value_to_postgres() {
         assert_eq!(reported.rows, expected, "reported rows in {table}");
     }
 
-    let target_pool = postgres(&target);
+    let target_pool = &target.raw;
     let admin: bool = sqlx::query_scalar("SELECT is_admin FROM users WHERE id = $1")
         .bind(seed.alice)
         .fetch_one(target_pool)
@@ -426,7 +419,7 @@ async fn non_empty_destination_is_refused_and_left_untouched() {
         "{error:#}"
     );
 
-    let target_pool = postgres(&target);
+    let target_pool = &target.raw;
     assert_eq!(postgres_count(target_pool, "users").await, 1);
     assert_eq!(postgres_count(target_pool, "repositories").await, 0);
     assert_eq!(postgres_count(target_pool, "file_reason_limits").await, 8);
@@ -450,7 +443,7 @@ async fn missing_baseline_history_is_refused() {
         format!("{error:#}").contains("migration versions differ"),
         "{error:#}"
     );
-    assert_eq!(postgres_count(postgres(&target), "users").await, 0);
+    assert_eq!(postgres_count(&target.raw, "users").await, 0);
 }
 
 #[tokio::test]
@@ -472,7 +465,7 @@ async fn sqlite_source_checksum_mismatch_is_refused() {
         .expect_err("copy must reject the same checksum as startup");
     assert_eq!(error.to_string(), startup_error.to_string());
     assert!(error.to_string().contains("history/checksum mismatch"));
-    assert_eq!(postgres_count(postgres(&target), "users").await, 0);
+    assert_eq!(postgres_count(&target.raw, "users").await, 0);
     assert_eq!(sqlite_count(&source.raw, "users").await, 1);
     let checksum: String =
         sqlx::query_scalar("SELECT sha256 FROM _gitserv_sqlite_migrations WHERE version = 1")
@@ -495,7 +488,7 @@ async fn postgres_source_checksum_mismatch_is_refused() {
         .await
         .unwrap();
     sqlx::query("UPDATE _gitserv_migrations SET sha256 = 'tampered' WHERE version = 1")
-        .execute(postgres(&source))
+        .execute(&source.raw)
         .await
         .unwrap();
     let startup_error = db::run_migrations(&source.pool).await.unwrap_err();
@@ -509,10 +502,10 @@ async fn postgres_source_checksum_mismatch_is_refused() {
     assert_eq!(error.to_string(), startup_error.to_string());
     assert!(error.to_string().contains("history/checksum mismatch"));
     assert!(!path.exists(), "destination must not be opened");
-    assert_eq!(postgres_count(postgres(&source), "users").await, 1);
+    assert_eq!(postgres_count(&source.raw, "users").await, 1);
     let checksum: String =
         sqlx::query_scalar("SELECT sha256 FROM _gitserv_migrations WHERE version = 1")
-            .fetch_one(postgres(&source))
+            .fetch_one(&source.raw)
             .await
             .unwrap();
     assert_eq!(checksum, "tampered");
@@ -560,7 +553,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
 
     sqlx::query("UPDATE repositories SET storage_node_id = NULL WHERE id = $1")
         .bind(repo.id)
-        .execute(postgres(&source))
+        .execute(&source.raw)
         .await
         .unwrap();
     db::copy::copy_database(&source.connection_url(), &url)
@@ -601,7 +594,7 @@ async fn failed_copy_leaves_destination_empty() {
         .expect_err("orphaned star breaks the copy");
     assert!(format!("{error:#}").contains("foreign key"), "{error:#}");
 
-    let target_pool = postgres(&target);
+    let target_pool = &target.raw;
     for table in sqlite_tables(&source.raw).await {
         let expected = if table == "file_reason_limits" { 8 } else { 0 };
         assert_eq!(
@@ -685,7 +678,7 @@ async fn cli_reads_urls_from_environment_and_refuses_passwords_in_arguments() {
     }
 }
 
-async fn create_repository(pool: &DbPool, owner: i64, name: &str) -> db::models::Repository {
+async fn create_repository(pool: &db::DbPool, owner: i64, name: &str) -> db::models::Repository {
     db::repositories::records::create_repository(
         pool,
         owner,

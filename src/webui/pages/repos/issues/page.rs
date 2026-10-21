@@ -74,7 +74,6 @@ impl Repository {
 pub struct ListCounts {
     pub open: i64,
     pub closed: i64,
-    pub all: i64,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -174,13 +173,13 @@ pub struct Item {
     /// The usernames assigned to the issue or pull request.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assignees: Vec<String>,
-    /// The milestone of an issue. Pull requests have none.
+    /// The milestone of the issue or pull request.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub milestone: Option<Milestone>,
     /// The comments on the issue or pull request, for the counts in the lists and tabs.
     #[serde(default)]
     pub comment_count: i64,
-    /// Whether the viewer may tick the task boxes of the body: its author or a writer.
+    /// Whether the viewer may tick the task boxes of the body: a writer.
     #[serde(default)]
     pub can_tick: bool,
     /// The task boxes in the body and how many are ticked. Lists show it; the detail page does not.
@@ -406,13 +405,14 @@ pub struct Event {
     pub previous: String,
     pub created: String,
 }
-/// Owned presentation data only. Permission flags select controls; they are never
-/// trusted authority for a backend mutation. The CSRF value is the same public form
-/// token already present in HTML, not a session credential or persistence record.
+
 fn first_page() -> usize {
     1
 }
 
+/// The pages of the issue and pull request views, as data. Permission flags select controls; the
+/// server checks them again when a form is sent. The CSRF value is the form token that is already
+/// in the page's HTML.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Page {
     List {
@@ -464,7 +464,7 @@ pub enum Page {
         /// Users who may still be assigned, offered to a writer.
         #[serde(default)]
         assignable: Vec<String>,
-        /// The repository's milestones, offered to a writer on an issue.
+        /// The repository's milestones, offered to a writer.
         #[serde(default)]
         milestones: Vec<Milestone>,
     },

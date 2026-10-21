@@ -10,15 +10,9 @@ use std::path::{Path, PathBuf};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::time::{timeout, Duration};
 
-extern "C" {
-    fn flock(fd: std::os::raw::c_int, operation: std::os::raw::c_int) -> std::os::raw::c_int;
-}
-
-pub(crate) fn effective_uid() -> Result<u32> {
-    // Unlike UID environment variables or file ownership, peer_cred observes
-    // this process's effective credentials, including setuid transitions.
-    let (left, _right) = UnixStream::pair()?;
-    Ok(left.peer_cred()?.uid())
+pub(crate) fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no arguments and cannot fail.
+    unsafe { libc::geteuid() }
 }
 
 /// A new temporary directory only this user can enter. `tempfile` applies the
@@ -112,8 +106,8 @@ pub(crate) async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, Socke
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .custom_flags(0x20000)
-        .open(PathBuf::from(lock_name))?; // O_NOFOLLOW
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(PathBuf::from(lock_name))?;
     let meta = lock.metadata()?;
     ensure!(
         meta.is_file()
@@ -123,8 +117,8 @@ pub(crate) async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, Socke
             && meta.len() == 0,
         "unsafe gateway lock"
     );
-    // SAFETY: the owned fd is valid; Linux LOCK_EX|LOCK_NB does not retain pointers.
-    if unsafe { flock(lock.as_raw_fd(), 2 | 4) } != 0 {
+    // SAFETY: the owned fd is valid and flock keeps no pointers.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         bail!("gateway socket is already owned by another process");
     }
     match std::fs::symlink_metadata(socket) {
@@ -157,7 +151,7 @@ pub(crate) async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, Socke
 }
 
 pub(crate) async fn connect(socket: &Path) -> Result<UnixStream> {
-    let uid = effective_uid()?;
+    let uid = effective_uid();
     let owner = std::fs::symlink_metadata(socket)?.uid();
     ensure!(uid == 0 || owner == uid, "socket belongs to another user");
     private_parent(socket, owner, false)?;
@@ -207,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn socket_binding_refuses_unsafe_paths_and_preserves_active_socket() {
         let directory = private_tempdir("openssh-socket-").unwrap();
-        let uid = effective_uid().unwrap();
+        let uid = effective_uid();
         let socket = directory.path().join("broker.sock");
         let (listener, guard) = bind(&socket, uid).await.unwrap();
         assert_eq!(std::fs::metadata(&socket).unwrap().mode() & 0o777, 0o600);
@@ -232,7 +226,7 @@ mod tests {
     async fn owned_cleanup_never_removes_a_replacement_path() {
         let directory = private_tempdir("openssh-replacement-").unwrap();
         let socket = directory.path().join("broker.sock");
-        let (listener, guard) = bind(&socket, effective_uid().unwrap()).await.unwrap();
+        let (listener, guard) = bind(&socket, effective_uid()).await.unwrap();
         std::fs::remove_file(&socket).unwrap();
         std::fs::write(&socket, b"replacement").unwrap();
         drop(listener);
@@ -247,11 +241,11 @@ mod tests {
         let stale = UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
         drop(stale);
-        let (listener, guard) = bind(&socket, effective_uid().unwrap()).await.unwrap();
+        let (listener, guard) = bind(&socket, effective_uid()).await.unwrap();
         drop(listener);
         drop(guard);
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
-        assert!(bind(&socket, effective_uid().unwrap()).await.is_err());
+        assert!(bind(&socket, effective_uid()).await.is_err());
         assert_eq!(
             std::fs::metadata(directory.path()).unwrap().mode() & 0o777,
             0o777

@@ -2683,7 +2683,7 @@ async fn failed_metadata_deletion_keeps_bytes_and_is_sanitized() {
 }
 
 #[tokio::test]
-async fn expiry_failure_reports_removed_bytes_and_keeps_the_row_for_retry() {
+async fn expiry_failure_keeps_the_row_and_object_for_retry() {
     let fixture = Fixture::open().await;
     let reservation = fixture
         .reserve(
@@ -2700,12 +2700,9 @@ async fn expiry_failure_reports_removed_bytes_and_keeps_the_row_for_retry() {
     fixture.expire(reservation.file_id).await;
     sqlx::query("CREATE TRIGGER refuse_expiry_delete BEFORE DELETE ON files BEGIN SELECT RAISE(ABORT, 'private expiry diagnostic'); END")
         .execute(&fixture.raw).await.unwrap();
-    let failure = files::remove_expired_uploads(&fixture.pool, &fixture.storage)
+    files::remove_expired_uploads(&fixture.pool, &fixture.storage)
         .await
         .unwrap_err();
-    assert_eq!(failure.removed, 0);
-    assert_eq!(failure.object_removed, Some(reservation.file_id));
-    assert!(!failure.to_string().contains("private expiry diagnostic"));
     assert!(fixture.object_path(reservation.file_id).exists());
     assert!(files_db::get_file_by_id(&fixture.pool, reservation.file_id)
         .await

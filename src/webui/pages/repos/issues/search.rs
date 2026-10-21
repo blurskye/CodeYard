@@ -73,7 +73,7 @@ pub(super) enum Qualifier {
     Sort(String),
 }
 
-/// Reads a search text for a list of `kind`. A word that is not a qualifier the list offers stays
+/// Reads a search text. A word that is not a qualifier the list offers stays
 /// in the text, so a search for it finds the words as they were typed.
 pub fn parse_search(text: &str) -> Search {
     let mut search = Search::default();
@@ -101,7 +101,7 @@ pub fn parse_search(text: &str) -> Search {
     search
 }
 
-/// The qualifier a word names for a list of `kind`, or None when the word is text.
+/// The qualifier a word names, or None when the word is text.
 pub(super) fn qualifier(word: &str) -> Option<Qualifier> {
     let (key, raw) = word.split_once(':')?;
     let value = unquote(raw);
@@ -125,19 +125,7 @@ pub(super) fn qualifier(word: &str) -> Option<Qualifier> {
         "assignee" => Some(Qualifier::Assignee(value)),
         "milestone" => Some(Qualifier::Milestone(value)),
         "label" => Some(Qualifier::Label(value)),
-        "sort"
-            if matches!(
-                value.as_str(),
-                "newest"
-                    | "oldest"
-                    | "recently-updated"
-                    | "least-recently-updated"
-                    | "most-commented"
-                    | "least-commented"
-            ) =>
-        {
-            Some(Qualifier::Sort(value))
-        }
+        "sort" if SORTS.iter().any(|(name, _)| *name == value) => Some(Qualifier::Sort(value)),
         "no" if value == "assignee" => Some(Qualifier::NoAssignee),
         "no" if value == "milestone" => Some(Qualifier::NoMilestone),
         _ => None,
@@ -278,8 +266,8 @@ const NAMES: [(&str, &str, &str); 7] = [
     ("is", "Is", "Open or closed"),
 ];
 
-/// The sort values the box offers, with their titles.
-const SORTS: [(&str, &str); 6] = [
+/// The sort values the box and the Sort menu offer, with their titles.
+pub(super) const SORTS: [(&str, &str); 6] = [
     ("newest", "Newest"),
     ("oldest", "Oldest"),
     ("most-commented", "Most commented"),

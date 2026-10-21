@@ -1,7 +1,5 @@
 //! Disposable native-database fixtures. Raw drivers are test-only, never exposed
 //! through the application handle. No environment mutation, .env or silent skip.
-// Each integration crate uses a different subset of these shared test fixtures.
-#![allow(dead_code)]
 use codeyard::backend::db;
 use sqlx::{
     postgres::PgPoolOptions,
@@ -87,9 +85,10 @@ impl NativeDatabase {
 
 pub struct PostgresDatabase {
     pub pool: db::DbPool,
-    raw: sqlx::PgPool,
-    url: String,
-    schema: String,
+    pub raw: sqlx::PgPool,
+    pub url: String,
+    pub schema: String,
+    removed: bool,
 }
 
 impl PostgresDatabase {
@@ -105,20 +104,21 @@ impl PostgresDatabase {
 
     pub async fn new() -> Self {
         let url = std::env::var("GITSERV_TEST_DATABASE_URL")
-            .expect("populated native parity requires owned PostgreSQL fixture URL");
+            .expect("set GITSERV_TEST_DATABASE_URL to a PostgreSQL URL");
         let parsed = url::Url::parse(&url).expect("fixture URL");
         assert!(
             matches!(parsed.scheme(), "postgres" | "postgresql")
                 && parsed.path() == "/gitserv_test"
                 && parsed.query().is_none()
-                && parsed.fragment().is_none()
+                && parsed.fragment().is_none(),
+            "tests only run against a database named gitserv_test"
         );
         let admin = PgPoolOptions::new()
             .max_connections(1)
             .connect(&url)
             .await
             .expect("required PostgreSQL fixture");
-        let schema = format!("native_parity_{}", Uuid::new_v4().simple());
+        let schema = format!("test_{}", Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
             .execute(&admin)
             .await
@@ -128,6 +128,7 @@ impl PostgresDatabase {
             raw: admin.clone(),
             url,
             schema,
+            removed: false,
         };
         admin.close().await;
         let options = sqlx::postgres::PgConnectOptions::from_str(&fixture.url)
@@ -136,62 +137,75 @@ impl PostgresDatabase {
                 ("search_path", fixture.schema.as_str()),
                 ("application_name", fixture.schema.as_str()),
             ]);
-        fixture.raw = PgPoolOptions::new()
-            .max_connections(4)
-            .connect_with(options)
-            .await
-            .unwrap();
+        fixture.raw = PgPoolOptions::new().connect_with(options).await.unwrap();
         fixture.pool = fixture.raw.clone().into();
         db::run_migrations(&fixture.pool)
             .await
             .expect("native PostgreSQL migration");
         fixture
     }
+
+    /// Drops the schema. Call it at the end of the test, after its servers and tasks have
+    /// stopped; Drop does the same if the test never gets there.
+    pub async fn finish(&mut self) {
+        if self.removed {
+            return;
+        }
+        if let Err(error) = drop_schema(&self.raw, &self.url, &self.schema).await {
+            panic!("dropping test schema {} failed: {error}", self.schema);
+        }
+        self.removed = true;
+    }
+}
+
+/// Ends the sessions the test left open (a killed server's last queries, a pool held by a
+/// spawned task), which would block the DROP, and then drops the schema.
+async fn drop_schema(raw: &sqlx::PgPool, url: &str, schema: &str) -> Result<(), sqlx::Error> {
+    let _ = tokio::time::timeout(Duration::from_secs(2), raw.close()).await;
+    let options = sqlx::postgres::PgConnectOptions::from_str(url)?
+        .options([("lock_timeout", "5s"), ("statement_timeout", "10s")]);
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options)
+        .await?;
+    sqlx::query(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+         WHERE application_name = $1 AND pid <> pg_backend_pid()",
+    )
+    .bind(schema)
+    .execute(&admin)
+    .await?;
+    let mut attempt = 1;
+    loop {
+        match sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
+            .execute(&admin)
+            .await
+        {
+            Ok(_) => break,
+            Err(error) if attempt < 5 => {
+                eprintln!("dropping {schema} failed (attempt {attempt}): {error}");
+                attempt += 1;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    admin.close().await;
+    Ok(())
 }
 
 impl Drop for PostgresDatabase {
     fn drop(&mut self) {
+        if self.removed {
+            return;
+        }
         let raw = self.raw.clone();
         let url = self.url.clone();
         let schema = self.schema.clone();
         let result = std::thread::spawn(move || {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(async move {
-                    // Sessions the test left open (a killed server's last queries, a pool held by
-                    // a spawned task) would block the DROP; end them first.
-                    let _ = tokio::time::timeout(Duration::from_secs(2), raw.close()).await;
-                    let options = sqlx::postgres::PgConnectOptions::from_str(&url)?
-                        .options([("lock_timeout", "5s"), ("statement_timeout", "10s")]);
-                    let admin = PgPoolOptions::new()
-                        .max_connections(1)
-                        .connect_with(options)
-                        .await?;
-                    sqlx::query(
-                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
-                         WHERE application_name = $1 AND pid <> pg_backend_pid()",
-                    )
-                    .bind(&schema)
-                    .execute(&admin)
-                    .await?;
-                    let mut attempt = 1;
-                    loop {
-                        match sqlx::query(&format!("DROP SCHEMA \"{schema}\" CASCADE"))
-                            .execute(&admin)
-                            .await
-                        {
-                            Ok(_) => break,
-                            Err(error) if attempt < 5 => {
-                                eprintln!("dropping {schema} failed (attempt {attempt}): {error}");
-                                attempt += 1;
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                            }
-                            Err(error) => return Err(error),
-                        }
-                    }
-                    admin.close().await;
-                    Ok::<_, sqlx::Error>(())
-                })
+                .block_on(async move { drop_schema(&raw, &url, &schema).await })
         })
         .join();
         let failure = match result {
@@ -200,9 +214,9 @@ impl Drop for PostgresDatabase {
             Err(_) => "cleanup thread panicked".to_owned(),
         };
         if std::thread::panicking() {
-            eprintln!("owned native parity schema cleanup failed: {failure}");
+            eprintln!("test schema cleanup failed: {failure}");
         } else {
-            panic!("owned native parity schema cleanup failed: {failure}");
+            panic!("test schema cleanup failed: {failure}");
         }
     }
 }

@@ -1,6 +1,7 @@
 //! Live actor and repository authority at local Git publication boundaries.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
+use crate::support::organizations::applied;
 
 use codeyard::backend::{
     db::{self, models::AccessLevel, organizations as orgs},
@@ -10,13 +11,6 @@ use codeyard::backend::{
     },
 };
 use database::Database;
-
-fn applied<T: std::fmt::Debug>(outcome: orgs::OrganizationOutcome<T>) -> T {
-    match outcome {
-        orgs::OrganizationOutcome::Applied(value) => value,
-        other => panic!("organization fixture change failed: {other:?}"),
-    }
-}
 
 fn write(branch: &str, path: &str, expected: &str) -> FileWrite {
     FileWrite {

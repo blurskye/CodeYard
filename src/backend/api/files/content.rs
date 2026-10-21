@@ -18,7 +18,7 @@ use std::{
 use tokio::io::{AsyncRead, ReadBuf};
 use uuid::Uuid;
 
-use super::{failure, Failure};
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 
 /// Receives upload bytes when files are stored locally (cookie-authenticated).
 pub async fn put_upload_content(
@@ -26,9 +26,8 @@ pub async fn put_upload_content(
     Path(file_id): Path<Uuid>,
     headers: HeaderMap,
     body: Body,
-) -> Result<StatusCode, Failure> {
+) -> Result<StatusCode, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::http::csrf::check(state.clone(), &headers).await?;
     let mut types = headers.get_all(header::CONTENT_TYPE).iter();
     let content_type = types
         .next()
@@ -45,7 +44,7 @@ pub async fn put_upload_content(
             .and_then(|v| v.parse::<u64>().ok())
             .ok_or_else(|| local_failure(LocalUploadError::Invalid))?;
         if lengths.next().is_some() || !(1..=100 * 1024 * 1024).contains(&length) {
-            return Err(failure(
+            return Err(ApiError::failure(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "upload_too_large",
                 "Upload exceeds the bounded declaration",
@@ -105,7 +104,7 @@ impl AsyncRead for UploadReader {
         Poll::Pending
     }
 }
-fn local_failure(error: LocalUploadError) -> Failure {
+fn local_failure(error: LocalUploadError) -> ApiFailure {
     let (status, code) = match error {
         LocalUploadError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
         LocalUploadError::NotPending => (StatusCode::CONFLICT, "not_pending"),
@@ -115,5 +114,5 @@ fn local_failure(error: LocalUploadError) -> Failure {
             (StatusCode::SERVICE_UNAVAILABLE, "upload_unavailable")
         }
     };
-    failure(status, code, &error.to_string())
+    ApiError::failure(status, code, &error.to_string())
 }

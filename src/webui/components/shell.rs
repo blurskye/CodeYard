@@ -295,6 +295,7 @@ fn HeaderContext(
         "admin" => Some("Administration"),
         "new" => Some("New repository"),
         "search" => Some("Search"),
+        "ci" => Some("Actions"),
         "stars" => Some("Stars"),
         "help" => Some("Help"),
         _ => None,
@@ -302,8 +303,31 @@ fn HeaderContext(
     if let Some(page) = page {
         return rsx! { span { class: "site-context", "{page}" } };
     }
-    if first.is_empty() || matches!(first, "login" | "register" | "enter" | "logout") {
+    // Sign-in pages and the demo pages have no location. `/orgs/:org/teams/:team` is the one
+    // address under `orgs`; anything else there names nothing.
+    if first.is_empty()
+        || matches!(
+            first,
+            "login" | "register" | "enter" | "logout" | "setup" | "forgot-password" | "demo"
+        )
+    {
         return rsx! {};
+    }
+    if first == "orgs" {
+        let (Some(org), Some("teams"), Some(team)) = (second, parts.next(), parts.next()) else {
+            return rsx! {};
+        };
+        let (org, team) = (decode_component(org), decode_component(team));
+        let org_href = format!("/{}", encode_component(&org));
+        return rsx! {
+            nav { class: "site-context", "aria-label": "Current location",
+                NavLink { href: org_href.clone(), class: "site-context-link".to_string(), "{org}" }
+                span { class: "site-context-slash", "aria-hidden": "true", "/" }
+                NavLink { href: format!("{org_href}?tab=teams"), class: "site-context-link".to_string(), "teams" }
+                span { class: "site-context-slash", "aria-hidden": "true", "/" }
+                NavLink { href: format!("/orgs/{}/teams/{}", encode_component(&org), encode_component(&team)), class: "site-context-link site-context-repo".to_string(), "{team}" }
+            }
+        };
     }
     // The path is already percent-encoded; decode it to show the names and encode them once.
     let first = decode_component(first);
@@ -878,6 +902,33 @@ mod shell_tests {
         ));
         assert!(!plain.contains("<h1"), "{plain}");
         assert!(!plain.contains("repo-engagement"), "{plain}");
+    }
+
+    #[test]
+    fn header_crumb_links_to_real_pages_and_skips_sign_in_pages() {
+        let crumb = |path: &str| {
+            dioxus_ssr::render_element(shell(
+                Chrome {
+                    username: Some("alice".into()),
+                    csrf_token: "token".into(),
+                    return_to: path.into(),
+                    ..Default::default()
+                },
+                None,
+                rsx! { p { "Body" } },
+            ))
+        };
+        let team = crumb("/orgs/acme/teams/core");
+        assert!(team.contains("href=\"/acme\""), "{team}");
+        assert!(team.contains("href=\"/acme?tab=teams\""), "{team}");
+        assert!(team.contains("href=\"/orgs/acme/teams/core\""), "{team}");
+        assert!(!team.contains("href=\"/orgs\""), "{team}");
+        assert!(crumb("/ci").contains("<span class=\"site-context\">Actions</span>"));
+        for path in ["/forgot-password", "/setup", "/demo", "/orgs/acme"] {
+            let html = crumb(path);
+            assert!(!html.contains("aria-label=\"Current location\""), "{html}");
+            assert!(!html.contains("class=\"site-context\""), "{html}");
+        }
     }
 
     #[test]

@@ -6,7 +6,7 @@ use crate::backend::db::DbPool;
 use std::net::IpAddr;
 use uuid::Uuid;
 
-pub const MAX_UPLOAD_BYTES: i64 = 100 * 1024 * 1024;
+pub const MAX_UPLOAD_BYTES: i64 = crate::backend::storage::MAX_OBJECT_BYTES;
 
 /// How long a client has to send the bytes after reserving an upload.
 pub const PUT_LIFETIME_SECONDS: i64 = 900;
@@ -145,6 +145,17 @@ native_operation!(crate::backend::db::postgres::files::get_file_by_id,
     crate::backend::db::sqlite::files::get_file_by_id,
     fn get_file_by_id(pool: &DbPool, file_id: Uuid) -> Result<Option<File>, sqlx::Error>);
 
+/// The file, only when `actor_id` uploaded it.
+pub async fn get_owned_file(
+    pool: &DbPool,
+    file_id: Uuid,
+    actor_id: i64,
+) -> Result<Option<File>, sqlx::Error> {
+    Ok(get_file_by_id(pool, file_id)
+        .await?
+        .filter(|file| file.user_id == Some(actor_id)))
+}
+
 native_operation!(crate::backend::db::postgres::files::get_user_file,
     crate::backend::db::sqlite::files::get_user_file,
     fn get_user_file(pool: &DbPool, file_id: Uuid, user_id: i64) -> Result<Option<File>, sqlx::Error>);
@@ -153,9 +164,15 @@ native_operation!(crate::backend::db::postgres::files::get_downloadable_file,
     crate::backend::db::sqlite::files::get_downloadable_file,
     fn get_downloadable_file(pool: &DbPool, file_id: Uuid, actor: Option<i64>) -> Result<Option<File>, sqlx::Error>);
 
-// Retain upload charges for the maximum 730-day admin report and downloads for
-// 30 days. Each sweep removes at most 20 batches of 500 rows per table, so a backlog
-// drains over several sweeps, preserving quota windows.
+/// Upload charges are kept for the longest admin report window and download
+/// charges for 30 days. Each sweep removes at most `SWEEP_BATCHES` batches of
+/// `SWEEP_BATCH` rows per table, so a backlog drains over several sweeps and
+/// quota windows stay intact.
+pub(crate) const UPLOAD_CHARGE_DAYS: i64 = 730;
+pub(crate) const DOWNLOAD_CHARGE_DAYS: i64 = 30;
+pub(crate) const SWEEP_BATCH: u64 = 500;
+pub(crate) const SWEEP_BATCHES: usize = 20;
+
 native_operation!(crate::backend::db::postgres::files::remove_expired_transfer_rows,
     crate::backend::db::sqlite::files::remove_expired_transfer_rows,
     fn remove_expired_transfer_rows(pool: &DbPool) -> Result<u64, sqlx::Error>);

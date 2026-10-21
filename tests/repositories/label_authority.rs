@@ -2,13 +2,20 @@
 //! databases. Setup failure fails the test; nothing is skipped or mocked.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 mod contention;
-mod fixture;
-use crate::support::native_database as native;
-use crate::support::production_ci as production;
+use crate::support::database::Database as Fixture;
 
 use codeyard::backend::db::{self, labels::LabelWriteRefusal};
-use fixture::Fixture;
 use serde_json::{json, Value};
+
+impl Fixture {
+    async fn label_repo(&self, owner: i64, org: Option<i64>) -> i64 {
+        if let Some(org) = org {
+            self.scalar("INSERT INTO repositories(owner_kind,owner_org_id,name,is_private,disk_path) VALUES('org',$1,'labels',TRUE,'/owned/not-executed.git') RETURNING id", &[org]).await
+        } else {
+            self.scalar("INSERT INTO repositories(owner_kind,owner_user_id,name,is_private,disk_path) VALUES('user',$1,'labels',TRUE,'/owned/not-executed.git') RETURNING id", &[owner]).await
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Mutation {
@@ -201,8 +208,8 @@ async fn authority_matrix(pg: bool) {
         )
         .await;
     }
-    let personal = f.repo(owner, None).await;
-    let repo = f.repo(owner, Some(org)).await;
+    let personal = f.label_repo(owner, None).await;
+    let repo = f.label_repo(owner, Some(org)).await;
     let (personal_issue, personal_label) = seed(f.pool(), owner, personal).await;
     let (issue, label) = seed(f.pool(), owner, repo).await;
     for target in [personal, repo] {
@@ -384,15 +391,15 @@ async fn authority_matrix(pg: bool) {
             }
         }
     }
-    f.close().await;
+    f.finish().await;
 }
 
 async fn scope_and_batches(pg: bool) {
     let mut f = Fixture::new(pg).await;
     let owner = f.actor("scope_owner").await;
     let foreign_owner = f.actor("foreign_owner").await;
-    let repo = f.repo(owner, None).await;
-    let foreign = f.repo(foreign_owner, None).await;
+    let repo = f.label_repo(owner, None).await;
+    let foreign = f.label_repo(foreign_owner, None).await;
     let (issue, label) = seed(f.pool(), owner, repo).await;
     let (foreign_issue, foreign_label) = seed(f.pool(), foreign_owner, foreign).await;
     let valid = db::labels::create_label(f.pool(), owner, repo, "valid", "#123456", None)
@@ -525,7 +532,7 @@ async fn scope_and_batches(pg: bool) {
         snapshot(f.pool(), &[foreign]).await,
         json!([before[1].clone()])
     );
-    f.close().await;
+    f.finish().await;
 }
 
 #[tokio::test]

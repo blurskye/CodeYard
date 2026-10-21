@@ -37,8 +37,6 @@ class ReleaseImageTests(unittest.TestCase):
                 checksums = subprocess.check_output(["sha256sum", *files], cwd=release)
                 (release / "SHA256SUMS").write_bytes(checksums)
                 shutil.copy(ROOT / "Containerfile", root)
-                (root / "scripts").mkdir()
-                shutil.copy(ROOT / "scripts/act-local-runner.sh", root / "scripts")
                 image = f"localhost/codeyard-release-test:{uuid.uuid4().hex}"
                 try:
                     subprocess.run([

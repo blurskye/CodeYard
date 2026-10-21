@@ -101,7 +101,7 @@ fn work_row(kind: Kind, item: &WorkItem) -> Element {
     let repo_name = format!("{}/{}", item.owner, item.repo);
     rsx! {
         article { class: "collaboration-row",
-            div { class: "collaboration-row-icon", title: item.state.clone(), {state_icon(kind, &item.state)} span { class: "repo-sr-only", "{item.state} {kind.singular()}" } }
+            div { class: "collaboration-row-icon", title: item.state.clone(), {state_icon(kind, &item.state)} span { class: "sr-only", "{item.state} {kind.singular()}" } }
             div { class: "collaboration-row-content",
                 div { class: "collaboration-row-title",
                     NavLink { class: "collaboration-title-link", href: item_href, "{item.title}" }

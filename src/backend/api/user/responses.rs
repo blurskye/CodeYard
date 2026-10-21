@@ -1,9 +1,9 @@
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
+use crate::backend::api::http::origin::safe_redirect_path;
 use crate::backend::db;
 use axum::http::StatusCode;
 use axum::response::Response;
-use axum::Json;
 use serde::Serialize;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -93,7 +93,6 @@ impl From<db::models::User> for AuthUserResponse {
 }
 
 pub(crate) type Fields = HashMap<String, String>;
-pub(crate) type ApiFailure = (StatusCode, Json<ApiError>);
 
 pub(crate) fn field<'a>(form: &'a Fields, name: &str) -> &'a str {
     form.get(name).map(String::as_str).unwrap_or("")
@@ -130,24 +129,10 @@ pub(crate) fn within_bounds(form: &Fields) -> bool {
 
 /// A redirect is always a local absolute path, including after browser decoding.
 pub(crate) fn safe_redirect(value: Option<&str>) -> String {
-    let value = value.unwrap_or("/");
-    if value.len() > 2048
-        || !value.starts_with('/')
-        || value.starts_with("//")
-        || value.chars().any(|c| c.is_control() || c == '\\')
-    {
-        return "/".into();
-    }
-    let lower = value.to_ascii_lowercase();
-    if lower.starts_with("/%2f")
-        || lower.starts_with("/%5c")
-        || ["%0a", "%0d", "%00", "%5c", "%25"]
-            .iter()
-            .any(|pattern| lower.contains(pattern))
-    {
-        return "/".into();
-    }
-    value.to_owned()
+    value
+        .filter(|value| safe_redirect_path(value))
+        .unwrap_or("/")
+        .to_owned()
 }
 
 pub(crate) fn public_api_message(error: &ApiError) -> &'static str {

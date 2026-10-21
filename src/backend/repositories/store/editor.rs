@@ -20,7 +20,7 @@ pub const MAX_EDITOR_BYTES: usize = 1024 * 1024;
 /// Limits of one upload commit: how many files, the largest file, and all the files together.
 pub const MAX_UPLOAD_FILES: usize = 100;
 pub const MAX_UPLOAD_FILE_BYTES: usize = 25 * 1024 * 1024;
-pub const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+pub const MAX_UPLOAD_TOTAL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_OUTPUT: usize = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(60);
 pub(super) const ZERO: &str = "0000000000000000000000000000000000000000";
@@ -92,7 +92,7 @@ impl UploadWrite {
             }
             total = total.saturating_add(file.size);
         }
-        if total > MAX_UPLOAD_BYTES {
+        if total > MAX_UPLOAD_TOTAL_BYTES {
             return Err(invalid("An upload can be at most 100 MiB."));
         }
         Ok(())
@@ -127,14 +127,22 @@ fn validate_path(path: &str) -> Result<(), RepoError> {
     if path.split('/').count() > 64 {
         return Err(invalid("A file path can have at most 64 segments."));
     }
-    if path.split('/').any(|part| {
-        part.is_empty() || part == "." || part == ".." || part.eq_ignore_ascii_case(".git")
-    }) {
+    if path
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == ".." || is_git_dir_name(part))
+    {
         return Err(invalid(
             "Use a relative file path without empty, dot, parent or .git segments.",
         ));
     }
     Ok(())
+}
+
+/// `.git` in any case, with the trailing spaces and dots and the short name `git~1` that
+/// Windows file systems treat as the same directory.
+fn is_git_dir_name(part: &str) -> bool {
+    let name = part.trim_end_matches([' ', '.']);
+    name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
 }
 
 fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoError> {
@@ -503,15 +511,11 @@ pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<Comm
     let repo = Repo(path);
     if crate::backend::git::branch_ref(&prepared.branch).as_deref()
         != Some(prepared.reference.as_str())
-        || prepared.commit.sha.len() != 40
-        || !prepared
-            .commit
-            .sha
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit())
-        || prepared.expected.as_ref().is_some_and(|expected| {
-            expected.len() != 40 || !expected.bytes().all(|byte| byte.is_ascii_hexdigit())
-        })
+        || !crate::backend::git::is_full_commit_id(&prepared.commit.sha)
+        || prepared
+            .expected
+            .as_ref()
+            .is_some_and(|expected| !crate::backend::git::is_full_commit_id(expected))
     {
         return Err(invalid("Invalid prepared file publication."));
     }
@@ -546,7 +550,7 @@ fn oid(bytes: &[u8]) -> Result<String, RepoError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| unavailable())?
         .trim();
-    if text.len() != 40 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !crate::backend::git::is_full_commit_id(text) {
         return Err(unavailable());
     }
     Ok(text.to_ascii_lowercase())
@@ -571,8 +575,7 @@ fn split_entry(record: &[u8]) -> Result<TreeEntry<'_>, RepoError> {
         || mode.len() != 6
         || !mode.bytes().all(|b| (b'0'..=b'7').contains(&b))
         || !matches!(kind, "tree" | "blob" | "commit")
-        || object.len() != 40
-        || !object.bytes().all(|b| b.is_ascii_hexdigit())
+        || !crate::backend::git::is_full_commit_id(object)
         || record.len() == tab + 1
     {
         return Err(unavailable());
@@ -648,6 +651,20 @@ mod tests {
             creating: true,
             deleting: false,
         }
+    }
+
+    fn blob_at(repo_path: &Path, git_ref: &str, path: &str) -> Vec<u8> {
+        let repository = git2::Repository::open_bare(repo_path).unwrap();
+        let tree = repository
+            .revparse_single(git_ref)
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        let entry = tree.get_path(Path::new(path)).unwrap();
+        let blob = repository.find_blob(entry.id()).unwrap();
+        blob.content().to_vec()
     }
 
     /// Prepares and publishes in one go, like `save_file` without the lock.
@@ -732,9 +749,22 @@ mod tests {
 
     #[test]
     fn unsafe_paths_and_missing_revision_are_rejected() {
-        for path in ["../x", "/x", "a//b", "a/.git/config", "a/../b", "a\\b"] {
+        for path in [
+            "../x",
+            "/x",
+            "a//b",
+            "a/.git/config",
+            "a/../b",
+            "a\\b",
+            ".GIT/x",
+            ".git /hooks/x",
+            ".git./x",
+            "git~1/x",
+        ] {
             assert!(input(path).validate().is_err(), "{path}");
         }
+        assert!(input(".github/x").validate().is_ok());
+        assert!(input("git~2/x").validate().is_ok());
         let mut value = input("docs/file.md");
         value.expected_revision.clear();
         assert!(value.validate().is_err());
@@ -1098,16 +1128,9 @@ mod tests {
             tree.get_path(Path::new("bin/run")).unwrap().filemode(),
             0o100755
         );
+        assert_eq!(blob_at(temp.path(), "main", "bin/run"), b"new\0\xff");
         assert_eq!(
-            crate::backend::git::get_blob_bytes(temp.path(), "main", "bin/run")
-                .unwrap()
-                .0,
-            b"new\0\xff"
-        );
-        assert_eq!(
-            crate::backend::git::get_blob_bytes(temp.path(), "main", "--literal\tline\nname")
-                .unwrap()
-                .0,
+            blob_at(temp.path(), "main", "--literal\tline\nname"),
             b"untouched"
         );
         assert_eq!(saved.parents, vec![revision.to_string()]);

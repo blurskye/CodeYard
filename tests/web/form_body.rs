@@ -1,8 +1,8 @@
-//! Completed form buffers remain admitted while their handlers wait for the database.
+//! A form whose body has been read gives its slot back while its handler waits for the database.
 use crate::support::database::Database;
 use axum::{
     body::Body,
-    http::{header, Request, StatusCode},
+    http::{header, Request},
 };
 use codeyard::backend::{
     api::create_router, app::AppState, ci::CiConfig, db::DbPool, storage::ObjectStore,
@@ -11,7 +11,7 @@ use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn completed_forms_keep_their_slots_until_handler_completion() {
+async fn completed_forms_release_their_slots_before_the_handler_finishes() {
     let mut database = Database::new(false).await;
     let root = tempfile::tempdir().unwrap();
     let state = AppState::new(
@@ -62,11 +62,14 @@ async fn completed_forms_keep_their_slots_until_handler_completion() {
         .unwrap()
         .unwrap()
         .forget();
-    let refused = tokio::time::timeout(Duration::from_secs(2), router.oneshot(request()))
+    // The eight handlers are stuck on the database, yet a ninth form still gets its body read.
+    tasks.push(tokio::spawn(router.oneshot(request())));
+    tokio::time::timeout(Duration::from_secs(5), completed.acquire_many(1))
         .await
         .unwrap()
-        .unwrap();
-    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        .unwrap()
+        .forget();
+    assert!(tasks.iter().all(|task| !task.is_finished()));
     for task in tasks {
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());

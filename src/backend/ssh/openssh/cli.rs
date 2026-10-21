@@ -175,7 +175,7 @@ async fn hook_request(key_id: i64, repo_id: i64, post: bool) -> Result<Request> 
     let token = std::env::var("GITSERV_OPENSSH_OPERATION")
         .map_err(|_| anyhow::anyhow!("receive hooks must belong to an active broker operation"))?;
     ensure!(
-        token.len() == 32 && token.bytes().all(|b| b.is_ascii_hexdigit()),
+        crate::backend::crypto::is_hex_token(&token, 32),
         "invalid operation token"
     );
     let mut bytes = Vec::new();
@@ -253,10 +253,6 @@ enum StandardIo {
     Pollable(AsyncFd<File>),
 }
 
-extern "C" {
-    fn fcntl(fd: std::os::raw::c_int, command: std::os::raw::c_int, ...) -> std::os::raw::c_int;
-}
-
 fn stdin() -> Result<StandardIo> {
     stdio(std::io::stdin().as_fd())
 }
@@ -272,20 +268,21 @@ fn stdio(fd: BorrowedFd<'_>) -> Result<StandardIo> {
     // Prefer a separate open description for pipes/terminals: changing flags
     // on a dup could otherwise affect inherited Git hook stderr in the parent.
     // Socketpairs cannot be reopened and intentionally share helper stdio flags.
-    // SAFETY: the owned fd is live; Linux F_GETFL/F_SETFL use scalar arguments.
-    let flags = unsafe { fcntl(file.as_raw_fd(), 3) };
+    // SAFETY: the owned fd is live; F_GETFL/F_SETFL use scalar arguments.
+    let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
     if flags < 0 {
         return Err(std::io::Error::last_os_error().into());
     }
     let reopened = OpenOptions::new()
-        .read(flags & 3 != 1)
-        .write(flags & 3 != 0)
-        .custom_flags(0x800 | 0x100)
-        .open(format!("/proc/self/fd/{}", file.as_raw_fd())); // O_NONBLOCK|O_NOCTTY
+        .read(flags & libc::O_ACCMODE != libc::O_WRONLY)
+        .write(flags & libc::O_ACCMODE != libc::O_RDONLY)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(format!("/proc/self/fd/{}", file.as_raw_fd()));
     let file = match reopened {
         Ok(file) => file,
         Err(_) => {
-            if unsafe { fcntl(file.as_raw_fd(), 4, flags | 0x800) } < 0 {
+            if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+            {
                 return Err(std::io::Error::last_os_error().into());
             }
             file

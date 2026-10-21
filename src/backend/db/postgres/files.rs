@@ -2,7 +2,8 @@
 //! then active; pending uploads expire.
 use crate::backend::db::files::{
     AdmissionError, DeleteFileOutcome, DeleteUnreferencedOutcome, ReserveUpload,
-    IN_FLIGHT_PUT_GRACE_SECONDS, PUT_LIFETIME_SECONDS,
+    DOWNLOAD_CHARGE_DAYS, IN_FLIGHT_PUT_GRACE_SECONDS, PUT_LIFETIME_SECONDS, SWEEP_BATCH,
+    SWEEP_BATCHES, UPLOAD_CHARGE_DAYS,
 };
 use sqlx::{PgPool, Postgres, Transaction};
 use std::net::IpAddr;
@@ -197,28 +198,6 @@ pub(crate) async fn delete_unreferenced_file_in_transaction(
         .await?
     {
         delete_if_unselected(tx, &file).await?;
-    }
-    Ok(())
-}
-
-/// Removes a former release upload after its links were deleted, in the same transaction.
-pub(crate) async fn delete_unlinked_release_file(
-    tx: &mut Transaction<'_, Postgres>,
-    file_id: Uuid,
-) -> Result<(), sqlx::Error> {
-    let file = sqlx::query_as::<_, File>("SELECT * FROM files WHERE id=$1 FOR UPDATE")
-        .bind(file_id)
-        .fetch_optional(&mut **tx)
-        .await?;
-    if let Some(file) = file {
-        let linked: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets WHERE file_id=$1)")
-                .bind(file_id)
-                .fetch_one(&mut **tx)
-                .await?;
-        if !linked {
-            delete_if_unselected(tx, &file).await?;
-        }
     }
     Ok(())
 }
@@ -423,14 +402,14 @@ pub async fn get_user_file(
 pub async fn remove_expired_transfer_rows(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let mut removed = 0;
     for sql in [
-        "DELETE FROM upload_rate_limit WHERE id IN (SELECT id FROM upload_rate_limit WHERE uploaded_at < NOW() - INTERVAL '730 days' ORDER BY uploaded_at LIMIT 500 FOR UPDATE SKIP LOCKED)",
-        "DELETE FROM download_rate_limit WHERE id IN (SELECT id FROM download_rate_limit WHERE downloaded_at < NOW() - INTERVAL '30 days' ORDER BY downloaded_at LIMIT 500 FOR UPDATE SKIP LOCKED)",
+        format!("DELETE FROM upload_rate_limit WHERE id IN (SELECT id FROM upload_rate_limit WHERE uploaded_at < NOW() - INTERVAL '{UPLOAD_CHARGE_DAYS} days' ORDER BY uploaded_at LIMIT {SWEEP_BATCH} FOR UPDATE SKIP LOCKED)"),
+        format!("DELETE FROM download_rate_limit WHERE id IN (SELECT id FROM download_rate_limit WHERE downloaded_at < NOW() - INTERVAL '{DOWNLOAD_CHARGE_DAYS} days' ORDER BY downloaded_at LIMIT {SWEEP_BATCH} FOR UPDATE SKIP LOCKED)"),
     ] {
-        // Each statement deletes at most 500 rows, so a short batch means none are left.
-        for _ in 0..20 {
-            let batch = sqlx::query(sql).execute(pool).await?.rows_affected();
+        // A short batch means none are left.
+        for _ in 0..SWEEP_BATCHES {
+            let batch = sqlx::query(&sql).execute(pool).await?.rows_affected();
             removed += batch;
-            if batch < 500 {
+            if batch < SWEEP_BATCH {
                 break;
             }
         }

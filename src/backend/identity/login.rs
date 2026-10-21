@@ -68,8 +68,9 @@ pub async fn password_login(
             .map_err(|_| LoginError::AccountUnavailable)?,
     };
     // Shared admission precedes every KDF, including missing/OAuth-only accounts.
-    admission::admit_login(
+    let attempt = admission::admit_login(
         pool,
+        session.client,
         user.as_ref().map(|user| user.id),
         credentials.identity,
     )
@@ -84,6 +85,7 @@ pub async fn password_login(
     if !verification.valid {
         return Err(LoginError::InvalidCredentials);
     }
+    admission::forgive_login(pool, &attempt).await;
     let user = user.ok_or(LoginError::InvalidCredentials)?;
     if user.is_banned {
         return Err(LoginError::Banned);
@@ -119,8 +121,8 @@ pub async fn password_login(
     })))
 }
 
-/// The second step: a current TOTP or recovery code for the account the sealed token names. The
-/// account budget that the password step charged applies here too, so guesses stay bounded.
+/// The second step: a current TOTP or recovery code for the account the sealed token names. Wrong
+/// codes count against the same budgets as wrong passwords, so guesses stay bounded.
 pub async fn second_factor_login(
     pool: &DbPool,
     encryptor: Option<&SecretEncryptor>,
@@ -144,7 +146,7 @@ pub async fn second_factor_login(
     if user.is_banned {
         return Err(LoginError::Banned);
     }
-    admission::admit_login(pool, Some(user.id), &user.username)
+    let attempt = admission::admit_login(pool, session.client, Some(user.id), &user.username)
         .await
         .map_err(LoginError::Admission)?;
     let normalized = two_factor::normalize_code(code);
@@ -181,5 +183,6 @@ pub async fn second_factor_login(
                 LoginError::Session(error)
             }
         })?;
+    admission::forgive_login(pool, &attempt).await;
     Ok(AuthenticatedAccount { user, session_id })
 }

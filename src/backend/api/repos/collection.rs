@@ -1,12 +1,15 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::repos::access::access_error;
+use crate::backend::api::repos::paging::{json_page, PageQuery};
 use crate::backend::api::repos::responses::{repository_owners, repository_topics, RepoResponse};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::organizations::{self as orgs, OrganizationOutcome, OrganizationPage};
-use crate::backend::db::repositories::records::RepositorySort;
+use crate::backend::db::repositories::records::{RepositoryFilter, RepositorySort};
 use crate::backend::repositories::{
+    access::AccessError,
     lifecycle::{self, InitialFiles},
     templates::{self, Template},
 };
@@ -14,7 +17,7 @@ use crate::webui::app::Page as AppPage;
 use crate::webui::pages::discovery::{
     self as view, NewRepositoryForm, RepositoryCreationChoices, RepositoryCreationOrganization,
 };
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::{Form, Json};
@@ -23,22 +26,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 pub async fn list_repos(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<RepoResponse>>, (StatusCode, Json<ApiError>)> {
-    let repos = db::repositories::records::list_public_repositories(
+    let (offset, limit) = json_page(query.page, Some(query.per_page.unwrap_or(100)))?;
+    let repos = db::repositories::records::search_public_repositories(
         &state.pool,
+        "",
+        RepositoryFilter::default(),
         RepositorySort::Recent,
-        100,
+        limit as i64,
+        offset as i64,
     )
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::new(
-                "database_error",
-                "Repository operation is unavailable",
-            )),
-        )
-    })?;
+    .map_err(|_| access_error(AccessError::Unavailable))?;
 
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut owners = repository_owners(&state.pool, &ids).await?;
@@ -46,28 +46,8 @@ pub async fn list_repos(
     let mut responses = Vec::with_capacity(repos.len());
     for repository in repos {
         let owner = owners.remove(&repository.id).expect("validated owner");
-        responses.push(RepoResponse {
-            id: repository.id,
-            owner_id: repository.owner_id(),
-            owner: owner.clone(),
-            name: repository.name.clone(),
-            full_name: format!("{}/{}", owner, repository.name),
-            description: repository.description,
-            website: repository.website,
-            topics: topics.remove(&repository.id).unwrap_or_default(),
-            is_private: repository.is_private,
-            is_archived: repository.is_archived,
-            allow_merge_commit: repository.allow_merge_commit,
-            allow_squash_merge: repository.allow_squash_merge,
-            allow_rebase_merge: repository.allow_rebase_merge,
-            default_branch: repository.default_branch,
-            stars_count: repository.stars_count,
-            forks_count: repository.forks_count,
-            watchers_count: repository.watchers_count,
-            forked_from: None,
-            created_at: repository.created_at.to_rfc3339(),
-            updated_at: repository.updated_at.to_rfc3339(),
-        });
+        let topics = topics.remove(&repository.id).unwrap_or_default();
+        responses.push(RepoResponse::new(&repository, &owner, topics, None));
     }
 
     Ok(Json(responses))
@@ -143,44 +123,8 @@ pub async fn create_repo(
         })?;
     Ok((
         StatusCode::CREATED,
-        Json(RepoResponse {
-            id: repo.id,
-            owner_id: repo.owner_id(),
-            owner: owner.clone(),
-            name: repo.name.clone(),
-            full_name: format!("{}/{}", owner, repo.name),
-            description: repo.description,
-            website: repo.website,
-            topics: Vec::new(),
-            is_private: repo.is_private,
-            is_archived: repo.is_archived,
-            allow_merge_commit: repo.allow_merge_commit,
-            allow_squash_merge: repo.allow_squash_merge,
-            allow_rebase_merge: repo.allow_rebase_merge,
-            default_branch: repo.default_branch,
-            stars_count: repo.stars_count,
-            forks_count: repo.forks_count,
-            watchers_count: repo.watchers_count,
-            forked_from: None,
-            created_at: repo.created_at.to_rfc3339(),
-            updated_at: repo.updated_at.to_rfc3339(),
-        }),
+        Json(RepoResponse::new(&repo, &owner, Vec::new(), None)),
     ))
-}
-
-fn valid_path_identity(value: &str) -> bool {
-    !value.is_empty()
-        && !matches!(value, "." | "..")
-        && value
-            .chars()
-            .all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.'))
-        && matches!(
-            std::path::Path::new(value)
-                .components()
-                .collect::<Vec<_>>()
-                .as_slice(),
-            [std::path::Component::Normal(_)]
-        )
 }
 
 fn selected_organization(raw: &str) -> Result<Option<i64>, &'static str> {
@@ -267,9 +211,7 @@ fn decode_creation(
         if name.is_empty() {
             return Err((Some("name"), "Repository name is required"));
         }
-        if name.len() > 100 || !valid_path_identity(name) {
-            return Err((Some("name"), "Repository name must be 1–100 bytes and contain only letters, numbers, hyphens, underscores and dots; not . or .."));
-        }
+        lifecycle::validate_name(name).map_err(|error| (Some("name"), error.message))?;
         lifecycle::validate_description(form.get("description").map(String::as_str).unwrap_or(""))
             .map_err(|error| (None, error.message))?;
         if !matches!(
@@ -492,7 +434,7 @@ pub(crate) async fn create_repository(
                 .await
         }
     };
-    if target.is_none() && !valid_path_identity(&user.username) {
+    if target.is_none() && lifecycle::validate_name(&user.username).is_err() {
         return creation_error(
             &ctx,
             values,
@@ -575,10 +517,10 @@ mod creation_tests {
             "x?y",
             "x#y",
         ] {
-            assert!(!valid_path_identity(invalid), "{invalid:?}");
+            assert!(lifecycle::validate_name(invalid).is_err(), "{invalid:?}");
         }
         for valid in ["alice", "my-repo", "a.b_c-1", "répo"] {
-            assert!(valid_path_identity(valid));
+            assert!(lifecycle::validate_name(valid).is_ok());
         }
     }
     #[test]

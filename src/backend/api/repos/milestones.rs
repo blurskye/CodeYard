@@ -3,12 +3,12 @@
 //! again.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::issues::assignees::assigned_item;
-use crate::backend::api::repos::pulls::pull::{
-    api_error, authorize_post, detail_outcome, field, item, kind, label, listed_assignees,
-    listed_head, page, pull_item, repository, safe_api_error, unavailable, with_status, ApiFailure,
-    RepositoryData, ResultPage,
+use crate::backend::api::repos::discussion::{
+    api_error, detail_outcome, item, kind, label, listed_assignees, listed_head, page, pull_item,
+    repository, safe_api_error, unavailable, ApiFailure, RepositoryData, ResultPage,
 };
+use crate::backend::api::repos::forms::{authorize_post, field, with_status};
+use crate::backend::api::repos::issues::assignees::assigned_item;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::assignees::AssignedItem;
@@ -147,17 +147,13 @@ pub(crate) async fn native_index(
     let (open, closed) = db::milestones::count_milestones(&ctx.state.pool, repo.record.id)
         .await
         .map_err(|_| unavailable(&ctx))?;
-    let counts = ListCounts {
-        open,
-        closed,
-        all: open + closed,
-    };
+    let counts = ListCounts { open, closed };
     let sort = ctx.query.get("sort").cloned().unwrap_or_default();
-    let page_number = crate::backend::api::repos::chrome::number(
+    let page_number = crate::backend::api::repos::paging::number(
         &ctx,
         "page",
         1,
-        crate::backend::api::repos::chrome::MAX_PAGE,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
     )?;
     let offset = (page_number - 1) as i64 * db::milestones::MILESTONES_PER_PAGE;
     let items =
@@ -313,13 +309,13 @@ async fn milestone_page(
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Milestone not found."))?;
     let milestone_id = summary.milestone.id;
     let milestone = milestone_view(summary);
-    let page_number = crate::backend::api::repos::chrome::number(
+    let page_number = crate::backend::api::repos::paging::number(
         ctx,
         "page",
         1,
-        crate::backend::api::repos::chrome::MAX_PAGE,
+        1..=crate::backend::api::repos::paging::MAX_PAGE,
     )?;
-    let (offset, limit) = crate::backend::api::repos::chrome::page_window(page_number, 30)
+    let (offset, limit) = crate::backend::api::repos::paging::page_window(page_number, 30)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid page."))?;
     let issue_state = match tab {
         "all" => None,
@@ -354,7 +350,7 @@ async fn milestone_page(
         let issue_labels = labels.remove(&entry.issue.id).unwrap_or_default();
         let issue_assignees = assignees.remove(&entry.issue.id).unwrap_or_default();
         let mut row =
-            crate::backend::api::repos::pulls::pull::issue_item(entry.issue, author, issue_labels);
+            crate::backend::api::repos::discussion::issue_item(entry.issue, author, issue_labels);
         row.assignees = issue_assignees;
         // The rows show titles, labels and assignees only, as the issue list does.
         row.body.clear();
@@ -376,7 +372,7 @@ async fn milestone_page(
     .await
     .map_err(|_| unavailable(ctx))?;
     let has_next = (more_issues || pulls.len() > limit)
-        && page_number < crate::backend::api::repos::chrome::MAX_PAGE;
+        && page_number < crate::backend::api::repos::paging::MAX_PAGE;
     pulls.truncate(limit);
     let pull_ids = pulls
         .iter()
@@ -446,6 +442,22 @@ pub(crate) async fn native_detail(
     milestone_page(&ctx, &repo, number, tab, None).await
 }
 
+/// A milestone form names the repository it was rendered for. After a rename, another repository
+/// can take the old address, and a stale form must not reach it.
+fn require_current_repository(
+    ctx: &PageContext,
+    form: &HashMap<String, String>,
+    repo: &RepositoryData,
+) -> ResultPage<()> {
+    if field(form, "repository_id").parse::<i64>().ok() != Some(repo.record.id) {
+        return Err(ctx.error(
+            StatusCode::CONFLICT,
+            "The repository changed. Reload the page and try again.",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) async fn native_update(
     State(state): State<Arc<AppState>>,
     Path((owner, name, number)): Path<(String, String, i32)>,
@@ -457,6 +469,7 @@ pub(crate) async fn native_update(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     require_writer(&ctx, &repo)?;
+    require_current_repository(&ctx, &form, &repo)?;
     let draft = submitted_milestone(&form);
     let input = match milestone_input(&draft) {
         Ok(input) => input,
@@ -520,6 +533,7 @@ pub(crate) async fn native_close(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     require_writer(&ctx, &repo)?;
+    require_current_repository(&ctx, &form, &repo)?;
     change_state(&ctx, &repo, number, "closed").await
 }
 
@@ -534,6 +548,7 @@ pub(crate) async fn native_reopen(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     require_writer(&ctx, &repo)?;
+    require_current_repository(&ctx, &form, &repo)?;
     change_state(&ctx, &repo, number, "open").await
 }
 
@@ -556,12 +571,7 @@ pub(crate) async fn native_delete(
     }
     let actor = ctx.require_user()?.id;
     let expected_id = field(&form, "milestone_id").parse::<i64>().unwrap_or(0);
-    if field(&form, "repository_id").parse::<i64>().ok() != Some(repo.record.id) {
-        return Err(ctx.error(
-            StatusCode::CONFLICT,
-            "The repository changed. Reload the page and try again.",
-        ));
-    }
+    require_current_repository(&ctx, &form, &repo)?;
     match db::milestones::delete_milestone(
         &ctx.state.pool,
         actor,

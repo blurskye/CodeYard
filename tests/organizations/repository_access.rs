@@ -3,59 +3,16 @@
 //! Setup failure fails the test; nothing is skipped.
 #![cfg(not(target_arch = "wasm32"))]
 
-use crate::support::native_database;
-use crate::support::production_ci;
+use crate::support::database::Database;
+use crate::support::organizations::applied;
 
 use codeyard::backend::db::{
     self,
     models::{AccessLevel, OrgRole},
-    organizations::{self, OrganizationOutcome},
+    organizations,
 };
 
-// Reuse the existing guarded resources/cleanup rather than another fixture owner.
-enum Database {
-    Postgres(Box<production_ci::Fixture>),
-    Sqlite(native_database::NativeDatabase),
-}
 impl Database {
-    fn pool(&self) -> &db::DbPool {
-        match self {
-            Self::Postgres(fixture) => &fixture.pool,
-            Self::Sqlite(fixture) => &fixture.pool,
-        }
-    }
-    async fn execute(&self, sql: &str, ids: &[i64]) {
-        // Numbered $ parameters work on both native drivers. Corruption is
-        // fixture-only; all effective access assertions use the public facade.
-        match self {
-            Self::Postgres(fixture) => {
-                let mut query = sqlx::query(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .execute(&fixture.raw)
-                    .await
-                    .expect("owned PG mutation");
-            }
-            Self::Sqlite(fixture) => {
-                let mut query = sqlx::query(sql);
-                for id in ids {
-                    query = query.bind(*id);
-                }
-                query
-                    .execute(&fixture.raw)
-                    .await
-                    .expect("owned SQLite mutation");
-            }
-        }
-    }
-    async fn actor(&self, name: &str) -> i64 {
-        db::users::accounts::create_user(self.pool(), name, None)
-            .await
-            .unwrap()
-            .id
-    }
     async fn org(&self, owner: i64, name: &str) -> i64 {
         applied(
             organizations::create_organization(
@@ -158,18 +115,6 @@ impl Database {
             level,
             "canonical actor={actor} repo={repo}"
         );
-    }
-    async fn close(&mut self) {
-        match self {
-            Self::Postgres(fixture) => fixture.finish().await,
-            Self::Sqlite(fixture) => fixture.close().await,
-        }
-    }
-}
-fn applied<T: std::fmt::Debug>(result: OrganizationOutcome<T>) -> T {
-    match result {
-        OrganizationOutcome::Applied(value) => value,
-        other => panic!("expected applied, got {other:?}"),
     }
 }
 
@@ -552,14 +497,14 @@ async fn canonical_access_contract(database: &Database) {
 
 #[tokio::test]
 async fn postgres_canonical_organization_repository_access() {
-    let mut database = Database::Postgres(Box::new(production_ci::Fixture::new().await));
+    let mut database = Database::new(true).await;
     canonical_access_contract(&database).await;
-    database.close().await;
+    database.finish().await;
 }
 
 #[tokio::test]
 async fn sqlite_canonical_organization_repository_access() {
-    let mut database = Database::Sqlite(native_database::NativeDatabase::new().await);
+    let mut database = Database::new(false).await;
     canonical_access_contract(&database).await;
-    database.close().await;
+    database.finish().await;
 }

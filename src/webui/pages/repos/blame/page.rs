@@ -1,4 +1,7 @@
-use crate::webui::components::{code::themed_highlight_lines, compact_date, Avatar};
+use crate::webui::components::{
+    code::{language_of_path, themed_highlight_lines},
+    compact_date, short_sha, Avatar,
+};
 use crate::webui::pages::repos::{
     blob::{
         file_downloads, file_layout, file_stats, more_menu, title_row, view_switch, FileView,
@@ -64,7 +67,7 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
     let raw = file_url(&base, "raw", &page.reference, &page.path);
     let blame_url = file_url(&base, "blame", &page.reference, &page.path);
     let name = page.path.rsplit('/').next().unwrap_or_default();
-    let language = page.path.rsplit('.').next().unwrap_or("text");
+    let language = language_of_path(&page.path);
     // Git counts lines by newline alone, so a carriage return is dropped rather than shown as
     // a line break inside a table cell.
     let text = page.content.replace('\r', "");
@@ -163,8 +166,4 @@ fn blame_rows<'a>(hunks: &'a [BlameHunk], code: Vec<String>) -> Vec<BlameRow<'a>
             }
         })
         .collect()
-}
-
-fn short_sha(sha: &str) -> &str {
-    sha.get(..7).unwrap_or(sha)
 }

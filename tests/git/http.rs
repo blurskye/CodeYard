@@ -1042,8 +1042,9 @@ async fn exercise(pool: &DbPool, url: &str) {
             .size_bytes
             > 0
     );
-    // A repository whose name ends in .git must not resolve to the shorter name.
-    let suffixed = lifecycle::provision(
+    // A name ending in .git cannot be created, so a clone URL ending in .git.git never names a
+    // repository other than the one before the suffix.
+    assert!(lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
         repositories::RepositoryCreationOwner::personal(owner.id),
@@ -1053,59 +1054,16 @@ async fn exercise(pool: &DbPool, url: &str) {
         None,
     )
     .await
-    .unwrap();
-    let suffixed_url = format!("{}/http_owner/open.git.git", server.base);
-    success(git(
-        root.path(),
-        &[
-            "-C",
-            "reader",
-            "commit",
-            "--allow-empty",
-            "-qm",
-            "suffixed repository",
-        ],
-        None,
-    ));
-    let suffix_head =
-        String::from_utf8(git(root.path(), &["-C", "reader", "rev-parse", "HEAD"], None).stdout)
-            .unwrap();
-    success(git(
-        root.path(),
-        &["-C", "reader", "push", "-q", &suffixed_url, "HEAD:main"],
-        Some(write_value),
-    ));
-    for (path, expected) in [
-        (&public.disk_path, local.trim()),
-        (&suffixed.disk_path, suffix_head.trim()),
-    ] {
-        assert_eq!(
-            git2::Repository::open_bare(path)
-                .unwrap()
-                .find_reference("refs/heads/main")
-                .unwrap()
-                .target()
-                .unwrap()
-                .to_string(),
-            expected
-        );
-    }
-    success(git(
-        root.path(),
-        &["clone", "-q", &suffixed_url, "suffixed-clone"],
-        None,
-    ));
+    .is_err());
     assert_eq!(
-        String::from_utf8(
-            git(
-                root.path(),
-                &["-C", "suffixed-clone", "rev-parse", "HEAD"],
-                None
-            )
-            .stdout
-        )
-        .unwrap(),
-        suffix_head
+        git2::Repository::open_bare(&public.disk_path)
+            .unwrap()
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap()
+            .to_string(),
+        local.trim()
     );
 
     let raw_url = format!("{}/api/repos/http_owner/open/raw/main/blob", server.base);
@@ -1132,7 +1090,7 @@ async fn exercise(pool: &DbPool, url: &str) {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     assert_eq!(
         std::fs::read(Path::new(&public.disk_path).join("HEAD")).unwrap(),
         head_before
@@ -1473,7 +1431,7 @@ async fn exercise(pool: &DbPool, url: &str) {
         }
     }
     refused(&client, &refs, Some(&banned_value)).await;
-    // Unknown-token failures share the existing account/global password limits.
+    // Failures with one unknown token spend that token's account budget and the client's.
     let mut limited = false;
     for _ in 0..12 {
         let response = client
@@ -1503,18 +1461,9 @@ async fn git_http_sqlite() {
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn git_http_postgres() {
-    let database = native::PostgresDatabase::new().await;
-    let DbPool::Postgres(raw) = &database.pool else {
-        unreachable!()
-    };
-    let schema: String = sqlx::query_scalar("SELECT current_schema()")
-        .fetch_one(raw)
-        .await
-        .unwrap();
-    let mut url = url::Url::parse(&std::env::var("GITSERV_TEST_DATABASE_URL").unwrap()).unwrap();
-    url.query_pairs_mut()
-        .append_pair("options", &format!("-c search_path={schema}"));
-    exercise(&database.pool, url.as_str()).await;
+    let mut database = native::PostgresDatabase::new().await;
+    exercise(&database.pool, &database.connection_url()).await;
+    database.finish().await;
 }
 
 /// Takes the only Git session slot the way an anonymous upload can: the request is announced and
@@ -1637,16 +1586,7 @@ async fn git_http_push_after_slot_wait_sqlite() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn git_http_push_after_slot_wait_postgres() {
-    let database = native::PostgresDatabase::new().await;
-    let DbPool::Postgres(raw) = &database.pool else {
-        unreachable!()
-    };
-    let schema: String = sqlx::query_scalar("SELECT current_schema()")
-        .fetch_one(raw)
-        .await
-        .unwrap();
-    let mut url = url::Url::parse(&std::env::var("GITSERV_TEST_DATABASE_URL").unwrap()).unwrap();
-    url.query_pairs_mut()
-        .append_pair("options", &format!("-c search_path={schema}"));
-    push_rechecks_access_after_waiting_for_a_slot(&database.pool, url.as_str()).await;
+    let mut database = native::PostgresDatabase::new().await;
+    push_rechecks_access_after_waiting_for_a_slot(&database.pool, &database.connection_url()).await;
+    database.finish().await;
 }

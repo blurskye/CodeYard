@@ -3,7 +3,7 @@
 
 use axum::{Extension, Json};
 use serde::Serialize;
-use std::sync::Arc;
+use std::{collections::HashSet, net::IpAddr, sync::Arc};
 
 /// The HTTP clone endpoint when neither PUBLIC_HTTP_CLONE_BASE nor PUBLIC_URL is set.
 pub const DEFAULT_HTTP_CLONE_BASE: &str = "http://localhost:3000";
@@ -14,7 +14,10 @@ pub const DEFAULT_SSH_CLONE_BASE: &str = "ssh://git@localhost:2222";
 #[derive(Debug, Clone)]
 pub struct WebConfig {
     pub public: PublicConfig,
+    /// Origins allowed to call the API from another site. None unless `CORS_ORIGINS` is set.
     pub cors_origins: Vec<String>,
+    /// Reverse proxies whose `X-Forwarded-For` header names the real client.
+    pub trusted_proxies: HashSet<IpAddr>,
 }
 
 impl WebConfig {
@@ -29,10 +32,15 @@ impl WebConfig {
                     .is_some_and(|s| s.setup_required),
             },
             cors_origins: std::env::var("CORS_ORIGINS")
-                .unwrap_or_else(|_| "http://localhost:8080".to_string())
+                .unwrap_or_default()
                 .split(',')
                 .map(|origin| origin.trim().to_string())
                 .filter(|origin| !origin.is_empty())
+                .collect(),
+            trusted_proxies: std::env::var("HTTP_TRUSTED_PROXY_IPS")
+                .unwrap_or_default()
+                .split(',')
+                .filter_map(|address| address.trim().parse().ok())
                 .collect(),
         }
     }

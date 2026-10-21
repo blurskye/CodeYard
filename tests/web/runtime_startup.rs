@@ -1,6 +1,7 @@
 //! Recovery and logging through a running standalone server on both databases.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::native_database as native;
+use crate::support::server::spawn_on_free_ports;
 
 use codeyard::backend::db;
 use reqwest::{Client, StatusCode};
@@ -28,63 +29,47 @@ impl Drop for Server {
 
 impl Server {
     async fn start(root: &Path, url: &str) -> Self {
-        let http = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let ssh = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = http.local_addr().unwrap();
-        let ssh_address = ssh.local_addr().unwrap();
-        drop((http, ssh));
         let log = root.join("server.log");
-        let output = std::fs::File::create(&log).unwrap();
-        let child = Command::new(env!("CARGO_BIN_EXE_codeyard"))
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap())
-            .env("HOME", root)
-            .env("WEBUI_DIST", root.join("webui"))
-            .env("DATABASE_URL", url)
-            .env("GITSERV_STATE_DIR", root.join("state"))
-            .env("REPOS_PATH", root.join("repos"))
-            .args([
-                "serve",
-                "--roles",
-                "web,storage,ssh",
-                "--ssh-mode",
-                "builtin",
-                "--http-addr",
-                &address.to_string(),
-                "--ssh-addr",
-                &ssh_address.to_string(),
-            ])
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .stdout(output.try_clone().unwrap())
-            .stderr(output)
-            .spawn()
-            .unwrap();
-        let mut server = Self {
-            child,
-            base: format!("http://{address}"),
-            ssh_port: ssh_address.port(),
-            log,
-        };
         let client = Client::new();
-        for _ in 0..100 {
-            assert!(
-                server.child.try_wait().unwrap().is_none(),
-                "server exited: {}",
-                std::fs::read_to_string(&server.log).unwrap()
-            );
-            if client
-                .get(format!("{}/ready", server.base))
-                .send()
-                .await
-                .is_ok_and(|reply| reply.status().is_success())
-                && tokio::net::TcpStream::connect(ssh_address).await.is_ok()
-            {
-                return server;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+        let (child, addresses) = spawn_on_free_ports(
+            &log,
+            2,
+            |addresses| {
+                let mut command = Command::new(env!("CARGO_BIN_EXE_codeyard"));
+                command
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").unwrap())
+                    .env("HOME", root)
+                    .env("WEBUI_DIST", root.join("webui"))
+                    .env("DATABASE_URL", url)
+                    .env("GITSERV_STATE_DIR", root.join("state"))
+                    .env("REPOS_PATH", root.join("repos"))
+                    .args(["serve", "--roles", "web,storage,ssh"])
+                    .args(["--ssh-mode", "builtin"])
+                    .args(["--http-addr", &addresses[0].to_string()])
+                    .args(["--ssh-addr", &addresses[1].to_string()])
+                    .current_dir(root);
+                command
+            },
+            |addresses| {
+                let client = &client;
+                async move {
+                    client
+                        .get(format!("http://{}/ready", addresses[0]))
+                        .send()
+                        .await
+                        .is_ok_and(|reply| reply.status().is_success())
+                        && tokio::net::TcpStream::connect(addresses[1]).await.is_ok()
+                }
+            },
+        )
+        .await;
+        Self {
+            child,
+            base: format!("http://{}", addresses[0]),
+            ssh_port: addresses[1].port(),
+            log,
         }
-        panic!("server did not start");
     }
 }
 

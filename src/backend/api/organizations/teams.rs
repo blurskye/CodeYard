@@ -293,16 +293,7 @@ pub(super) async fn detail(
         Err(_) => return Err(unavailable(ctx)),
     };
     Ok(Some(view::TeamDetail {
-        team: view::Team {
-            id: selected.team.id,
-            name: selected.team.name,
-            slug: selected.team.slug.clone(),
-            description: selected.team.description.clone().unwrap_or_default(),
-            privacy: selected.team.privacy,
-            member_count: selected.member_count,
-        },
-        slug: selected.team.slug,
-        description: selected.team.description.unwrap_or_default(),
+        team: organization::team_view(selected.team, selected.member_count),
         more_members: members.len() as i64 == organization::PAGE_LIMIT,
         more_repositories: repositories.len() as i64 == organization::PAGE_LIMIT,
         members_after: members.last().map(|v| v.id).unwrap_or(members_cursor),
@@ -424,26 +415,8 @@ pub(super) async fn public_show(
     } = public;
     let title = format!("{} / {}", org.name, team.name);
     let model = view::TeamPage {
-        organization: view::Organization {
-            id: org.id,
-            name: org.name,
-            display_name: org.display_name,
-            description: org.description.unwrap_or_default(),
-            suspended: false,
-            avatar_url: org
-                .avatar_file_id
-                .map(|id| format!("/api/files/{id}/download")),
-        },
-        team: view::Team {
-            id: team.id,
-            name: team.name,
-            slug: team.slug,
-            description: team.description.clone().unwrap_or_default(),
-            privacy: team.privacy,
-            member_count,
-        },
-        description: team.description.unwrap_or_default(),
-        member_count,
+        organization: organization::public_view(org),
+        team: organization::team_view(team, member_count),
         repository_count,
         manage,
         show_repositories,

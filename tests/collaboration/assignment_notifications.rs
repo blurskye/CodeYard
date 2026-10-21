@@ -6,19 +6,12 @@
 use super::notification_privacy::notifications_model;
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{self, models::repositories::AccessLevel},
-    storage::ObjectStore,
-};
+use codeyard::backend::db::{self, models::repositories::AccessLevel};
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 /// alice owns `proj`, which is public. bob and carol are collaborators with read access, so
 /// both can be assigned.
@@ -36,7 +29,7 @@ struct World {
 async fn setup(pg: bool) -> World {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let carol_id = database.actor("carol").await;
@@ -58,14 +51,7 @@ async fn setup(pg: bool) -> World {
             .await
             .unwrap();
     }
-    let router = create_router(AppState::new(
-        database.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;
     let bob = Client::login(&router, database.pool(), bob_id).await;
     World {
@@ -316,7 +302,7 @@ async fn assigned_reason_filters_the_list(pg: bool) {
     assert_eq!(kinds, vec!["assigned"]);
     let model = notifications_model(&w.bob, "/notifications?reason=assigned").await;
     let reasons = model["reasons"].as_array().unwrap();
-    assert_eq!(reasons.len(), 11);
+    assert_eq!(reasons.len(), 13);
     assert!(reasons
         .iter()
         .any(|reason| reason["slug"] == "assigned" && reason["label"] == "Assigned"));

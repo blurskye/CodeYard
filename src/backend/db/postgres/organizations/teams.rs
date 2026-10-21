@@ -8,6 +8,13 @@ use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
 use super::authority::*;
 
+/// One page of a team's members who are still active members of its organization.
+const TEAM_MEMBERS_PAGE: &str = "SELECT tm.* FROM team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=$1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=$2 AND tm.id>$3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT $4";
+
+/// One page of a team's repository grants. Team visibility is not READ, so the rows are
+/// filtered before paging with same-organization team access plus direct or public READ.
+const TEAM_REPOSITORIES_PAGE: &str = "SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE a.team_id=$1 AND a.id>$2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$3 AND r.owner_user_id IS NULL AND ($5 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$6 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$6 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY a.id LIMIT $4";
+
 pub async fn create_organization_team(
     pool: &PgPool,
     actor: i64,
@@ -122,8 +129,13 @@ pub async fn list_organization_team_members(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(Denied);
     }
-    let members = sqlx::query_as("SELECT tm.* FROM team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=$1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=$2 AND tm.id>$3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT $4")
-        .bind(org).bind(team.id).bind(page.after).bind(page.limit).fetch_all(&mut *tx).await?;
+    let members = sqlx::query_as(TEAM_MEMBERS_PAGE)
+        .bind(org)
+        .bind(team.id)
+        .bind(page.after)
+        .bind(page.limit)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Applied(members))
 }
@@ -280,8 +292,15 @@ pub async fn list_organization_team_repositories(
     }
     // Team visibility is not READ. Apply effective access before LIMIT/projection;
     // same-org team joins match the canonical contribution helper below.
-    let rows = sqlx::query_as("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE a.team_id=$1 AND a.id>$2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$3 AND r.owner_user_id IS NULL AND ($5 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$6 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$6 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY a.id LIMIT $4")
-        .bind(team.id).bind(page.after).bind(org).bind(page.limit).bind(administers(role)).bind(actor).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query_as(TEAM_REPOSITORIES_PAGE)
+        .bind(team.id)
+        .bind(page.after)
+        .bind(org)
+        .bind(page.limit)
+        .bind(administers(role))
+        .bind(actor)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Applied(rows))
 }
@@ -336,8 +355,13 @@ pub async fn list_public_team_members(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(None);
     }
-    let members = sqlx::query_as("SELECT tm.* FROM team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=$1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=$2 AND tm.id>$3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT $4")
-        .bind(org).bind(team.id).bind(page.after).bind(page.limit).fetch_all(&mut *tx).await?;
+    let members = sqlx::query_as(TEAM_MEMBERS_PAGE)
+        .bind(org)
+        .bind(team.id)
+        .bind(page.after)
+        .bind(page.limit)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Some(members))
 }
@@ -358,9 +382,15 @@ pub async fn list_public_team_repositories(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(None);
     }
-    // Same READ filter as list_organization_team_repositories.
-    let rows = sqlx::query_as("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE a.team_id=$1 AND a.id>$2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$3 AND r.owner_user_id IS NULL AND ($5 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$6 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$6 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret'))) ORDER BY a.id LIMIT $4")
-        .bind(team.id).bind(page.after).bind(org).bind(page.limit).bind(administers(role)).bind(actor).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query_as(TEAM_REPOSITORIES_PAGE)
+        .bind(team.id)
+        .bind(page.after)
+        .bind(org)
+        .bind(page.limit)
+        .bind(administers(role))
+        .bind(actor)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Some(rows))
 }

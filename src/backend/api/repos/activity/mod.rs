@@ -3,24 +3,23 @@ use crate::backend::app::AppState;
 use axum::{routing::get, Router};
 use std::sync::Arc;
 
+pub mod engagement;
 pub mod forks;
-pub mod star;
 pub mod stargazers;
-pub mod watch;
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/api/repos/:owner/:repo/star",
-            get(star::check_star)
-                .put(star::star_repo)
-                .delete(star::unstar_repo),
+            get(engagement::check_star)
+                .put(engagement::star_repo)
+                .delete(engagement::unstar_repo),
         )
         .route(
             "/api/repos/:owner/:repo/watch",
-            get(watch::check_watch)
-                .put(watch::watch_repo)
-                .delete(watch::unwatch_repo),
+            get(engagement::check_watch)
+                .put(engagement::watch_repo)
+                .delete(engagement::unwatch_repo),
         )
         .route(
             "/api/repos/:owner/:repo/stargazers",

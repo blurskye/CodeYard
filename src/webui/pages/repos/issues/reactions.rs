@@ -1,7 +1,7 @@
 //! The reaction bar under a description, a comment or a review. It is one native form: each reaction
 //! is a submit button, so it works without JavaScript.
-use super::{detail::csrf, Reaction, Repository};
-use crate::webui::pages::repos::chrome::icon;
+use super::{Reaction, Repository};
+use crate::webui::pages::repos::chrome::{csrf, icon};
 use dioxus::prelude::*;
 
 /// The reactions a user can pick, in display order: the stored name, the emoji and its label.

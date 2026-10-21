@@ -1,7 +1,6 @@
 use super::inbox::inbox_error;
 use super::inbox::native_action;
 use super::inbox::notification_session_denied;
-use super::inbox::require_notification_csrf;
 use super::inbox::BulkUpdateResponse;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::extract_session_id;
@@ -23,7 +22,6 @@ pub async fn mark_all_notifications_read(
     headers: axum::http::HeaderMap,
 ) -> Result<Json<BulkUpdateResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    require_notification_csrf(&state, &headers).await?;
 
     let session_id = extract_session_id(&headers).ok_or_else(notification_session_denied)?;
     let inbox = crate::backend::notifications::inbox::inbox(

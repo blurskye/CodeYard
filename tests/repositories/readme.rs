@@ -3,7 +3,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as http;
+use crate::support::http_client as http;
 
 use axum::{
     body::{to_bytes, Body},
@@ -11,15 +11,11 @@ use axum::{
 };
 use codeyard::{
     backend::{
-        api::create_router,
-        app::AppState,
-        ci::CiConfig,
         db,
         repositories::{
             lifecycle::provision,
             store::{repo_store, FileWrite, RepoStore},
         },
-        storage::ObjectStore,
     },
     webui::{
         app::{Page, PageEnvelope},
@@ -27,7 +23,7 @@ use codeyard::{
     },
 };
 use database::Database;
-use std::{io::Write, sync::Arc};
+use std::io::Write;
 use tower::ServiceExt;
 
 #[expect(
@@ -97,7 +93,7 @@ async fn model(client: &http::Client, path: &str) -> (view::tree::TreePage, usiz
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("readme_owner").await;
     let root = tempfile::tempdir().unwrap();
     let repository = provision(
@@ -112,14 +108,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let store = repo_store(&repository, None);
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = http::Client::anonymous(&router);
     let tree_path = "/readme_owner/preview";
     let file_path = "/readme_owner/preview/blob/refs/heads/main/ReadMe.md";
@@ -451,7 +440,7 @@ async fn postgres_readme_previews_are_bounded() {
 async fn commit_history_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("history_owner").await;
     let root = tempfile::tempdir().unwrap();
     let repository = provision(
@@ -538,14 +527,7 @@ async fn commit_history_contract(pg: bool) {
         .write_all(stream.as_bytes())
         .unwrap();
     assert!(git.wait().unwrap().success());
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = http::Client::anonymous(&router);
     let head = store.commit("main").await.unwrap().sha;
     let commits = client
@@ -647,7 +629,7 @@ async fn browse_fixture(
 ) {
     bundle::install();
     let f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("browse_owner").await;
     let root = tempfile::tempdir().unwrap();
     let repository = provision(
@@ -661,14 +643,7 @@ async fn browse_fixture(
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = http::Client::login(&router, f.pool(), actor).await;
     (f, root, repository, client)
 }
@@ -789,7 +764,7 @@ async fn bounded_ancestors_contract(pg: bool) {
         &repo,
         None,
         1_800_000_000,
-        &"x".repeat(codeyard::backend::repositories::store::MAX_COMMIT_METADATA_BYTES + 1),
+        &"x".repeat(codeyard::backend::git::MAX_COMMIT_OBJECT_BYTES + 1),
         &files,
     );
     let tip = browse_commit(&repo, Some(oversized), 1_700_000_000, "small tip", &files);
@@ -952,7 +927,7 @@ async fn type_change_contract(pg: bool) {
 async fn folder_header_contract() {
     bundle::install();
     let f = Database::new(false).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("folder_owner").await;
     let root = tempfile::tempdir().unwrap();
     let repository = provision(
@@ -967,14 +942,7 @@ async fn folder_header_contract() {
     .await
     .unwrap();
     let store = repo_store(&repository, None);
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = http::Client::anonymous(&router);
     // Commit times have one-second resolution, so each commit waits for the clock to move on.
     let docs_first = save(
@@ -1062,7 +1030,7 @@ async fn postgres_type_changes_keep_complete_diffs() {
 async fn merge_tree_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("merge_owner").await;
     let root = tempfile::tempdir().unwrap();
     let repository = provision(
@@ -1138,14 +1106,7 @@ async fn merge_tree_contract(pg: bool) {
     bare.reference("refs/heads/main", merge, false, "fixture")
         .unwrap();
     bare.set_head("refs/heads/main").unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = http::Client::anonymous(&router);
     let entries = client
         .expect(

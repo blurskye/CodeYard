@@ -5,7 +5,7 @@ use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use super::repository::{find_commit_checked, peel_to_commit_checked, tree_entry};
+use super::repository::{find_commit_checked, is_missing_path, peel_to_commit_checked, tree_entry};
 
 pub const MAX_CI_WORKFLOW_BYTES: usize = 256 * 1024;
 pub const MAX_WORKFLOW_DIRECTORY_ENTRIES: usize = 64;
@@ -75,7 +75,7 @@ pub(crate) fn resolve_ci_commit(
     let tip = peel_to_commit_checked(&git, &full_ref).ok().map(|c| c.id());
     let oid = match sha {
         Some(sha) => {
-            if sha.len() != 40 || !sha.bytes().all(|c| c.is_ascii_hexdigit()) {
+            if !super::is_full_commit_id(sha) {
                 return Err(not_found("invalid CI SHA"));
             }
             let oid = Oid::from_str(sha)?;
@@ -230,14 +230,6 @@ fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {
     Ok(false)
 }
 
-/// True when a lookup found no such path in a tree. Other Git errors, such as a missing
-/// object, stay errors.
-fn is_missing_path(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<git2::Error>().is_some_and(|error| {
-        error.code() == git2::ErrorCode::NotFound && error.class() == git2::ErrorClass::Tree
-    })
-}
-
 pub(crate) fn load_push_workflows(
     path: &Path,
     sha: &str,
@@ -248,7 +240,13 @@ pub(crate) fn load_push_workflows(
     let files = match workflow_files_in_commit(&git, &commit) {
         Ok(files) => files,
         // A commit without a workflow directory has no workflows to run.
-        Err(error) if is_missing_path(&error) => Vec::new(),
+        Err(error)
+            if error
+                .downcast_ref::<git2::Error>()
+                .is_some_and(is_missing_path) =>
+        {
+            Vec::new()
+        }
         Err(error) => return Err(error),
     };
     Ok((

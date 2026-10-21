@@ -4,7 +4,7 @@ use argon2::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Algorithm, Argon2, Params, Version,
 };
-use rand_core::OsRng;
+use rand::rngs::OsRng;
 use std::sync::{Arc, OnceLock};
 use tokio::sync::Semaphore;
 
@@ -12,6 +12,11 @@ pub const MAX_PASSWORD_BYTES: usize = 1024;
 const MEMORY_KIB: u32 = 19_456;
 const ITERATIONS: u32 = 2;
 const PARALLELISM: u32 = 1;
+// A stored hash may use any cost up to these limits, so raising the cost above does not lock out
+// older hashes, while a corrupted hash cannot pick an expensive one.
+const MAX_MEMORY_KIB: u32 = 65_536;
+const MAX_ITERATIONS: u32 = 6;
+const MAX_PARALLELISM: u32 = 4;
 const DUMMY: &str = "$argon2id$v=19$m=19456,t=2,p=1$cHJvZHVjdGlvbi1kdW1teQ$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 static WORK: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
@@ -56,9 +61,9 @@ fn accepted_phc(stored: &str) -> Option<PasswordHash<'_>> {
         return None;
     }
     let params = Params::try_from(&hash).ok()?;
-    if params.m_cost() != MEMORY_KIB
-        || params.t_cost() != ITERATIONS
-        || params.p_cost() != PARALLELISM
+    if params.m_cost() > MAX_MEMORY_KIB
+        || params.t_cost() > MAX_ITERATIONS
+        || params.p_cost() > MAX_PARALLELISM
     {
         return None;
     }
@@ -150,6 +155,7 @@ mod tests {
         assert!(accepted_phc(&a.replace("m=19456", "m=4294967295")).is_none());
         assert!(accepted_phc(&a.replace("t=2", "t=9000")).is_none());
         assert!(accepted_phc(&a.replace("p=1", "p=128")).is_none());
+        assert!(accepted_phc(&a.replace("t=2", "t=3")).is_some());
         assert!(accepted_phc(&a.replace("argon2id", "argon2i")).is_none());
         assert!(accepted_phc(&a.replace("m=19456", "keyid=1234")).is_none());
         assert!(accepted_phc(DUMMY).is_some());

@@ -18,20 +18,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/admin/nodes/:name/revoke", post(revoke))
 }
 
-/// The signed-in account's id, if it may change cluster membership.
-fn administrator(ctx: &PageContext) -> Option<i64> {
-    ctx.user
-        .as_ref()
-        .filter(|user| user.is_admin && !user.is_banned && !user.must_change_password)
-        .map(|user| user.id)
-}
-
 async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if administrator(&ctx).is_none() {
+    if ctx.administrator().is_none() {
         return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
     }
     render(&ctx, StatusCode::OK, None).await
@@ -109,7 +101,7 @@ async fn change(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let Some(actor) = administrator(&ctx) else {
+    let Some(actor) = ctx.administrator().map(|user| user.id) else {
         return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
     };
     let session =

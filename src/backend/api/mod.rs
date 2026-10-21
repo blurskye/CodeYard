@@ -86,6 +86,8 @@ pub fn create_router(state: AppState) -> Router {
         // Sees every response, including errors. It reads the state, so it sits inside the Extension layer.
         .layer(axum::middleware::from_fn(render::render_page))
         .layer(axum::middleware::from_fn(middleware::no_ai_html))
+        // Outside every handler, so no request keeps a client address that it sent itself.
+        .layer(axum::middleware::from_fn(middleware::stamp_client_address))
         // Resource middleware extracts this before handlers extract router state.
         .layer(Extension(state))
         .layer(Extension(config))
@@ -109,11 +111,14 @@ pub async fn run_web_server(
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let mut listener_stop = stop.clone();
     let server = async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = listener_stop.wait_for(|stopped| *stopped).await;
-            })
-            .await
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = listener_stop.wait_for(|stopped| *stopped).await;
+        })
+        .await
     };
     let result = server.await;
     // Accepted handlers may still be waiting for a Git session slot. Keep task

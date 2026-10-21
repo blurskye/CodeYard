@@ -29,29 +29,6 @@ pub struct FormValues {
     pub mode: String,
     pub days: String,
 }
-impl FormValues {
-    pub fn get(&self, key: &str) -> String {
-        match key {
-            "username" => &self.username,
-            "email" => &self.email,
-            "node_mode" => &self.node_mode,
-            "display_name" => &self.display_name,
-            "bio" => &self.bio,
-            "location" => &self.location,
-            "website" => &self.website,
-            "name" => &self.name,
-            "public_key" => &self.public_key,
-            "scope" => &self.scope,
-            "expiry" => &self.expiry,
-            "expires_at" => &self.expires_at,
-            "redirect" => &self.redirect,
-            "mode" => &self.mode,
-            "days" => &self.days,
-            _ => return String::new(),
-        }
-        .clone()
-    }
-}
 
 /// Only explicitly non-secret values may survive a failed submission.
 pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
@@ -117,8 +94,8 @@ pub(in crate::webui::pages) fn managed_account_form(
     rsx! {
         form { method: "post", action: action.to_owned(), class: "identity-form",
             {csrf(token)}
-            {text_field("username", "Username", values.get("username"), "text", true, 255)}
-            {text_field("email", "Email (optional)", values.get("email"), "email", false, 320)}
+            {text_field("username", "Username", values.username.clone(), "text", true, 255)}
+            {text_field("email", "Email (optional)", values.email.clone(), "email", false, 320)}
             {password_field("password", "Temporary password", true)}
             if with_admin {
                 label { class: "identity-check",
@@ -162,20 +139,11 @@ pub(in crate::webui::pages) fn access_forms(
                             }
                             form { method: "post", action: format!("{prefix}/requests/{}/resolve", request.id), class: "identity-row-actions",
                                 {csrf(token)}
-                                if prefix.starts_with("/admin/") { input { r#type: "hidden", name: "days", value: values.get("days") } }
+                                if prefix.starts_with("/admin/") { input { r#type: "hidden", name: "days", value: values.days.clone() } }
                                 button { r#type: "submit", name: "action", value: "approve", class: SUBMIT, "Approve" }
                                 button { r#type: "submit", name: "action", value: "reject", class: "identity-button", "Reject" }
                             }
                         }
-                    }
-                }
-                if requests.len() == if prefix.starts_with("/admin/") { 5 } else { 100 } {
-                    if let Some(last) = requests.last() {
-                        a { class: "identity-button", href: if prefix.starts_with("/admin/") {
-                            format!("/admin?days={}&requests_after={}", crate::webui::pages::admin::normalize_days(Some(&values.days)), last.id)
-                        } else {
-                            format!("/settings?tab=access&requests_after={}", last.id)
-                        }, "Next requests" }
                     }
                 }
             }

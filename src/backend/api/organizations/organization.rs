@@ -195,6 +195,32 @@ pub(super) fn invalid(ctx: &PageContext) -> Response {
 pub(super) fn not_found(ctx: &PageContext) -> Response {
     ctx.error(StatusCode::NOT_FOUND, "Organization not found.")
 }
+/// The header of an organization's public pages, with its picture.
+pub(super) fn public_view(org: crate::backend::db::models::Organization) -> view::Organization {
+    view::Organization {
+        id: org.id,
+        name: org.name,
+        display_name: org.display_name,
+        description: org.description.unwrap_or_default(),
+        suspended: false,
+        avatar_url: org
+            .avatar_file_id
+            .map(|id| format!("/api/files/{id}/download")),
+    }
+}
+
+/// A team with its member count, as the organization pages list it.
+pub(super) fn team_view(team: crate::backend::db::models::Team, member_count: i64) -> view::Team {
+    view::Team {
+        id: team.id,
+        name: team.name,
+        slug: team.slug,
+        description: team.description.unwrap_or_default(),
+        privacy: team.privacy,
+        member_count,
+    }
+}
+
 fn metadata(org: OrganizationMetadata) -> view::Organization {
     view::Organization {
         id: org.id,
@@ -291,10 +317,7 @@ pub(super) async fn respond_with_hook_draft(
         None
     };
     // The same role check every write makes; the page only chooses which controls to show.
-    let can_recover = ctx
-        .user
-        .as_ref()
-        .is_some_and(|user| user.is_admin && !user.is_banned && !user.must_change_password);
+    let can_recover = ctx.administrator().is_some();
     let (can_manage, is_owner) = match org {
         Some(org) => {
             match organizations::get_organization_role(&ctx.state.pool, actor, org).await {
@@ -471,14 +494,7 @@ pub(super) async fn respond_with_hook_draft(
                     model.more_teams = values.len() as i64 == PAGE_LIMIT;
                     values
                         .into_iter()
-                        .map(|v| view::Team {
-                            id: v.team.id,
-                            name: v.team.name,
-                            slug: v.team.slug,
-                            description: v.team.description.unwrap_or_default(),
-                            privacy: v.team.privacy,
-                            member_count: v.member_count,
-                        })
+                        .map(|v| team_view(v.team, v.member_count))
                         .collect()
                 }
                 Ok(_) => return not_found(ctx),

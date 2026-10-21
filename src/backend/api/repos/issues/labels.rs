@@ -1,11 +1,12 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::api::repos::issues::assignees::assigned_item;
 use crate::backend::api::repos::labels::label_write_error;
 use crate::backend::api::repos::labels::LabelResponse;
-use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::assignees::AssignedItem;
@@ -32,18 +33,9 @@ pub async fn add_issue_labels(
     Path((owner, repo, number)): Path<(String, String, i32)>,
     Json(req): Json<AddLabelsRequest>,
 ) -> Result<Json<Vec<LabelResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(label_write_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
     let actor = get_current_user(&state.pool, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &actor).await?;
     let issue = db::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(label_write_error)?
@@ -54,30 +46,15 @@ pub async fn add_issue_labels(
             )
         })?;
 
-    let before = db::labels::get_issue_labels(&state.pool, issue.id)
-        .await
-        .map_err(label_write_error)?;
-    let labels =
-        db::labels::add_issue_labels(&state.pool, actor.id, repository.id, issue.id, &req.labels)
-            .await
-            .map_err(label_write_error)?;
-    for label in labels
-        .iter()
-        .filter(|label| req.labels.contains(&label.id))
-        .filter(|label| !before.iter().any(|old| old.id == label.id))
-    {
-        db::timeline::record(
-            &state.pool,
-            repository.id,
-            db::timeline::Subject::Issue,
-            issue.id,
-            actor.id,
-            "labeled",
-            &label.name,
-            "",
-        )
-        .await;
-    }
+    let labels = add_labels(
+        &state.pool,
+        actor.id,
+        repository.id,
+        AssignedItem::Issue(issue.id),
+        &req.labels,
+    )
+    .await
+    .map_err(label_write_error)?;
 
     Ok(Json(labels.into_iter().map(LabelResponse::from).collect()))
 }
@@ -87,18 +64,9 @@ pub async fn remove_issue_label(
     headers: HeaderMap,
     Path((owner, repo, number, label_id)): Path<(String, String, i32, i64)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(label_write_error)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
     let actor = get_current_user(&state.pool, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &actor).await?;
     let issue = db::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(label_write_error)?
@@ -109,31 +77,82 @@ pub async fn remove_issue_label(
             )
         })?;
 
-    let name = db::labels::get_issue_labels(&state.pool, issue.id)
-        .await
-        .map_err(label_write_error)?
-        .into_iter()
-        .find(|label| label.id == label_id)
-        .map(|label| label.name);
-    let removed =
-        db::labels::remove_issue_label(&state.pool, actor.id, repository.id, issue.id, label_id)
-            .await
-            .map_err(label_write_error)?;
-    if let (true, Some(name)) = (removed, name) {
-        db::timeline::record(
-            &state.pool,
-            repository.id,
-            db::timeline::Subject::Issue,
-            issue.id,
-            actor.id,
-            "unlabeled",
-            &name,
-            "",
-        )
-        .await;
-    }
+    remove_label(
+        &state.pool,
+        actor.id,
+        repository.id,
+        AssignedItem::Issue(issue.id),
+        label_id,
+    )
+    .await
+    .map_err(label_write_error)?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Adds labels to an issue or pull request and records a "labeled" event for each one that was
+/// not on it yet. Returns every label the item has afterwards.
+async fn add_labels(
+    pool: &db::DbPool,
+    actor_id: i64,
+    repo_id: i64,
+    subject: AssignedItem,
+    ids: &[i64],
+) -> anyhow::Result<Vec<db::models::Label>> {
+    let before = item_labels(pool, subject).await?;
+    let labels = match subject {
+        AssignedItem::Issue(item_id) => {
+            db::labels::add_issue_labels(pool, actor_id, repo_id, item_id, ids).await?
+        }
+        AssignedItem::PullRequest(item_id) => {
+            db::labels::add_pull_request_labels(pool, actor_id, repo_id, item_id, ids).await?
+        }
+    };
+    for label in labels
+        .iter()
+        .filter(|label| ids.contains(&label.id))
+        .filter(|label| !before.iter().any(|old| old.id == label.id))
+    {
+        db::timeline::record_for(pool, repo_id, subject, actor_id, "labeled", &label.name).await;
+    }
+    Ok(labels)
+}
+
+/// Removes a label from an issue or pull request and records an "unlabeled" event when it was on
+/// it. Returns whether it was.
+async fn remove_label(
+    pool: &db::DbPool,
+    actor_id: i64,
+    repo_id: i64,
+    subject: AssignedItem,
+    label_id: i64,
+) -> anyhow::Result<bool> {
+    let before = item_labels(pool, subject).await?;
+    let removed = match subject {
+        AssignedItem::Issue(item_id) => {
+            db::labels::remove_issue_label(pool, actor_id, repo_id, item_id, label_id).await?
+        }
+        AssignedItem::PullRequest(item_id) => {
+            db::labels::remove_pull_request_label(pool, actor_id, repo_id, item_id, label_id)
+                .await?
+        }
+    };
+    if let (true, Some(label)) = (removed, before.iter().find(|label| label.id == label_id)) {
+        db::timeline::record_for(pool, repo_id, subject, actor_id, "unlabeled", &label.name).await;
+    }
+    Ok(removed)
+}
+
+async fn item_labels(
+    pool: &db::DbPool,
+    subject: AssignedItem,
+) -> anyhow::Result<Vec<db::models::Label>> {
+    match subject {
+        AssignedItem::Issue(item_id) => db::labels::get_issue_labels(pool, item_id).await,
+        AssignedItem::PullRequest(item_id) => {
+            db::labels::get_pull_request_labels(pool, item_id).await
+        }
+    }
 }
 
 pub(crate) async fn native_add_label(
@@ -171,40 +190,11 @@ pub(crate) async fn native_add_label(
     };
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let actor = ctx.require_user()?.id;
-    let applied = match subject {
-        AssignedItem::Issue(item_id) => {
-            db::labels::add_issue_labels(&ctx.state.pool, actor, repo.record.id, item_id, &[id])
-                .await
-        }
-        AssignedItem::PullRequest(item_id) => {
-            db::labels::add_pull_request_labels(
-                &ctx.state.pool,
-                actor,
-                repo.record.id,
-                item_id,
-                &[id],
-            )
-            .await
-        }
-    }
-    .map_err(crate::backend::api::repos::labels::label_write_error);
+    let applied = add_labels(&ctx.state.pool, actor, repo.record.id, subject, &[id])
+        .await
+        .map_err(label_write_error);
     match applied {
         Ok(applied) if applied.iter().any(|label| label.id == id) => {
-            if !value.labels.iter().any(|label| label.id == id) {
-                let name = labels
-                    .iter()
-                    .find(|label| label.id == id)
-                    .map_or("", |label| label.name.as_str());
-                db::timeline::record_for(
-                    &ctx.state.pool,
-                    repo.record.id,
-                    subject,
-                    actor,
-                    "labeled",
-                    name,
-                )
-                .await;
-            }
             Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number)))
         }
         Ok(_) => {
@@ -246,48 +236,11 @@ pub(crate) async fn native_remove_label(
     }
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let actor = ctx.require_user()?.id;
-    let removed = match subject {
-        AssignedItem::Issue(item_id) => {
-            db::labels::remove_issue_label(
-                &ctx.state.pool,
-                actor,
-                repo.record.id,
-                item_id,
-                label_id,
-            )
-            .await
-        }
-        AssignedItem::PullRequest(item_id) => {
-            db::labels::remove_pull_request_label(
-                &ctx.state.pool,
-                actor,
-                repo.record.id,
-                item_id,
-                label_id,
-            )
-            .await
-        }
-    }
-    .map_err(crate::backend::api::repos::labels::label_write_error);
+    let removed = remove_label(&ctx.state.pool, actor, repo.record.id, subject, label_id)
+        .await
+        .map_err(label_write_error);
     match removed {
-        Ok(false) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
-        Ok(true) => {
-            let name = value
-                .labels
-                .iter()
-                .find(|label| label.id == label_id)
-                .map_or("", |label| label.name.as_str());
-            db::timeline::record_for(
-                &ctx.state.pool,
-                repo.record.id,
-                subject,
-                actor,
-                "unlabeled",
-                name,
-            )
-            .await;
-            Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number)))
-        }
+        Ok(_) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
         Err(failure) => {
             let (status, message) = safe_api_error(&failure);
             render_detail(

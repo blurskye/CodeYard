@@ -3,6 +3,8 @@
 //! No ambient .env, private installation, service, executor or live accounts.
 #![cfg(not(target_arch = "wasm32"))]
 
+use crate::support::database::wait_until_blocked;
+use crate::support::organizations::applied;
 use crate::support::production_ci;
 use codeyard::backend::db::{
     self,
@@ -225,12 +227,6 @@ impl Database {
         if let Some(pg) = &mut self._pg {
             pg.finish().await;
         }
-    }
-}
-fn applied<T: std::fmt::Debug>(result: OrganizationOutcome<T>) -> T {
-    match result {
-        Applied(value) => value,
-        other => panic!("expected applied, got {other:?}"),
     }
 }
 fn page() -> OrganizationPage {
@@ -2824,27 +2820,6 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
     );
 }
 
-async fn wait_until_blocked_by(raw: &sqlx::PgPool, holder: i32, waiters: i64) {
-    for _ in 0..800 {
-        let blocked: i64 = sqlx::query_scalar(
-            "WITH RECURSIVE waiting(pid) AS (
-                 SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
-                 UNION
-                 SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid = ANY(pg_blocking_pids(a.pid))
-             ) SELECT COUNT(*) FROM waiting",
-        )
-        .bind(holder)
-        .fetch_one(raw)
-        .await
-        .unwrap();
-        if blocked >= waiters {
-            return;
-        }
-        tokio::task::yield_now().await;
-    }
-    panic!("the authority changes did not reach the held membership row");
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
     let mut database = Database::postgres().await;
@@ -2916,13 +2891,13 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
                 _ => unreachable!(),
             }
         });
-        wait_until_blocked_by(&raw, holder, 1).await;
+        wait_until_blocked(&raw, holder, 1).await;
         let pool = database.pool.clone();
         let banning = tokio::spawn(async move {
             db::users::transitions::change_ban(&pool, site, admin, true).await
         });
         // The ban must wait without locking the owner, which the write still needs.
-        wait_until_blocked_by(&raw, holder, 2).await;
+        wait_until_blocked(&raw, holder, 2).await;
         gate.commit().await.unwrap();
         tokio::time::timeout(Duration::from_secs(30), writing)
             .await
@@ -3016,12 +2991,12 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
     let promoting = tokio::spawn(async move {
         recover_suspended_organization_owner(&pool, site, organization.id, replacement).await
     });
-    wait_until_blocked_by(&raw, holder, 1).await;
+    wait_until_blocked(&raw, holder, 1).await;
     let pool = database.pool.clone();
     let banning = tokio::spawn(async move {
         db::users::transitions::change_ban(&pool, site, replacement, true).await
     });
-    wait_until_blocked_by(&raw, holder, 2).await;
+    wait_until_blocked(&raw, holder, 2).await;
     gate.commit().await.unwrap();
 
     let promoted = tokio::time::timeout(Duration::from_secs(30), promoting)

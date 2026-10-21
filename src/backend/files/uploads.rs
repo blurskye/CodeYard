@@ -200,10 +200,9 @@ pub async fn confirm_upload(
     actor_id: i64,
     file_id: Uuid,
 ) -> Result<(), ConfirmationError> {
-    let first = files_db::get_file_by_id(pool, file_id)
+    let first = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
-        .filter(|file| file.user_id == Some(actor_id))
         .ok_or(ConfirmationError::NotFound)?;
     let _file_lock = tokio::time::timeout(
         std::time::Duration::from_secs(1),
@@ -212,16 +211,11 @@ pub async fn confirm_upload(
     .await
     .map_err(|_| ConfirmationError::StorageUnavailable)?
     .map_err(|_| ConfirmationError::StorageUnavailable)?;
-    let file = files_db::get_file_by_id(pool, file_id)
+    let file = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
-        .filter(|file| file.user_id == Some(actor_id))
         .ok_or(ConfirmationError::NotFound)?;
-    if file.is_active
-        || file
-            .upload_expires_at
-            .is_none_or(|expires| expires <= chrono::Utc::now())
-    {
+    if !file.is_pending() {
         return Err(ConfirmationError::NotPending);
     }
     let _io = store

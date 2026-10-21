@@ -20,11 +20,7 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if !ctx
-        .user
-        .as_ref()
-        .is_some_and(|user| user.is_admin && !user.is_banned && !user.must_change_password)
-    {
+    if ctx.administrator().is_none() {
         return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
     }
     let database = match ctx.state.pool {

@@ -4,27 +4,12 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
-use pulls::Client;
+use pulls::{visible_text, Client};
 use serde_json::{json, Value};
-use std::sync::Arc;
-
-/// The page without Dioxus node-id comments, so text can be matched next to its tag.
-fn plain(page: &str) -> String {
-    let mut out = String::new();
-    let mut rest = page;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(&rest[..start]);
-        rest = rest[start..].split_once("-->").map_or("", |(_, tail)| tail);
-    }
-    out.push_str(rest);
-    out
-}
 
 async fn save_about(
     client: &Client,
@@ -44,7 +29,7 @@ async fn save_about(
 async fn topics_save_validate_and_filter(pg: bool) {
     bundle::install();
     let mut database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let carol_id = database.actor("carol").await;
@@ -60,14 +45,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        database.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;
     let bob = Client::login(&router, database.pool(), bob_id).await;
     // carol is signed in and can read the public repository, but she cannot write to it.
@@ -180,16 +158,16 @@ async fn topics_save_validate_and_filter(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let (_, page) = carol.page("/explore").await;
-    let page = plain(&page);
+    let page = visible_text(&page);
     assert!(page.contains("href=\"/explore?topic=a5\""));
     assert!(!page.contains("topic=a6"));
     let (status, page) = carol.page("/explore?topic=A1").await;
     assert_eq!(status, StatusCode::OK);
-    let page = plain(&page);
+    let page = visible_text(&page);
     assert!(page.contains("/alice/proj"));
     assert!(page.contains("aria-label=\"Topic filter\""));
     let (_, page) = carol.page("/explore?topic=rust").await;
-    assert!(!plain(&page).contains("/alice/proj"));
+    assert!(!visible_text(&page).contains("/alice/proj"));
     let (_, list) = carol.api("GET", "/api/explore", Value::Null).await;
     assert_eq!(list[0]["topics"].as_array().unwrap().len(), 6);
 

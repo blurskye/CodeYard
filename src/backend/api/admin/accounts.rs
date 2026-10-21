@@ -2,12 +2,11 @@ use crate::backend::api::admin::signup_requests::load_requests;
 use crate::backend::api::auth::errors;
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::http::session;
 use crate::backend::api::user::profile::{private_access, settings_result};
 use crate::backend::api::user::responses::{
-    public_api_message, require_account, ApiFailure, AuthResponse,
-    AuthUserResponse as UserResponse, Fields,
+    public_api_message, require_account, AuthResponse, AuthUserResponse as UserResponse, Fields,
 };
 use crate::backend::app::AppState;
 use crate::backend::{db, identity};
@@ -121,25 +120,6 @@ pub(crate) async fn require_admin_user(
     Ok(user)
 }
 
-/// The account as the admin pages show it.
-pub(crate) fn account_row(account: db::models::AdminAccountSummary) -> Account {
-    Account {
-        id: account.id,
-        username: account.username,
-        email: account.email.unwrap_or_default(),
-        admin: account.is_admin,
-        banned: account.is_banned,
-        must_change_password: account.must_change_password,
-        two_factor: account.two_factor_enabled,
-        files: account.total_files,
-        bytes: account.total_bytes,
-        commits: account.commits_total,
-        pushes: account.pushes_total,
-        contributions: account.contributions_total,
-        created: account.created_at.format("%b %e, %Y").to_string(),
-    }
-}
-
 pub(crate) async fn load_admin(
     ctx: &PageContext,
     days: i32,
@@ -157,7 +137,11 @@ pub(crate) async fn load_admin(
             )
         })?
         .into_iter()
-        .map(account_row)
+        .map(|(id, username, created)| Account {
+            id,
+            username,
+            created: created.format("%b %e, %Y").to_string(),
+        })
         .collect();
     let (users, banned, bytes) = db::users::accounts::admin_totals(&ctx.state.pool)
         .await
@@ -186,11 +170,10 @@ pub(crate) async fn load_admin(
         })
         .collect();
     let (requests, requests_count, requests_page) = if manage_access {
-        load_requests(ctx, 5).await?
+        load_requests(ctx).await?
     } else {
         (Vec::new(), 0, 1)
     };
-    let pending_requests = requests_count as i64;
     let mut values = submitted.map(preserved_values).unwrap_or_default();
     values.days = days.to_string();
     let ai_crawlers = db::node_config::get_node_configuration(&ctx.state.pool)
@@ -213,7 +196,6 @@ pub(crate) async fn load_admin(
         days,
         manage_access,
         requests,
-        pending_requests,
         requests_count,
         requests_page,
         values,
@@ -288,34 +270,5 @@ pub(crate) async fn access_result<T>(
         }
     } else {
         settings_result(ctx, "access", form, result, saved).await
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn account_projection_keeps_recorded_statistics() {
-        let rows: Vec<_> = (0..5)
-            .map(|id| db::models::AdminAccountSummary {
-                id,
-                username: format!("user-{id}"),
-                email: None,
-                is_admin: false,
-                is_banned: id % 2 == 0,
-                must_change_password: false,
-                two_factor_enabled: false,
-                created_at: chrono::DateTime::from_timestamp(id, 0).unwrap(),
-                total_files: 0,
-                total_bytes: 10,
-                commits_total: 0,
-                pushes_total: 0,
-                contributions_total: 0,
-            })
-            .collect();
-        let projected: Vec<_> = rows.into_iter().map(account_row).collect();
-        assert_eq!(projected.len(), 5);
-        assert_eq!(projected[0].bytes, 10);
-        assert!(projected[0].banned);
     }
 }

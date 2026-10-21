@@ -1,17 +1,14 @@
 #![cfg(not(target_arch = "wasm32"))]
 
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client as requests;
 use crate::support::native_database as native;
-use crate::support::pull_requests as requests;
 
 use axum::http::StatusCode;
 use codeyard::backend::api::user::responses::PublicUserResponse;
+use codeyard::backend::db;
 use codeyard::backend::db::users::accounts::AuthorDisplay;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
 use serde_json::json;
-use std::sync::Arc;
 
 #[tokio::test]
 async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
@@ -34,14 +31,7 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
             panic!("fresh setup must succeed")
         };
         let root = tempfile::tempdir().unwrap();
-        let router = create_router(AppState::new(
-            pool.clone(),
-            root.path().to_owned(),
-            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-            None,
-            CiConfig::default(),
-            None,
-        ));
+        let router = crate::support::database::router(pool, root.path()).await;
         let client = requests::Client::login(&router, pool, user.id).await;
         let valid = json!({
             "display_name": "é".repeat(50), "bio": "é".repeat(2000),
@@ -122,6 +112,7 @@ async fn setup_rejects_nul_email_on_both_engines() {
                 initiating: InitiatingSession::Missing,
                 fresh_id: &fresh,
                 user_agent: None,
+                client: None,
                 expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             },
         )

@@ -55,7 +55,7 @@ async fn provenance(pg: bool) {
     f.reopen().await;
     agrees(&f, recipient, &[account]).await;
     assert_eq!(f.history(recipient).await, after_delete);
-    f.close().await;
+    f.finish().await;
 }
 
 #[tokio::test]

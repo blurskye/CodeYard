@@ -215,14 +215,14 @@ pub fn open_pending_login(
     Some((fields[2].parse::<i64>().ok()?, fields.get(4)?.clone()))
 }
 
-/// Every change to the second factor needs the current password, and counts against the same
-/// login budget as signing in.
+/// Every change to the second factor needs the current password, and a wrong one counts against
+/// the same account budget as a wrong sign-in password.
 async fn verify_current_password(
     pool: &DbPool,
     user: &User,
     password: &str,
 ) -> Result<(), TwoFactorError> {
-    admission::admit_login(pool, Some(user.id), &user.username)
+    let attempt = admission::admit_login(pool, None, Some(user.id), &user.username)
         .await
         .map_err(TwoFactorError::Admission)?;
     let verified = passwords::verify_password(password, user.password_hash.as_deref())
@@ -231,6 +231,7 @@ async fn verify_current_password(
     if !verified.valid {
         return Err(TwoFactorError::InvalidPassword);
     }
+    admission::forgive_login(pool, &attempt).await;
     Ok(())
 }
 

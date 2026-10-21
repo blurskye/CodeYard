@@ -321,7 +321,7 @@ mod tests {
         let error = SecretsError::authority(anyhow::anyhow!("private helper failure"));
         assert_eq!(error.to_string(), "Secret authority unavailable");
         assert!(std::error::Error::source(&error).is_some());
-        let error = SecretsError::Encryption(SecretError::MissingMasterKey);
+        let error = SecretsError::Encryption(SecretError::EncryptionFailed);
         assert_eq!(error.to_string(), "Secret encryption unavailable");
     }
 }

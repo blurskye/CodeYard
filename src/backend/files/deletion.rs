@@ -32,10 +32,9 @@ pub async fn delete_owned_file(
     actor_id: i64,
     file_id: Uuid,
 ) -> Result<(), DeleteError> {
-    let first = files_db::get_file_by_id(pool, file_id)
+    let first = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
-        .filter(|file| file.user_id == Some(actor_id))
         .ok_or(DeleteError::NotFound)?;
     let _file_lock = store
         .lock_file(&first.object_key)
@@ -69,10 +68,9 @@ pub async fn delete_unreferenced_file(
     actor_id: i64,
     file_id: Uuid,
 ) -> Result<bool, DeleteError> {
-    let Some(first) = files_db::get_file_by_id(pool, file_id)
+    let Some(first) = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| DeleteError::MetadataUnavailable)?
-        .filter(|file| file.user_id == Some(actor_id))
     else {
         return Ok(false);
     };
@@ -94,21 +92,10 @@ pub async fn delete_unreferenced_file(
     Ok(true)
 }
 
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
-#[error("Upload expiry metadata unavailable after removing {removed} files")]
-pub struct ExpiryError {
-    pub removed: usize,
-    /// Set when metadata was removed but updating its cleanup work failed.
-    pub object_removed: Option<Uuid>,
-}
-
 /// One bounded sweep. Expired metadata and due object work have independent
 /// budgets, so either backlog keeps making progress. No database transaction
 /// spans an object-store operation.
-pub async fn remove_expired_uploads(
-    pool: &DbPool,
-    store: &ObjectStore,
-) -> Result<usize, ExpiryError> {
+pub async fn remove_expired_uploads(pool: &DbPool, store: &ObjectStore) -> anyhow::Result<usize> {
     const EXPIRED_LIMIT: i64 = 100;
     const OBJECT_LIMIT: i64 = 100;
     use futures_util::{stream, StreamExt};
@@ -116,28 +103,11 @@ pub async fn remove_expired_uploads(
     let mut removed = 0;
     let mut objects = HashMap::new();
     let metadata_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let expired = files_db::expired_uploads(pool, EXPIRED_LIMIT)
-        .await
-        .map_err(|_| ExpiryError {
-            removed,
-            object_removed: None,
-        })?;
+    let expired = files_db::expired_uploads(pool, EXPIRED_LIMIT).await?;
     for candidate in expired {
         let expire = async {
-            let _file_lock =
-                store
-                    .lock_file(&candidate.object_key)
-                    .await
-                    .map_err(|_| ExpiryError {
-                        removed,
-                        object_removed: None,
-                    })?;
-            files_db::delete_expired_upload(pool, candidate.id)
-                .await
-                .map_err(|_| ExpiryError {
-                    removed,
-                    object_removed: Some(candidate.id),
-                })
+            let _file_lock = store.lock_file(&candidate.object_key).await?;
+            Ok::<_, anyhow::Error>(files_db::delete_expired_upload(pool, candidate.id).await?)
         };
         let file = match tokio::time::timeout_at(metadata_deadline, expire).await {
             Ok(result) => result?,
@@ -149,12 +119,7 @@ pub async fn remove_expired_uploads(
         }
     }
 
-    let due = files_db::due_object_deletions(pool, OBJECT_LIMIT)
-        .await
-        .map_err(|_| ExpiryError {
-            removed,
-            object_removed: None,
-        })?;
+    let due = files_db::due_object_deletions(pool, OBJECT_LIMIT).await?;
     for key in due {
         objects.insert(key, true);
     }
@@ -193,19 +158,11 @@ pub async fn remove_expired_uploads(
         } else {
             Ok(())
         };
-        recorded.map_err(|_| ExpiryError {
-            removed,
-            object_removed: None,
-        })?;
+        recorded?;
     }
     // Work cancelled at the batch deadline must not occupy the next batch again.
     for key in remaining {
-        files_db::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS)
-            .await
-            .map_err(|_| ExpiryError {
-                removed,
-                object_removed: None,
-            })?;
+        files_db::postpone_object_deletion(pool, &key, OBJECT_RETRY_SECONDS).await?;
     }
     Ok(removed)
 }

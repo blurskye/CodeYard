@@ -57,7 +57,7 @@ async fn contract(pg: bool) {
             .unwrap()
             .is_empty()
     );
-    db.close().await;
+    db.finish().await;
 }
 
 #[tokio::test]

@@ -1,7 +1,8 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::chrome::{json_page, PageQuery};
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -34,26 +35,13 @@ pub async fn create_pull_request_comment(
         )
         .await
         .map_err(super::operation_error)?;
-    let user = current_actor;
 
     Ok((
         StatusCode::CREATED,
-        Json(PullRequestCommentResponse {
-            id: comment.id,
-            pull_request_id: comment.pull_request_id,
-            author_id: comment.author_id,
-            author: Some(UserResponse::from(user)),
-            body: comment.body,
-            path: comment.path,
-            line: comment.line,
-            side: comment.side,
-            commit_sha: comment.commit_sha,
-            in_reply_to_comment_id: comment.in_reply_to_comment_id,
-            resolved_at: comment.resolved_at.map(|at| at.to_rfc3339()),
-            resolved_by_id: comment.resolved_by_id,
-            created_at: comment.created_at.to_rfc3339(),
-            updated_at: comment.updated_at.to_rfc3339(),
-        }),
+        Json(PullRequestCommentResponse::new(
+            comment,
+            Some(UserResponse::from(current_actor)),
+        )),
     ))
 }
 
@@ -96,22 +84,7 @@ async fn set_resolved(
         .ok()
         .flatten()
         .map(UserResponse::from);
-    Ok(Json(PullRequestCommentResponse {
-        id: comment.id,
-        pull_request_id: comment.pull_request_id,
-        author_id: comment.author_id,
-        author,
-        body: comment.body,
-        path: comment.path,
-        line: comment.line,
-        side: comment.side,
-        commit_sha: comment.commit_sha,
-        in_reply_to_comment_id: comment.in_reply_to_comment_id,
-        resolved_at: comment.resolved_at.map(|at| at.to_rfc3339()),
-        resolved_by_id: comment.resolved_by_id,
-        created_at: comment.created_at.to_rfc3339(),
-        updated_at: comment.updated_at.to_rfc3339(),
-    }))
+    Ok(Json(PullRequestCommentResponse::new(comment, author)))
 }
 
 #[derive(Serialize)]
@@ -131,74 +104,10 @@ pub struct PullRequestCommentResponse {
     pub created_at: String,
     pub updated_at: String,
 }
-pub async fn list_pull_request_comments(
-    State(state): State<Arc<AppState>>,
-    Path((owner, repo, number)): Path<(String, String, i32)>,
-    Query(query): Query<PageQuery>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<PullRequestCommentResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
 
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
-    let (offset, limit) = json_page(query.page, query.per_page)?;
-
-    let pull_request =
-        db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Collaboration storage is temporarily unavailable",
-                    )),
-                )
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::NOT_FOUND,
-                    Json(ApiError::new("not_found", "Pull request not found")),
-                )
-            })?;
-
-    let comments = db::pull_requests::reviews::list_pull_request_comments(
-        &state.pool,
-        pull_request.id,
-        limit as i64,
-        offset as i64,
-    )
-    .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::new(
-                "database_error",
-                "Collaboration storage is temporarily unavailable",
-            )),
-        )
-    })?;
-
-    let mut responses = Vec::with_capacity(comments.len());
-    for entry in comments {
-        let author = Some(UserResponse::from_display(&entry.author));
-        let comment = entry.comment;
-        responses.push(PullRequestCommentResponse {
+impl PullRequestCommentResponse {
+    fn new(comment: db::models::PullRequestComment, author: Option<UserResponse>) -> Self {
+        Self {
             id: comment.id,
             pull_request_id: comment.pull_request_id,
             author_id: comment.author_id,
@@ -213,7 +122,43 @@ pub async fn list_pull_request_comments(
             resolved_by_id: comment.resolved_by_id,
             created_at: comment.created_at.to_rfc3339(),
             updated_at: comment.updated_at.to_rfc3339(),
-        });
+        }
+    }
+}
+
+pub async fn list_pull_request_comments(
+    State(state): State<Arc<AppState>>,
+    Path((owner, repo, number)): Path<(String, String, i32)>,
+    Query(query): Query<PageQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<PullRequestCommentResponse>>, (StatusCode, Json<ApiError>)> {
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
+    let (offset, limit) = json_page(query.page, query.per_page)?;
+
+    let pull_request =
+        db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
+            .await
+            .map_err(|_| storage_unavailable())?
+            .ok_or_else(|| {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError::new("not_found", "Pull request not found")),
+                )
+            })?;
+
+    let comments = db::pull_requests::reviews::list_pull_request_comments(
+        &state.pool,
+        pull_request.id,
+        limit as i64,
+        offset as i64,
+    )
+    .await
+    .map_err(|_| storage_unavailable())?;
+
+    let mut responses = Vec::with_capacity(comments.len());
+    for entry in comments {
+        let author = Some(UserResponse::from_display(&entry.author));
+        responses.push(PullRequestCommentResponse::new(entry.comment, author));
     }
 
     Ok(Json(responses))

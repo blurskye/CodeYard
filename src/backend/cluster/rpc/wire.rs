@@ -1,7 +1,7 @@
 use crate::backend::repositories::store::{
     BlobRange, CommitFilter, ErrorKind, FileWrite, GitService, GitSession, MergeFailure,
     MergeMethod, MergeRequest, PreparedFile, RepoError, RestackMove, UploadWrite, MAX_EDITOR_BYTES,
-    MAX_UPLOAD_BYTES,
+    MAX_UPLOAD_TOTAL_BYTES,
 };
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
@@ -396,7 +396,7 @@ pub fn unavailable() -> RepoError {
 pub(super) fn operation_body_limit(operation: &Operation) -> usize {
     match operation {
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
-        Operation::PrepareUpload { .. } => MAX_UPLOAD_BYTES,
+        Operation::PrepareUpload { .. } => MAX_UPLOAD_TOTAL_BYTES,
         _ => 0,
     }
 }
@@ -429,7 +429,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unavailable_preserves_typed_reason_and_released_wire_shape() {
+    fn unavailable_keeps_its_typed_reason_on_the_wire() {
         let error = unavailable();
         assert!(error.is_storage_node_unavailable());
         assert_eq!(error.kind, ErrorKind::Unavailable);
@@ -439,6 +439,7 @@ mod tests {
             value,
             serde_json::json!({
                 "kind": "Unavailable",
+                "reason": "StorageNodeUnavailable",
                 "message": "storage node unavailable"
             })
         );

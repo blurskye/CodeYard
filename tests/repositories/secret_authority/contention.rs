@@ -1,6 +1,7 @@
 use super::{
     applied, database::Database, db, denied, orgs, put, secrets, AccessLevel, SecretsError, NAME,
 };
+use crate::support::database::wait_until_blocked;
 use std::{str::FromStr, time::Duration};
 
 async fn attempt(
@@ -16,42 +17,6 @@ async fn attempt(
             .await
             .map(|_| ()),
     }
-}
-
-// An observed server lock edge, not sleep or task non-completion as evidence.
-async fn wait_for_lock(raw: &sqlx::PgPool, blocker: i32) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND wait_event_type='Lock')")
-                .bind(blocker).fetch_one(raw).await.unwrap();
-            if waiting { break; }
-            tokio::task::yield_now().await;
-        }
-    }).await.expect("actual secret lock wait edge required");
-}
-
-async fn wait_for_lock_chain(raw: &sqlx::PgPool, blocker: i32, waiters: i64) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let waiting: i64 = sqlx::query_scalar(
-                "WITH RECURSIVE waiting(pid) AS (
-                    SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
-                    UNION
-                    SELECT a.pid FROM pg_stat_activity a JOIN waiting w ON w.pid=ANY(pg_blocking_pids(a.pid))
-                ) SELECT COUNT(*) FROM waiting",
-            )
-            .bind(blocker)
-            .fetch_one(raw)
-            .await
-            .unwrap();
-            if waiting >= waiters {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("actual transitive secret lock wait edges");
 }
 
 #[tokio::test]
@@ -77,9 +42,7 @@ async fn postgres_secrets_wait_for_uncommitted_grant_revocation() {
     let organization = d
         .repo(owner, Some(org), "secret_wait_organization", true)
         .await;
-    let Database::Postgres(f) = &d else {
-        unreachable!()
-    };
+    let raw = d.pg();
     for repo in [personal, organization] {
         put(d.pool(), repo, Some(owner)).await.unwrap();
         for operation in 0..3 {
@@ -94,7 +57,7 @@ async fn postgres_secrets_wait_for_uncommitted_grant_revocation() {
                 AccessLevel::Admin
             );
             let before = d.snapshot(repo).await;
-            let mut revoke = f.raw.begin().await.unwrap();
+            let mut revoke = raw.begin().await.unwrap();
             let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
                 .fetch_one(&mut *revoke)
                 .await
@@ -109,7 +72,7 @@ async fn postgres_secrets_wait_for_uncommitted_grant_revocation() {
                 .unwrap();
             let pool = d.pool().clone();
             let task = tokio::spawn(async move { attempt(&pool, actor, repo, operation).await });
-            wait_for_lock(&f.raw, pid).await;
+            wait_until_blocked(raw, pid, 1).await;
             revoke.commit().await.unwrap();
             denied(
                 tokio::time::timeout(Duration::from_secs(10), task)
@@ -133,11 +96,9 @@ async fn postgres_secret_write_keeps_its_grant_until_commit() {
     db::repositories::access::grant_repo_access(d.pool(), actor, repo, AccessLevel::Admin)
         .await
         .unwrap();
-    let Database::Postgres(f) = &d else {
-        unreachable!()
-    };
+    let raw = d.pg();
 
-    let mut secret = f.raw.begin().await.unwrap();
+    let mut secret = raw.begin().await.unwrap();
     let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *secret)
         .await
@@ -150,13 +111,13 @@ async fn postgres_secret_write_keeps_its_grant_until_commit() {
         .unwrap();
     let pool = d.pool().clone();
     let effect = tokio::spawn(async move { put(&pool, repo, Some(actor)).await });
-    wait_for_lock(&f.raw, blocker).await;
+    wait_until_blocked(raw, blocker, 1).await;
 
     let pool = d.pool().clone();
     let revocation = tokio::spawn(async move {
         db::repositories::access::revoke_repo_access(&pool, actor, repo).await
     });
-    wait_for_lock_chain(&f.raw, blocker, 2).await;
+    wait_until_blocked(raw, blocker, 2).await;
     assert!(!revocation.is_finished());
     secret.commit().await.unwrap();
 

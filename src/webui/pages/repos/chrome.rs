@@ -1,4 +1,5 @@
 use crate::webui::navigation::NavLink;
+pub(super) use crate::webui::pages::fields::csrf;
 use dioxus::prelude::*;
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -248,13 +249,11 @@ pub fn active_tab(base: &str, path: &str, suffix: &str) -> bool {
     }
 }
 
-pub(super) fn csrf(token: &str) -> Element {
-    rsx! { input { r#type: "hidden", name: "csrf_token", value: token.to_owned() } }
-}
-
+/// The hidden field that carries the repository's immutable ID back with a form.
 pub(super) fn repository_id(id: i64) -> Element {
     rsx! { input { r#type: "hidden", name: "repository_id", value: id.to_string() } }
 }
+
 /// The visibility and archive labels. The header band draws them after the repository name.
 pub fn repo_badges(repo: &RepoChrome) -> Element {
     let (icon_name, label) = if repo.is_private {
@@ -399,17 +398,13 @@ fn watch_menu(repo: &RepoChrome) -> Element {
     }
 }
 
+/// The Star and Unstar button: a form that posts `action`.
 fn engagement_form(repo: &RepoChrome, action: &str, label: &str, count: i32) -> Element {
-    let kind = if action.contains("watch") {
-        "watch"
-    } else {
-        "star"
-    };
     rsx! { form { method: "post", action: repo.action(action),
         {csrf(&repo.csrf_token)}
         {repository_id(repo.id)}
         button { r#type: "submit", class: if action == "unstar" { "repo-engagement-button repo-starred" } else { "repo-engagement-button" },
-            {engagement_content(kind, label, count)}
+            {engagement_content("star", label, count)}
         }
     } }
 }
@@ -421,7 +416,7 @@ fn engagement_content(kind: &str, label: &str, count: i32) -> Element {
     }
 }
 
-/// Original repository SVG vocabulary, without browser data/session ownership.
+/// The icon named `kind`. A name that has no icon draws a gear.
 pub(crate) fn icon(kind: &str) -> Element {
     rsx! {
         svg { class: "repo-icon", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", width: "16", height: "16", "aria-hidden": "true", "focusable": "false",

@@ -1,11 +1,11 @@
 use crate::webui::pages::repos::{
-    chrome::{chrome, csrf, icon, RepoChrome},
+    chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::commit_date,
     pulls::PullSummary,
     ref_path::{compare_url, file_url},
 };
 use crate::webui::{
-    components::{compact_date, confirm_dialog, count_label, DraftInput, DraftTextarea},
+    components::{compact_date, confirm_dialog, count_label, short_sha, DraftInput, DraftTextarea},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -112,7 +112,7 @@ pub fn refs(
                                     if !row.sha.is_empty() {
                                         p { class: "repo-ref-meta",
                                             if tags { "Tagged " }
-                                            NavLink { class: "repo-short-sha".to_owned(), href: format!("{base}/commit/{}", crate::webui::encode_component(&row.sha)), "{row.sha.get(..7).unwrap_or(&row.sha)}" }
+                                            NavLink { class: "repo-short-sha".to_owned(), href: format!("{base}/commit/{}", crate::webui::encode_component(&row.sha)), "{short_sha(&row.sha)}" }
                                             if let Some(updated) = row.updated.as_ref().filter(|_| !tags) { " updated " {commit_date(updated)} }
                                         }
                                     }
@@ -137,7 +137,7 @@ pub fn refs(
                                             // the backdrop reload the list, which closes it without JavaScript.
                                             {confirm_dialog(None, &format!("Delete {kind} {}", row.name), &list_url, &repo.action(&format!("delete-{kind}")), rsx! {
                                                 {csrf(&repo.csrf_token)}
-                                                input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
+                                                {repository_id(repo.id)}
                                                 input { r#type: "hidden", name: "name", value: row.name.clone() }
                                                 strong { "Delete {kind} {row.name}?" }
                                                 p { "This cannot be undone." }
@@ -173,7 +173,7 @@ fn CreateRefForm(repo: RepoChrome, tags: bool, branches: Vec<RefRow>) -> Element
     rsx! {
         form { method: "post", action: repo.action(&format!("create-{kind}")), class: "repo-settings-section panel",
             {csrf(&repo.csrf_token)}
-            input { r#type: "hidden", name: "repository_id", value: "{repo.id}" }
+            {repository_id(repo.id)}
             header { class: "repo-section-heading",
                 div { h3 { "Create a {kind}" } p { "Start from an existing branch." } }
             }
@@ -183,7 +183,7 @@ fn CreateRefForm(repo: RepoChrome, tags: bool, branches: Vec<RefRow>) -> Element
                     // Native selection tracks the option, not its possibly shared SHA.
                     select { name: "sha", required: true,
                         for (index, branch) in branches.iter().enumerate() {
-                            option { key: "{branch.name}", value: branch.sha.clone(), "selected": index == 0, "{branch.name} ({branch.sha.get(..7).unwrap_or(&branch.sha)})" }
+                            option { key: "{branch.name}", value: branch.sha.clone(), "selected": index == 0, "{branch.name} ({short_sha(&branch.sha)})" }
                         }
                     }
                 }

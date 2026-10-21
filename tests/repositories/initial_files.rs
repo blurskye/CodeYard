@@ -14,8 +14,8 @@ use codeyard::backend::{
 use database::Database;
 
 async fn contract(pg: bool) {
-    let f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    let mut f = Database::new(pg).await;
+    f.complete_setup().await;
     let alice = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = provision_with_initial_files(
@@ -77,6 +77,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert!(std::path::Path::new(&preserved.disk_path).exists());
+    f.finish().await;
 }
 
 #[tokio::test]

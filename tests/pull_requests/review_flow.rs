@@ -5,17 +5,14 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use base64::Engine;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
-use pulls::{text, Client};
+use pulls::{hidden_value, text, visible_text, Client};
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 /// `alice/proj`, a private repository whose `main` holds one commit. Bob and Carol have
 /// write access, Dave can only read, and Erin has no access. Alice owns the repository.
@@ -34,7 +31,7 @@ impl World {
     async fn new(pg: bool) -> Self {
         bundle::install();
         let database = Database::new(pg).await;
-        database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+        database.complete_setup().await;
         let alice_id = database.actor("alice").await;
         let bob_id = database.actor("bob").await;
         let carol_id = database.actor("carol").await;
@@ -65,14 +62,7 @@ impl World {
             .await
             .unwrap();
         }
-        let router = create_router(AppState::new(
-            database.pool().clone(),
-            root.path().to_owned(),
-            Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-            None,
-            CiConfig::default(),
-            None,
-        ));
+        let router = database.router(root.path()).await;
         let alice = Client::login(&router, database.pool(), alice_id).await;
         let bob = Client::login(&router, database.pool(), bob_id).await;
         let carol = Client::login(&router, database.pool(), carol_id).await;
@@ -149,17 +139,6 @@ async fn review_count(alice: &Client, number: i64) -> usize {
         .len()
 }
 
-/// The id a redirect names after `marker`, such as `#review-` or `#thread-`.
-fn id_after(location: &Option<String>, marker: &str) -> i64 {
-    let location = location.as_deref().expect("a redirect");
-    location
-        .rsplit(marker)
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap_or_else(|_| panic!("{marker} in {location}"))
-}
-
 /// Whether the input whose tag contains `needle` is checked.
 fn checked(html: &str, needle: &str) -> bool {
     input_tag(html, needle).contains("checked")
@@ -202,33 +181,26 @@ async fn open_thread(bob: &Client, number: i64, head: &str) -> i64 {
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
     assert!(
-        reply.location.as_deref().unwrap().ends_with(&format!(
-            "/diff#thread-{}",
-            id_after(&reply.location, "#thread-")
-        )),
+        reply
+            .location
+            .as_deref()
+            .unwrap()
+            .ends_with(&format!("/diff#thread-{}", reply.id_after("#thread-"))),
         "{:?}",
         reply.location
     );
-    id_after(&reply.location, "#thread-")
+    reply.id_after("#thread-")
 }
 
 /// The markup of a tab from its label to the end of its link, with the hydration comments that wrap
 /// the text of its count left out.
 fn tab_text(page: &str, label: &str) -> String {
     let start = page
-        .find(&format!("{label}</span>"))
+        .find(&format!("{label}<"))
         .expect("the tab is on the page");
     let tab = &page[start..];
     let tab = &tab[..tab.find("</a>").expect("the tab link ends")];
-    let mut text = String::new();
-    let mut rest = tab;
-    while let Some(open) = rest.find("<!--") {
-        text.push_str(&rest[..open]);
-        let close = rest[open..].find("-->").expect("the comment ends") + open + 3;
-        rest = &rest[close..];
-    }
-    text.push_str(rest);
-    text
+    visible_text(tab)
 }
 
 /// The Conversation tab has one comment box. The Files changed tab holds the review menu: a writer
@@ -534,7 +506,7 @@ async fn readers_and_authors_get_no_vote(pg: bool) {
     assert!(!reader.contains("name=\"state\""));
     assert!(!reader.contains("value=\"approved\""));
     assert!(!reader.contains("value=\"changes_requested\""));
-    let (_, author) = world.alice.page(&page).await;
+    let author = world.alice.page_ok(&page).await;
     assert!(!author.contains("value=\"approved\""));
 
     // A reader may comment on the review box, but may not vote even when the form is forged.
@@ -607,7 +579,7 @@ async fn stale_marks_and_refused_stale_reviews(pg: bool) {
         )
         .await;
     assert!(approved.status.is_redirection(), "{}", approved.text());
-    let (_, before) = world.alice.page(&page).await;
+    let before = world.alice.page_ok(&page).await;
     assert!(!before.contains("Stale"));
 
     // The branch moves. The review keeps its commit and is marked Stale when read.
@@ -778,7 +750,7 @@ async fn resolve_and_reopen(pg: bool) {
         .as_deref()
         .unwrap()
         .ends_with(&format!("#thread-{root}")));
-    let (_, shown) = world.alice.page(&format!("{page}/diff")).await;
+    let shown = world.alice.page_ok(&format!("{page}/diff")).await;
     assert!(!shown.contains("Resolved"));
     world.database.finish().await;
 }
@@ -801,7 +773,7 @@ async fn dismissal_is_for_administrators(pg: bool) {
         )
         .await;
     assert!(asked.status.is_redirection(), "{}", asked.text());
-    let review = id_after(&asked.location, "#review-");
+    let review = asked.id_after("#review-");
 
     // A writer cannot dismiss a review; the administrator can, and the reason shows.
     let refused = world
@@ -1459,18 +1431,6 @@ async fn reviewer_requests_are_asked_again_and_removed(pg: bool) {
     world.database.finish().await;
 }
 
-/// The value of the input named `name` on a page.
-fn hidden_value(html: &str, name: &str) -> String {
-    let at = html
-        .find(&format!("name=\"{name}\""))
-        .unwrap_or_else(|| panic!("{name} in the page"));
-    let start = html[..at].rfind('<').unwrap();
-    let end = at + html[at..].find('>').unwrap();
-    let tag = &html[start..=end];
-    let value = tag.find("value=\"").unwrap() + "value=\"".len();
-    tag[value..].split('"').next().unwrap().to_owned()
-}
-
 /// A preview of a draft written against an earlier head keeps that head, so the later submit is
 /// still checked against it and refused as stale.
 async fn preview_keeps_the_commit_a_draft_was_written_against(pg: bool) {
@@ -1705,19 +1665,6 @@ async fn postgres_closed_pull_request_keeps_the_refused_text_read_only() {
     closed_pull_request_keeps_the_refused_text_read_only(true).await;
 }
 
-/// Saves a file with `content` on `branch` through the editor API.
-async fn save_text(alice: &Client, branch: &str, file: &str, content: &str, tip: &str) {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(content);
-    alice
-        .expect(
-            "POST",
-            &format!("/api/repos/alice/proj/contents/{file}"),
-            json!({"content": encoded, "message": format!("Add {file}"), "branch": branch, "expected_revision": tip}),
-            StatusCode::CREATED,
-        )
-        .await;
-}
-
 /// A file whose patch is too large to display blocks comments on that file only. A comment on a
 /// small file of the same pull request still goes in, and one on the large file gets the size
 /// error rather than an unavailable service.
@@ -1727,7 +1674,10 @@ async fn oversized_patch_blocks_only_its_own_comments(pg: bool) {
     let small = world.alice.save("mixed", "small.txt", &world.base).await;
     // About 325 KB of text: one file's patch may hold 256 KiB, so this file alone exceeds it.
     let large = "line of text\n".repeat(25_000);
-    save_text(&world.alice, "mixed", "huge.txt", &large, &small).await;
+    world
+        .alice
+        .save_text("mixed", "huge.txt", &large, &small)
+        .await;
     let pull = world.alice.open_pull("Mixed", "mixed", "main").await;
     let number = pull["number"].as_i64().unwrap();
     let comments = rest(number, "/comments");

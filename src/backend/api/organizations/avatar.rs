@@ -81,12 +81,6 @@ async fn upload(
             "Send the picture from the organization form.",
         );
     };
-    // A form is buffered while it is read, so it needs a picture slot first, and the slot
-    // is kept until the picture is stored.
-    let Some(_slot) = ctx.state.storage.try_acquire_picture() else {
-        let busy = avatars::AvatarError::Unavailable;
-        return ctx.error(avatar_status(&busy).0, &busy.to_string());
-    };
     let form = match pictures::read(multipart).await {
         Ok(form) => form,
         Err(error) => return ctx.error(error.status(), error.message()),

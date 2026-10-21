@@ -2,6 +2,7 @@
 use super::fields::{controls, input};
 use super::{avatar, governance, membership, teams};
 use crate::webui::components::webhooks::{WebhookPanel, WebhookSection};
+use crate::webui::pages::fields::csrf;
 use crate::webui::{
     components::count_label,
     navigation::NavLink,
@@ -74,8 +75,6 @@ pub struct RepositoryChoice {
 #[serde(deny_unknown_fields)]
 pub struct TeamDetail {
     pub team: Team,
-    pub slug: String,
-    pub description: String,
     pub members: Vec<Member>,
     pub repositories: Vec<RepositoryGrant>,
     /// True when another page of members, or of repositories, follows this one.
@@ -267,7 +266,7 @@ fn overview(page: &Page, org: &Organization, target: &str) -> Element {
         "How this organization appears across codeyard."
     };
     rsx! {
-        section { id: "organization-overview", class: "org-section", hidden: page.tab != "overview", aria_labelledby: "organization-overview-title",
+        section { id: "organization-overview", class: "org-section", aria_labelledby: "organization-overview-title",
             div { class: "org-section-header", div {
                 h2 { id: "organization-overview-title", "Overview" }
                 p { "{intro}" }
@@ -340,11 +339,11 @@ fn index(page: &Page) -> Element {
                             }
                             div { class: "org-row-actions",
                                 form { method: "post", action: format!("/settings/organizations/invitations/{}/accept", invite.org_id), class: "org-inline-form",
-                                    input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                                    {csrf(&page.csrf_token)}
                                     button { r#type: "submit", class: "btn btn-primary", "Accept" }
                                 }
                                 form { method: "post", action: format!("/settings/organizations/invitations/{}/decline", invite.org_id), class: "org-inline-form",
-                                    input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
+                                    {csrf(&page.csrf_token)}
                                     button { r#type: "submit", class: "btn", "Decline" }
                                 }
                             }

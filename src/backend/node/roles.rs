@@ -35,10 +35,6 @@ impl NodeRoles {
         self.0.iter().map(|role| role.as_str().to_owned()).collect()
     }
 
-    pub fn is_subset_of(&self, other: &NodeRoles) -> bool {
-        self.0.is_subset(&other.0)
-    }
-
     pub fn worker_only(&self) -> bool {
         self.0.len() == 1 && self.contains(NodeRole::ActionsWorker)
     }

@@ -36,7 +36,7 @@ pub async fn register_password(
 ) -> Result<RegistrationOutcome, RegistrationError> {
     validate_account(&input).map_err(RegistrationError::Input)?;
     validate_new_account_name(input.username).map_err(RegistrationError::Input)?;
-    admission::admit_login(pool, None, input.username)
+    admission::admit_login(pool, session.client, None, input.username)
         .await
         .map_err(RegistrationError::Admission)?;
     let hash = passwords::hash_password(input.password)

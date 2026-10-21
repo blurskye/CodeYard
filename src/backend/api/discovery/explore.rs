@@ -48,28 +48,12 @@ pub async fn explore_repos(
     let mut responses = Vec::with_capacity(repos.len());
     for repo in repos {
         let owner = owner_name(&repo, &owners).map_err(|_| missing_owner())?;
-        responses.push(RepoResponse {
-            id: repo.id,
-            owner_id: repo.owner_id(),
-            owner: owner.clone(),
-            name: repo.name.clone(),
-            full_name: format!("{}/{}", owner, repo.name),
-            description: repo.description,
-            website: repo.website,
-            topics: topics.remove(&repo.id).unwrap_or_default(),
-            is_private: repo.is_private,
-            is_archived: repo.is_archived,
-            allow_merge_commit: repo.allow_merge_commit,
-            allow_squash_merge: repo.allow_squash_merge,
-            allow_rebase_merge: repo.allow_rebase_merge,
-            default_branch: repo.default_branch,
-            stars_count: repo.stars_count,
-            forks_count: repo.forks_count,
-            watchers_count: repo.watchers_count,
-            forked_from: None,
-            created_at: repo.created_at.to_rfc3339(),
-            updated_at: repo.updated_at.to_rfc3339(),
-        });
+        responses.push(RepoResponse::new(
+            &repo,
+            &owner,
+            topics.remove(&repo.id).unwrap_or_default(),
+            None,
+        ));
     }
 
     Ok(Json(responses))

@@ -94,8 +94,9 @@ pub async fn get_webhook<'e>(
         .await?)
 }
 
-/// Whether `actor_id` may manage the hooks of `owner`, checked in `tx`, which must be a
-/// `BEGIN IMMEDIATE` transaction: a repository's administrators, or an organization's owners.
+/// Whether `actor_id` may manage the hooks of `owner`, checked in `tx`: a repository's
+/// administrators, or an organization's owners. A caller that writes afterwards must pass a
+/// `BEGIN IMMEDIATE` transaction; a read-only view can use a plain one.
 async fn may_manage_hooks(
     tx: &mut Transaction<'_, Sqlite>,
     owner: HookOwner,

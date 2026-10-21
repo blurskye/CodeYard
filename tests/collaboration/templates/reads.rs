@@ -1,34 +1,41 @@
 use super::*;
 
+async fn directory_valued_templates_do_not_break_issue_forms(pg: bool) {
+    let (mut database, _root, alice, _) = setup(pg).await;
+    let main = put(&alice, "main", "README.md", "proj", "unborn").await;
+    let main = put(
+        &alice,
+        "main",
+        ".github/ISSUE_TEMPLATE/bug.md",
+        BUG_TEMPLATE,
+        &main,
+    )
+    .await;
+    put(
+        &alice,
+        "main",
+        ".github/ISSUE_TEMPLATE/config.yml/README.md",
+        "not a config file",
+        &main,
+    )
+    .await;
+    let (status, page) = alice.page("/alice/proj/issues/new").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page.contains("Bug report") && page.contains("Open a blank issue"),
+        "{page}"
+    );
+    database.finish().await;
+}
+
 #[tokio::test]
-async fn directory_valued_templates_do_not_break_issue_forms() {
-    for pg in [false, true] {
-        let (mut database, _root, alice, _) = setup(pg).await;
-        let main = put(&alice, "main", "README.md", "proj", "unborn").await;
-        let main = put(
-            &alice,
-            "main",
-            ".github/ISSUE_TEMPLATE/bug.md",
-            BUG_TEMPLATE,
-            &main,
-        )
-        .await;
-        put(
-            &alice,
-            "main",
-            ".github/ISSUE_TEMPLATE/config.yml/README.md",
-            "not a config file",
-            &main,
-        )
-        .await;
-        let (status, page) = alice.page("/alice/proj/issues/new").await;
-        assert_eq!(status, StatusCode::OK, "{page}");
-        assert!(
-            page.contains("Bug report") && page.contains("Open a blank issue"),
-            "{page}"
-        );
-        database.finish().await;
-    }
+async fn sqlite_directory_valued_templates_do_not_break_issue_forms() {
+    directory_valued_templates_do_not_break_issue_forms(false).await;
+}
+
+#[tokio::test]
+async fn postgres_directory_valued_templates_do_not_break_issue_forms() {
+    directory_valued_templates_do_not_break_issue_forms(true).await;
 }
 
 #[tokio::test]

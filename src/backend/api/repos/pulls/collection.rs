@@ -1,7 +1,8 @@
 use super::pull::{detail_response, PullRequestDetailResponse, PullRequestResponse};
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -32,18 +33,10 @@ pub async fn create_pull_request(
     )
     .await
     .map_err(super::operation_error)?;
-    let user = current_actor;
 
     Ok((
         StatusCode::CREATED,
-        Json(
-            detail_response(
-                &state.pool,
-                pull_request,
-                Some(PublicUserResponse::from(user)),
-            )
-            .await?,
-        ),
+        Json(detail_response(&state.pool, pull_request).await?),
     ))
 }
 
@@ -59,25 +52,7 @@ pub async fn list_pull_requests(
     Query(query): Query<PullRequestQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Vec<PullRequestResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let pr_state = match query.state.as_deref() {
         Some("open") | Some("closed") => query.state.as_deref(),
@@ -93,7 +68,7 @@ pub async fn list_pull_requests(
         }
     };
 
-    let (offset, limit) = crate::backend::api::repos::chrome::json_page(
+    let (offset, limit) = crate::backend::api::repos::paging::json_page(
         query.page,
         Some(query.per_page.unwrap_or(100)),
     )?;
@@ -109,15 +84,7 @@ pub async fn list_pull_requests(
         limit as i64,
     )
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::new(
-                "database_error",
-                "Collaboration storage is temporarily unavailable",
-            )),
-        )
-    })?;
+    .map_err(|_| storage_unavailable())?;
 
     let mut responses = Vec::with_capacity(prs.len());
     for entry in prs {

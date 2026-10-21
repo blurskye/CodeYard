@@ -1,7 +1,7 @@
 //! The upload page: pick files, name the commit, and add the files to the branch in one commit.
 //! The file input is a native control, so the form works without JavaScript and accepts a drop.
 use crate::webui::pages::repos::{
-    chrome::{chrome, csrf, icon, RepoChrome},
+    chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::commit_target,
     ref_path::file_url,
     tree::breadcrumbs,
@@ -62,12 +62,12 @@ pub fn upload_page(repo: &RepoChrome, form: &UploadForm) -> Element {
                 if !form.saved {
                 form { method: "post", action: form_action, class: "repo-upload-form", "enctype": "multipart/form-data",
                     {csrf(&repo.csrf_token)}
-                    input { r#type: "hidden", name: "repository_id", value: "{form.repository_id}" }
+                    {repository_id(form.repository_id)}
                     input { r#type: "hidden", name: "expected_revision", value: form.expected_revision.clone() }
                     section { class: "repo-upload-panel panel",
                         header { class: "repo-section-heading", div { h3 { "Files" } p { "Up to 100 files become one commit on the branch." } } }
                         div { class: "repo-upload-body",
-                            label { class: "repo-sr-only", r#for: UPLOAD_INPUT_ID, "Files to upload" }
+                            label { class: "sr-only", r#for: UPLOAD_INPUT_ID, "Files to upload" }
                             UploadFileInput {}
                         }
                     }

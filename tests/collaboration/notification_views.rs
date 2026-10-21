@@ -6,19 +6,12 @@
 use super::notification_privacy::notifications_model;
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{self, models::repositories::AccessLevel},
-    storage::ObjectStore,
-};
+use codeyard::backend::db::{self, models::repositories::AccessLevel};
 use database::Database;
 use pulls::Client;
 use serde_json::json;
-use std::sync::Arc;
 
 const FORM: &str = "application/x-www-form-urlencoded";
 
@@ -39,7 +32,7 @@ struct World {
 async fn setup(pg: bool) -> World {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -58,14 +51,7 @@ async fn setup(pg: bool) -> World {
         .unwrap();
         repositories.push(repo.id);
     }
-    let router = create_router(AppState::new(
-        database.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = database.router(root.path()).await;
     let alice = Client::login(&router, database.pool(), alice_id).await;
     let bob = Client::login(&router, database.pool(), bob_id).await;
     World {
@@ -472,7 +458,7 @@ async fn filters_narrow_each_tab(pg: bool) {
     assert_eq!(model["notifications"].as_array().unwrap().len(), 1);
     assert_eq!(model["notifications"][0]["repository"], "alice/docs");
     assert_eq!(model["reason"], "comment");
-    assert_eq!(model["reasons"].as_array().unwrap().len(), 11);
+    assert_eq!(model["reasons"].as_array().unwrap().len(), 13);
     let names: Vec<&str> = model["repositories"]
         .as_array()
         .unwrap()

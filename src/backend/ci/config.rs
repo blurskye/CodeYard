@@ -120,7 +120,8 @@ impl CiConfig {
             workflow_ci: var("CI_WORKFLOW_CI").unwrap_or(defaults.workflow_ci),
             workflow_cd: var("CI_WORKFLOW_CD").unwrap_or(defaults.workflow_cd),
             trusted_actor_ids: parse_actor_ids(&var("CI_TRUSTED_ACTOR_IDS").unwrap_or_default())?,
-            max_active_runs: number("CI_MAX_ACTIVE_RUNS", 4)? as usize,
+            max_active_runs: number("CI_MAX_ACTIVE_RUNS", defaults.max_active_runs as u32)?
+                as usize,
             run_timeout_seconds: number("CI_RUN_TIMEOUT_SECONDS", defaults.run_timeout_seconds)?,
         })
     }
@@ -144,13 +145,13 @@ pub(super) fn podman_socket_path(socket: &str) -> Result<&str> {
 }
 
 fn default_podman_socket() -> String {
-    dirs::runtime_dir()
-        .map(|dir| {
-            dir.join("podman/podman.sock")
-                .to_string_lossy()
-                .into_owned()
-        })
-        .unwrap_or_else(|| "/run/user/1000/podman/podman.sock".into())
+    match std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from) {
+        Some(dir) if dir.is_absolute() => dir
+            .join("podman/podman.sock")
+            .to_string_lossy()
+            .into_owned(),
+        _ => "/run/user/1000/podman/podman.sock".into(),
+    }
 }
 
 fn default_platform_map(image: &str) -> BTreeMap<String, String> {

@@ -1,9 +1,9 @@
 use crate::backend::ci::CiRuns;
 use crate::backend::db::DbPool;
 use crate::backend::ssh::handler::{AuthOutcome, GitSshHandler};
-use crate::backend::ssh::rate_limit::RateLimiter;
+use crate::backend::ssh::rate_limit::{client_key, RateLimiter};
 use anyhow::{Context, Result};
-use rand_core::{OsRng, RngCore};
+use rand::{rngs::OsRng, RngCore};
 use russh::keys::ssh_key::private::Ed25519Keypair;
 use russh::keys::PrivateKey;
 use russh::server::{Config, Server as _};
@@ -243,6 +243,7 @@ struct PreAuthSlot {
 
 impl PreAuthSlot {
     fn for_ip(mut self, ip: IpAddr) -> Option<Self> {
+        let ip = client_key(ip);
         {
             let mut counts = self
                 .admission
@@ -653,6 +654,18 @@ mod tests {
         assert!(admit(other).is_none());
         slots.pop();
         assert!(admit(other).is_some());
+    }
+
+    #[test]
+    fn preauth_slots_count_an_ipv6_prefix_as_one_address() {
+        let admission = PreAuthAdmission::default();
+        let admit = |ip: &str| admission.reserve()?.for_ip(ip.parse().unwrap());
+        let slots: Vec<_> = (1..=MAX_PREAUTH_CONNECTIONS_PER_IP)
+            .map(|host| admit(&format!("2001:db8:0:1::{host:x}")).unwrap())
+            .collect();
+        assert!(admit("2001:db8:0:1::ffff").is_none());
+        assert!(admit("2001:db8:0:2::1").is_some());
+        drop(slots);
     }
 
     #[tokio::test]

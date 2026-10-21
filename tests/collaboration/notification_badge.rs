@@ -5,19 +5,12 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::{http::StatusCode, Router};
-use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
-    db::{self, models::repositories::AccessLevel},
-    storage::ObjectStore,
-};
+use codeyard::backend::db::{self, models::repositories::AccessLevel};
 use database::Database;
 use pulls::Client;
 use serde_json::json;
-use std::sync::Arc;
 
 /// alice owns `proj`, which is public, and `vault`, which is private. bob reads the account
 /// notifications he is given, and `vault` once a test grants it.
@@ -33,7 +26,7 @@ struct World {
 async fn setup(pg: bool) -> World {
     bundle::install();
     let database = Database::new(pg).await;
-    database.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    database.complete_setup().await;
     let alice_id = database.actor("alice").await;
     let bob_id = database.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
@@ -54,14 +47,7 @@ async fn setup(pg: bool) -> World {
             vault = repo.id;
         }
     }
-    let router = create_router(AppState::new(
-        database.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = database.router(root.path()).await;
     let bob = Client::login(&router, database.pool(), bob_id).await;
     World {
         database,

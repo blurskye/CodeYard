@@ -1,4 +1,4 @@
-use super::OperationError;
+use super::{database_error, OperationError};
 use crate::backend::db;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
@@ -15,13 +15,6 @@ pub struct CreateCommentRequest {
     pub body: String,
     pub repository_id: Option<i64>,
     pub issue_id: Option<i64>,
-}
-
-fn read_error(_: anyhow::Error) -> OperationError {
-    OperationError::Unavailable {
-        code: "database_error",
-        message: "Collaboration storage is temporarily unavailable".to_owned(),
-    }
 }
 
 /// The comment a change names: its issue or pull request in the repository, and its id.
@@ -42,7 +35,7 @@ async fn read_issue(
 ) -> Result<(db::models::Repository, db::models::Issue), OperationError> {
     let repository = db::repositories::records::get_repository(pool, owner, repo)
         .await
-        .map_err(read_error)?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".to_owned(),
@@ -50,7 +43,7 @@ async fn read_issue(
     super::require_read(pool, user, &repository).await?;
     let issue = db::issues::get_issue(pool, repository.id, number)
         .await
-        .map_err(read_error)?
+        .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Issue not found".to_owned(),
@@ -66,7 +59,7 @@ async fn issue_comment(
 ) -> Result<db::models::IssueComment, OperationError> {
     db::issues::get_issue_comment(pool, comment_id)
         .await
-        .map_err(read_error)?
+        .map_err(database_error)?
         .filter(|comment| comment.issue_id == issue.id)
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",

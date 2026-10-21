@@ -1,0 +1,18 @@
+# Bundler
+/.bundle/
+/vendor/bundle/
+/vendor/cache/
+
+# Gems and build output
+*.gem
+*.rbc
+/pkg/
+/coverage/
+/doc/
+/.yardoc/
+
+# Logs and temporary files
+/log/
+/tmp/
+*.log
+.byebug_history

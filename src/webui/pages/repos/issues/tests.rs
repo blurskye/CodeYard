@@ -1344,7 +1344,7 @@ fn review_changes_menu_has_its_own_heading_and_summary_label() {
     let footer = form.find("collaboration-card-footer").unwrap();
     assert!(body < box_at && box_at < footer, "{form}");
     // The label is for screen readers; the header is the one visible title.
-    assert!(form.contains("class=\"repo-sr-only\">Summary (Markdown)</label>"));
+    assert!(form.contains("class=\"sr-only\">Summary (Markdown)</label>"));
     // One review form, one summary box.
     assert_eq!(form.matches("<textarea").count(), 1);
     assert_eq!(form.matches("name=\"body\"").count(), 1);
@@ -2376,6 +2376,30 @@ fn review_changes_menu_keeps_a_refused_review_and_counts_pending_comments() {
     assert!(!html.contains("Comments waiting in your pending review"));
     assert!(!html.contains("/reviews/pending/discard"));
 }
+
+#[test]
+fn discarding_a_review_from_the_split_view_returns_to_the_split_view() {
+    let mut repo = repository_at(Kind::Pull, "/7/diff");
+    repo.viewer = "bob".into();
+    let html = dioxus_ssr::render_element(diff_page(
+        &repo,
+        &item(),
+        &files_diff(),
+        &[],
+        false,
+        None,
+        None,
+        2,
+        None,
+        &Default::default(),
+        true,
+    ));
+    assert!(html.contains("action=\"/alice/repo/pulls/7/reviews/pending/discard?view=split\""));
+    // Cancel returns to the same view.
+    let dialog = &html[html.find("aria-label=\"Discard review\"").unwrap()..];
+    assert!(dialog.contains("href=\"/alice/repo/pulls/7/diff?view=split\""));
+}
+
 #[test]
 fn discussion_merges_reviews_by_time_and_marks_stale_and_dismissed_reviews() {
     crate::webui::tests::in_scope(|| {
@@ -2732,11 +2756,7 @@ fn a_closed_pull_request_shows_the_refused_review_text_read_only() {
 fn list_tabs_count_each_state_and_the_search_is_a_plain_get_form() {
     crate::webui::tests::in_scope(|| {
         let repo = repository();
-        let counts = ListCounts {
-            open: 3,
-            closed: 1,
-            all: 4,
-        };
+        let counts = ListCounts { open: 3, closed: 1 };
         let html =
             dioxus_ssr::render_element(list(&repo, Kind::Issue, "open", "crash", counts, &[]));
         let content = html.split_once("class=\"repo-content ").unwrap().1;
@@ -2843,8 +2863,10 @@ fn pull_tabs_count_commits_and_checks_and_mark_only_the_page_shown() {
         );
         assert!(commits.contains("aria-label=\"More pull request pages\""));
         assert!(tabs(&shown, detail::PullTab::Files)
-            .contains("Files changed</span><span class=\"collaboration-tab-count\">4</span>"));
+            .contains("Files changed<span class=\"collaboration-tab-count\">4</span>"));
         shown.commit_count = Some(100);
+        assert!(!tabs(&shown, detail::PullTab::Files).contains("100+"));
+        shown.commit_count = Some(101);
         assert!(tabs(&shown, detail::PullTab::Files).contains("100+"));
         // Without a count from Git, the Commits tab shows no number at all. The Conversation, Checks
         // and Files changed tabs still show theirs.
@@ -2881,7 +2903,21 @@ fn pr_commits_tab_lists_each_commit_with_a_copy_button_and_marks_its_tab() {
         assert!(html.contains("Add the parser"));
         assert!(html.contains("Copy SHA"));
         assert!(html.contains(&format!("/alice/repo/commit/{}", "a".repeat(40))));
-        assert!(html.contains("<span aria-current=\"page\">Commits</span>"));
+        assert!(html.contains("aria-current=\"page\">Commits<"));
+        assert!(!html.contains("commits are listed"));
+        // The notice appears only when a 101st commit exists, not at exactly 100.
+        let notice = |count: i64| {
+            let mut shown = item();
+            shown.commit_count = Some(count);
+            dioxus_ssr::render_element(render(Page::PullCommits {
+                repository: repository_at(Kind::Pull, "/7/commits"),
+                item: shown,
+                commits: Vec::new(),
+            }))
+            .contains("Only the newest 100 commits are listed.")
+        };
+        assert!(!notice(100));
+        assert!(notice(101));
     });
 }
 
@@ -3083,6 +3119,15 @@ fn one_composer_comments_alone_and_reviews_live_on_the_files_page() {
         let html = render(&signed_out, &item());
         assert!(!html.contains("action=\"/alice/repo/pulls/7/comments\""));
         assert!(html.contains("to join the discussion."));
+
+        // An archived repository refuses comments, so the page offers no comment box and no state button.
+        let mut archived = repository_at(Kind::Pull, "/7");
+        archived.chrome.is_archived = true;
+        let html = render(&archived, &item());
+        assert!(!html.contains("action=\"/alice/repo/pulls/7/comments\""));
+        assert!(!html.contains("Add a comment"));
+        assert!(!html.contains("to join the discussion."));
+        assert!(!html.contains("action=\"/alice/repo/pulls/7/state\""));
 
         // A closed pull request keeps the comment box and Reopen, with no vote and no review anchor.
         let mut closed = item();
@@ -3689,11 +3734,7 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
         let list_html = dioxus_ssr::render_element(milestones::list(
             &repository(),
             "open",
-            ListCounts {
-                open: 1,
-                closed: 0,
-                all: 1,
-            },
+            ListCounts { open: 1, closed: 0 },
             std::slice::from_ref(&release),
             "",
             1,
@@ -4265,7 +4306,7 @@ fn assignee_picker_rows_show_avatars_and_a_check_and_offer_assign_yourself() {
         };
 
         let html = render(vec!["alice".into()]);
-        let picker = &html[html.find("Assign people to this issue").unwrap()..];
+        let picker = &html[html.find("Assign people to this pull request").unwrap()..];
         // Bob is not assigned, so the menu opens with an Assign yourself button for him.
         let self_at = picker.find("Assign yourself").unwrap();
         assert!(self_at < picker.find("collaboration-picker-list").unwrap());

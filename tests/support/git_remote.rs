@@ -1,6 +1,7 @@
 //! Built-in SSH and HTTP test servers and the Git and API calls they take in tests.
 
 use super::native_database as native;
+use super::server::spawn_on_free_ports;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use codeyard::backend::{cluster::NodeKey, db};
 use reqwest::{Client, StatusCode};
@@ -45,93 +46,76 @@ impl Server {
         session_limit: Option<usize>,
     ) -> Self {
         std::fs::create_dir_all(root).unwrap();
-        let http = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = http.local_addr().unwrap();
-        let ssh = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let ssh_address = ssh.local_addr().unwrap();
-        drop((http, ssh));
         let log = root.join("server.log");
-        let output = std::fs::File::create(&log).unwrap();
         let key = NodeKey::generate();
-        let child = std::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap())
-            .env("HOME", root)
-            .env("WEBUI_DIST", std::env::var_os("WEBUI_DIST").unwrap())
-            .env("RUST_LOG", "info")
-            .env("COOKIE_SECURE", "false")
-            .env("DATABASE_URL", database.connection_url())
-            .env("GITSERV_STATE_DIR", root.join("state"))
-            .env("REPOS_PATH", root.join("repos"))
-            .env("PUBLIC_URL", format!("http://{address}"))
-            .env("CI_TRUSTED_ACTOR_IDS", trusted_actor.to_string())
-            .env(
-                "GIT_SESSION_LIMIT",
-                session_limit
-                    .map(|limit| limit.to_string())
-                    .unwrap_or_default(),
-            )
-            .env("SECRETS_MASTER_KEY", "2a".repeat(32))
-            .env("NODE_NAME", name)
-            .env("NODE_KEY", key.secret_hex())
-            .env("IROH_BIND", "127.0.0.1:0")
-            .args([
-                "serve",
-                "--roles",
-                roles,
-                "--ssh-mode",
-                if roles.contains("ssh") {
-                    "builtin"
-                } else {
-                    "disabled"
-                },
-                "--http-addr",
-                &address.to_string(),
-                "--ssh-addr",
-                &ssh_address.to_string(),
-            ])
-            .current_dir(root)
-            .stdin(Stdio::null())
-            .stdout(output.try_clone().unwrap())
-            .stderr(output)
-            .spawn()
-            .unwrap();
-        let mut server = Self {
-            child,
-            base: format!("http://{address}"),
-            ssh_port: ssh_address.port(),
-            log,
-            node_id: 0,
-        };
         let client = Client::new();
-        for _ in 0..100 {
-            assert!(
-                server.child.try_wait().unwrap().is_none(),
-                "server exited: {}",
-                std::fs::read_to_string(&server.log).unwrap()
-            );
-            if let Some(node) = db::cluster::get_node_by_name(&database.pool, name)
-                .await
-                .unwrap()
-            {
-                if node.addr_hint.is_some()
-                    && (!roles.contains("web")
-                        || client
-                            .get(format!("{}/health", server.base))
-                            .send()
-                            .await
-                            .is_ok_and(|reply| reply.status().is_success()))
-                {
-                    server.node_id = node.id;
-                    return server;
+        let (child, addresses) = spawn_on_free_ports(
+            &log,
+            2,
+            |addresses| {
+                let http = addresses[0].to_string();
+                let ssh = addresses[1].to_string();
+                let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_codeyard"));
+                command
+                    .env_clear()
+                    .env("PATH", std::env::var_os("PATH").unwrap())
+                    .env("HOME", root)
+                    .env("WEBUI_DIST", std::env::var_os("WEBUI_DIST").unwrap())
+                    .env("RUST_LOG", "info")
+                    .env("COOKIE_SECURE", "false")
+                    .env("DATABASE_URL", database.connection_url())
+                    .env("GITSERV_STATE_DIR", root.join("state"))
+                    .env("REPOS_PATH", root.join("repos"))
+                    .env("PUBLIC_URL", format!("http://{http}"))
+                    .env("CI_TRUSTED_ACTOR_IDS", trusted_actor.to_string())
+                    .env(
+                        "GIT_SESSION_LIMIT",
+                        session_limit
+                            .map(|limit| limit.to_string())
+                            .unwrap_or_default(),
+                    )
+                    .env("SECRETS_MASTER_KEY", "2a".repeat(32))
+                    .env("NODE_NAME", name)
+                    .env("NODE_KEY", key.secret_hex())
+                    .env("IROH_BIND", "127.0.0.1:0")
+                    .args(["serve", "--roles", roles, "--ssh-mode"])
+                    .arg(if roles.contains("ssh") {
+                        "builtin"
+                    } else {
+                        "disabled"
+                    })
+                    .args(["--http-addr", &http, "--ssh-addr", &ssh])
+                    .current_dir(root);
+                command
+            },
+            |addresses| {
+                let client = &client;
+                async move {
+                    let node = db::cluster::get_node_by_name(&database.pool, name)
+                        .await
+                        .unwrap();
+                    node.is_some_and(|node| node.addr_hint.is_some())
+                        && (!roles.contains("web")
+                            || client
+                                .get(format!("http://{}/health", addresses[0]))
+                                .send()
+                                .await
+                                .is_ok_and(|reply| reply.status().is_success()))
                 }
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            },
+        )
+        .await;
+        let node = db::cluster::get_node_by_name(&database.pool, name)
+            .await
+            .unwrap()
+            .expect("the started node registered itself");
+        Self {
+            child,
+            base: format!("http://{}", addresses[0]),
+            ssh_port: addresses[1].port(),
+            log,
+            node_id: node.id,
         }
-        panic!(
-            "server did not start: {}",
-            std::fs::read_to_string(&server.log).unwrap()
-        );
     }
 }
 

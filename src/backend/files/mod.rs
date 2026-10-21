@@ -6,7 +6,7 @@ mod local_uploads;
 mod uploads;
 
 pub use deletion::{
-    delete_owned_file, delete_unreferenced_file, remove_expired_uploads, DeleteError, ExpiryError,
+    delete_owned_file, delete_unreferenced_file, remove_expired_uploads, DeleteError,
 };
 pub use downloads::{
     download_asset, download_for_user, open_asset_download, open_file, AssetDownload,

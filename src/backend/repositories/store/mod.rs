@@ -7,10 +7,11 @@
 //! The one exception is [`RepoStore::local_path_for_spawning_git`], used by the
 //! host OpenSSH gateway.
 mod editor;
+mod error;
 mod local;
 mod remote;
+mod types;
 
-use crate::backend::repositories::protection::{self, MERGE_COMMIT_BLOCKED};
 use crate::backend::{
     cluster::{
         rpc::{self, Operation},
@@ -19,24 +20,30 @@ use crate::backend::{
     db::{self, models::Repository},
     git,
 };
-use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt, path::Path, time::Instant};
+use std::{collections::HashMap, path::Path, time::Instant};
 
 pub(crate) use crate::backend::git::validate_merge_revision;
 pub use crate::backend::git::{
     BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource, CommitFilter,
     CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame, FileList, LanguageStat,
-    RepoInfo, TagInfo, TreeEntry, MAX_CI_CHANGED_PATHS, MAX_CI_CHANGED_PATH_BYTES,
-    MAX_CI_CHANGED_PATH_TOTAL_BYTES, MAX_CI_WORKFLOW_BYTES, MAX_CONTRIBUTORS, MAX_DIFF_FILES,
-    MAX_DIFF_FILE_PATCH_BYTES, MAX_DIFF_TOTAL_PATCH_BYTES, MAX_LANGUAGE_FILES, MAX_REPOSITORY_REFS,
-    MAX_TREE_ENTRIES, MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
+    RepoInfo, TagInfo, TreeEntry, MAX_CI_CHANGED_PATHS, MAX_CI_WORKFLOW_BYTES,
+    MAX_DIFF_FILE_PATCH_BYTES, MAX_REPOSITORY_REFS, MAX_TREE_ENTRIES,
+    MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
 pub use editor::{
-    FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_BYTES,
-    MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES,
+    FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
+    MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
+use error::invalid_ref;
+pub use error::{ErrorKind, RepoError, RepoErrorReason, MERGE_METHOD_NOT_ALLOWED, REPLICA_BUSY};
 pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
+pub use types::{
+    allowed_merge_methods, BlobBytes, BlobRange, GitService, GitSession, GitStreams, MergeFailure,
+    MergeMethod, MergeRequest, RestackMove, MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
+    MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE, MAX_CONTRIBUTOR_RESPONSE_BYTES,
+};
+pub(crate) use types::{BlobMetadata, WorkflowPayloadEntry, MAX_WORKFLOW_PAYLOAD_BYTES};
 
 /// The store for a repository row. Cheap to create and to clone.
 pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore {
@@ -86,543 +93,6 @@ impl RepoStore {
         }
         self
     }
-}
-
-/// Why a store call failed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ErrorKind {
-    /// The branch, tag, commit or object does not exist, or the revision is malformed.
-    NotFound,
-    /// The commit exists but the path inside it does not.
-    MissingPath,
-    /// The request is not acceptable as written.
-    Invalid,
-    /// A ref moved since the caller last looked.
-    Conflict,
-    /// Git or the disk failed, or the repository cannot be reached.
-    Unavailable,
-}
-
-/// Refused when the storage node finds the merge method turned off in the repository.
-pub const MERGE_METHOD_NOT_ALLOWED: &str = "This merge method is not allowed in this repository.";
-
-/// Refused when a replica asks for a copy while a ref change to the repository is in progress.
-/// The copy waits and asks again on its next pass.
-pub const REPLICA_BUSY: &str = "Repository writes are in progress.";
-
-/// Specific failure reasons remain internal; the released RPC shape is unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RepoErrorReason {
-    NotFile,
-    StorageNodeUnavailable,
-    SessionsBusy,
-    ReplicaBusy,
-    WriteDenied,
-    ProtectedBranch,
-    MergeCommitBlocked,
-    AuthorityUnavailable,
-    AppliedFollowupFailed,
-    ResponseTooLarge,
-    RangeNotSatisfiable,
-    BranchMissing,
-    MergeMethodNotAllowed,
-}
-
-/// A failed store call, with stable wire fields and an internal typed reason.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct RepoError {
-    pub kind: ErrorKind,
-    #[serde(skip)]
-    pub reason: Option<RepoErrorReason>,
-    /// What Git said, or a fixed sentence for requests refused here.
-    pub message: String,
-}
-
-impl RepoError {
-    pub fn is_storage_node_unavailable(&self) -> bool {
-        self.reason == Some(RepoErrorReason::StorageNodeUnavailable)
-    }
-
-    pub fn is_sessions_busy(&self) -> bool {
-        self.reason == Some(RepoErrorReason::SessionsBusy)
-    }
-
-    pub fn is_write_denied(&self) -> bool {
-        self.reason == Some(RepoErrorReason::WriteDenied)
-    }
-
-    pub fn is_protected_branch(&self) -> bool {
-        self.reason == Some(RepoErrorReason::ProtectedBranch)
-    }
-
-    pub fn is_merge_commit_blocked(&self) -> bool {
-        self.reason == Some(RepoErrorReason::MergeCommitBlocked)
-    }
-
-    pub fn is_authority_unavailable(&self) -> bool {
-        self.reason == Some(RepoErrorReason::AuthorityUnavailable)
-    }
-
-    pub fn is_applied_followup_failed(&self) -> bool {
-        self.reason == Some(RepoErrorReason::AppliedFollowupFailed)
-    }
-
-    pub fn is_response_too_large(&self) -> bool {
-        self.reason == Some(RepoErrorReason::ResponseTooLarge)
-    }
-
-    pub fn is_range_not_satisfiable(&self) -> bool {
-        self.reason == Some(RepoErrorReason::RangeNotSatisfiable)
-    }
-
-    pub fn is_branch_missing(&self) -> bool {
-        self.reason == Some(RepoErrorReason::BranchMissing)
-    }
-
-    pub fn is_merge_method_not_allowed(&self) -> bool {
-        self.reason == Some(RepoErrorReason::MergeMethodNotAllowed)
-    }
-
-    pub fn is_replica_busy(&self) -> bool {
-        self.reason == Some(RepoErrorReason::ReplicaBusy)
-    }
-
-    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            reason: None,
-            message: message.into(),
-        }
-    }
-
-    pub fn storage_node_unavailable() -> Self {
-        Self {
-            kind: ErrorKind::Unavailable,
-            reason: Some(RepoErrorReason::StorageNodeUnavailable),
-            message: "storage node unavailable".into(),
-        }
-    }
-
-    pub fn sessions_busy() -> Self {
-        Self {
-            kind: ErrorKind::Unavailable,
-            reason: Some(RepoErrorReason::SessionsBusy),
-            message: "Git sessions busy".into(),
-        }
-    }
-
-    pub fn replica_busy() -> Self {
-        Self {
-            kind: ErrorKind::Unavailable,
-            reason: Some(RepoErrorReason::ReplicaBusy),
-            message: REPLICA_BUSY.into(),
-        }
-    }
-
-    pub fn write_denied() -> Self {
-        Self {
-            kind: ErrorKind::Invalid,
-            reason: Some(RepoErrorReason::WriteDenied),
-            message: "repository write denied".into(),
-        }
-    }
-
-    pub fn protected_branch() -> Self {
-        Self {
-            kind: ErrorKind::Invalid,
-            reason: Some(RepoErrorReason::ProtectedBranch),
-            message: "protected branch".into(),
-        }
-    }
-
-    /// A branch protection rule refused the write. `message` is the rule's own text, which
-    /// survives the cluster wire (see `protection::refusal_text`).
-    pub fn protected_refusal(message: &'static str) -> Self {
-        Self {
-            kind: ErrorKind::Invalid,
-            reason: Some(RepoErrorReason::ProtectedBranch),
-            message: message.into(),
-        }
-    }
-
-    /// The merge would leave merge commits on a branch that requires a linear history.
-    pub fn merge_commit_blocked() -> Self {
-        Self {
-            kind: ErrorKind::Invalid,
-            reason: Some(RepoErrorReason::MergeCommitBlocked),
-            message: MERGE_COMMIT_BLOCKED.into(),
-        }
-    }
-
-    pub fn authority_unavailable() -> Self {
-        Self {
-            kind: ErrorKind::Unavailable,
-            reason: Some(RepoErrorReason::AuthorityUnavailable),
-            message: "Repository authority is unavailable".into(),
-        }
-    }
-
-    pub fn applied_followup_failed() -> Self {
-        Self {
-            kind: ErrorKind::Unavailable,
-            reason: Some(RepoErrorReason::AppliedFollowupFailed),
-            message: "Git changed, but default branch synchronization failed".into(),
-        }
-    }
-
-    pub fn response_too_large() -> Self {
-        Self {
-            kind: ErrorKind::Invalid,
-            reason: Some(RepoErrorReason::ResponseTooLarge),
-            message: "repository response exceeds its limit".into(),
-        }
-    }
-
-    pub fn range_not_satisfiable() -> Self {
-        Self {
-            kind: ErrorKind::Invalid,
-            reason: Some(RepoErrorReason::RangeNotSatisfiable),
-            message: "repository byte range is not satisfiable".into(),
-        }
-    }
-
-    /// The storage node found the merge method turned off in the repository.
-    pub fn merge_method_not_allowed() -> Self {
-        Self {
-            kind: ErrorKind::Invalid,
-            reason: Some(RepoErrorReason::MergeMethodNotAllowed),
-            message: MERGE_METHOD_NOT_ALLOWED.into(),
-        }
-    }
-
-    /// A file write named a branch the primary does not have.
-    pub fn branch_missing() -> Self {
-        Self {
-            kind: ErrorKind::Conflict,
-            reason: Some(RepoErrorReason::BranchMissing),
-            message: "The branch does not exist.".into(),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for RepoError {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        #[derive(Deserialize)]
-        struct WireError {
-            kind: ErrorKind,
-            message: String,
-        }
-        let wire = WireError::deserialize(deserializer)?;
-        // Released peers carry only kind/message. Decode fixed typed reasons
-        // here; operation and HTTP callers never select behavior from error text.
-        Ok(match (wire.kind, wire.message.as_str()) {
-            (ErrorKind::MissingPath, "The path is not a file") => Self {
-                kind: wire.kind,
-                reason: Some(RepoErrorReason::NotFile),
-                message: wire.message,
-            },
-            (ErrorKind::Unavailable, "storage node unavailable") => {
-                Self::storage_node_unavailable()
-            }
-            (ErrorKind::Unavailable, "Git sessions busy") => Self::sessions_busy(),
-            (ErrorKind::Unavailable, REPLICA_BUSY) => Self::replica_busy(),
-            (ErrorKind::Invalid, "repository write denied") => Self::write_denied(),
-            (ErrorKind::Invalid, "protected branch") => Self::protected_branch(),
-            (ErrorKind::Invalid, MERGE_COMMIT_BLOCKED) => Self::merge_commit_blocked(),
-            (ErrorKind::Unavailable, "Repository authority is unavailable") => {
-                Self::authority_unavailable()
-            }
-            (ErrorKind::Unavailable, "Git changed, but default branch synchronization failed") => {
-                Self::applied_followup_failed()
-            }
-            (ErrorKind::Invalid, "repository response exceeds its limit") => {
-                Self::response_too_large()
-            }
-            (ErrorKind::Invalid, "repository byte range is not satisfiable") => {
-                Self::range_not_satisfiable()
-            }
-            (ErrorKind::Conflict, "The branch does not exist.") => Self::branch_missing(),
-            (ErrorKind::Invalid, MERGE_METHOD_NOT_ALLOWED) => Self::merge_method_not_allowed(),
-            _ => match protection::refusal_text(&wire.message) {
-                Some(text) => Self::protected_refusal(text),
-                None => Self::new(wire.kind, wire.message),
-            },
-        })
-    }
-}
-
-impl fmt::Display for RepoError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for RepoError {}
-
-fn invalid_ref(kind: &str) -> RepoError {
-    RepoError::new(ErrorKind::Invalid, format!("Invalid {kind} name"))
-}
-
-impl From<anyhow::Error> for RepoError {
-    /// Sorts a Git failure by its libgit2 code, so callers can tell a missing
-    /// branch or path from an outage without knowing about libgit2.
-    fn from(error: anyhow::Error) -> Self {
-        if let Some(error) = error.downcast_ref::<RepoError>() {
-            return error.clone();
-        }
-        if error.is::<crate::backend::git::repository::process::SessionsBusy>() {
-            return Self::sessions_busy();
-        }
-        if let Some(conflict) = error.downcast_ref::<crate::backend::git::repository::RefConflict>()
-        {
-            return Self::new(ErrorKind::Conflict, conflict.to_string());
-        }
-        if error.is::<crate::backend::git::repository::PullHeadConflict>() {
-            return Self::new(ErrorKind::Conflict, "Git pull request ref changed");
-        }
-        if let Some(conflict) =
-            error.downcast_ref::<crate::backend::git::repository::MergeConflict>()
-        {
-            return Self::new(ErrorKind::Conflict, conflict.to_string());
-        }
-        if let Some(unsupported) =
-            error.downcast_ref::<crate::backend::git::repository::UnsupportedMerge>()
-        {
-            return Self::new(ErrorKind::Invalid, unsupported.to_string());
-        }
-        if error.is::<crate::backend::git::repository::process::OutputLimitExceeded>()
-            || error.is::<crate::backend::git::ObjectTooLarge>()
-        {
-            return Self::response_too_large();
-        }
-        if error.is::<crate::backend::git::repository::NotFile>() {
-            return Self {
-                kind: ErrorKind::MissingPath,
-                reason: Some(RepoErrorReason::NotFile),
-                message: "The path is not a file".into(),
-            };
-        }
-        if error.is::<crate::backend::git::InvalidByteRange>() {
-            return Self::range_not_satisfiable();
-        }
-        if let Some(refused) = error.downcast_ref::<crate::backend::git::repository::BlameRefused>()
-        {
-            return Self::new(ErrorKind::Invalid, refused.0);
-        }
-        let kind = match error.downcast_ref::<git2::Error>() {
-            Some(error)
-                if error.code() == git2::ErrorCode::NotFound
-                    && error.class() == git2::ErrorClass::Tree =>
-            {
-                ErrorKind::MissingPath
-            }
-            // A repository directory that cannot be opened is an outage, not a
-            // missing branch.
-            Some(error)
-                if error.code() == git2::ErrorCode::NotFound
-                    && matches!(
-                        error.class(),
-                        git2::ErrorClass::Os | git2::ErrorClass::Repository
-                    ) =>
-            {
-                ErrorKind::Unavailable
-            }
-            Some(error)
-                if matches!(
-                    error.code(),
-                    git2::ErrorCode::NotFound | git2::ErrorCode::InvalidSpec
-                ) =>
-            {
-                ErrorKind::NotFound
-            }
-            _ => ErrorKind::Unavailable,
-        };
-        // A request for a ref or commit this repository lacks is reported with its own words.
-        let message = match error.downcast_ref::<git2::Error>() {
-            Some(named)
-                if named.code() == git2::ErrorCode::InvalidSpec
-                    && named.class() == git2::ErrorClass::Invalid =>
-            {
-                named.message().to_owned()
-            }
-            _ => error.to_string(),
-        };
-        Self::new(kind, message)
-    }
-}
-
-/// The two Git server programs a session can run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GitService {
-    UploadPack,
-    ReceivePack,
-}
-
-impl GitService {
-    fn name(self) -> &'static str {
-        match self {
-            Self::UploadPack => "upload-pack",
-            Self::ReceivePack => "receive-pack",
-        }
-    }
-}
-
-/// A live Git service, interactive over SSH and stateless over HTTP.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GitSession {
-    pub service: GitService,
-    pub stateless: bool,
-    pub git_protocol: Option<String>,
-    pub credential: Option<crate::backend::repositories::git_sessions::ReceiveCredential>,
-    pub owner: String,
-    /// Set only after a storage-side CI claim check; never accepted from the wire.
-    #[serde(skip)]
-    pub allow_unreachable: bool,
-}
-
-impl GitSession {
-    pub fn new(service: GitService, stateless: bool) -> Self {
-        Self {
-            service,
-            stateless,
-            git_protocol: None,
-            credential: None,
-            owner: String::new(),
-            allow_unreachable: false,
-        }
-    }
-}
-
-pub struct GitStreams<'a> {
-    pub input: &'a mut (dyn tokio::io::AsyncRead + Unpin + Send),
-    pub output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
-    pub errors: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
-}
-
-/// A bounded part of an immutable blob, with metadata for range and preview
-/// responses.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlobBytes {
-    pub id: String,
-    pub bytes: Vec<u8>,
-    pub is_binary: bool,
-    pub size: u64,
-    pub offset: u64,
-    /// The Git file mode of the entry, such as 0o100644 or 0o120000.
-    pub mode: u32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlobRange {
-    #[default]
-    Full,
-    /// A preview window. An offset beyond EOF produces an empty window at EOF.
-    Window { offset: u64, length: u64 },
-    /// An HTTP byte range with an inclusive optional end.
-    Bytes { start: u64, end: Option<u64> },
-    /// The final `length` bytes.
-    Suffix { length: u64 },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct BlobMetadata {
-    pub id: String,
-    pub is_binary: bool,
-    pub size: u64,
-    pub offset: u64,
-    pub mode: u32,
-}
-
-pub const MAX_BLOB_RESPONSE_BYTES: usize = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES;
-pub const MAX_ARCHIVE_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
-pub const MAX_COMMIT_PAGE_SIZE: usize = 100;
-pub const MAX_COMMIT_OFFSET: usize = 100_000;
-pub const MAX_COMMIT_METADATA_BYTES: usize = crate::backend::git::MAX_COMMIT_OBJECT_BYTES;
-pub const MAX_COMMIT_PAGE_BYTES: usize = crate::backend::git::MAX_COMMIT_PAGE_BYTES;
-pub const MAX_CONTRIBUTOR_RESPONSE_BYTES: usize = 1024 * 1024;
-pub const MAX_TAG_METADATA_BYTES: usize = crate::backend::git::MAX_TAG_OBJECT_BYTES;
-pub const MAX_TAG_RESPONSE_BYTES: usize = crate::backend::git::MAX_TAG_RESPONSE_BYTES;
-
-pub(crate) const MAX_WORKFLOW_PAYLOAD_BYTES: usize =
-    MAX_WORKFLOW_DIRECTORY_ENTRIES * MAX_CI_WORKFLOW_BYTES;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub(crate) struct WorkflowPayloadEntry {
-    pub path: String,
-    pub length: usize,
-}
-
-/// How the commits of a pull request reach the base branch.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MergeMethod {
-    /// A merge commit with the base and the head as parents.
-    #[default]
-    Merge,
-    /// One commit on the base branch that holds the whole change.
-    Squash,
-    /// Each commit of the head, replayed in order on the base branch.
-    Rebase,
-}
-
-impl MergeMethod {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Merge => "merge",
-            Self::Squash => "squash",
-            Self::Rebase => "rebase",
-        }
-    }
-}
-
-/// The merge methods that `repository` allows, in the order the merge form offers them.
-pub fn allowed_merge_methods(repository: &Repository) -> Vec<MergeMethod> {
-    [
-        (repository.allow_merge_commit, MergeMethod::Merge),
-        (repository.allow_squash_merge, MergeMethod::Squash),
-        (repository.allow_rebase_merge, MergeMethod::Rebase),
-    ]
-    .into_iter()
-    .filter_map(|(allowed, method)| allowed.then_some(method))
-    .collect()
-}
-
-/// Merge `head_branch` into `base_branch`, as approved when the branches were at
-/// `head` and `base`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MergeRequest {
-    pub head_branch: String,
-    pub base_branch: String,
-    pub head: String,
-    pub base: String,
-    /// The message of a merge or squash commit. A rebase keeps each commit's own message.
-    pub message: String,
-    /// The committer: the person who merges.
-    pub name: String,
-    pub email: String,
-    pub method: MergeMethod,
-    /// The author of a squash commit. Without one, the committer is the author.
-    pub author_name: Option<String>,
-    pub author_email: Option<String>,
-}
-
-/// One branch that a restack moves: the commit it must still be at, and the commit it moves to.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RestackMove {
-    pub branch: String,
-    pub old: String,
-    pub new: String,
-}
-
-/// Why a prepared merge changed nothing.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MergeFailure {
-    /// The branches conflict, or Git could not build the merge commit.
-    CannotMerge,
-    /// A branch moved after the merge commit was built, so nothing was published.
-    BranchMoved,
-    /// The owning storage node could not be reached.
-    Unavailable,
 }
 
 /// A repository's Git data, wherever it lives.
@@ -2017,7 +1487,7 @@ impl RepoStore {
         }
     }
 
-    /// Pipes the client to Git on the owning node, with the shared receive hooks.
+    /// A slot for one Git session: a local one runs Git here, a remote one forwards it.
     pub(crate) async fn session_permit(&self) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit> {
         use crate::backend::git::repository::process;
         match &self.0 {
@@ -2026,6 +1496,7 @@ impl RepoStore {
         }
     }
 
+    /// Pipes the client to Git on the owning node, with the shared receive hooks.
     pub async fn git_session(
         &self,
         session: GitSession,

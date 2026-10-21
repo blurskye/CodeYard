@@ -1,6 +1,4 @@
-use crate::backend::db::discussions::{
-    contains_pattern, ListFilter, StateCounts, SHOWN_PR_COMMENT,
-};
+use crate::backend::db::discussions::{ListFilter, StateCounts, SHOWN_PR_COMMENT};
 use crate::backend::db::models::PullRequest;
 use crate::backend::db::pull_requests::records::PullRequestListEntry;
 use crate::backend::db::pull_requests::records::{
@@ -346,7 +344,7 @@ pub async fn list_repo_pull_requests(
     let prs = sqlx::query_as::<_, PullRequestListEntry>(&format!(
         r"SELECT i.*, {columns}, h.id AS head_display_id, h.name AS head_display_name, CASE WHEN h.owner_kind='user' AND h.owner_org_id IS NULL THEN hu.username WHEN h.owner_kind='org' AND h.owner_user_id IS NULL THEN ho.name END AS head_display_owner FROM pull_requests i JOIN users u ON u.id=i.author_id LEFT JOIN repositories h ON h.id=i.head_repo_id LEFT JOIN users hu ON h.owner_kind='user' AND h.owner_user_id=hu.id LEFT JOIN organizations ho ON h.owner_kind='org' AND h.owner_org_id=ho.id
         WHERE i.repo_id = ?1 AND (?2 IS NULL OR i.state = ?2 OR (?11 AND ?2 = 'closed' AND i.state = 'merged'))
-            AND (?3 IS NULL OR i.title LIKE ?3 ESCAPE '\' OR i.body LIKE ?3 ESCAPE '\')
+            AND (?3 IS NULL OR i.title REGEXP ?3 OR i.body REGEXP ?3)
             AND (?5 IS NULL OR i.author_id = ?5)
             AND (?6 = 0 OR (?6 = 1 AND NOT EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id))
                 OR (?6 = 2 AND EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id AND a.user_id = ?7)))
@@ -358,7 +356,7 @@ pub async fn list_repo_pull_requests(
     ))
     .bind(repo_id)
     .bind(filter.state)
-    .bind(filter.search.map(contains_pattern))
+    .bind(filter.search.map(super::super::search::contains))
     .bind(limit)
     .bind(filter.author_id)
     .bind(assignee_mode)
@@ -378,16 +376,16 @@ pub async fn list_repo_pull_requests(
 fn viewer_pull_request_sql(relation: PullRequestRelation) -> &'static str {
     match relation {
         PullRequestRelation::Assigned => {
-            "EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = p.id AND a.user_id = ?1)"
+            "p.id IN (SELECT pull_request_id FROM pr_assignees WHERE user_id = ?1)"
         }
         PullRequestRelation::Created => "p.author_id = ?1",
         PullRequestRelation::ReviewRequested => {
-            "EXISTS (SELECT 1 FROM pr_reviewers a WHERE a.pull_request_id = p.id AND a.user_id = ?1)"
+            "p.id IN (SELECT pull_request_id FROM pr_reviewers WHERE user_id = ?1)"
         }
         PullRequestRelation::Involved => {
             "(p.author_id = ?1 \
-             OR EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = p.id AND a.user_id = ?1) \
-             OR EXISTS (SELECT 1 FROM pr_reviewers a WHERE a.pull_request_id = p.id AND a.user_id = ?1))"
+             OR p.id IN (SELECT pull_request_id FROM pr_assignees WHERE user_id = ?1) \
+             OR p.id IN (SELECT pull_request_id FROM pr_reviewers WHERE user_id = ?1))"
         }
     }
 }
@@ -459,7 +457,7 @@ pub async fn count_repo_pull_requests(
     let labels = super::super::discussions::label_names_json(filter.labels)?;
     let rows = sqlx::query_as::<_, (String, i64)>(
         r"SELECT CASE WHEN i.state = 'merged' THEN 'closed' ELSE i.state END AS bucket, COUNT(*) FROM pull_requests i WHERE i.repo_id = ?1
-            AND (?2 IS NULL OR i.title LIKE ?2 ESCAPE '\' OR i.body LIKE ?2 ESCAPE '\')
+            AND (?2 IS NULL OR i.title REGEXP ?2 OR i.body REGEXP ?2)
             AND (?3 IS NULL OR i.author_id = ?3)
             AND (?4 = 0 OR (?4 = 1 AND NOT EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id))
                 OR (?4 = 2 AND EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id AND a.user_id = ?5)))
@@ -470,7 +468,7 @@ pub async fn count_repo_pull_requests(
         GROUP BY bucket",
     )
     .bind(repo_id)
-    .bind(filter.search.map(contains_pattern))
+    .bind(filter.search.map(super::super::search::contains))
     .bind(filter.author_id)
     .bind(assignee_mode)
     .bind(assignee_id)

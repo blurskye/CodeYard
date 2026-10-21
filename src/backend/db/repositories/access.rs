@@ -1,7 +1,24 @@
 //! Shared named operation surface; native transactions stay inside db.
-use crate::backend::db::models::{AccessLevel, RepoAccess, Repository};
+use crate::backend::db::models::{AccessLevel, RepoAccess, Repository, User};
 use crate::backend::db::DbPool;
 use anyhow::Result;
+
+pub enum CollaboratorChange {
+    Applied(Box<User>),
+    NotFound,
+    PasswordChangeRequired,
+    InvalidCollaboratorOwner,
+}
+
+native_operation!(crate::backend::db::postgres::repositories::access::change_personal_repository_collaborator,
+    crate::backend::db::sqlite::repositories::access::change_personal_repository_collaborator,
+    fn change_personal_repository_collaborator(
+    pool: &DbPool,
+    actor: i64,
+    repo_id: i64,
+    username: &str,
+    permission: Option<AccessLevel>,
+) -> Result<CollaboratorChange>);
 
 native_operation!(crate::backend::db::postgres::repositories::access::readable_repositories_by_ids,
     crate::backend::db::sqlite::repositories::access::readable_repositories_by_ids,

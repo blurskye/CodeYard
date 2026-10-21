@@ -8,6 +8,6 @@ pub mod repository;
 pub mod stats;
 
 pub use ci::*;
-pub(crate) use ref_names::{branch_ref, is_canonical_ref, tag_ref};
+pub(crate) use ref_names::{branch_ref, is_canonical_ref, is_full_commit_id, tag_ref};
 pub use repository::*;
 pub use stats::*;

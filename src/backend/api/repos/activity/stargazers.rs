@@ -1,6 +1,7 @@
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
-use crate::backend::api::repos::chrome::{json_page, PageQuery};
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::paging::{json_page, PageQuery};
+use crate::backend::api::repos::responses::repository_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -14,25 +15,7 @@ pub async fn list_stargazers(
     Query(query): Query<PageQuery>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<Vec<UserResponse>>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
     let users = db::repositories::engagement::list_repo_stargazers(
         &state.pool,
@@ -41,15 +24,7 @@ pub async fn list_stargazers(
         offset as i64,
     )
     .await
-    .map_err(|_| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiError::new(
-                "database_error",
-                "Repository operation is unavailable",
-            )),
-        )
-    })?;
+    .map_err(|_| repository_unavailable())?;
 
     Ok(Json(users.into_iter().map(UserResponse::from).collect()))
 }

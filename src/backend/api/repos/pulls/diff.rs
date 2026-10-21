@@ -1,10 +1,12 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::with_status;
 use crate::backend::api::repos::issues::reactions;
-use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::api::repos::pulls::review_forms;
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::code_owners::load_rules;
@@ -20,41 +22,55 @@ use axum::response::Response;
 use axum::Json;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+
+/// Whether the viewer chose the split diff view.
+fn split_view(ctx: &PageContext) -> bool {
+    ctx.query.get("view").is_some_and(|view| view == "split")
+}
+
+/// The diff page's address, keeping the view the viewer chose.
+pub(crate) fn diff_url(ctx: &PageContext, base: &str) -> String {
+    let view = if split_view(ctx) { "?view=split" } else { "" };
+    format!("{base}/diff{view}")
+}
+
 /// Bound the actual envelope, including drafts, pending threads, references and JSON escaping.
 pub(crate) fn bound_thread_projection(
     envelope: &mut crate::webui::app::PageEnvelope,
 ) -> Result<(), serde_json::Error> {
     use crate::webui::app::Page;
-    let Page::Collaboration(model) = &mut envelope.page else {
-        return Ok(());
+    let entries = match &mut envelope.page {
+        Page::Collaboration(model) => match model.as_mut() {
+            view::Page::Diff { threads, .. } => std::mem::take(threads),
+            _ => return Ok(()),
+        },
+        _ => return Ok(()),
     };
-    let view::Page::Diff { threads, .. } = model.as_mut() else {
-        return Ok(());
-    };
-    let entries = std::mem::take(threads);
     let mut bytes = serde_json::to_vec(envelope)?.len();
-    let Page::Collaboration(model) = &mut envelope.page else {
-        unreachable!()
-    };
-    let view::Page::Diff {
-        threads, truncated, ..
-    } = model.as_mut()
-    else {
-        unreachable!()
-    };
     if bytes > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES {
         return Err(serde::ser::Error::custom(
             "Diff page exceeds its size limit",
         ));
     }
+    let mut kept = Vec::new();
+    let mut cut = false;
     for thread in entries {
-        let size = serde_json::to_vec(&thread)?.len() + usize::from(!threads.is_empty());
+        let size = serde_json::to_vec(&thread)?.len() + usize::from(!kept.is_empty());
         if bytes.saturating_add(size) > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES {
-            *truncated = true;
+            cut = true;
             break;
         }
         bytes += size;
-        threads.push(thread);
+        kept.push(thread);
+    }
+    if let Page::Collaboration(model) = &mut envelope.page {
+        if let view::Page::Diff {
+            threads, truncated, ..
+        } = model.as_mut()
+        {
+            *threads = kept;
+            *truncated |= cut;
+        }
     }
     Ok(())
 }
@@ -64,38 +80,12 @@ pub async fn get_pull_request_diff(
     Path((owner, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
 ) -> Result<Json<DiffInfo>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let pull_request =
         db::pull_requests::records::get_pull_request(&state.pool, repository.id, number)
             .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "database_error",
-                        "Collaboration storage is temporarily unavailable",
-                    )),
-                )
-            })?
+            .map_err(|_| storage_unavailable())?
             .ok_or_else(|| {
                 (
                     StatusCode::NOT_FOUND,
@@ -322,12 +312,10 @@ pub(crate) async fn render_diff(
             .to_vec();
     }
     let mut ctx = ctx.clone();
-    let split = ctx.query.get("view").is_some_and(|view| view == "split");
-    ctx.return_to = Some(format!(
-        "{}/{}/diff{}",
-        repo.view.family_url(Kind::Pull),
-        value.number,
-        if split { "?view=split" } else { "" }
+    let split = split_view(&ctx);
+    ctx.return_to = Some(diff_url(
+        &ctx,
+        &format!("{}/{}", repo.view.family_url(Kind::Pull), value.number),
     ));
     Ok(with_status(
         ctx.page_model(

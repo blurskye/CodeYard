@@ -3,8 +3,8 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client as http;
 use crate::support::native_database as native;
-use crate::support::pull_requests as http;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
@@ -12,7 +12,7 @@ use axum::{
 };
 use base64::Engine;
 use codeyard::{
-    backend::{api::create_router, app::AppState, db, storage::ObjectStore},
+    backend::db,
     webui::{
         app::{Page, PageEnvelope},
         pages::repos as view,
@@ -20,7 +20,6 @@ use codeyard::{
 };
 use database::Database;
 use serde_json::{json, Value};
-use std::sync::Arc;
 use tower::ServiceExt;
 
 async fn request(
@@ -127,7 +126,7 @@ async fn contract(pg: bool) {
     // The HTML form answers below render full pages, which need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("editor_boundary").await;
     let session = native::token();
     let csrf = native::token();
@@ -161,14 +160,7 @@ async fn contract(pg: bool) {
     .unwrap();
     let repository_id = repository.id.to_string();
     let path = std::path::PathBuf::from(repository.disk_path);
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let outsider_id = f.actor("editor_outsider").await;
     let outsider = http::Client::login(&router, f.pool(), outsider_id).await;
     for method in ["POST", "PUT"] {
@@ -680,7 +672,7 @@ fn hidden_repository_id(page: &str) -> String {
 async fn stale_repository_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     for (owner, populated) in [("unborn_editor", false), ("populated_editor", true)] {
         let actor = f.actor(owner).await;
         let (client, root) = long_name_client(&f, actor).await;
@@ -802,14 +794,7 @@ async fn long_name_client(f: &Database, owner: i64) -> (http::Client, tempfile::
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     (http::Client::login(&router, f.pool(), owner).await, root)
 }
 
@@ -872,7 +857,7 @@ async fn merge_pull(client: &http::Client, repo: &str, number: i64) -> Value {
 /// edited and merged. A 256-character branch cannot back a pull request.
 async fn long_account_and_branch_contract(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     // 128 two-byte characters: 256 bytes, within the 255-character account bound.
     let name = "é".repeat(128);
     let owner = f.actor(&name).await;
@@ -939,7 +924,7 @@ async fn long_account_and_branch_contract(pg: bool) {
 /// message, merges, and its commits are listed and read back with the name.
 async fn longest_account_name_contract(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     // 255 four-byte characters: 1020 bytes.
     let name = "𠀀".repeat(255);
     let owner = f.actor(&name).await;
@@ -1003,7 +988,7 @@ async fn longest_account_name_contract(pg: bool) {
 
 async fn default_branch_contract(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("default_owner").await;
     let (client, _root) = long_name_client(&f, actor).await;
     let api = "/api/repos/default_owner/save";
@@ -1181,7 +1166,7 @@ async fn postgres_longest_account_name_commits() {
 async fn missing_branch_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor = f.actor("missing_branch").await;
     let (client, _root) = long_name_client(&f, actor).await;
     let repository = db::repositories::records::get_repository(f.pool(), "missing_branch", "save")
@@ -1307,17 +1292,10 @@ async fn postgres_missing_branch_saves_are_named() {
 async fn protected_branch_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("protected_editor").await;
     let (client, root) = long_name_client(&f, owner).await;
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let (session, csrf) = (client.session.clone(), client.csrf.clone());
     let api = "/api/repos/protected_editor/save";
     let tip = save_file(&client, api, "main", "README.md", "first", "unborn", true).await;
@@ -1453,7 +1431,7 @@ fn commit_blob(repo: &git2::Repository, commit: &git2::Commit, path: &str) -> Ve
 async fn commit_target_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("commit_target").await;
     let (client, _root) = long_name_client(&f, owner).await;
     let first = save_file(
@@ -1672,17 +1650,10 @@ async fn postgres_commit_target_direct_or_new_branch() {
 async fn delete_file_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("delete_editor").await;
     let (client, root) = long_name_client(&f, owner).await;
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        codeyard::backend::ci::CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let (session, csrf) = (client.session.clone(), client.csrf.clone());
     let api = "/api/repos/delete_editor/save";
     let first = save_file(

@@ -3,7 +3,7 @@
 //! cannot read never reaches the page.
 
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::repos::pulls::pull::unavailable;
+use crate::backend::api::repos::discussion::unavailable;
 use crate::backend::db;
 use crate::backend::repositories::access::can_read;
 use crate::webui::components::references::{self, References};

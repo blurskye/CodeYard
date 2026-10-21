@@ -197,9 +197,9 @@ os.execve({str(h.sudo)!r}, [{str(h.sudo)!r}, "-n", "-u", {o.service_user!r},
     # consume whitespace, options, other subcommands or arbitrary shell commands.
     socket_regex = str(o.socket).replace(".", "[.]")
     sudoers = (MARKER
-        + f"Cmnd_Alias GIT_SERV_37_SSH = {o.binary} ^ssh serve --socket {socket_regex} --(key|deploy-key)-id [1-9][0-9]*$\n"
-        + 'Defaults!GIT_SERV_37_SSH env_reset, !setenv, !requiretty, env_keep += "SSH_ORIGINAL_COMMAND GIT_PROTOCOL"\n'
-        + f"{o.git_user} ALL=({o.service_user}) NOPASSWD: NOSETENV: GIT_SERV_37_SSH\n")
+        + f"Cmnd_Alias CODEYARD_SSH_SERVE = {o.binary} ^ssh serve --socket {socket_regex} --(key|deploy-key)-id [1-9][0-9]*$\n"
+        + 'Defaults!CODEYARD_SSH_SERVE env_reset, !setenv, !requiretty, env_keep += "SSH_ORIGINAL_COMMAND GIT_PROTOCOL"\n'
+        + f"{o.git_user} ALL=({o.service_user}) NOPASSWD: NOSETENV: CODEYARD_SSH_SERVE\n")
     snippet = (MARKER + f"Match User {o.git_user}\n"
         + "    AuthenticationMethods publickey\n    PubkeyAuthentication yes\n"
         + "    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n"

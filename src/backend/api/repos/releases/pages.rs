@@ -3,7 +3,8 @@
 use crate::backend::api::files::download::asset_response;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::chrome;
-use crate::backend::api::repos::pulls::pull::{authorize_post, with_status};
+use crate::backend::api::repos::code::upload::READ_TIMEOUT as UPLOAD_READ_TIMEOUT;
+use crate::backend::api::repos::forms::{authorize_post, field, with_status};
 use crate::backend::app::AppState;
 use crate::backend::db::models::{ReleaseAsset, ReleaseRow};
 use crate::backend::files::{DownloadError, UploadError};
@@ -19,6 +20,7 @@ use crate::webui::pages::repos::page::Page as RepoPage;
 use crate::webui::pages::repos::releases::{
     AssetItem, Page as ReleasePage, ReleaseDraft, ReleaseItem,
 };
+use axum::extract::multipart::MultipartError;
 use axum::extract::{Form, Multipart, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -145,10 +147,6 @@ fn refusal(ctx: &PageContext, repo: &RepoChrome, error: ReleaseError) -> Respons
 
 fn repo_page(repo: RepoChrome, page: ReleasePage) -> Page {
     Page::Repositories(RepoPage::Releases { repo, page })
-}
-
-fn field(form: &HashMap<String, String>, name: &str) -> String {
-    form.get(name).cloned().unwrap_or_default()
 }
 
 /// The release form as submitted. A checkbox is in the form only when it is ticked.
@@ -288,11 +286,8 @@ pub(crate) async fn list(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let page = ctx
@@ -341,11 +336,8 @@ pub(crate) async fn detail(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
@@ -385,11 +377,8 @@ pub(crate) async fn new_page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let draft = ReleaseDraft {
@@ -413,11 +402,8 @@ pub(crate) async fn create(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let draft = submitted_draft(&form);
@@ -477,11 +463,8 @@ pub(crate) async fn edit_page(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     edit_form(&ctx, &repo, &owner, &name, id, None, None).await
@@ -501,11 +484,8 @@ pub(crate) async fn update(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let draft = submitted_draft(&form);
@@ -557,11 +537,8 @@ pub(crate) async fn delete(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
@@ -579,6 +556,18 @@ pub(crate) async fn delete(
     {
         Ok(()) => ctx.redirect(&format!("{}/releases", repo.base())),
         Err(error) => refusal(&ctx, &repo, error),
+    }
+}
+
+/// A body over the limit is a 413. Any other read failure is a bad request.
+fn upload_read_error(ctx: &PageContext, error: &MultipartError) -> Response {
+    if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        ctx.error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "Assets are limited to 100 MiB.",
+        )
+    } else {
+        ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read.")
     }
 }
 
@@ -615,21 +604,14 @@ pub(crate) async fn upload_asset(
             let part = match multipart.next_field().await {
                 Ok(Some(part)) => part,
                 Ok(None) => break,
-                Err(_) => {
-                    return Err(ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read."))
-                }
+                Err(error) => return Err(upload_read_error(&ctx, &error)),
             };
             let part_name = part.name().unwrap_or_default().to_owned();
             if part_name == "file" {
                 let filename = part.file_name().unwrap_or_default().to_owned();
                 match part.bytes().await {
                     Ok(bytes) => file = Some((filename, bytes.to_vec())),
-                    Err(_) => {
-                        return Err(ctx.error(
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            "Assets are limited to 100 MiB.",
-                        ))
-                    }
+                    Err(error) => return Err(upload_read_error(&ctx, &error)),
                 }
             } else if let Ok(text) = part.text().await {
                 fields.insert(part_name, text);
@@ -637,8 +619,7 @@ pub(crate) async fn upload_asset(
         }
         Ok((fields, file))
     };
-    let (fields, file) = match tokio::time::timeout(std::time::Duration::from_secs(30), read).await
-    {
+    let (fields, file) = match tokio::time::timeout(UPLOAD_READ_TIMEOUT, read).await {
         Ok(Ok(parts)) => parts,
         Ok(Err(response)) => return response,
         Err(_) => {
@@ -651,11 +632,8 @@ pub(crate) async fn upload_asset(
     if let Err(response) = authorize_post(&ctx, &fields) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
@@ -698,11 +676,8 @@ pub(crate) async fn delete_asset(
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    let repo = match chrome::load_database(&ctx, &owner, &name)
-        .await
-        .map(|loaded| loaded.chrome)
-    {
-        Ok(repo) => repo,
+    let repo = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded.chrome,
         Err(response) => return response,
     };
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
@@ -756,11 +731,8 @@ pub(crate) async fn download(
             Ok(response) => ctx.with_cookie(response),
             Err(failure) => failure.into_response(),
         },
-        Err(error) => match chrome::load_database(&ctx, &owner, &name)
-            .await
-            .map(|loaded| loaded.chrome)
-        {
-            Ok(repo) => refusal(&ctx, &repo, error),
+        Err(error) => match chrome::load_database(&ctx, &owner, &name).await {
+            Ok(loaded) => refusal(&ctx, &loaded.chrome, error),
             Err(response) => response,
         },
     }

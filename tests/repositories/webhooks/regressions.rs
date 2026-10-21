@@ -29,84 +29,91 @@ async fn insert_hook(database: &Database, url: &str) -> db::models::Webhook {
         .unwrap()
 }
 
-#[tokio::test]
-async fn webhook_settings_batch_statuses_and_paginate_on_both_engines() {
-    for pg in [false, true] {
-        let (mut database, _root, alice, _) = setup(pg).await;
-        let mut hooks = Vec::new();
-        for _ in 0..32 {
-            hooks.push(insert_hook(&database, "https://hooks.example/push").await);
-        }
-        let mut record = db::webhooks::NewDelivery {
-            guid: uuid::Uuid::new_v4().to_string(),
-            event: "push".into(),
-            action: None,
-            status_code: Some(200),
-            duration_ms: 1,
-            error: None,
-            request_headers: String::new(),
-            request_body: String::new(),
-            response_headers: None,
-            response_body: None,
-        };
-        db::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
-            .await
-            .unwrap();
-        record.guid = uuid::Uuid::new_v4().to_string();
-        record.status_code = None;
-        record.error = Some("failed".into());
-        db::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
-            .await
-            .unwrap();
-        record.guid = uuid::Uuid::new_v4().to_string();
-        record.status_code = Some(201);
-        db::webhooks::insert_delivery(database.pool(), hooks[2].id, &record)
-            .await
-            .unwrap();
-        let actor =
-            db::users::accounts::get_user_by_id(database.pool(), hooks[0].created_by_id.unwrap())
-                .await
-                .unwrap()
-                .unwrap();
-        let place = webhooks::panel::Place {
-            owner: HookOwner::Repository(hooks[0].repo_id.unwrap()),
-            base: "/alice/proj/settings?tab=webhooks",
-            action_base: "/alice/proj/_forms",
-            csrf_token: "token",
-            repository_id: hooks[0].repo_id,
-        };
-        let first = webhooks::panel::build(database.pool(), &actor, &place, &Default::default())
-            .await
-            .unwrap();
-        assert_eq!(first.hooks.len(), 30);
-        assert_eq!(first.hooks[0].last, "No deliveries yet");
-        assert_eq!(first.hooks[1].last, "Last delivery failed");
-        assert_eq!(first.hooks[2].last, "Last delivery 201");
-        assert!(first.next_href.is_some() && first.first_href.is_none());
-        let query = [("hook_after".into(), hooks[29].id.to_string())].into();
-        let next = webhooks::panel::build(database.pool(), &actor, &place, &query)
-            .await
-            .unwrap();
-        assert_eq!(next.hooks.len(), 2);
-        assert!(next.next_href.is_none() && next.first_href.is_some());
-        let query = [
-            ("hook".into(), hooks[31].id.to_string()),
-            ("edit".into(), "1".into()),
-        ]
-        .into();
-        let editor = webhooks::panel::build(database.pool(), &actor, &place, &query)
-            .await
-            .unwrap();
-        assert!(editor.hooks.is_empty());
-        assert_eq!(editor.editing.unwrap().id, Some(hooks[31].id));
-        let (status, html) = alice.page(place.base).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(
-            html.contains("Next page") && html.contains("hook_after="),
-            "{html}"
-        );
-        database.finish().await;
+async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
+    let (mut database, _root, alice, _) = setup(pg).await;
+    let mut hooks = Vec::new();
+    for _ in 0..32 {
+        hooks.push(insert_hook(&database, "https://hooks.example/push").await);
     }
+    let mut record = db::webhooks::NewDelivery {
+        guid: uuid::Uuid::new_v4().to_string(),
+        event: "push".into(),
+        action: None,
+        status_code: Some(200),
+        duration_ms: 1,
+        error: None,
+        request_headers: String::new(),
+        request_body: String::new(),
+        response_headers: None,
+        response_body: None,
+    };
+    db::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
+        .await
+        .unwrap();
+    record.guid = uuid::Uuid::new_v4().to_string();
+    record.status_code = None;
+    record.error = Some("failed".into());
+    db::webhooks::insert_delivery(database.pool(), hooks[1].id, &record)
+        .await
+        .unwrap();
+    record.guid = uuid::Uuid::new_v4().to_string();
+    record.status_code = Some(201);
+    db::webhooks::insert_delivery(database.pool(), hooks[2].id, &record)
+        .await
+        .unwrap();
+    let actor =
+        db::users::accounts::get_user_by_id(database.pool(), hooks[0].created_by_id.unwrap())
+            .await
+            .unwrap()
+            .unwrap();
+    let place = webhooks::panel::Place {
+        owner: HookOwner::Repository(hooks[0].repo_id.unwrap()),
+        base: "/alice/proj/settings?tab=webhooks",
+        action_base: "/alice/proj/_forms",
+        csrf_token: "token",
+        repository_id: hooks[0].repo_id,
+    };
+    let first = webhooks::panel::build(database.pool(), &actor, &place, &Default::default())
+        .await
+        .unwrap();
+    assert_eq!(first.hooks.len(), 30);
+    assert_eq!(first.hooks[0].last, "No deliveries yet");
+    assert_eq!(first.hooks[1].last, "Last delivery failed");
+    assert_eq!(first.hooks[2].last, "Last delivery 201");
+    assert!(first.next_href.is_some() && first.first_href.is_none());
+    let query = [("hook_after".into(), hooks[29].id.to_string())].into();
+    let next = webhooks::panel::build(database.pool(), &actor, &place, &query)
+        .await
+        .unwrap();
+    assert_eq!(next.hooks.len(), 2);
+    assert!(next.next_href.is_none() && next.first_href.is_some());
+    let query = [
+        ("hook".into(), hooks[31].id.to_string()),
+        ("edit".into(), "1".into()),
+    ]
+    .into();
+    let editor = webhooks::panel::build(database.pool(), &actor, &place, &query)
+        .await
+        .unwrap();
+    assert!(editor.hooks.is_empty());
+    assert_eq!(editor.editing.unwrap().id, Some(hooks[31].id));
+    let (status, html) = alice.page(place.base).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("Next page") && html.contains("hook_after="),
+        "{html}"
+    );
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_webhook_settings_batch_statuses_and_paginate() {
+    webhook_settings_batch_statuses_and_paginate(false).await;
+}
+
+#[tokio::test]
+async fn postgres_webhook_settings_batch_statuses_and_paginate() {
+    webhook_settings_batch_statuses_and_paginate(true).await;
 }
 
 pub(super) async fn retry_backoff_frees_send_slots(pg: bool) {

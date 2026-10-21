@@ -5,7 +5,7 @@ use super::{
     ActionsPage, Run,
 };
 use crate::webui::{
-    components::{current_time, relative_age, DraftSelect, SelectOption},
+    components::{relative_time, DraftSelect, SelectOption},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -64,14 +64,7 @@ pub fn timestamp(value: i64) -> String {
         .unwrap_or_else(|| "Unknown time".to_string())
 }
 
-/// "5 minutes ago", "3 days ago". The exact time goes in the title beside it.
-pub fn relative_time(value: i64) -> String {
-    chrono::DateTime::from_timestamp(value, 0)
-        .map(|then| relative_age(then, current_time()))
-        .unwrap_or_else(|| "Unknown time".to_string())
-}
-
-/// Reused from the reference's pure act parser, not its browser store/runtime.
+/// The job name in the bracketed prefix of an `act` output line, such as `[CI/build]`.
 pub fn act_job_name(line: &str) -> Option<String> {
     let inner = line.strip_prefix('[')?;
     let token = &inner[..inner.find(']')?];
@@ -395,16 +388,8 @@ pub(super) fn LogOutput(
     let mut query = use_signal(move || initial_query);
     let mut wrap = use_signal(move || initial_wrap);
     // One job at a time: the job the sidebar chose, or the first job when none is chosen.
-    let chosen = selected_job(&jobs, model.value("workflow_job"));
-    let visible_jobs: Vec<_> = jobs
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| Some(*index) == chosen)
-        .collect();
-    let heading = match visible_jobs.first() {
-        Some((_, job)) => job.name.clone(),
-        None => "Logs".to_string(),
-    };
+    let job = selected_job(&jobs, model.value("workflow_job")).and_then(|index| jobs.get(index));
+    let heading = job.map_or_else(|| "Logs".to_string(), |job| job.name.clone());
     rsx! {
         section { id: "job-logs", class: "actions-log-panel", "aria-label": "Workflow logs",
             header { class: "actions-log-heading",
@@ -415,12 +400,12 @@ pub(super) fn LogOutput(
                 form { method: "get", action: model.base_path.clone(), class: "actions-log-controls",
                     {preserved_inputs(&model, &["log_q", "wrap"])}
                     label { class: "actions-search-field actions-log-search",
-                        span { class: "actions-sr-only", "Search logs" }
+                        span { class: "sr-only", "Search logs" }
                         {icon("search")}
                         crate::webui::components::DraftInput { class: "actions-search", name: "log_q", input_type: "search", placeholder: "Search logs", initial_value: query(), maxlength: Some(300), on_value: move |value| query.set(value) }
                     }
                     label { class: "actions-wrap-control", title: "Wrap log lines",
-                        {icon("wrap")} span { class: "actions-sr-only", "Wrap lines" }
+                        {icon("wrap")} span { class: "sr-only", "Wrap lines" }
                         DraftSelect { name: "wrap", initial_value: String::from(if wrap() { "1" } else { "0" }),
                             options: vec![SelectOption::new("1", "Wrap"), SelectOption::new("0", "No wrap")],
                             on_value: move |value: String| wrap.set(value != "0") }
@@ -440,12 +425,12 @@ pub(super) fn LogOutput(
                         }
                     }
                 }
-                for (job_index, job) in &visible_jobs {
+                if let Some(job) = job {
                     section { class: "actions-log-job",
-                        div { class: "actions-step-list", {render_steps(*job_index, job, &query(), wrap())} }
+                        div { class: "actions-step-list", {render_steps(job, &query(), wrap())} }
                     }
                 }
-                if !model.value("workflow_job").is_empty() && visible_jobs.is_empty() && !logs_empty {
+                if !model.value("workflow_job").is_empty() && job.is_none() && !logs_empty {
                     p { class: "actions-log-empty", "This job is not available in the recent logs." }
                 }
             }
@@ -480,7 +465,7 @@ fn log_text(line: &str) -> Element {
         return rsx! {
             span { class: "actions-log-text actions-log-marker", title: line.to_owned(),
                 {status_icon(status)}
-                span { class: "actions-sr-only", "{status_label(status)}: " }
+                span { class: "sr-only", "{status_label(status)}: " }
                 span { "{name}" }
                 if let Some(timing) = timing { span { class: "actions-log-timing", "{timing}" } }
             }
@@ -497,19 +482,19 @@ fn log_text(line: &str) -> Element {
     rsx! { span { class: "actions-log-text", "{display_log_text(line)}" } }
 }
 
-fn render_steps(job_index: usize, job: &WorkflowJob, query: &str, wrap: bool) -> Element {
+fn render_steps(job: &WorkflowJob, query: &str, wrap: bool) -> Element {
     let visible = search_steps(&job.steps, query);
     rsx! {
         if visible.is_empty() { p { class: "actions-log-empty", "No log lines match your search." } }
-        for (step_index, (step, lines)) in visible.iter().enumerate() {
+        for (step, lines) in &visible {
             details { class: "actions-step", open: !query.is_empty() || matches!(step.status.as_str(), "failed" | "running"),
-                summary { class: "actions-step-heading", id: format!("stage-{job_index}-{step_index}"),
+                summary { class: "actions-step-heading",
                     span { class: "actions-step-name",
                         {status_icon(&step.status)}
                         span { "{step.name}" }
                         if matches!(step.status.as_str(), "unknown" | "cancelled" | "queued") {
                             span { class: "actions-step-outcome", "{status_label(&step.status)}" }
-                        } else { span { class: "actions-sr-only", "{step.status}" } }
+                        } else { span { class: "sr-only", "{step.status}" } }
                     }
                     span { class: "actions-step-duration",
                         if let Some(duration) = &step.duration { "{short_duration(duration)}" }

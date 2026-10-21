@@ -138,13 +138,13 @@ pub fn auth_page(
                     label { r#for: "username", if signup { "Username" } else { "Username or email" } }
                     // Raw default attributes preserve text entered before hydration/chrome updates.
                     // The backend allows 255 characters; HTML maxlength counts UTF-16 units.
-                    input { id: "username", name: "username", r#type: "text", "value": values.get("username"),
+                    input { id: "username", name: "username", r#type: "text", "value": values.username.clone(),
                         autocomplete: "username", autocapitalize: "none", spellcheck: "false", required: true, maxlength: "510" }
                 }
                 if signup {
                     div { class: "identity-auth-field",
                         label { r#for: "email", "Email (optional)" }
-                        input { id: "email", name: "email", r#type: "email", "value": values.get("email"),
+                        input { id: "email", name: "email", r#type: "email", "value": values.email.clone(),
                             autocomplete: "email", autocapitalize: "none", spellcheck: "false", maxlength: "320" }
                     }
                 }
@@ -160,7 +160,7 @@ pub fn auth_page(
                     div { class: "identity-auth-field",
                         label { r#for: "node_mode", "Node access" }
                         DraftSelect { id: Some("node_mode".to_owned()), name: "node_mode",
-                            initial_value: String::from(if values.get("node_mode") == "private" { "private" } else { "public" }),
+                            initial_value: String::from(if values.node_mode == "private" { "private" } else { "public" }),
                             options: vec![
                                 SelectOption::new("public", "Public"),
                                 SelectOption::new("private", "Private — approved accounts only"),
@@ -240,7 +240,7 @@ pub fn two_factor_page(
                 p { "Enter the six-digit code from your authenticator app, or one of your recovery codes." }
             }
             if let Some(message) = message {
-                p { role: if is_error { "alert" } else { "status" }, class: if is_error { "identity-auth-error" } else { "identity-auth-notice" }, "{message}" }
+                p { role: if is_error { "alert" } else { "status" }, class: if is_error { "identity-auth-notice identity-auth-notice-error" } else { "identity-auth-notice" }, "{message}" }
             }
             form { method: "post", action: action.to_owned(), class: "identity-form",
                 {csrf(token)}

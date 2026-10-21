@@ -1,14 +1,13 @@
 use super::tree::view_entries;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::{
-    is_branch, load_refs_from_repo, number, ref_names_under, resolve, root_if_missing, store_error,
-    Loaded,
+    is_branch, load_refs_from_repo, ref_names_under, resolve, root_if_missing, store_error, Loaded,
 };
+use crate::backend::api::repos::paging::number;
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::app::AppState;
-use crate::backend::db;
 use crate::backend::git::{MAX_BLAME_FILE_BYTES, MAX_BLAME_LINES};
 use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
@@ -102,25 +101,7 @@ pub async fn get_blob(
     Query(query): Query<BlobQuery>,
     headers: HeaderMap,
 ) -> Result<Response, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Repository operation is unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let permit = state
         .repository_downloads
         .clone()
@@ -135,7 +116,7 @@ pub async fn get_blob(
             )
         })?;
 
-    let refs = load_refs_from_repo(&state, &repository, &format!("{}/{}", owner, repo)).await?;
+    let refs = load_refs_from_repo(&state, &repository).await?;
     if refs.is_empty() {
         return Err((
             StatusCode::NOT_FOUND,
@@ -344,11 +325,11 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     if loaded.refs.is_empty() {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository is empty."));
     }
-    let offset = number(ctx, "offset", 0, usize::MAX)?;
+    let offset = number(ctx, "offset", 0, 0..=usize::MAX)?;
     let target = ctx
         .query
         .contains_key("line")
-        .then(|| number(ctx, "line", 1, u32::MAX as usize))
+        .then(|| number(ctx, "line", 1, 1..=u32::MAX as usize))
         .transpose()?;
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
     // Resolve the ref once. The content, the Files panel and the permalink then name the same
@@ -583,6 +564,7 @@ pub(in crate::backend::api::repos) async fn page(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::db;
 
     #[tokio::test]
     async fn binary_json_previews_hold_download_slots_until_consumed_or_timed_out() {

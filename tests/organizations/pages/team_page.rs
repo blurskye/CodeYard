@@ -105,7 +105,7 @@ pub async fn contracts(f: &Fixture) {
     assert_eq!(page.team.slug, "writers");
     assert!(!page.manage);
     assert!(!page.show_repositories);
-    assert_eq!(page.member_count, 1);
+    assert_eq!(page.team.member_count, 1);
     assert_eq!(page.repository_count, 0);
     assert_eq!(page.members.len(), 1);
     assert_eq!(page.members[0].username, "ordinary_member");

@@ -309,8 +309,8 @@ impl ProtocolHandler for CiHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         while let Some(link) = transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
-                tracing::debug!(%error, "CI queue RPC failed");
-                connection.close(413u32.into(), b"invalid or oversized CI frame");
+                tracing::warn!(%error, "CI queue RPC failed");
+                connection.close(500u32.into(), b"CI request failed");
                 break;
             }
         }

@@ -2,10 +2,10 @@
 //! which users may be assigned, so these handlers only resolve names and show the outcome.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::pulls::pull::{
-    authorize_post, detail_outcome, field, item, kind, repository, unavailable, ApiFailure,
-    RepositoryData, ResultPage,
+use crate::backend::api::repos::discussion::{
+    detail_outcome, item, kind, repository, unavailable, ApiFailure, RepositoryData, ResultPage,
 };
+use crate::backend::api::repos::forms::{authorize_post, field};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};

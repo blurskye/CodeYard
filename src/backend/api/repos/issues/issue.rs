@@ -1,9 +1,11 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_read_access;
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::{authorize_post, field};
 use crate::backend::api::repos::labels::LabelResponse;
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -114,37 +116,11 @@ pub async fn get_issue(
     Path((owner, repo, number)): Path<(String, String, i32)>,
     headers: HeaderMap,
 ) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let issue = db::issues::get_issue(&state.pool, repository.id, number)
         .await
-        .map_err(|_| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiError::new(
-                    "database_error",
-                    "Collaboration storage is temporarily unavailable",
-                )),
-            )
-        })?
+        .map_err(|_| storage_unavailable())?
         .ok_or_else(|| {
             (
                 StatusCode::NOT_FOUND,
@@ -154,10 +130,10 @@ pub async fn get_issue(
 
     let author = db::users::accounts::get_user_by_id(&state.pool, issue.author_id)
         .await
-        .map_err(crate::backend::api::http::error::discussion_write_error)?;
+        .map_err(|_| storage_unavailable())?;
     let response = load_issue_response(&state.pool, issue, author.map(UserResponse::from))
         .await
-        .map_err(crate::backend::api::http::error::discussion_write_error)?;
+        .map_err(|_| storage_unavailable())?;
 
     Ok(Json(response))
 }
@@ -261,16 +237,16 @@ pub(crate) async fn native_detail(
         &value,
         &DetailDraft::default(),
         ctx.query
-            .get("creation_warning")
-            .map(|warning| warning.as_str())
-            .filter(|warning| {
-                warning.len() <= 6000
-                    && warning.starts_with("Issue created, but some details could not be applied.")
-            }),
+            .contains_key("creation_warning")
+            .then_some(CREATION_WARNING),
         StatusCode::OK,
     )
     .await
 }
+
+/// Shown on the page of a new issue when its assignees, labels or milestone could not be saved.
+/// The redirect only names the warning, so a link cannot carry text of its own.
+pub(super) const CREATION_WARNING: &str = "Issue created, but some details could not be applied. Check the sidebar and choose the assignees, labels and milestone again.";
 
 pub(crate) async fn native_edit(
     State(state): State<Arc<AppState>>,
@@ -322,14 +298,15 @@ pub(crate) async fn native_edit(
     if draft.preview {
         return render_detail(&ctx, &repo, kind, &value, &draft, None, StatusCode::OK).await;
     }
-    let result = save_entry_text(
+    let result = save_entry_change(
         &ctx,
         kind,
         ctx.require_user()?.id,
         (owner, name, number),
-        EntryText {
-            title,
-            body,
+        EntryChange {
+            title: Some(title),
+            body: Some(body),
+            state: None,
             expected_state: field(&form, "expected_state"),
             expected_updated: field(&form, "expected_updated"),
         },
@@ -344,22 +321,23 @@ pub(crate) async fn native_edit(
     }
 }
 
-/// The text an edit saves: the title and body, with the revision they were read at. The update
-/// rules check the writer and the revision.
-pub(crate) struct EntryText {
-    pub title: String,
-    pub body: String,
+/// What an edit changes: the title and body, or the state, with the revision they were read at.
+/// The update rules check the writer and the revision.
+pub(crate) struct EntryChange {
+    pub title: Option<String>,
+    pub body: Option<String>,
+    pub state: Option<String>,
     pub expected_state: String,
     pub expected_updated: String,
 }
 
-/// Saves the text of an issue or pull request through the same update the edit form uses.
-pub(crate) async fn save_entry_text(
+/// Saves a change to an issue or pull request through the same update the edit form uses.
+pub(crate) async fn save_entry_change(
     ctx: &PageContext,
     kind: Kind,
     actor_id: i64,
     (owner, name, number): (String, String, i32),
-    text: EntryText,
+    text: EntryChange,
 ) -> Result<(), ApiFailure> {
     match kind {
         Kind::Issue => crate::backend::issues::mutations::update_issue(
@@ -372,9 +350,9 @@ pub(crate) async fn save_entry_text(
             crate::backend::issues::mutations::UpdateIssueRequest {
                 expected_state: text.expected_state,
                 expected_updated: text.expected_updated,
-                title: Some(text.title),
-                body: Some(text.body),
-                state: None,
+                title: text.title,
+                body: text.body,
+                state: text.state,
             },
         )
         .await
@@ -389,9 +367,9 @@ pub(crate) async fn save_entry_text(
             crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
                 expected_state: text.expected_state,
                 expected_updated: text.expected_updated,
-                title: Some(text.title),
-                body: Some(text.body),
-                state: None,
+                title: text.title,
+                body: text.body,
+                state: text.state,
                 base: None,
             },
         )
@@ -442,44 +420,20 @@ pub(crate) async fn native_change_state(
         )
         .await;
     }
-    let result = match kind {
-        Kind::Issue => crate::backend::issues::mutations::update_issue(
-            &ctx.state.pool,
-            &ctx.state.notification_broadcaster,
-            ctx.require_user()?.id,
-            owner,
-            name,
-            number,
-            crate::backend::issues::mutations::UpdateIssueRequest {
-                expected_state: field(&form, "expected_state"),
-                expected_updated: field(&form, "expected_updated"),
-                title: None,
-                body: None,
-                state: Some(target),
-            },
-        )
-        .await
-        .map_err(crate::backend::api::repos::issues::operation_error)
-        .map(|_| ()),
-        Kind::Pull => crate::backend::repositories::pull_requests::mutations::update_pull_request(
-            &ctx.state.pool,
-            &ctx.state.ci_runs,
-            &ctx.state.notification_broadcaster,
-            ctx.require_user()?.id,
-            (owner, name, number),
-            crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
-                expected_state: field(&form, "expected_state"),
-                expected_updated: field(&form, "expected_updated"),
-                title: None,
-                body: None,
-                state: Some(target),
-                base: None,
-            },
-        )
-        .await
-        .map_err(crate::backend::api::repos::pulls::operation_error)
-        .map(|_| ()),
-    };
+    let result = save_entry_change(
+        &ctx,
+        kind,
+        ctx.require_user()?.id,
+        (owner, name, number),
+        EntryChange {
+            title: None,
+            body: None,
+            state: Some(target),
+            expected_state: field(&form, "expected_state"),
+            expected_updated: field(&form, "expected_updated"),
+        },
+    )
+    .await;
     match result {
         Ok(()) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
         Err(failure) => {

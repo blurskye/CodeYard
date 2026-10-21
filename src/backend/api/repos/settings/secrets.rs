@@ -1,6 +1,6 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::access::check_repo_admin_access;
+use crate::backend::api::repos::access::{check_repo_admin_access, find_repository};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use axum::extract::{Path, State};
@@ -97,17 +97,8 @@ pub async fn create_or_update_secret(
     Json(body): Json<CreateSecretRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| secrets_unavailable())?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
     let encryptor = state
         .secret_encryptor
         .as_ref()
@@ -133,17 +124,8 @@ pub async fn list_secrets(
     Path((owner, repo)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| secrets_unavailable())?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
     let secrets = db::secrets::list_secrets(&state.pool, user.id, repository.id)
         .await
         .map_err(secret_error)?;
@@ -166,17 +148,8 @@ pub async fn delete_secret(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let repository = db::repositories::records::get_repository(&state.pool, &owner, &repo)
-        .await
-        .map_err(|_| secrets_unavailable())?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-        })?;
-
-    check_repo_admin_access(&state.pool, &repository, &headers).await?;
+    let repository = find_repository(&state.pool, &owner, &repo).await?;
+    check_repo_admin_access(&state.pool, &repository, &user).await?;
     let deleted = db::secrets::delete_secret(&state.pool, user.id, repository.id, &name)
         .await
         .map_err(secret_error)?;
@@ -240,7 +213,7 @@ mod tests {
                 "private SQL encrypted_value nonce plaintext /filesystem/key"
             )),
             db::secrets::SecretsError::Encryption(
-                crate::backend::crypto::SecretError::MissingMasterKey,
+                crate::backend::crypto::SecretError::EncryptionFailed,
             ),
         ] {
             let (status, Json(error)) = secret_error(error);

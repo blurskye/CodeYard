@@ -210,6 +210,14 @@ pub fn page_router() -> axum::Router<std::sync::Arc<crate::backend::app::AppStat
         )
 }
 
+/// The refusals that report a change that was partly made. `safe_api_error` recognizes them by
+/// these messages.
+pub(crate) const BRANCH_MERGED_MESSAGE: &str =
+    "The branch was merged, but the pull request status could not be updated.";
+pub(crate) const OPENED_MESSAGE: &str =
+    "Pull request opened but its head could not be fetched; retry after storage is available";
+pub(crate) const UPDATED_MESSAGE: &str = "The change was saved, but pull request revisions could not be refreshed. Reload before retrying.";
+
 pub(crate) fn operation_error(
     error: crate::backend::repositories::pull_requests::OperationError,
 ) -> (
@@ -223,13 +231,31 @@ pub(crate) fn operation_error(
         OperationError::Invalid { code, message } => (StatusCode::BAD_REQUEST, code, message),
         OperationError::Missing { code, message } => (StatusCode::NOT_FOUND, code, message),
         OperationError::Denied { code, message } => (StatusCode::FORBIDDEN, code, message),
-        OperationError::Unauthenticated { code, message } => (StatusCode::UNAUTHORIZED, code, message),
+        OperationError::Unauthenticated { code, message } => {
+            (StatusCode::UNAUTHORIZED, code, message)
+        }
         OperationError::Conflict { code, message } => (StatusCode::CONFLICT, code, message),
-        OperationError::Unavailable { code, message } => (StatusCode::SERVICE_UNAVAILABLE, code, message),
-        OperationError::TooLarge { code, message } => (StatusCode::PAYLOAD_TOO_LARGE, code, message),
-        OperationError::BranchMerged { .. } => (StatusCode::SERVICE_UNAVAILABLE, "database_error", "The branch was merged, but the pull request status could not be updated.".into()),
-        OperationError::Opened { .. } => (StatusCode::SERVICE_UNAVAILABLE, "git_unavailable", "Pull request opened but its head could not be fetched; retry after storage is available".into()),
-        OperationError::Updated { .. } => (StatusCode::SERVICE_UNAVAILABLE, "database_error", "The change was saved, but pull request revisions could not be refreshed. Reload before retrying.".into()),
+        OperationError::Unavailable { code, message } => {
+            (StatusCode::SERVICE_UNAVAILABLE, code, message)
+        }
+        OperationError::TooLarge { code, message } => {
+            (StatusCode::PAYLOAD_TOO_LARGE, code, message)
+        }
+        OperationError::BranchMerged { .. } => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_error",
+            BRANCH_MERGED_MESSAGE.into(),
+        ),
+        OperationError::Opened { .. } => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "git_unavailable",
+            OPENED_MESSAGE.into(),
+        ),
+        OperationError::Updated { .. } => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "database_error",
+            UPDATED_MESSAGE.into(),
+        ),
     };
     (status, Json(ApiError::new(code, &message)))
 }
@@ -237,6 +263,7 @@ pub(crate) fn operation_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backend::api::repos::discussion::safe_api_error;
     use crate::backend::repositories::pull_requests::OperationError;
 
     #[test]
@@ -247,7 +274,7 @@ mod tests {
         assert_eq!(status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(error.error, "database_error");
         assert!(error.message.contains("branch was merged"));
-        let (_, message) = pull::safe_api_error(&(status, axum::Json(error)));
+        let (_, message) = safe_api_error(&(status, axum::Json(error)));
         assert!(message.contains("branch was merged"));
     }
 }

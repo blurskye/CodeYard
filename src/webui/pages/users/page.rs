@@ -206,8 +206,9 @@ fn activity_text(item: &ProfileActivityItem) -> String {
     }
 }
 
-/// Filtering is presentation-only: these are the rows already authorized by the server.
-/// Default order preserves the server's name ordering; formatted dates are not parsed/sorted.
+/// Filtering is presentation-only: these are the rows already authorized by the server, and only
+/// the ones on the current page. Default order preserves the server's name ordering; formatted
+/// dates are not parsed/sorted.
 pub(super) fn profile_repository_rows<'a>(
     repositories: &'a [Repository],
     query: &str,
@@ -274,11 +275,11 @@ pub fn ProfileRepositories(
     rsx! {
         section { id: "profile-repositories", class: "identity-profile-repositories", "aria-label": "Repositories",
             if !repositories.is_empty() {
-                div { class: "identity-profile-toolbar", role: "search", "aria-label": "Filter listed repositories",
+                div { class: "identity-profile-toolbar", role: "search", "aria-label": "Filter the repositories on this page",
                     label { class: "identity-profile-search",
-                        span { class: "identity-profile-sr-only", "Find a listed repository" }
+                        span { class: "identity-profile-sr-only", "Filter the repositories on this page" }
                         {profile_icon(ProfileIcon::Search)}
-                        input { r#type: "search", placeholder: "Find a repository…", value: query_value,
+                        input { r#type: "search", placeholder: "Filter this page…", value: query_value,
                             maxlength: "256", disabled: !ready(), oninput: move |event| query.set(event.value()) }
                     }
                     label { class: "identity-profile-select",
@@ -305,7 +306,7 @@ pub fn ProfileRepositories(
             }
             if filtered {
                 div { class: "identity-profile-filter-result", role: "status",
-                    p { "{rows.len()} of " {count_label(repositories.len(), "repository", "repositories")} }
+                    p { "{rows.len()} of " {count_label(repositories.len(), "repository", "repositories")} " on this page" }
                     button { r#type: "button", onclick: move |_| { query.set(String::new()); kind.set("all".to_owned()); cleared.set(cleared() + 1); }, "Clear filters" }
                 }
             }
@@ -317,7 +318,7 @@ pub fn ProfileRepositories(
                         if own { NavLink { href: "/new".to_owned(), class: "identity-profile-button identity-profile-new", "Create a repository" } }
                     }
                 } else if rows.is_empty() {
-                    div { class: "identity-profile-empty", h3 { "No repositories match your filters." } }
+                    div { class: "identity-profile-empty", h3 { "No repositories on this page match your filters." } }
                 } else {
                     for repo in rows {
                         article { key: "{repo.name}", class: "identity-profile-repository-row",

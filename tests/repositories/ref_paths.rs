@@ -1,15 +1,11 @@
-use crate::support::{database::Database, fake_webui_bundle as bundle, pull_requests::Client};
+use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle,
-    storage::ObjectStore,
-};
-use std::sync::Arc;
+use codeyard::backend::{db, repositories::lifecycle};
 
 async fn contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repo = lifecycle::provision(
@@ -70,14 +66,7 @@ async fn contract(pg: bool) {
     ] {
         git.reference(&reference, oid, true, "fixture").unwrap();
     }
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = Client::login(&router, f.pool(), alice).await;
     let (status, html) = client.page("/alice/proj/tree/abcdef1").await;
     assert_eq!(status, StatusCode::OK, "{html}");

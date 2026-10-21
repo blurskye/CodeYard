@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use super::{failure, Failure};
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,16 +28,15 @@ pub async fn confirm_upload(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<ConfirmUploadRequest>,
-) -> Result<Json<ConfirmUploadResponse>, Failure> {
+) -> Result<Json<ConfirmUploadResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    super::super::http::csrf::check(state.clone(), &headers).await?;
     files::confirm_upload(&state.pool, &state.storage, user.id, req.file_id)
         .await
         .map_err(confirmation_failure)?;
     Ok(Json(ConfirmUploadResponse { success: true }))
 }
 
-fn confirmation_failure(error: ConfirmationError) -> Failure {
+fn confirmation_failure(error: ConfirmationError) -> ApiFailure {
     let (status, code, message) = match error {
         ConfirmationError::MetadataUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -61,7 +60,7 @@ fn confirmation_failure(error: ConfirmationError) -> Failure {
             "The uploaded file is missing or does not match its declaration",
         ),
     };
-    failure(status, code, message)
+    ApiError::failure(status, code, message)
 }
 
 #[cfg(test)]

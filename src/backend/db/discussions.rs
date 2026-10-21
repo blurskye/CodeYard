@@ -72,8 +72,9 @@ impl StateCounts {
     }
 }
 
-/// The pattern for a title or body that contains `text`. The search text matches itself, so its
-/// `\`, `%` and `_` are escaped. Both databases compare with `ESCAPE '\'`.
+/// The `ILIKE` pattern, for PostgreSQL, for a title or body that contains `text`. The search text
+/// matches itself, so its `\`, `%` and `_` are escaped and the query uses `ESCAPE '\'`. SQLite
+/// builds its own pattern in `sqlite::search`.
 pub fn contains_pattern(text: &str) -> String {
     let mut pattern = String::with_capacity(text.len() + 2);
     pattern.push('%');

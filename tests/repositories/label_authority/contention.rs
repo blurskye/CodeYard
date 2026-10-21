@@ -1,4 +1,5 @@
 use super::{db, mutate, refusal, seed, snapshot, Fixture, LabelWriteRefusal, MUTATIONS};
+use crate::support::database::wait_until_blocked;
 use std::{str::FromStr, time::Duration};
 
 #[tokio::test]
@@ -6,22 +7,20 @@ async fn postgres_every_label_write_waits_for_actor_row_then_rechecks_revocation
     let mut fixture = Fixture::new(true).await;
     let owner = fixture.actor("lock_owner").await;
     let actor = fixture.actor("lock_admin").await;
-    let repo = fixture.repo(owner, None).await;
+    let repo = fixture.label_repo(owner, None).await;
     let (issue, label) = seed(fixture.pool(), owner, repo).await;
-    let Fixture::Postgres(f) = &fixture else {
-        unreachable!()
-    };
+    let raw = fixture.pg();
     for mutation in MUTATIONS {
         db::repositories::access::grant_repo_access(
-            &f.pool,
+            fixture.pool(),
             actor,
             repo,
             db::models::repositories::AccessLevel::Admin,
         )
         .await
         .unwrap();
-        let before = snapshot(&f.pool, &[repo]).await;
-        let mut revoker = f.raw.begin().await.unwrap();
+        let before = snapshot(fixture.pool(), &[repo]).await;
+        let mut revoker = raw.begin().await.unwrap();
         let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *revoker)
             .await
@@ -32,19 +31,11 @@ async fn postgres_every_label_write_waits_for_actor_row_then_rechecks_revocation
             .fetch_one(&mut *revoker)
             .await
             .unwrap();
-        let pool = f.pool.clone();
+        let pool = fixture.pool().clone();
         let task =
             tokio::spawn(async move { mutate(&pool, actor, repo, issue, label, mutation).await });
-        tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                assert!(!task.is_finished(), "must wait before effect: {mutation:?}");
-                let waiting: bool = sqlx::query_scalar(
-                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))",
-                ).bind(blocker).fetch_one(&f.raw).await.unwrap();
-                if waiting { break; }
-                tokio::task::yield_now().await;
-            }
-        }).await.expect("observe actual PostgreSQL lock wait, not elapsed time");
+        wait_until_blocked(raw, blocker, 1).await;
+        assert!(!task.is_finished(), "must wait before effect: {mutation:?}");
         // These NOWAIT locks prove the waiting write did not acquire the
         // repository, label or issue rows first. No lock-order claim is inferred
         // from sleeps.
@@ -78,12 +69,12 @@ async fn postgres_every_label_write_waits_for_actor_row_then_rechecks_revocation
             LabelWriteRefusal::Denied,
         );
         assert_eq!(
-            snapshot(&f.pool, &[repo]).await,
+            snapshot(fixture.pool(), &[repo]).await,
             before,
             "revoked {mutation:?}"
         );
     }
-    fixture.close().await;
+    fixture.finish().await;
 }
 
 #[tokio::test]
@@ -91,7 +82,7 @@ async fn sqlite_every_label_write_contends_for_reserved_writer_then_rechecks() {
     let mut fixture = Fixture::new(false).await;
     let owner = fixture.actor("reserved_owner").await;
     let actor = fixture.actor("reserved_admin").await;
-    let repo = fixture.repo(owner, None).await;
+    let repo = fixture.label_repo(owner, None).await;
     let (issue, label) = seed(fixture.pool(), owner, repo).await;
     db::repositories::access::grant_repo_access(
         fixture.pool(),
@@ -151,5 +142,5 @@ async fn sqlite_every_label_write_contends_for_reserved_writer_then_rechecks() {
     }
     second.close().await;
     raw.close().await;
-    fixture.close().await;
+    fixture.finish().await;
 }

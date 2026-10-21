@@ -5,8 +5,7 @@ use crate::backend::db;
 use crate::backend::repositories::store::CommitInfo;
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::TimeZone;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use serde::Serialize;
 /// Safe canonical namespace projection, never numeric-ID owner inference.
 pub(crate) async fn repository_owner(
@@ -99,6 +98,39 @@ pub struct RepoResponse {
     pub updated_at: String,
 }
 
+impl RepoResponse {
+    /// The repository as the API lists it. `owner` is the namespace it belongs to.
+    pub(crate) fn new(
+        repository: &db::models::Repository,
+        owner: &str,
+        topics: Vec<String>,
+        forked_from: Option<ForkParent>,
+    ) -> Self {
+        Self {
+            id: repository.id,
+            owner_id: repository.owner_id(),
+            full_name: format!("{owner}/{}", repository.name),
+            owner: owner.to_owned(),
+            name: repository.name.clone(),
+            description: repository.description.clone(),
+            website: repository.website.clone(),
+            topics,
+            is_private: repository.is_private,
+            is_archived: repository.is_archived,
+            allow_merge_commit: repository.allow_merge_commit,
+            allow_squash_merge: repository.allow_squash_merge,
+            allow_rebase_merge: repository.allow_rebase_merge,
+            default_branch: repository.default_branch.clone(),
+            stars_count: repository.stars_count,
+            forks_count: repository.forks_count,
+            watchers_count: repository.watchers_count,
+            forked_from,
+            created_at: repository.created_at.to_rfc3339(),
+            updated_at: repository.updated_at.to_rfc3339(),
+        }
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct ForkParent {
     pub id: i64,
@@ -129,14 +161,16 @@ pub struct CommitResponse {
     pub author: Option<AuthorInfo>,
 }
 
+/// A Unix timestamp as RFC 3339, or `None` when it is out of range.
+pub(crate) fn rfc3339(timestamp: i64) -> Option<String> {
+    Utc.timestamp_opt(timestamp, 0)
+        .single()
+        .map(|date| date.to_rfc3339())
+}
+
 impl CommitResponse {
     pub(crate) fn from_commit(commit: CommitInfo, author: Option<AuthorInfo>) -> Self {
-        let date = |timestamp| {
-            Utc.timestamp_opt(timestamp, 0)
-                .single()
-                .map(|date| date.to_rfc3339())
-                .unwrap_or_default()
-        };
+        let date = |timestamp| rfc3339(timestamp).unwrap_or_default();
         Self {
             sha: commit.sha,
             message: commit.message,
@@ -210,15 +244,43 @@ pub(crate) fn lifecycle_status(
     }
 }
 
+/// The answer when the database cannot be reached while handling a repository.
+pub(crate) fn repository_unavailable() -> (StatusCode, Json<ApiError>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiError::new(
+            "database_error",
+            "Repository operation is unavailable",
+        )),
+    )
+}
+
+/// The answer when the database cannot be reached while handling a discussion.
+pub(crate) fn storage_unavailable() -> (StatusCode, Json<ApiError>) {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ApiError::new(
+            "database_error",
+            "Collaboration storage is temporarily unavailable",
+        )),
+    )
+}
+
 pub(crate) fn lifecycle_error(
     error: crate::backend::repositories::lifecycle::StorageError,
 ) -> (StatusCode, Json<ApiError>) {
     use crate::backend::repositories::lifecycle::LifecycleFailure;
     let code = match error.kind {
         LifecycleFailure::Invalid => "validation_error",
-        LifecycleFailure::OwnRepositoryFork => "invalid_operation",
+        LifecycleFailure::OwnRepositoryFork | LifecycleFailure::UnsupportedOrganizationFork => {
+            "invalid_operation"
+        }
+        LifecycleFailure::Denied => "forbidden",
+        LifecycleFailure::Conflict => "conflict",
         LifecycleFailure::DeletedStorageRemains => "storage_unavailable",
-        _ => "storage_pending",
+        LifecycleFailure::Unavailable | LifecycleFailure::InitializationCleanupFailed => {
+            "storage_pending"
+        }
     };
     (
         lifecycle_status(&error),

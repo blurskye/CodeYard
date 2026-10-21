@@ -39,10 +39,6 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_user
     crate::backend::db::sqlite::repositories::records::list_user_repositories,
     fn list_user_repositories(pool: &DbPool, user_id: i64) -> Result<Vec<Repository>>);
 
-native_operation!(crate::backend::db::postgres::repositories::records::list_profile_repositories,
-    crate::backend::db::sqlite::repositories::records::list_profile_repositories,
-    fn list_profile_repositories(pool: &DbPool, user_id: i64, include_private: bool, offset: i64) -> Result<Vec<Repository>>);
-
 native_operation!(crate::backend::db::postgres::repositories::records::count_user_repositories,
     crate::backend::db::sqlite::repositories::records::count_user_repositories,
     fn count_user_repositories(pool: &DbPool, user_id: i64, include_private: bool) -> Result<i64>);
@@ -152,6 +148,8 @@ pub(crate) fn validate_repository_alias(name: &str) -> Result<()> {
             && name.len() <= 100
             && name != "."
             && name != ".."
+            // Git URLs strip one trailing `.git`, so such a name would resolve to another repository.
+            && !name.ends_with(".git")
             && name
                 .chars()
                 .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.')),
@@ -225,23 +223,6 @@ native_operation!(crate::backend::db::postgres::repositories::records::update_re
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_size,
     crate::backend::db::sqlite::repositories::records::update_repo_size,
     fn update_repo_size(pool: &DbPool, repo_id: i64, size: i64) -> Result<()>);
-
-native_operation!(crate::backend::db::postgres::repositories::records::update_repo_default_branch_and_size,
-    crate::backend::db::sqlite::repositories::records::update_repo_default_branch_and_size,
-    fn update_repo_default_branch_and_size(
-    pool: &DbPool,
-    repo_id: i64,
-    default_branch: &str,
-    size_bytes: i64,
-) -> Result<()>);
-
-native_operation!(crate::backend::db::postgres::repositories::records::insert_repo_storage_snapshot,
-    crate::backend::db::sqlite::repositories::records::insert_repo_storage_snapshot,
-    fn insert_repo_storage_snapshot(
-    pool: &DbPool,
-    repo_id: i64,
-    size_bytes: i64,
-) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::delete_repository,
     crate::backend::db::sqlite::repositories::records::delete_repository,

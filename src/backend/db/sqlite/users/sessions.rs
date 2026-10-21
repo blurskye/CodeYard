@@ -1,3 +1,4 @@
+use crate::backend::crypto::is_hex_token;
 use crate::backend::db::models::{BrowserSession, OAuthState, Session, User};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
@@ -139,22 +140,12 @@ pub async fn consume_bound_oauth_state(
     let Some(stored) = stored else {
         return Ok(None);
     };
-    let now =
-        sqlx::query_scalar::<_, DateTime<Utc>>("SELECT strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
-            .fetch_one(&mut *tx)
-            .await?;
-    if stored.expires_at <= now {
-        return Ok(None);
-    }
     let bound = stored.browser_binding.as_deref().is_some_and(|expected| {
         expected.len() == 64
             && binding.len() == 64
             && bool::from(expected.as_bytes().ct_eq(binding.as_bytes()))
     });
-    if !bound
-        || !bool::from(stored.state.as_bytes().ct_eq(state.as_bytes()))
-        || stored.redirect_uri.as_deref() != Some(redirect)
-    {
+    if !bound || stored.redirect_uri.as_deref() != Some(redirect) {
         return Ok(None);
     }
     sqlx::query("DELETE FROM oauth_states WHERE state=?1")
@@ -180,7 +171,7 @@ pub async fn rotate_authenticated_session(
     user_agent: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
-    if !valid_random_token(fresh) || old == Some(fresh) {
+    if !is_hex_token(fresh, 64) || old == Some(fresh) {
         anyhow::bail!("Authenticated session requires a fresh random identifier");
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -289,10 +280,6 @@ pub async fn rotate_authenticated_session(
     Ok(Some(session))
 }
 
-fn valid_random_token(token: &str) -> bool {
-    token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 pub async fn create_browser_session(
     pool: &SqlitePool,
     id: &str,
@@ -300,7 +287,7 @@ pub async fn create_browser_session(
     ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<BrowserSession> {
-    if !valid_random_token(id) {
+    if !is_hex_token(id, 64) {
         anyhow::bail!("Session requires a random identifier");
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -354,7 +341,7 @@ fn current_token(row: &CsrfRow) -> Option<String> {
     let unexpired = row.csrf_expires_at.is_some_and(|expiry| expiry > row.now);
     row.csrf_token
         .clone()
-        .filter(|token| live && unexpired && valid_random_token(token))
+        .filter(|token| live && unexpired && is_hex_token(token, 64))
 }
 
 pub async fn get_or_create_csrf_token(
@@ -364,10 +351,7 @@ pub async fn get_or_create_csrf_token(
     candidate: &str,
     ttl_seconds: i64,
 ) -> Result<Option<String>> {
-    if !valid_random_token(id)
-        || !valid_random_token(candidate)
-        || !(1..=7200).contains(&ttl_seconds)
-    {
+    if !is_hex_token(id, 64) || !is_hex_token(candidate, 64) || !(1..=7200).contains(&ttl_seconds) {
         anyhow::bail!("Invalid CSRF token input");
     }
     // Page loads nearly always find the current token stored already. A plain read

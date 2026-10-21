@@ -309,6 +309,12 @@ pub struct BlobContent {
 
 pub const MAX_BLOB_MATERIALIZE_BYTES: usize = 32 * 1024 * 1024;
 
+/// True when a tree lookup found no such path. Other NotFound errors, such as a missing
+/// object, are not a missing path.
+pub(crate) fn is_missing_path(error: &git2::Error) -> bool {
+    error.code() == git2::ErrorCode::NotFound && error.class() == git2::ErrorClass::Tree
+}
+
 #[derive(Debug, thiserror::Error)]
 #[error("repository object exceeds its response limit")]
 pub(crate) struct ObjectTooLarge;
@@ -342,10 +348,9 @@ pub(crate) fn template_texts(
             let entry = match tree_entry(&repo, &commit, path) {
                 Ok(entry) => entry,
                 Err(error)
-                    if error.downcast_ref::<git2::Error>().is_some_and(|error| {
-                        error.code() == git2::ErrorCode::NotFound
-                            && error.class() == git2::ErrorClass::Tree
-                    }) =>
+                    if error
+                        .downcast_ref::<git2::Error>()
+                        .is_some_and(is_missing_path) =>
                 {
                     return Ok(None)
                 }
@@ -1039,30 +1044,6 @@ pub(crate) async fn list_tree_with_history(
     Ok(entries)
 }
 
-#[cfg(test)]
-pub(crate) fn get_blob_bytes(
-    repo_path: &Path,
-    git_ref: &str,
-    path: &str,
-) -> Result<(Vec<u8>, bool)> {
-    let repo = Repository::open_bare(repo_path)?;
-
-    let obj = repo.revparse_single(git_ref)?;
-    let commit = obj.peel_to_commit()?;
-    let tree = commit.tree()?;
-
-    let entry = tree.get_path(Path::new(path))?;
-    let (size, kind) = repo.odb()?.read_header(entry.id())?;
-    anyhow::ensure!(kind == ObjectType::Blob, "Not a blob");
-    if size > MAX_BLOB_MATERIALIZE_BYTES {
-        return Err(ObjectTooLarge.into());
-    }
-    let obj = entry.to_object(&repo)?;
-    let blob = obj.as_blob().ok_or_else(|| anyhow!("Not a blob"))?;
-
-    Ok((blob.content().to_vec(), blob.is_binary()))
-}
-
 /// A blob by object ID, wherever it appears in the repository.
 pub(crate) fn get_blob_by_id(repo_path: &Path, id: &str) -> Result<Vec<u8>> {
     let repo = Repository::open_bare(repo_path)?;
@@ -1591,7 +1572,6 @@ pub(crate) fn get_commit(repo_path: &Path, sha: &str) -> Result<CommitInfo> {
     Ok(commit_info(&commit))
 }
 
-/// Enough for one page of commit IDs, which is far below this limit.
 /// A line of a file that contains the text a code search looks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeMatch {
@@ -2240,7 +2220,7 @@ pub(crate) async fn compare_repositories(
     options.bare(true).external_template(false);
     let repo = Repository::init_opts(temporary.path(), &options)?;
     let odb = repo.odb()?;
-    let mut alternates = String::new();
+    let mut alternates = Vec::new();
     for source in [&base_repo, &head_repo] {
         let objects = source.path().join("objects").canonicalize()?;
         let path = objects
@@ -2248,20 +2228,8 @@ pub(crate) async fn compare_repositories(
             .ok_or_else(|| anyhow!("Invalid object storage path"))?;
         // libgit2 borrows through this handle; subprocess Git reads the same paths below.
         odb.add_disk_alternate(path)?;
-        alternates.push('"');
-        for character in path.chars() {
-            match character {
-                '\\' | '"' => {
-                    alternates.push('\\');
-                    alternates.push(character);
-                }
-                control if control.is_ascii_control() => {
-                    alternates.push_str(&format!("\\{:03o}", control as u8));
-                }
-                other => alternates.push(other),
-            }
-        }
-        alternates.push_str("\"\n");
+        alternates.extend(checked::quote_alternate(&objects).into_vec());
+        alternates.push(b'\n');
     }
     std::fs::write(repo.path().join("objects/info/alternates"), alternates)?;
     repo.set_head_detached(base)?;
@@ -2391,7 +2359,7 @@ pub(crate) async fn changed_paths(
             .checked_add(bytes.len())
             .filter(|total| *total <= MAX_CI_CHANGED_PATH_TOTAL_BYTES)
             .ok_or_else(|| anyhow!("changed paths exceed their total size limit"))?;
-        paths.push(std::str::from_utf8(bytes)?.to_owned());
+        paths.push(String::from_utf8_lossy(bytes).into_owned());
     }
     paths.sort();
     paths.dedup();

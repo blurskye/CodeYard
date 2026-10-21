@@ -590,8 +590,7 @@ pub async fn wait_for_address(endpoint: &Endpoint) {
     warn!("this node has no address to report yet");
 }
 
-/// Records a sign of life and the addresses this node can be reached at. Returns
-/// false if the node has no row.
+/// Free space, in bytes, on the filesystem that holds `path`.
 fn disk_free(path: &Path) -> Result<i64> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
@@ -606,6 +605,8 @@ fn disk_free(path: &Path) -> Result<i64> {
     )?)
 }
 
+/// Records a sign of life and the addresses this node can be reached at. Returns
+/// false if the node has no row.
 pub async fn report_alive(
     pool: &DbPool,
     key: iroh::PublicKey,

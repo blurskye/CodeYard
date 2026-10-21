@@ -49,11 +49,6 @@ fn unavailable(message: &'static str) -> RepoError {
     RepoError::new(ErrorKind::Unavailable, message)
 }
 
-/// A full object ID: 40 hex digits, as the primary sends them.
-fn is_object_id(text: &str) -> bool {
-    text.len() == 40 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
 fn normalize_blob_range(range: BlobRange, size: u64) -> Result<(u64, usize), RepoError> {
     let (offset, length) = match range {
         BlobRange::Full => (0, size),
@@ -1704,12 +1699,18 @@ impl LocalStore {
     ) -> anyhow::Result<std::process::ExitStatus> {
         let mut revs = String::new();
         for target in targets {
-            anyhow::ensure!(is_object_id(target), "invalid replica ref target");
+            anyhow::ensure!(
+                crate::backend::git::is_full_commit_id(target),
+                "invalid replica ref target"
+            );
             revs.push_str(target);
             revs.push('\n');
         }
         for tip in have {
-            anyhow::ensure!(is_object_id(tip), "invalid replica tip");
+            anyhow::ensure!(
+                crate::backend::git::is_full_commit_id(tip),
+                "invalid replica tip"
+            );
             revs.push('^');
             revs.push_str(tip);
             revs.push('\n');
@@ -1788,7 +1789,7 @@ impl LocalStore {
                     "invalid replica ref name",
                 ));
             }
-            if !is_object_id(sha) {
+            if !crate::backend::git::is_full_commit_id(sha) {
                 return Err(RepoError::new(
                     ErrorKind::Invalid,
                     "invalid replica ref value",
@@ -1950,6 +1951,7 @@ impl LocalStore {
                 git_sessions::ReceiveSession {
                     repo_id: repo.id,
                     path: self.path(),
+                    executable: hook_executable()?,
                     session,
                 },
                 streams,
@@ -1965,7 +1967,8 @@ impl LocalStore {
         if session.stateless {
             command.arg("--stateless-rpc");
         }
-        if let Some(protocol) = session.git_protocol {
+        if let Some(protocol) = git_sessions::validation::protocol(session.git_protocol.as_deref())?
+        {
             command.env("GIT_PROTOCOL", protocol);
         }
         command.arg(self.path());
@@ -1977,5 +1980,22 @@ impl LocalStore {
             false,
         )
         .await
+    }
+}
+
+/// The binary Git runs as the receive hooks. Rust unit tests are not the application, so they
+/// get the integrated binary from the environment.
+fn hook_executable() -> anyhow::Result<PathBuf> {
+    #[cfg(test)]
+    {
+        use anyhow::Context;
+        Ok(PathBuf::from(
+            std::env::var_os("GITSERV_TEST_OPENSSH_HELPER")
+                .context("set GITSERV_TEST_OPENSSH_HELPER to the integrated application")?,
+        ))
+    }
+    #[cfg(not(test))]
+    {
+        Ok(std::env::current_exe()?)
     }
 }

@@ -150,127 +150,155 @@ impl Gateway {
         validation::validate_updates(updates)?;
         #[cfg(test)]
         super::broker::policy_tests::before_authorize(operation, post).await;
-        // All transports and server-side ref mutations use this same repository lock.
-        let publication = if post {
-            None
+        if post {
+            self.post_receive(operation, updates).await
         } else {
-            Some(crate::backend::git::locks::lock(&operation.path).await)
-        };
+            self.pre_receive(operation, updates, quarantine).await
+        }
+    }
+
+    /// The operation's repository, still at the location it was admitted at.
+    async fn operation_repository(&self, operation: &Operation) -> Result<(Repository, PathBuf)> {
         let repo = db::repositories::records::get_repository_by_id(&self.pool, operation.repo_id)
             .await?
             .context("repository unavailable")?;
         let path = self.bare_path(&repo).await?;
         ensure!(path == operation.path, "repository location changed");
-        if !post {
-            let (identity, _) = operation
-                .credential
-                .authorize(&self.pool, &repo, true)
-                .await?;
-            ensure!(identity.id == operation.actor_id, "identity changed");
-            let quarantine = match quarantine {
-                Some(claimed) => quarantine_directory(&path, claimed).await,
-                None => None,
-            };
-            let history = History::Push {
-                repository: &path,
-                quarantine: quarantine.as_deref(),
-            };
-            // Every branch of the push is judged against one read of the rules and one budget.
-            let branch_updates: Vec<(&RefUpdate, &str)> = updates
-                .iter()
-                .filter_map(|update| {
-                    let branch = update.reference.strip_prefix("refs/heads/")?;
-                    Some((update, branch))
-                })
-                .collect();
-            if !branch_updates.is_empty() {
-                let rules = load_rules(&self.pool, &repo)
-                    .await
-                    .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?;
-                let mut protection_budget = WorkflowMatchBudget::new();
-                for (update, branch) in branch_updates {
-                    let write = BranchWrite {
-                        branch,
-                        old: (update.old != ZERO_SHA).then_some(update.old.as_str()),
-                        new: (update.new != ZERO_SHA).then_some(update.new.as_str()),
-                        via: if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
-                            WriteVia::DeployKey
-                        } else {
-                            WriteVia::Direct
-                        },
-                    };
-                    check_branch_write_with(
-                        &self.pool,
-                        &rules,
-                        &repo,
-                        &identity,
-                        &write,
-                        &history,
-                        &mut protection_budget,
-                    )
-                    .await
-                    .map_err(|refusal| match refusal {
-                        Refusal::Blocked(reason) => {
-                            anyhow::Error::from(RepoError::new(ErrorKind::Invalid, reason))
-                        }
-                        Refusal::Unavailable => {
-                            anyhow::anyhow!("branch protection could not be checked")
-                        }
-                    })?;
-                }
-            }
-            // The stored default can lag behind Git, so the default that Git advertises is
-            // protected as well.
-            let advertised = crate::backend::git::repository::default_branch(&path).await?;
-            ensure!(
-                !updates.iter().any(|update| update.new == ZERO_SHA
-                    && update
-                        .reference
-                        .strip_prefix("refs/heads/")
-                        .is_some_and(|branch| {
-                            branch == repo.default_branch || advertised.as_deref() == Some(branch)
-                        })),
-                "the default branch cannot be deleted"
-            );
-            let gateway = self.clone();
-            let (admitted, admitted_path, admitted_updates) =
-                (operation.clone(), path.clone(), updates.to_vec());
-            tokio::task::spawn_blocking(move || {
-                let tags: Vec<_> = admitted_updates
-                    .iter()
-                    .filter(|update| update.reference.starts_with("refs/tags/"))
-                    .map(|update| (update.reference.clone(), update.new.clone()))
-                    .collect();
-                if !tags.is_empty() {
-                    crate::backend::git::check_tag_budget(
-                        &admitted_path,
-                        quarantine.as_deref(),
-                        &tags,
-                    )?;
-                }
-                admit_updates(
-                    &gateway.operations,
-                    &admitted,
-                    &admitted_path,
-                    &admitted_updates,
-                )
+        Ok((repo, path))
+    }
+
+    /// Judges a push before Git accepts it and keeps the repository lock until it is published.
+    async fn pre_receive(
+        self: &Arc<Self>,
+        operation: &Arc<Operation>,
+        updates: &[RefUpdate],
+        quarantine: Option<&str>,
+    ) -> Result<()> {
+        // All transports and server-side ref mutations use this same repository lock.
+        let publication = crate::backend::git::locks::lock(&operation.path).await;
+        let (repo, path) = self.operation_repository(operation).await?;
+        let (identity, _) = operation
+            .credential
+            .authorize(&self.pool, &repo, true)
+            .await?;
+        ensure!(identity.id == operation.actor_id, "identity changed");
+        let quarantine = match quarantine {
+            Some(claimed) => quarantine_directory(&path, claimed).await,
+            None => None,
+        };
+        let history = History::Push {
+            repository: &path,
+            quarantine: quarantine.as_deref(),
+        };
+        // Every branch of the push is judged against one read of the rules and one budget.
+        let branch_updates: Vec<(&RefUpdate, &str)> = updates
+            .iter()
+            .filter_map(|update| {
+                let branch = update.reference.strip_prefix("refs/heads/")?;
+                Some((update, branch))
             })
-            .await??;
-            operation
-                .state
-                .lock()
-                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
-                .publication = publication;
-            return Ok(());
+            .collect();
+        if !branch_updates.is_empty() {
+            let rules = load_rules(&self.pool, &repo)
+                .await
+                .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?;
+            let mut protection_budget = WorkflowMatchBudget::new();
+            for (update, branch) in branch_updates {
+                let write = BranchWrite {
+                    branch,
+                    old: (update.old != ZERO_SHA).then_some(update.old.as_str()),
+                    new: (update.new != ZERO_SHA).then_some(update.new.as_str()),
+                    via: if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
+                        WriteVia::DeployKey
+                    } else {
+                        WriteVia::Direct
+                    },
+                };
+                check_branch_write_with(
+                    &self.pool,
+                    &rules,
+                    &repo,
+                    &identity,
+                    &write,
+                    &history,
+                    &mut protection_budget,
+                )
+                .await
+                .map_err(|refusal| match refusal {
+                    Refusal::Blocked(reason) => {
+                        anyhow::Error::from(RepoError::new(ErrorKind::Invalid, reason))
+                    }
+                    Refusal::Unavailable => {
+                        anyhow::anyhow!("branch protection could not be checked")
+                    }
+                })?;
+            }
         }
+        // The stored default can lag behind Git, so the default that Git advertises is
+        // protected as well.
+        let advertised = crate::backend::git::repository::default_branch(&path).await?;
+        if updates.iter().any(|update| {
+            update.new == ZERO_SHA
+                && update
+                    .reference
+                    .strip_prefix("refs/heads/")
+                    .is_some_and(|branch| {
+                        branch == repo.default_branch || advertised.as_deref() == Some(branch)
+                    })
+        }) {
+            return Err(RepoError::new(
+                ErrorKind::Invalid,
+                "The default branch cannot be deleted.",
+            )
+            .into());
+        }
+        let gateway = self.clone();
+        let (admitted, admitted_path, admitted_updates) =
+            (operation.clone(), path.clone(), updates.to_vec());
+        tokio::task::spawn_blocking(move || {
+            let tags: Vec<_> = admitted_updates
+                .iter()
+                .filter(|update| update.reference.starts_with("refs/tags/"))
+                .map(|update| (update.reference.clone(), update.new.clone()))
+                .collect();
+            if !tags.is_empty() {
+                crate::backend::git::check_tag_budget(
+                    &admitted_path,
+                    quarantine.as_deref(),
+                    &tags,
+                )?;
+            }
+            admit_updates(
+                &gateway.operations,
+                &admitted,
+                &admitted_path,
+                &admitted_updates,
+            )
+        })
+        .await??;
+        operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .publication = Some(publication);
+        Ok(())
+    }
+
+    /// Follow-up after Git accepted the push: metadata, events, pull requests and CI.
+    async fn post_receive(&self, operation: &Arc<Operation>, updates: &[RefUpdate]) -> Result<()> {
+        let (repo, path) = self.operation_repository(operation).await?;
         // This control request runs in the persistent backend. Disconnecting a
         // helper does not move scheduled CI into a short-lived CLI runtime.
         let mut failed = false;
-        if self
+        if let Err(error) = self
             .update_metadata(&repo, &path, updates, operation.clone())
             .await
-            .is_err()
         {
+            tracing::warn!(
+                repo_id = repo.id,
+                error = %format!("{error:#}"),
+                "could not update repository metadata after a push"
+            );
             failed = true;
         }
         crate::backend::git::maintenance::after_push(repo.id, path.clone());
@@ -524,7 +552,8 @@ impl Gateway {
                         access,
                     )
                     .await;
-                if result.is_err() {
+                if let Err(error) = result {
+                    tracing::warn!(repo_id = repo.id, %error, "push CI dispatch failed");
                     failed = true;
                 }
             }
@@ -574,14 +603,8 @@ impl Gateway {
             Ok::<_, anyhow::Error>((branch, size.min(i64::MAX as u64) as i64))
         })
         .await??;
-        db::repositories::records::update_repo_default_branch_and_size(
-            &self.pool, repo.id, &branch, size,
-        )
-        .await?;
-        if repo.size_bytes != size {
-            db::repositories::records::insert_repo_storage_snapshot(&self.pool, repo.id, size)
-                .await?;
-        }
+        db::repositories::records::update_repo_default_branch(&self.pool, repo.id, &branch).await?;
+        db::repositories::records::update_repo_size(&self.pool, repo.id, size).await?;
         Ok(())
     }
 }

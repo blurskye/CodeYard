@@ -1,14 +1,14 @@
 use crate::webui::{
     components::{confirm_dialog, count_label, DraftInput},
     encode_component,
+    navigation::NavLink,
     pages::repos::{
         self,
+        chrome::csrf,
         issues::{
-            csrf,
             detail::label_chip,
-            label_hex,
-            list::{choice, filter_menu},
-            Label, Repository,
+            filter_menu::{Choice, FilterMenu},
+            label_hex, Label, Repository,
         },
     },
 };
@@ -57,7 +57,7 @@ fn label_fields(name: String, color: String, description: String) -> Element {
 fn edit_label(repo: &Repository, label: &Label) -> Element {
     rsx! {
         details { class: "collaboration-edit",
-            summary { class: "btn btn-secondary btn-sm", "Edit" span { class: "repo-sr-only", " {label.name}" } }
+            summary { class: "btn btn-secondary btn-sm", "Edit" span { class: "sr-only", " {label.name}" } }
             form { method: "post", action: repo.chrome.action("edit-label"), class: "collaboration-form-fields",
                 {csrf(&repo.csrf)}
                 {repos::chrome::repository_id(repo.chrome.id)}
@@ -75,7 +75,7 @@ fn delete_label(repo: &Repository, label: &Label) -> Element {
     let list_url = format!("{}/labels", repo.url());
     rsx! {
         details { class: "collaboration-edit native-menu repo-delete-menu",
-            summary { class: "btn btn-danger btn-sm", "Delete" span { class: "repo-sr-only", " {label.name}" } }
+            summary { class: "btn btn-danger btn-sm", "Delete" span { class: "sr-only", " {label.name}" } }
             {confirm_dialog(None, &format!("Delete label {}", label.name), &list_url, &repo.chrome.action("delete-label"), rsx! {
                 {csrf(&repo.csrf)}
                 {repos::chrome::repository_id(repo.chrome.id)}
@@ -113,7 +113,12 @@ pub fn list(
     let url = format!("{}/labels", repo.url());
     let sort = if sort.is_empty() { "name" } else { sort };
     let none_match = !query.trim().is_empty() && items.is_empty();
-    let count = count_label(items.len(), "label", "labels");
+    // A page of a longer list cannot say how many labels there are.
+    let count = if page_number > 1 || has_next {
+        format!("Page {page_number}")
+    } else {
+        count_label(items.len(), "label", "labels")
+    };
     let sorts = [
         ("name", "Name"),
         ("newest", "Newest"),
@@ -126,20 +131,14 @@ pub fn list(
         .map_or("Name", |(_, text)| *text);
     let sort_href =
         |value: &str| format!("{url}?q={}&sort={value}", encode_component(query.trim()));
+    let sort_choices: Vec<Choice> = sorts
+        .iter()
+        .map(|(value, text)| Choice::plain(sort_href(value), text, sort == *value))
+        .collect();
     repos::chrome::chrome(
         &repo.chrome,
         rsx! {
             section { class: "collaboration-page collaboration-labels-page", aria_label: "Labels",
-                if page_number > 1 || has_next {
-                    nav { class: "repo-pagination", aria_label: "Label pages",
-                        if page_number > 1 {
-                            crate::webui::navigation::NavLink { href: format!("{}&page={}", sort_href(sort), page_number - 1), "Previous" }
-                        }
-                        if has_next {
-                            crate::webui::navigation::NavLink { href: format!("{}&page={}", sort_href(sort), page_number + 1), "Next" }
-                        }
-                    }
-                }
                 div { class: "collaboration-toolbar",
                     div { class: "collaboration-title-block",
                         h2 { "Labels" }
@@ -171,11 +170,8 @@ pub fn list(
                         input { r#type: "search", name: "q", class: "collaboration-input", value: query.to_owned(), maxlength: "200", placeholder: "Search all labels", aria_label: "Search all labels" }
                     }
                     div { class: "collaboration-filter-menus",
-                        {filter_menu(&format!("Sort: {sort_text}"), sort != "name", rsx! {
-                            for (value, text) in sorts {
-                                {choice(sort_href(value), text, sort == value)}
-                            }
-                        })}
+                        FilterMenu { id: "filter-label-sort", title: format!("Sort: {sort_text}"), heading: "Sort by", search_label: "", searchable: false, set: sort != "name", choices: sort_choices, empty: "",
+                            clear: None::<String> }
                     }
                 }
                 div { class: "collaboration-panel collaboration-list-panel",
@@ -206,6 +202,16 @@ pub fn list(
                                     {delete_label(repo, label)}
                                 }
                             }
+                        }
+                    }
+                }
+                if page_number > 1 || has_next {
+                    nav { class: "repo-pagination", aria_label: "Label pages",
+                        if page_number > 1 {
+                            NavLink { href: format!("{}&page={}", sort_href(sort), page_number - 1), "Previous" }
+                        }
+                        if has_next {
+                            NavLink { href: format!("{}&page={}", sort_href(sort), page_number + 1), "Next" }
                         }
                     }
                 }

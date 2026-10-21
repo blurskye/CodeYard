@@ -101,8 +101,8 @@ pub async fn list_repo_labels_page(
         "most-used" => "((SELECT COUNT(*) FROM issue_labels il WHERE il.label_id=l.id) + (SELECT COUNT(*) FROM pr_labels pl WHERE pl.label_id=l.id)) DESC, LOWER(l.name), l.id",
         _ => "LOWER(l.name), l.id",
     };
-    Ok(sqlx::query_as(&format!(r"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at FROM labels l WHERE l.repo_id=?1 AND (LOWER(l.name) LIKE LOWER(?2) ESCAPE '\' OR LOWER(COALESCE(l.description,'')) LIKE LOWER(?2) ESCAPE '\') ORDER BY {order} LIMIT ?3 OFFSET ?4"))
-        .bind(repo_id).bind(crate::backend::db::discussions::contains_pattern(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!(r"SELECT l.id,l.repo_id,l.name,l.color,substr(l.description,1,1024) AS description,l.created_at FROM labels l WHERE l.repo_id=?1 AND (l.name REGEXP ?2 OR COALESCE(l.description,'') REGEXP ?2) ORDER BY {order} LIMIT ?3 OFFSET ?4"))
+        .bind(repo_id).bind(super::search::contains(query.trim())).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 /// Each label of the repository with the number of issues and pull requests it is on, as

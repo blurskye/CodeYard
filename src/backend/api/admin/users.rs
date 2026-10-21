@@ -2,11 +2,11 @@
 //! Every handler rechecks administrator authority in its identity call.
 use crate::backend::api::auth::errors;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::user::profile::settings_result;
 use crate::backend::api::user::responses::{
     field, mutation_guard, optional_field, public_api_message, require_account, within_bounds,
-    ApiFailure, Fields,
+    Fields,
 };
 use crate::backend::api::{auth, http::session};
 use crate::backend::app::AppState;
@@ -159,7 +159,7 @@ async fn load_users(
                 "Unable to load account settings.",
             )
         })?
-        .is_some_and(|config| config.node_mode.eq_ignore_ascii_case("private"));
+        .is_some_and(|config| config.is_private());
     Ok(AdminUsers {
         managed_accounts,
         current_user_id: admin.id,

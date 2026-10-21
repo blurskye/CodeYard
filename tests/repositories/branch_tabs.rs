@@ -4,16 +4,12 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 use axum::http::StatusCode;
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, repositories::lifecycle,
-    storage::ObjectStore,
-};
+use codeyard::backend::{db, repositories::lifecycle};
 use codeyard::webui::{app::Page, pages::repos};
 use database::Database;
-use pulls::Client;
-use std::sync::Arc;
+use pulls::{visible_text, Client};
 
 const DAY: i64 = 24 * 60 * 60;
 
@@ -65,19 +61,6 @@ async fn refs(client: &Client, path: &str) -> (Vec<String>, String, usize, usize
     }
 }
 
-/// The page without the comments Dioxus writes before its text, so a badge's count is the text
-/// that follows its tag.
-fn plain(html: &str) -> String {
-    let mut out = String::new();
-    let mut rest = html;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(&rest[..start]);
-        rest = rest[start..].split_once("-->").map_or("", |(_, tail)| tail);
-    }
-    out.push_str(rest);
-    out
-}
-
 /// The count in the badge of the first tab that links to `href`. The badge is a span with the
 /// count-badge class, and Dioxus adds attributes to it after the class.
 fn tab_count(html: &str, href: &str) -> usize {
@@ -98,7 +81,7 @@ async fn tabs_contract(pg: bool) {
     // The branch list is HTML, which needs the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repository = lifecycle::provision(
@@ -127,14 +110,7 @@ async fn tabs_contract(pg: bool) {
         "Experiment",
     );
 
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), owner).await;
 
     // All lists every branch, the default first and then by name.
@@ -166,7 +142,7 @@ async fn tabs_contract(pg: bool) {
     // The tabs show the same counts the lists have.
     let (status, html) = alice.page("/alice/proj/branches").await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    let html = plain(&html);
+    let html = visible_text(&html);
     assert_eq!(tab_count(&html, "/alice/proj/branches"), 5, "{html}");
     assert_eq!(
         tab_count(&html, "/alice/proj/branches?tab=active"),

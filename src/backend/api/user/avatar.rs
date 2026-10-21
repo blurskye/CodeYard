@@ -2,7 +2,7 @@
 //! `avatar` uploads, or take it away.
 
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::pictures;
 use crate::backend::api::user::profile::settings_response;
@@ -21,8 +21,6 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use std::sync::Arc;
 use uuid::Uuid;
-
-type Failure = (StatusCode, Json<ApiError>);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,7 +41,7 @@ pub fn avatar_status(error: &AvatarError) -> (StatusCode, &'static str) {
     }
 }
 
-fn failure(error: AvatarError) -> Failure {
+fn failure(error: AvatarError) -> ApiFailure {
     let (status, code) = avatar_status(&error);
     (status, Json(ApiError::new(code, &error.to_string())))
 }
@@ -52,7 +50,7 @@ pub async fn set_avatar(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Json(request): Json<SetAvatarRequest>,
-) -> Result<Json<UserResponse>, Failure> {
+) -> Result<Json<UserResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     avatars::set_user_avatar(&state.pool, &user, request.file_id)
         .await
@@ -83,7 +81,7 @@ pub async fn set_avatar(
 pub async fn remove_avatar(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
-) -> Result<StatusCode, Failure> {
+) -> Result<StatusCode, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     avatars::remove_user_avatar(&state.pool, &user)
         .await
@@ -133,12 +131,6 @@ async fn upload(
             "Send the picture from the settings form.",
         )
         .await;
-    };
-    // A form is buffered while it is read, so it needs a picture slot first, and the slot
-    // is kept until the picture is stored.
-    let Some(_slot) = ctx.state.storage.try_acquire_picture() else {
-        let busy = AvatarError::Unavailable;
-        return refused(&ctx, avatar_status(&busy).0, &busy.to_string()).await;
     };
     let form = match pictures::read(multipart).await {
         Ok(form) => form,

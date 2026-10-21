@@ -11,6 +11,7 @@ use crate::backend::{
 };
 use axum::{
     http::{HeaderMap, StatusCode},
+    middleware::from_fn,
     routing::{get, post},
     Json, Router,
 };
@@ -90,7 +91,12 @@ pub fn router() -> Router<Arc<AppState>> {
             "/api/ci/jobs/:job_id/log-download",
             get(logs::download_ci_job_logs),
         )
-        .route("/api/ci/jobs/:job_id/cancel", post(cancel::cancel_ci_job))
+        .route(
+            "/api/ci/jobs/:job_id/cancel",
+            post(cancel::cancel_ci_job).layer(from_fn(
+                crate::backend::api::http::csrf::cookie_api_submission,
+            )),
+        )
         .route(
             "/api/ci/jobs/:job_id/deployment",
             get(deployment::get_ci_deployment),

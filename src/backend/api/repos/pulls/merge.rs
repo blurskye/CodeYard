@@ -1,7 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::discussion::*;
+use crate::backend::api::repos::forms::{authorize_post, field};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::pull_requests;
@@ -101,9 +102,9 @@ pub(crate) async fn native_merge(
     }
     let merge_method = match field(&form, "merge_method").as_str() {
         "" => MergeMethod::Merge,
-        method => match serde_json::from_value(serde_json::Value::from(method)) {
-            Ok(method) => method,
-            Err(_) => {
+        method => match MergeMethod::parse(method) {
+            Some(method) => method,
+            None => {
                 return render_detail(
                     &ctx,
                     &repo,
@@ -121,7 +122,7 @@ pub(crate) async fn native_merge(
         .comparison
         .as_ref()
         .ok_or_else(|| ctx.error(StatusCode::CONFLICT, "Comparison data is unavailable."))?;
-    let (_, refs) = branches(&ctx, &repo).await?;
+    let (_, refs) = branches(&ctx, &repo.record).await?;
     // Early conflict feedback only. The shared operation below independently
     // admits these submitted immutable OIDs and publishes with a ref transaction.
     if field(&form, "expected_head") != compare.head_sha

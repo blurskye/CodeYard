@@ -12,13 +12,11 @@ use aws_sdk_s3::{
 };
 use aws_smithy_types::timeout::TimeoutConfig;
 use base64::{engine::general_purpose::STANDARD, Engine};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, net::IpAddr, time::Duration};
 use tokio::io::AsyncReadExt;
 
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone)]
 pub struct S3Config {
     pub endpoint: String,
     pub public_endpoint: Option<String>,

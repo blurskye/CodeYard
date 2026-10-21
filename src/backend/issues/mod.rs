@@ -142,6 +142,14 @@ pub(crate) fn comment_link(base: &str, id: i64, position: anyhow::Result<i64>) -
     discussion_link(base, discussion_page(position), &format!("comment-{id}"))
 }
 
+/// A storage failure, reported without the driver's own text.
+fn database_error<E>(_: E) -> OperationError {
+    OperationError::Unavailable {
+        code: "database_error",
+        message: "Collaboration storage is temporarily unavailable".into(),
+    }
+}
+
 pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
     db::users::accounts::get_user_by_id(pool, id)
         .await
@@ -153,18 +161,25 @@ pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User
         })
 }
 
+async fn can_read(
+    pool: &db::DbPool,
+    user: &db::models::User,
+    repo: &db::models::Repository,
+) -> Result<bool, OperationError> {
+    access::can_read(pool, Some(user), repo)
+        .await
+        .map_err(|_| OperationError::Unavailable {
+            code: "database_error",
+            message: "Repository authority is unavailable".into(),
+        })
+}
+
 pub(super) async fn require_read(
     pool: &db::DbPool,
     user: &db::models::User,
     repo: &db::models::Repository,
 ) -> Result<(), OperationError> {
-    if access::can_read(pool, Some(user), repo)
-        .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Repository authority is unavailable".into(),
-        })?
-    {
+    if can_read(pool, user, repo).await? {
         Ok(())
     } else {
         Err(OperationError::Missing {
@@ -187,7 +202,8 @@ pub(super) async fn require_write(
         })?
     {
         Ok(())
-    } else if repo.is_archived || user.must_change_password {
+    } else if (repo.is_archived || user.must_change_password) && can_read(pool, user, repo).await? {
+        // Only someone who can read the repository learns why a write is refused.
         Err(OperationError::Denied {
             code: "write_denied",
             message: "Archived repositories and password-change-required accounts cannot write"

@@ -159,9 +159,7 @@ async fn adoption_and_index(pool: &DbPool) {
 #[tokio::test]
 async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     let db = PostgresDatabase::new().await;
-    let DbPool::Postgres(raw) = &db.pool else {
-        unreachable!()
-    };
+    let raw = &db.raw;
     let root = tempfile::tempdir().unwrap();
     let node = db::cluster::register_own_node(
         &db.pool,

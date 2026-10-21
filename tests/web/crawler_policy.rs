@@ -3,20 +3,17 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 
 use crate::support::database;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::{
     body::{to_bytes, Body},
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::{
-    api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
-};
+use codeyard::backend::db;
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};
-use std::sync::Arc;
 use tower::ServiceExt;
 
 const ALLOW_ALL: &str = "User-agent: *\nDisallow:\n";
@@ -60,11 +57,7 @@ fn assert_blocked_robots(robots: &str) {
 
 async fn contract(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let admin_id = f.actor("admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin_id])
         .await;
@@ -76,14 +69,7 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(stored.ai_crawlers, "block");
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
 
     // Block is the default: AI crawlers are disallowed, and HTML pages carry the header.
     let (status, headers, robots) = fetch(&router, "/robots.txt").await;

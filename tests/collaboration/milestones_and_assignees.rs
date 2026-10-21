@@ -46,7 +46,7 @@ async fn issue_set(pool: &db::DbPool, repo: i64, filter: ListFilter<'_>) -> Vec<
 
 async fn contract(pg: bool) {
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let reader = f.actor("bob").await;
     let writer = f.actor("dave").await;
@@ -548,7 +548,7 @@ async fn postgres_milestones_and_assignees_hold_their_rules() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn postgres_concurrent_assignments_stop_at_the_limit() {
     let mut f = Database::new(true).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let pool = f.pool().clone();

@@ -99,7 +99,7 @@ impl References {
                 &self.owner,
                 &self.repo,
                 sha,
-                sha[..7].to_owned(),
+                super::short_sha(sha).to_owned(),
             )),
             Token::RepoCommit { owner, repo, sha } => {
                 self.repository_last_number(owner, repo)?;
@@ -107,7 +107,7 @@ impl References {
                     owner,
                     repo,
                     sha,
-                    format!("{owner}/{repo}@{}", &sha[..7]),
+                    format!("{owner}/{repo}@{}", super::short_sha(sha)),
                 ))
             }
         }

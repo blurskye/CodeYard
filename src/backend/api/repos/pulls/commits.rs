@@ -1,7 +1,7 @@
 //! The Commits tab of a pull request: the commits its head has that its base does not.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::chrome;
-use crate::backend::api::repos::pulls::pull::*;
+use crate::backend::api::repos::discussion::*;
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
 use crate::webui::pages::repos::issues::{self as view, Kind};

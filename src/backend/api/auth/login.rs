@@ -2,9 +2,9 @@ use crate::backend::api::auth::errors;
 use crate::backend::api::auth::session::LoginSessionRequest;
 use crate::backend::api::auth::setup::configured_admin_secret;
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::error::{ApiError, ApiFailure};
 use crate::backend::api::user::responses::{
-    api_error, field, optional_field, public_api_message, safe_redirect, within_bounds, ApiFailure,
+    api_error, field, optional_field, public_api_message, safe_redirect, within_bounds,
     AuthResponse, AuthUserResponse as UserResponse, Fields,
 };
 use crate::backend::api::{auth, http::session};
@@ -345,7 +345,6 @@ mod tests {
     use crate::backend::api::user::responses::{
         account_permission, public_api_message, safe_redirect, within_bounds,
     };
-    use crate::backend::identity::profiles::visible_on_profile;
     use axum::response::IntoResponse;
     use std::collections::HashMap;
 
@@ -357,7 +356,6 @@ mod tests {
             "/\\evil.example",
             "/%2Fevil.example",
             "/%5cevil.example",
-            "/%252fevil.example",
             "/ok%0d%0aLocation:evil",
             "/ok\n",
             "",
@@ -368,6 +366,7 @@ mod tests {
             safe_redirect(Some("/alice/project/tree/main?view=code")),
             "/alice/project/tree/main?view=code"
         );
+        assert_eq!(safe_redirect(Some("/search?q=50%25")), "/search?q=50%25");
     }
 
     #[test]
@@ -394,13 +393,6 @@ mod tests {
         );
         assert_eq!(account_permission(true, false, false, false), Ok(()));
         assert_eq!(account_permission(true, false, true, true), Ok(()));
-    }
-
-    #[test]
-    fn profile_lists_do_not_broaden_private_repository_visibility() {
-        assert!(!visible_on_profile(true, false));
-        assert!(visible_on_profile(true, true));
-        assert!(visible_on_profile(false, false));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use super::{
     DispatchDraft, Run, SelectedRun,
 };
 use crate::webui::{
-    components::{DraftSelect, SelectOption},
+    components::{relative_time, short_sha, DraftSelect, SelectOption},
     encode_component,
     navigation::{NavLink, RefreshLink},
     pages::repos::{self, chrome::RepoChrome},
@@ -177,18 +177,13 @@ pub(super) fn status_chip(status: &str) -> Element {
     }
 }
 
-// Original Actions/repository SVGs, with presentation only: no session/API state.
+/// The small icons of the Actions pages. A name that has no icon draws a play triangle.
 pub(super) fn icon(kind: &str) -> Element {
     rsx! {
         svg { width: "15", height: "15", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.5", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true",
             match kind {
-                "code" => rsx! { path { d: "m18 16 4-4-4-4M6 8l-4 4 4 4m8.5-12-5 16" } },
-                "issues" => rsx! { circle { cx: "12", cy: "12", r: "10" } circle { cx: "12", cy: "12", r: "1" } },
-                "pulls" => rsx! { circle { cx: "18", cy: "18", r: "3" } circle { cx: "6", cy: "6", r: "3" } path { d: "M13 6h3a2 2 0 0 1 2 2v7M6 9v12" } },
                 "actions" => rsx! { circle { cx: "12", cy: "12", r: "9" } path { d: "m10 8 6 4-6 4z" } },
-                "commits" => rsx! { path { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2" } },
                 "branches" => rsx! { path { d: "M6 3v12M18 9a9 9 0 0 1-9 9" } circle { cx: "18", cy: "6", r: "3" } circle { cx: "6", cy: "18", r: "3" } },
-                "tags" => rsx! { path { d: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" } circle { cx: "7.5", cy: "7.5", r: ".5", fill: "currentColor" } },
                 "summary" => rsx! { path { d: "m3 10 9-7 9 7v10H3zM9 20v-7h6v7" } },
                 "usage" => rsx! { path { d: "m12 14 4-4M3.34 19a10 10 0 1 1 17.32 0" } },
                 "file" => rsx! { path { d: "M10 12.5 8 15l2 2.5m4-5 2 2.5-2 2.5M14 2v4a2 2 0 0 0 2 2h4M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" } },
@@ -250,8 +245,6 @@ jobs:
       - run: echo \"Hello from Codeyard\"
 ";
 
-/// Shown for a repository with no workflow at this ref. Writers get a link to the new-file page
-/// opened in the workflow directory.
 /// The Workflow filter's choices: every workflow on the page, plus the workflow in the URL when the
 /// page does not list it.
 fn workflow_filter_options(model: &ActionsPage) -> Vec<SelectOption> {
@@ -297,6 +290,8 @@ fn status_filter_options(model: &ActionsPage) -> Vec<SelectOption> {
     options
 }
 
+/// Shown for a repository with no workflow at this ref. Writers get a link to the new-file page
+/// opened in the workflow directory.
 fn get_started(model: &ActionsPage) -> Element {
     let can_write = model
         .repo_chrome
@@ -334,14 +329,14 @@ pub(in crate::webui::pages::repos) fn run_row(
                 div { class: "actions-run-subtitle",
                     span { "{run.event}" }
                     span { title: run.id.clone(), "Run #{short_id(&run.id, 8)}" }
-                    span { class: "actions-sr-only", "Run ID {run.id}" }
+                    span { class: "sr-only", "Run ID {run.id}" }
                     if show_repository { span { "{run.repository}" } }
-                    if let Some(sha) = &run.head_sha { code { title: sha.clone(), "{short_id(sha, 7)}" } }
+                    if let Some(sha) = &run.head_sha { code { title: sha.clone(), "{short_sha(sha)}" } }
                 }
             }
             span { class: "actions-branch-badge", title: run.branch.clone(), {icon("branches")} "{run.branch}" }
             div { class: "actions-run-time",
-                span { class: "actions-time-line", {icon("calendar")} span { title: logs::timestamp(run.created_at), "{logs::relative_time(run.created_at)}" } }
+                span { class: "actions-time-line", {icon("calendar")} span { title: logs::timestamp(run.created_at), "{relative_time(run.created_at)}" } }
                 span { class: "actions-time-line actions-run-duration", {icon("duration")} "{run_duration(run)}" }
             }
         }
@@ -444,31 +439,31 @@ pub fn actions_page(mut model: ActionsPage) -> Element {
                                 form { id: "actions-run-filters", method: "get", action: model.base_path.clone(), class: "actions-filters",
                                     {preserved_inputs(&model, &["q", "workflow", "event", "status", "branch", "actor", "before", "job", "view", "workflow_job"])}
                                     label { class: "actions-search-field",
-                                        span { class: "actions-sr-only", "Search runs" }
+                                        span { class: "sr-only", "Search runs" }
                                         {icon("search")}
                                         input { class: "actions-search", r#type: "search", name: "q", "value": model.value("q"), placeholder: "Filter workflow runs" }
                                     }
                                     label { class: "actions-filter-field",
-                                        span { class: "actions-sr-only", "Workflow" }
+                                        span { class: "sr-only", "Workflow" }
                                         DraftSelect { class: "actions-filter", name: "workflow", initial_value: model.value("workflow").to_owned(), options: workflow_filter_options(&model) }
                                     }
                                     label { class: "actions-filter-field",
-                                        span { class: "actions-sr-only", "Event" }
+                                        span { class: "sr-only", "Event" }
                                         DraftSelect { class: "actions-filter", name: "event", initial_value: model.value("event").to_owned(),
                                             options: std::iter::once(SelectOption::new("", "Any event"))
                                                 .chain(events.iter().map(|event| SelectOption::new(*event, *event)))
                                                 .collect::<Vec<_>>() }
                                     }
                                     label { class: "actions-filter-field",
-                                        span { class: "actions-sr-only", "Status" }
+                                        span { class: "sr-only", "Status" }
                                         DraftSelect { class: "actions-filter", name: "status", initial_value: model.value("status").to_owned(), options: status_filter_options(&model) }
                                     }
                                     label { class: "actions-filter-field",
-                                        span { class: "actions-sr-only", "Filter by branch" }
+                                        span { class: "sr-only", "Filter by branch" }
                                         input { class: "actions-filter actions-branch-filter", name: "branch", "value": model.value("branch"), placeholder: "Branch" }
                                     }
                                     label { class: "actions-filter-field",
-                                        span { class: "actions-sr-only", "Actor" }
+                                        span { class: "sr-only", "Actor" }
                                         input { class: "actions-filter", name: "actor", "value": model.value("actor"), placeholder: "Actor" }
                                     }
                                     button { class: "actions-button", r#type: "submit", "Filter runs" }

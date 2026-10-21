@@ -9,9 +9,12 @@ mod users;
 pub use page::{admin_page, normalize_days, Account, Activity, Admin, Signup};
 pub use users::{admin_users_page, AccountMetadata, AdminUsers};
 
+/// Signup requests shown per page, on the admin overview and in settings.
+pub(crate) const SIGNUP_REQUESTS_PER_PAGE: usize = 30;
+
 pub(crate) fn signup_pagination(page: usize, total: usize, base: &str) -> dioxus::prelude::Element {
     use dioxus::prelude::*;
-    let pages = total.div_ceil(30).max(1);
+    let pages = total.div_ceil(SIGNUP_REQUESTS_PER_PAGE).max(1);
     rsx! {
         p { "{total} pending requests" }
         if pages > 1 {

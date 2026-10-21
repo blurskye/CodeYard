@@ -2,7 +2,7 @@
 
 use crate::backend::api::auth::errors;
 use crate::backend::api::auth::session::LoginSessionRequest;
-use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::render::public_error;
 use crate::backend::api::http::session;
 use crate::backend::app::AppState;
 use crate::backend::identity::oauth;
@@ -10,10 +10,10 @@ use crate::backend::identity::oauth::{providers, OAuthError};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Deserialize;
 use std::sync::Arc;
 
+/// No request header determines a callback origin. HTTP is permitted only on loopback fixtures.
 pub fn configured_public_origin() -> Option<String> {
     validated_public_origin(&std::env::var("PUBLIC_URL").ok()?)
 }
@@ -34,86 +34,61 @@ pub(crate) fn validated_public_origin(value: &str) -> Option<String> {
     Some(url.origin().ascii_serialization())
 }
 
-fn api_error(status: StatusCode, code: &str, message: &str) -> Response {
-    (status, Json(ApiError::new(code, message))).into_response()
-}
-
-/// `GET /api/auth/oauth/:provider`
+/// The provider sends the browser back here, so a failure is an error page, not JSON.
 fn failure(error: OAuthError, provider: &str) -> Response {
-    let (status, code, message) = match error {
-        OAuthError::UnknownProvider => (
-            StatusCode::NOT_FOUND,
-            "not_found",
-            "Unknown OAuth provider".to_owned(),
-        ),
+    let (status, message) = match error {
+        OAuthError::UnknownProvider => {
+            (StatusCode::NOT_FOUND, "Unknown OAuth provider.".to_owned())
+        }
         OAuthError::Disabled => (
             StatusCode::FORBIDDEN,
-            "forbidden",
-            format!("{provider} authentication is not enabled"),
+            format!("{provider} authentication is not enabled."),
         ),
-        OAuthError::InvalidCode => (
-            StatusCode::BAD_REQUEST,
-            "validation_error",
-            "Invalid code or state".to_owned(),
-        ),
+        OAuthError::InvalidCode => (StatusCode::BAD_REQUEST, "Invalid code or state.".to_owned()),
         OAuthError::InvalidState => (
             StatusCode::BAD_REQUEST,
-            "validation_error",
-            "Invalid, expired or transferred OAuth state".to_owned(),
+            "Invalid, expired or transferred OAuth state. Start signing in again.".to_owned(),
         ),
-        OAuthError::InvalidPkce => (
-            StatusCode::BAD_REQUEST,
-            "validation_error",
-            "Invalid PKCE state".to_owned(),
-        ),
+        OAuthError::InvalidPkce => (StatusCode::BAD_REQUEST, "Invalid PKCE state.".to_owned()),
         OAuthError::SetupRequired => (
             StatusCode::PRECONDITION_REQUIRED,
-            "setup_required",
-            "Complete node setup before signing in".to_owned(),
+            "Complete node setup before signing in.".to_owned(),
         ),
-        OAuthError::Admission(error) => return errors::admission_failure(error).into_response(),
         OAuthError::StateUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-            "Authentication storage is temporarily unavailable".to_owned(),
+            "Authentication storage is temporarily unavailable.".to_owned(),
         ),
         OAuthError::AccountUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "database_unavailable",
-            "Account storage is temporarily unavailable".to_owned(),
+            "Account storage is temporarily unavailable.".to_owned(),
         ),
         OAuthError::ClientUnavailable => (
             StatusCode::SERVICE_UNAVAILABLE,
-            "oauth_error",
-            "Provider client is unavailable".to_owned(),
+            "Provider client is unavailable.".to_owned(),
         ),
         OAuthError::ProviderFailed => (
             StatusCode::BAD_GATEWAY,
-            "oauth_error",
-            "Provider authentication failed; start sign-in again".to_owned(),
+            "Provider authentication failed. Start signing in again.".to_owned(),
         ),
         OAuthError::ApprovalRequired => (
             StatusCode::FORBIDDEN,
-            "approval_required",
-            "A private-node administrator must enroll this provider identity before sign-in"
+            "A private-node administrator must enroll this provider identity before sign-in."
                 .to_owned(),
         ),
         OAuthError::Conflict => (
             StatusCode::CONFLICT,
-            "conflict",
-            "Could not allocate account identity".to_owned(),
+            "Could not allocate account identity.".to_owned(),
         ),
         OAuthError::Denied => (
             StatusCode::FORBIDDEN,
-            "forbidden",
-            "Account is suspended or requires a password change".to_owned(),
+            "Account is suspended or requires a password change.".to_owned(),
         ),
         OAuthError::AccountAdmittedSessionFailed(error) => {
-            let (status, body) = errors::session_issue_failure(error);
-            return api_error(status, &body.0.error, "Account admission completed, but no session was issued. Check your session cookies and start sign-in again");
+            let (status, _) = errors::session_issue_failure(error);
+            return public_error(status, "Account admission completed, but no session was issued. Check your session cookies and start signing in again.");
         }
     };
-    api_error(status, code, &message)
+    public_error(status, &message)
 }
 
 fn local_return_to(target: &str) -> &str {
@@ -136,10 +111,9 @@ pub async fn oauth_redirect(
         return failure(OAuthError::Disabled, &provider);
     }
     let Some(origin) = configured_public_origin() else {
-        return api_error(
+        return public_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "configuration_error",
-            "Configure PUBLIC_URL with the public OAuth origin",
+            "Configure PUBLIC_URL with the public OAuth origin.",
         );
     };
     // Always replace the browser nonce; only the latest flow in this browser completes.
@@ -194,11 +168,7 @@ pub async fn oauth_callback(
         return failure(OAuthError::UnknownProvider, &provider);
     }
     let (Some(code), Some(token)) = (query.code, query.state) else {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "validation_error",
-            "Missing code or state",
-        );
+        return public_error(StatusCode::BAD_REQUEST, "Missing code or state.");
     };
     if providers::provider_credentials(&provider).is_none() {
         return failure(OAuthError::Disabled, &provider);
@@ -211,17 +181,15 @@ pub async fn oauth_callback(
         return failure(error, &provider);
     }
     let Some(nonce) = session::random_cookie(&headers, session::oauth_browser_cookie_name()) else {
-        return api_error(
+        return public_error(
             StatusCode::BAD_REQUEST,
-            "validation_error",
-            "OAuth must complete in its initiating browser",
+            "OAuth must complete in its initiating browser.",
         );
     };
     let Some(origin) = configured_public_origin() else {
-        return api_error(
+        return public_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            "configuration_error",
-            "Configure PUBLIC_URL with the public OAuth origin",
+            "Configure PUBLIC_URL with the public OAuth origin.",
         );
     };
     let redirect = format!("{origin}/api/auth/oauth/{provider}/callback");

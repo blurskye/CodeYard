@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 pub use crate::backend::db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
 
-pub const MAX_ASSET_BYTES: usize = 100 * 1024 * 1024;
+pub const MAX_ASSET_BYTES: usize = crate::backend::storage::MAX_OBJECT_BYTES as usize;
 
 #[cfg(test)]
 mod tests {
@@ -244,20 +244,8 @@ pub async fn detail_by_tag(
     let can_write = can_write(pool, viewer, repository.id).await?;
     let release = db::releases::get_release_by_tag(pool, repository.id, tag)
         .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write {
-        return Err(ReleaseError::NotFound);
-    }
-    let assets = db::releases::list_release_assets(pool, release.release.id)
-        .await
         .map_err(unavailable)?;
-    Ok(ReleaseDetail {
-        repository,
-        can_write,
-        release,
-        assets,
-    })
+    visible_detail(pool, repository, can_write, release).await
 }
 
 /// One release by its number, for the JSON API. A draft is hidden from everyone but writers.
@@ -272,8 +260,17 @@ pub async fn detail_by_id(
     let can_write = can_write(pool, viewer, repository.id).await?;
     let release = db::releases::get_release(pool, repository.id, release_id)
         .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
+        .map_err(unavailable)?;
+    visible_detail(pool, repository, can_write, release).await
+}
+
+async fn visible_detail(
+    pool: &db::DbPool,
+    repository: Repository,
+    can_write: bool,
+    release: Option<ReleaseRow>,
+) -> Result<ReleaseDetail, ReleaseError> {
+    let release = release.ok_or(ReleaseError::NotFound)?;
     if release.release.is_draft && !can_write {
         return Err(ReleaseError::NotFound);
     }
@@ -442,18 +439,31 @@ pub async fn create(
     } else {
         "published"
     };
-    let (release_for_hook, repository_for_hook) = (release.clone(), repository.clone());
-    let (author_id, sender_id) = (actor, actor);
+    emit_release(pool, &repository, &release, actor, action);
+
+    Ok(release)
+}
+
+/// Tells the repository's release webhooks what `actor` did to `release`.
+fn emit_release(
+    pool: &db::DbPool,
+    repository: &Repository,
+    release: &Release,
+    actor: i64,
+    action: &'static str,
+) {
+    let (release, repository_for_hook) = (release.clone(), repository.clone());
+    let author_id = release.author_id;
     webhooks::emit(
         pool,
-        &repository,
+        repository,
         events::RELEASE,
-        vec![author_id, sender_id],
+        vec![author_id, actor],
         move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            let (author, sender) = (people.get(author_id), people.get(actor));
             payloads::release(
                 action,
-                &release_for_hook,
+                &release,
                 &author,
                 Scope {
                     repo: &repository_for_hook,
@@ -463,8 +473,6 @@ pub async fn create(
             )
         },
     );
-
-    Ok(release)
 }
 
 /// Changes a release's notes, title, flags and latest mark. A draft that is published now
@@ -492,27 +500,7 @@ pub async fn update(
         notify_published(pool, broadcaster, &user, &repository, owner, name, &release).await;
     }
     let action = if published { "published" } else { "edited" };
-    let (release_for_hook, repository_for_hook) = (release.clone(), repository.clone());
-    let (author_id, sender_id) = (release.author_id, actor);
-    webhooks::emit(
-        pool,
-        &repository,
-        events::RELEASE,
-        vec![author_id, sender_id],
-        move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
-            payloads::release(
-                action,
-                &release_for_hook,
-                &author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            )
-        },
-    );
+    emit_release(pool, &repository, &release, actor, action);
 
     Ok(release)
 }
@@ -537,28 +525,7 @@ pub async fn delete(
     for file in files {
         discard_object(store, &file).await;
     }
-    let deleted = deleted.release;
-    let (release_for_hook, repository_for_hook) = (deleted.clone(), repository.clone());
-    let (author_id, sender_id) = (deleted.author_id, actor);
-    webhooks::emit(
-        pool,
-        &repository,
-        events::RELEASE,
-        vec![author_id, sender_id],
-        move |owner, people| {
-            let (author, sender) = (people.get(author_id), people.get(sender_id));
-            payloads::release(
-                "deleted",
-                &release_for_hook,
-                &author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            )
-        },
-    );
+    emit_release(pool, &repository, &deleted.release, actor, "deleted");
     Ok(())
 }
 

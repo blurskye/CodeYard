@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -9,6 +9,15 @@ const BAN_DURATION: Duration = Duration::from_secs(300);
 const ATTEMPT_WINDOW: Duration = Duration::from_secs(60);
 const MAX_TRACKED_IPS: usize = 16_384;
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+
+/// The address that failures and connection counts are tracked under. An IPv6
+/// client usually owns a whole /64, so it is keyed by that prefix.
+pub(super) fn client_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(ip) => IpAddr::V6(Ipv6Addr::from(u128::from(ip) & (u128::MAX << 64))),
+        ip => ip,
+    }
+}
 
 #[derive(Clone)]
 struct IpRecord {
@@ -38,21 +47,15 @@ impl RateLimiter {
 
     pub async fn is_blocked(&self, ip: IpAddr) -> bool {
         let records = self.records.read().await;
-        if !records.by_ip.contains_key(&ip)
-            && records.by_ip.len() >= MAX_TRACKED_IPS
-            && Instant::now() < records.cleanup_at
-        {
-            return true;
-        }
-        if let Some(record) = records.by_ip.get(&ip) {
-            if let Some(banned_until) = record.banned_until {
-                return Instant::now() < banned_until;
-            }
-        }
-        false
+        records
+            .by_ip
+            .get(&client_key(ip))
+            .and_then(|record| record.banned_until)
+            .is_some_and(|banned_until| Instant::now() < banned_until)
     }
 
     pub async fn record_failure(&self, ip: IpAddr) -> bool {
+        let ip = client_key(ip);
         let mut records = self.records.write().await;
         let now = Instant::now();
         let cutoff = now - ATTEMPT_WINDOW;
@@ -67,9 +70,10 @@ impl RateLimiter {
             });
             records.cleanup_at = now + CLEANUP_INTERVAL;
         }
-        // Preserve active bans rather than evicting one to admit a new address.
+        // When the table is full, new addresses are not tracked. Active bans are kept
+        // and nobody is refused for lack of room.
         if records.by_ip.len() >= MAX_TRACKED_IPS && !records.by_ip.contains_key(&ip) {
-            return true;
+            return false;
         }
         let record = records.by_ip.entry(ip).or_insert_with(|| IpRecord {
             attempts: Vec::new(),
@@ -179,7 +183,7 @@ mod tests {
             .unwrap()
             .attempts = vec![expired];
         for index in 0..MAX_TRACKED_IPS {
-            let ip = IpAddr::V6(std::net::Ipv6Addr::from(index as u128 + 1));
+            let ip = IpAddr::V6(Ipv6Addr::from((index as u128 + 1) << 64));
             limiter.record_failure(ip).await;
         }
         {
@@ -187,11 +191,27 @@ mod tests {
             assert_eq!(records.by_ip.len(), MAX_TRACKED_IPS);
             assert_eq!(records.by_ip[&ip(1)].attempts, vec![expired]);
         }
-        assert!(limiter.is_blocked(ip(2)).await);
+        // A full table does not refuse new addresses; it just does not track them.
+        assert!(!limiter.is_blocked(ip(2)).await);
+        assert!(!limiter.record_failure(ip(2)).await);
+        assert!(!limiter.records.read().await.by_ip.contains_key(&ip(2)));
         limiter.records.write().await.cleanup_at = Instant::now();
         limiter.record_failure(ip(2)).await;
         assert!(!limiter.records.read().await.by_ip.contains_key(&ip(1)));
+        assert!(limiter.records.read().await.by_ip.contains_key(&ip(2)));
         assert!(!limiter.is_blocked(ip(2)).await);
+    }
+
+    #[tokio::test]
+    async fn an_ipv6_prefix_shares_one_failure_bucket() {
+        let limiter = RateLimiter::new();
+        let in_prefix = |last: u16| IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, last));
+        for last in 1..MAX_FAILED_ATTEMPTS as u16 {
+            assert!(!limiter.record_failure(in_prefix(last)).await);
+        }
+        assert!(limiter.record_failure(in_prefix(200)).await);
+        assert!(limiter.is_blocked(in_prefix(99)).await);
+        assert!(!limiter.is_blocked("2001:db8:0:2::1".parse().unwrap()).await);
     }
 
     #[tokio::test]

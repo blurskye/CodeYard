@@ -35,6 +35,7 @@ const VISIBLE_RUN_ERRORS: &[&str] = &[
     "A workflow job failed",
     "CI container recovery is unavailable",
     "CI could not load the repository or secrets",
+    "CI could not run",
     "Cancelled",
     "Cancelled before it started",
     "The CI worker shut down during the run",

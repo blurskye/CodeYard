@@ -10,8 +10,7 @@ use crate::webui::pages::repos::{
 use crate::webui::{navigation::NavLink, pages::repos::ref_path::file_url};
 use dioxus::prelude::*;
 
-/// The Checks tab: the workflow runs on the head commit of a pull request. Each run is the Actions
-/// page's run row, linked to the run's logs there.
+/// A commit status an outside service reported on the head commit.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CheckStatus {
     pub context: String,
@@ -20,6 +19,8 @@ pub struct CheckStatus {
     pub target_url: Option<String>,
 }
 
+/// The Checks tab: the workflow runs on the head commit of a pull request. Each run is the Actions
+/// page's run row, linked to the run's logs there.
 pub fn checks_page(
     repo: &Repository,
     item: &Item,

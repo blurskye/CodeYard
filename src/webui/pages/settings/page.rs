@@ -116,26 +116,86 @@ fn token_expiry_day(submitted: String) -> String {
 /// The account settings navigation, in three groups. Organization pages share it; `current` is
 /// the tab or page being shown.
 pub fn settings_nav(current: &str, manage_access: bool) -> Element {
-    let mut tabs = vec![
-        ("/settings?tab=profile", "Public profile", "profile"),
-        ("/settings?tab=appearance", "Appearance", "appearance"),
-        ("/settings?tab=email", "Email address", "email"),
-        ("/settings?tab=password", "Password", "password"),
+    let mut groups = vec![
         (
-            "/settings?tab=two-factor",
-            "Two-factor authentication",
-            "two-factor",
+            "Account",
+            vec![
+                (
+                    "/settings?tab=profile",
+                    "Public profile",
+                    "profile",
+                    ProfileIcon::User,
+                ),
+                (
+                    "/settings?tab=appearance",
+                    "Appearance",
+                    "appearance",
+                    ProfileIcon::Appearance,
+                ),
+                (
+                    "/settings?tab=email",
+                    "Email address",
+                    "email",
+                    ProfileIcon::User,
+                ),
+                (
+                    "/settings?tab=password",
+                    "Password",
+                    "password",
+                    ProfileIcon::Lock,
+                ),
+                (
+                    "/settings?tab=two-factor",
+                    "Two-factor authentication",
+                    "two-factor",
+                    ProfileIcon::Shield,
+                ),
+            ],
         ),
-        ("/settings?tab=keys", "SSH keys", "keys"),
-        ("/settings?tab=tokens", "Access tokens", "tokens"),
-        ("/settings?tab=sessions", "Sessions", "sessions"),
-        ("/settings/organizations", "Organizations", "organizations"),
+        (
+            "Access",
+            vec![
+                (
+                    "/settings?tab=keys",
+                    "SSH keys",
+                    "keys",
+                    ProfileIcon::Terminal,
+                ),
+                (
+                    "/settings?tab=tokens",
+                    "Access tokens",
+                    "tokens",
+                    ProfileIcon::Key,
+                ),
+                (
+                    "/settings?tab=sessions",
+                    "Sessions",
+                    "sessions",
+                    ProfileIcon::Layers,
+                ),
+                (
+                    "/settings/organizations",
+                    "Organizations",
+                    "organizations",
+                    ProfileIcon::Building,
+                ),
+            ],
+        ),
     ];
     if manage_access {
-        tabs.push(("/settings?tab=access", "Account access", "access"));
+        groups.push((
+            "Administration",
+            vec![(
+                "/settings?tab=access",
+                "Account access",
+                "access",
+                ProfileIcon::Shield,
+            )],
+        ));
     }
-    let label = tabs
+    let label = groups
         .iter()
+        .flat_map(|(_, tabs)| tabs)
         .find(|tab| tab.2 == current)
         .map_or("Settings", |tab| tab.1);
     rsx! {
@@ -146,7 +206,7 @@ pub fn settings_nav(current: &str, manage_access: bool) -> Element {
                 svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true", path { d: "m6 9 6 6 6-6" } }
             }
             div { class: "identity-settings-picker-panel",
-                for (href, text, id) in tabs {
+                for &(href, text, id, _) in groups.iter().flat_map(|(_, tabs)| tabs) {
                     NavLink {
                         href: href.to_owned(),
                         class: if id == current { "identity-settings-nav-current".to_owned() } else { String::new() },
@@ -157,20 +217,14 @@ pub fn settings_nav(current: &str, manage_access: bool) -> Element {
             }
         }
         nav { class: "identity-settings-nav", aria_label: "Account settings",
-            p { class: "identity-settings-nav-title", "Account" }
-            {nav_link("/settings?tab=profile".to_owned(), "Public profile", ProfileIcon::User, current == "profile")}
-            {nav_link("/settings?tab=appearance".to_owned(), "Appearance", ProfileIcon::Appearance, current == "appearance")}
-            {nav_link("/settings?tab=email".to_owned(), "Email address", ProfileIcon::User, current == "email")}
-            {nav_link("/settings?tab=password".to_owned(), "Password", ProfileIcon::Lock, current == "password")}
-            {nav_link("/settings?tab=two-factor".to_owned(), "Two-factor authentication", ProfileIcon::Shield, current == "two-factor")}
-            p { class: "identity-settings-nav-title identity-settings-nav-section", "Access" }
-            {nav_link("/settings?tab=keys".to_owned(), "SSH keys", ProfileIcon::Terminal, current == "keys")}
-            {nav_link("/settings?tab=tokens".to_owned(), "Access tokens", ProfileIcon::Key, current == "tokens")}
-            {nav_link("/settings?tab=sessions".to_owned(), "Sessions", ProfileIcon::Layers, current == "sessions")}
-            {nav_link("/settings/organizations".to_owned(), "Organizations", ProfileIcon::Building, current == "organizations")}
-            if manage_access {
-                p { class: "identity-settings-nav-title identity-settings-nav-section", "Administration" }
-                {nav_link("/settings?tab=access".to_owned(), "Account access", ProfileIcon::Shield, current == "access")}
+            for (index, (title, tabs)) in groups.iter().enumerate() {
+                p {
+                    class: if index == 0 { "identity-settings-nav-title" } else { "identity-settings-nav-title identity-settings-nav-section" },
+                    "{title}"
+                }
+                for &(href, text, id, icon) in tabs {
+                    {nav_link(href.to_owned(), text, icon, id == current)}
+                }
             }
         }
     }
@@ -206,14 +260,14 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                             }
                             form { method: "post", action: "/settings/profile", class: "identity-form",
                                 {csrf(token)}
-                                {text_field("display_name", "Name", values.get("display_name"), "text", false, 100)}
+                                {text_field("display_name", "Name", values.display_name.clone(), "text", false, 100)}
                                 div { class: "space-y-2",
                                     label { r#for: "bio", class: "block text-sm font-semibold", "Bio" }
-                                    DraftTextarea { id: Some("bio".to_owned()), name: "bio", initial_value: values.get("bio"), rows: 4, maxlength: Some(4000), class: FIELD }
+                                    DraftTextarea { id: Some("bio".to_owned()), name: "bio", initial_value: values.bio.clone(), rows: 4, maxlength: Some(4000), class: FIELD }
                                     p { class: "identity-form-hint", "A short introduction shown on your profile." }
                                 }
-                                {text_field("location", "Location", values.get("location"), "text", false, 200)}
-                                {text_field("website", "Website", values.get("website"), "url", false, 255)}
+                                {text_field("location", "Location", values.location.clone(), "text", false, 200)}
+                                {text_field("website", "Website", values.website.clone(), "url", false, 255)}
                                 div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Save profile" } }
                             }
                             p { class: "identity-account-meta", "Signed in as @{model.profile.username} · {model.email}" }
@@ -287,10 +341,10 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                             header { class: "identity-section-header", h2 { id: "settings-add-key-title", "Add SSH key" } }
                             form { method: "post", action: "/settings/keys", class: "identity-form",
                                 {csrf(token)}
-                                {text_field("name", "Title", values.get("name"), "text", true, 100)}
+                                {text_field("name", "Title", values.name.clone(), "text", true, 100)}
                                 div { class: "space-y-2",
                                     label { r#for: "public_key", class: "block text-sm font-semibold", "Public key" }
-                                    DraftTextarea { id: Some("public_key".to_owned()), name: "public_key", initial_value: values.get("public_key"), required: true, rows: 5, maxlength: Some(16384), class: FIELD }
+                                    DraftTextarea { id: Some("public_key".to_owned()), name: "public_key", initial_value: values.public_key.clone(), required: true, rows: 5, maxlength: Some(16384), class: FIELD }
                                     p { class: "identity-form-hint", "Paste the contents of your public key. Never share a private key." }
                                 }
                                 div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Add SSH key" } }
@@ -335,11 +389,11 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                             header { class: "identity-section-header", h2 { id: "settings-create-token-title", "Create token" } }
                             form { method: "post", action: "/settings/tokens", class: "identity-form",
                                 {csrf(token)}
-                                {text_field("name", "Token name", values.get("name"), "text", true, 100)}
+                                {text_field("name", "Token name", values.name.clone(), "text", true, 100)}
                                 div { class: "space-y-2",
                                     label { r#for: "scope", class: "block text-sm font-semibold", "Repository access" }
                                     DraftSelect { id: Some("scope".to_owned()), name: "scope", class: FIELD,
-                                        initial_value: String::from(if values.get("scope") == "write" { "write" } else { "read" }),
+                                        initial_value: String::from(if values.scope == "write" { "write" } else { "read" }),
                                         options: vec![
                                             SelectOption::new("read", "Read — clone and fetch"),
                                             SelectOption::new("write", "Write — clone, fetch, and push"),
@@ -348,13 +402,13 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 fieldset { class: "identity-expiry",
                                     legend { class: "block text-sm font-semibold", "Expiration" }
                                     label { class: "identity-expiry-option",
-                                        input { r#type: "radio", name: "expiry", value: "never", checked: values.get("expiry") == "never" }
+                                        input { r#type: "radio", name: "expiry", value: "never", checked: values.expiry == "never" }
                                         span { "Never expires" }
                                     }
                                     label { class: "identity-expiry-option",
-                                        input { r#type: "radio", name: "expiry", value: "date", checked: values.get("expiry") != "never" }
+                                        input { r#type: "radio", name: "expiry", value: "date", checked: values.expiry != "never" }
                                         span { "Expires on" }
-                                        input { r#type: "date", name: "expires_at", class: FIELD, value: token_expiry_day(values.get("expires_at")) }
+                                        input { r#type: "date", name: "expires_at", class: FIELD, value: token_expiry_day(values.expires_at.clone()) }
                                     }
                                     p { class: "identity-form-hint", "A token that expires stops working at the end of the chosen day, in UTC." }
                                 }
@@ -413,7 +467,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                             if model.password_supported {
                                 form { method: "post", action: "/settings/email", class: "identity-form",
                                     {csrf(token)}
-                                    {text_field("email", "New email address", if values.get("email").is_empty() { model.email.clone() } else { values.get("email") }, "email", true, 255)}
+                                    {text_field("email", "New email address", if values.email.is_empty() { model.email.clone() } else { values.email.clone() }, "email", true, 255)}
                                     {password_field("current_password", "Current password", false)}
                                     div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Update email" } }
                                 }

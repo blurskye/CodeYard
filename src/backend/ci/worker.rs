@@ -35,14 +35,20 @@ pub struct WorkflowName {
 
 impl Drop for WorkflowName {
     fn drop(&mut self) {
-        self.active.lock().unwrap().remove(&self.name);
+        self.active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.name);
     }
 }
 
 impl WorkflowNames {
     fn take(&self, name: &str, run_id: uuid::Uuid) -> WorkflowName {
         let id = run_id.simple();
-        let mut active = self.active.lock().unwrap();
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut candidate = format!("{name} ({id})");
         let mut attempt = 2;
         while !active.insert(candidate.clone()) {
@@ -77,10 +83,6 @@ const STALE_AFTER_SECONDS: i64 = 90;
 
 /// The longest wait between attempts to record a final state.
 const FINISH_RETRY_MAX: Duration = Duration::from_secs(60);
-
-/// A worker error that becomes a run's final message is cut to this many characters. The
-/// database accepts at most 16 KiB, and a longer message could never be recorded.
-const RESULT_MESSAGE_CHARS: usize = 4096;
 
 /// How long a claim still in flight at shutdown may run, for a database or a remote queue.
 /// A claim that has not returned by then is dropped, so shutdown stays prompt.
@@ -298,10 +300,9 @@ async fn execute(
                     ("failed", Some("The run exceeded its time limit".to_owned()))
                 }
                 None => {
-                    let message: String = format!("CI could not run: {error:#}")
-                        .chars()
-                        .take(RESULT_MESSAGE_CHARS)
-                        .collect();
+                    // The cause may hold paths or credentials, so only the server log gets it.
+                    warn!(error = %format!("{error:#}"), run = %run.run_id, "CI could not run");
+                    let message = "CI could not run".to_owned();
                     let _ = send_log_lines(
                         service,
                         worker,
@@ -609,14 +610,13 @@ fn act_command(
             // Use the runner image that is already on the node; act pulls it only when it is
             // missing. Pulling on every run costs a registry round trip and fails offline.
             command.arg("--pull=false");
+            // One job at a time, so the limits below bound the whole run.
+            command.arg("--concurrent-jobs").arg("1");
             if let Some(label) = podman_label {
-                let options = run_container_options(label);
-                // Direct act gets the option from argv. The shipped wrapper combines the
-                // same value with its resource limits instead of replacing either one.
-                command
-                    .env("GITSERV_CONTAINER_OPTIONS", &options)
-                    .arg("--container-options")
-                    .arg(options);
+                command.arg("--container-options").arg(format!(
+                    "{JOB_CONTAINER_LIMITS} {}",
+                    run_container_options(label)
+                ));
             }
         }
     }
@@ -627,6 +627,10 @@ fn act_command(
     }
     command
 }
+
+/// Caps on a job container. act applies them only to a job without its own `container.options`,
+/// so a workflow can replace them; they stop a runaway job, they do not sandbox a hostile one.
+const JOB_CONTAINER_LIMITS: &str = "--cpus=2 --memory=2g --pids-limit=512";
 
 fn run_container_label(run_id: uuid::Uuid) -> String {
     format!("{RUN_LABEL_KEY}={run_id}")

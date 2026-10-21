@@ -1,20 +1,18 @@
 //! Review, profile and session regressions on both database engines.
 use crate::support::{
-    database::Database, fake_webui_bundle, native_database::token, pull_requests::Client,
+    database::{wait_until_blocked, Database},
+    fake_webui_bundle,
+    http_client::Client,
+    native_database::token,
     PASSWORD_WORK,
 };
 use axum::http::StatusCode;
 use chrono::{Duration, Utc};
 use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    ci::CiConfig,
     db, identity,
     notifications::{NotificationBroadcaster, NotificationEvent},
-    storage::ObjectStore,
 };
 use serde_json::json;
-use std::sync::Arc;
 
 async fn session(pool: &db::DbPool, user: i64) -> String {
     let id = token();
@@ -114,14 +112,7 @@ async fn signup_review(pg: bool) {
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        CiConfig::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let client = Client::login(&router, f.pool(), admin).await;
     let (status, page) = client.model("/settings?tab=access&request_page=2").await;
     assert_eq!(status, StatusCode::OK);
@@ -273,7 +264,7 @@ async fn totp_rollback(pg: bool) {
         two_factor::{self, FactorAuthority, StoredTwoFactor},
     };
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let actor =
         db::users::accounts::create_user_with_password(f.pool(), "totp_actor", None, "hash")
             .await
@@ -592,16 +583,6 @@ async fn sqlite_activity_and_cleanup_queries_seek_their_indexes() {
     f.finish().await;
 }
 
-async fn wait_blocked(raw: &sqlx::PgPool, blocker: i32) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND $1=ANY(pg_blocking_pids(pid)))").bind(blocker).fetch_one(raw).await.unwrap();
-            if blocked { break; }
-            tokio::task::yield_now().await;
-        }
-    }).await.unwrap();
-}
-
 #[tokio::test]
 async fn postgres_factor_reset_locks_the_account_before_the_factor() {
     use db::users::two_factor::{self, FactorAuthority, StoredTwoFactor};
@@ -631,9 +612,7 @@ async fn postgres_factor_reset_locks_the_account_before_the_factor() {
     )
     .await
     .unwrap();
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     let mut factor_lock = raw.begin().await.unwrap();
     let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
         .fetch_one(&mut *factor_lock)
@@ -656,7 +635,7 @@ async fn postgres_factor_reset_locks_the_account_before_the_factor() {
         )
         .await
     });
-    wait_blocked(raw, pid).await;
+    wait_until_blocked(raw, pid, 1).await;
     let mut observer = raw.begin().await.unwrap();
     sqlx::query("SET LOCAL lock_timeout='150ms'")
         .execute(&mut *observer)
@@ -682,9 +661,7 @@ async fn postgres_credential_enrollment_rechecks_expiry_after_the_session_lock_w
     let actor = f.actor("expiry_actor").await;
     for ssh in [false, true] {
         let session = session(f.pool(), actor).await;
-        let db::DbPool::Postgres(raw) = f.pool() else {
-            unreachable!()
-        };
+        let raw = f.pg();
         let mut lock = raw.begin().await.unwrap();
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *lock)
@@ -704,7 +681,7 @@ async fn postgres_credential_enrollment_rechecks_expiry_after_the_session_lock_w
                 .is_none()
             }
         });
-        wait_blocked(raw, pid).await;
+        wait_until_blocked(raw, pid, 1).await;
         sqlx::query("SELECT pg_sleep(0.5)")
             .execute(&mut *lock)
             .await

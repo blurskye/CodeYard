@@ -6,9 +6,8 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock},
+    sync::OnceLock,
 };
 
 struct RuntimeBundle {
@@ -16,8 +15,67 @@ struct RuntimeBundle {
     module: String,
 }
 static RUNTIME: OnceLock<RuntimeBundle> = OnceLock::new();
-/// Each embedded asset's ETag, hashed on first use and keyed by the asset's address.
-static ETAGS: Mutex<BTreeMap<usize, String>> = Mutex::new(BTreeMap::new());
+
+/// An asset compiled into the binary. Its ETag is hashed on first use.
+struct Embedded {
+    path: &'static str,
+    bytes: &'static [u8],
+    mime: &'static str,
+    etag: OnceLock<String>,
+}
+
+const fn embedded(path: &'static str, bytes: &'static [u8], mime: &'static str) -> Embedded {
+    Embedded {
+        path,
+        bytes,
+        mime,
+        etag: OnceLock::new(),
+    }
+}
+
+static EMBEDDED: [Embedded; 8] = [
+    embedded(
+        "/assets/logo.svg",
+        include_bytes!("../../../webui/assets/logo.svg"),
+        "image/svg+xml",
+    ),
+    embedded(
+        "/assets/logo.webp",
+        include_bytes!("../../../webui/assets/logo.webp"),
+        "image/webp",
+    ),
+    embedded(
+        "/assets/favicon.png",
+        include_bytes!("../../../webui/assets/favicon.png"),
+        "image/png",
+    ),
+    embedded(
+        "/assets/tailwind.css",
+        include_bytes!("../../../webui/assets/tailwind.css"),
+        "text/css; charset=utf-8",
+    ),
+    embedded(
+        "/assets/actions.css",
+        include_bytes!("../../../webui/assets/actions.css"),
+        "text/css; charset=utf-8",
+    ),
+    embedded(
+        "/assets/native.css",
+        include_bytes!("../../../webui/components/native.css"),
+        "text/css; charset=utf-8",
+    ),
+    embedded(
+        "/assets/fonts/mona-sans.woff2",
+        include_bytes!("../../../webui/assets/fonts/mona-sans.woff2"),
+        "font/woff2",
+    ),
+    embedded(
+        "/assets/fonts/OFL.txt",
+        include_bytes!("../../../webui/assets/fonts/OFL.txt"),
+        "text/plain; charset=utf-8",
+    ),
+];
+
 static DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 
 fn runtime() -> Result<&'static RuntimeBundle, ()> {
@@ -80,49 +138,11 @@ pub(crate) fn runtime_module() -> Result<&'static str, ()> {
 }
 
 pub async fn asset(uri: Uri, headers: HeaderMap) -> Response {
-    let native: Option<(&'static [u8], &'static str)> = match uri.path() {
-        "/assets/logo.svg" => Some((
-            include_bytes!("../../../webui/assets/logo.svg"),
-            "image/svg+xml",
-        )),
-        "/assets/logo.webp" => Some((
-            include_bytes!("../../../webui/assets/logo.webp"),
-            "image/webp",
-        )),
-        "/assets/favicon.png" => Some((
-            include_bytes!("../../../webui/assets/favicon.png"),
-            "image/png",
-        )),
-        "/assets/tailwind.css" => Some((
-            include_bytes!("../../../webui/assets/tailwind.css"),
-            "text/css; charset=utf-8",
-        )),
-        "/assets/actions.css" => Some((
-            include_bytes!("../../../webui/assets/actions.css"),
-            "text/css; charset=utf-8",
-        )),
-        "/assets/native.css" => Some((
-            include_bytes!("../../../webui/components/native.css"),
-            "text/css; charset=utf-8",
-        )),
-        "/assets/fonts/mona-sans.woff2" => Some((
-            include_bytes!("../../../webui/assets/fonts/mona-sans.woff2"),
-            "font/woff2",
-        )),
-        "/assets/fonts/OFL.txt" => Some((
-            include_bytes!("../../../webui/assets/fonts/OFL.txt"),
-            "text/plain; charset=utf-8",
-        )),
-        _ => None,
-    };
-    if let Some((bytes, mime)) = native {
-        let etag = ETAGS
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .entry(bytes.as_ptr() as usize)
-            .or_insert_with(|| format!("W/\"{:x}\"", Sha256::digest(bytes)))
-            .clone();
-        return asset_response(Body::from(bytes), mime, &etag, &headers);
+    if let Some(file) = EMBEDDED.iter().find(|file| file.path == uri.path()) {
+        let etag = file
+            .etag
+            .get_or_init(|| format!("W/\"{:x}\"", Sha256::digest(file.bytes)));
+        return asset_response(Body::from(file.bytes), file.mime, etag, &headers);
     }
     match runtime() {
         Ok(runtime) => serve_runtime(&runtime.root, &uri, &headers).await,

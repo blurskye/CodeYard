@@ -104,8 +104,7 @@ async fn insert_comment(
     .bind(review_id)
     .fetch_one(&mut *tx)
     .await?;
-    sqlx::query("UPDATE pull_requests SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
-        .bind(input.pr_id).execute(&mut *tx).await?;
+    touch_revision(&mut tx, input.pr_id).await?;
     tx.commit().await?;
 
     Ok(comment)
@@ -435,10 +434,7 @@ pub async fn discard_pending_review(pool: &PgPool, pr_id: i64, author_id: i64) -
     .await?;
     let discarded = result.rows_affected() > 0;
     if discarded {
-        sqlx::query("UPDATE pull_requests SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
-            .bind(pr_id)
-            .execute(&mut *tx)
-            .await?;
+        touch_revision(&mut tx, pr_id).await?;
     }
     tx.commit().await?;
     Ok(discarded)
@@ -603,8 +599,7 @@ pub async fn add_pull_request_review(
             .await?
         }
     };
-    sqlx::query("UPDATE pull_requests SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
-        .bind(pr_id).execute(&mut *tx).await?;
+    touch_revision(&mut tx, pr_id).await?;
     // Consuming a request belongs to the same admitted review transaction.
     sqlx::query("DELETE FROM pr_reviewers WHERE pull_request_id=$1 AND user_id=$2")
         .bind(pr_id)
@@ -719,8 +714,7 @@ pub async fn dismiss_pull_request_review(
     .bind(pr_id)
     .fetch_one(&mut *tx)
     .await?;
-    sqlx::query("UPDATE pull_requests SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
-        .bind(review.pull_request_id).execute(&mut *tx).await?;
+    touch_revision(&mut tx, review.pull_request_id).await?;
     tx.commit().await?;
 
     Ok(review)
@@ -968,4 +962,12 @@ pub async fn delete_pull_request_comment(
         .await?;
     tx.commit().await?;
     Ok(removed.rows_affected() == 1)
+}
+
+async fn touch_revision(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, pr_id: i64) -> Result<()> {
+    sqlx::query("UPDATE pull_requests SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
+        .bind(pr_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }

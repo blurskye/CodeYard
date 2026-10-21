@@ -5,7 +5,8 @@ use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, NewDelivery};
 use crate::backend::db::DbPool;
-use sha2::{Digest, Sha256};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use url::{Host, Url};
@@ -359,26 +360,11 @@ fn failed_record(outgoing: &Outgoing, duration_ms: i32, error: &str) -> NewDeliv
     }
 }
 
-/// HMAC-SHA256 from SHA-256 (RFC 2104), so no new dependency is needed.
+/// HMAC-SHA256 of `message`, the signature receivers check.
 pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    const BLOCK: usize = 64;
-    let mut block = [0u8; BLOCK];
-    if key.len() > BLOCK {
-        block[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        block[..key.len()].copy_from_slice(key);
-    }
-    let inner_pad: Vec<u8> = block.iter().map(|byte| byte ^ 0x36).collect();
-    let outer_pad: Vec<u8> = block.iter().map(|byte| byte ^ 0x5c).collect();
-    let inner = Sha256::new()
-        .chain_update(&inner_pad)
-        .chain_update(message)
-        .finalize();
-    Sha256::new()
-        .chain_update(&outer_pad)
-        .chain_update(inner)
-        .finalize()
-        .into()
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(message);
+    mac.finalize().into_bytes().into()
 }
 
 #[cfg(test)]

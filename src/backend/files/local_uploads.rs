@@ -33,10 +33,9 @@ pub async fn put_local_upload(
     content_type: &str,
     reader: impl AsyncRead + Unpin,
 ) -> Result<(), LocalUploadError> {
-    let first = files_db::get_file_by_id(pool, file_id)
+    let first = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| LocalUploadError::MetadataUnavailable)?
-        .filter(|file| file.user_id == Some(actor_id))
         .ok_or(LocalUploadError::NotFound)?;
     let time_left = first
         .upload_expires_at
@@ -51,16 +50,11 @@ pub async fn put_local_upload(
             .lock_file(&key)
             .await
             .map_err(|_| LocalUploadError::StorageUnavailable)?;
-        let file = files_db::get_file_by_id(pool, file_id)
+        let file = files_db::get_owned_file(pool, file_id, actor_id)
             .await
             .map_err(|_| LocalUploadError::MetadataUnavailable)?
-            .filter(|file| file.user_id == Some(actor_id))
             .ok_or(LocalUploadError::NotFound)?;
-        if file.is_active
-            || file
-                .upload_expires_at
-                .is_none_or(|expires| expires <= chrono::Utc::now())
-        {
+        if !file.is_pending() {
             return Err(LocalUploadError::NotPending);
         }
         if file.content_type != content_type {

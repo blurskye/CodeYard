@@ -1,9 +1,10 @@
 //! Review presentation for pull requests: the review form and reviews in the discussion,
 //! the reviewers panel, conversation badges, and inline threads on the diff. Callers decide
 //! what the viewer may do and pass those flags in. The server checks every submission again.
+use crate::webui::pages::repos::chrome::csrf;
 use crate::webui::pages::repos::issues::{
     detail::{
-        ago, author_link, comment_entry, csrf, glyph, picker_heading, DetailDraft, Glyph,
+        ago, author_link, comment_entry, glyph, picker_heading, picker_option, DetailDraft, Glyph,
         PickerPopover, PickerRow,
     },
     editor::MarkdownEditor,
@@ -12,8 +13,8 @@ use crate::webui::pages::repos::issues::{
 };
 use crate::webui::{
     components::{
-        confirm_dialog, count_label, references::References, Avatar, DraftInput, DraftTextarea,
-        Markdown,
+        confirm_dialog, count_label, references::References, short_sha, Avatar, DraftInput,
+        DraftTextarea, Markdown,
     },
     encode_component,
     navigation::NavLink,
@@ -165,11 +166,6 @@ pub(in crate::webui::pages::repos) fn timeline<'a>(
     entries.into_iter().map(|(_, entry)| entry).collect()
 }
 
-/// The short form of a commit, as the page shows it.
-fn short(sha: &str) -> &str {
-    sha.get(..7).unwrap_or(sha)
-}
-
 fn review_action(state: &str) -> &'static str {
     match state {
         "approved" => "approved these changes",
@@ -240,7 +236,7 @@ fn CommentComposer(
             input { r#type: "hidden", name: "issue_id", value: issue_id() }
             div { class: "collaboration-form-fields",
                 // The header already names the box, so the label is for screen readers only.
-                label { r#for: "comment-body", class: "repo-sr-only", "Comment (Markdown)" }
+                label { r#for: "comment-body", class: "sr-only", "Comment (Markdown)" }
                 MarkdownEditor { key: "{url}:comment:{comment}:{preview}", id: "comment-body", initial: comment, rows: 6, required: true, initial_preview: preview, references: references.clone() }
             }
             div { class: "collaboration-card-footer",
@@ -286,6 +282,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
         ""
     };
     let pending_text = count_label(pending_comments, "pending comment", "pending comments");
+    let view = if split { "?view=split" } else { "" };
     rsx! {
         details { class: "native-menu collaboration-review-menu", open: draft.is_some(),
             summary { class: "btn btn-primary collaboration-review-summary", title: "Review these changes", aria_label: "Review changes",
@@ -295,7 +292,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
             }
             div { class: "native-menu-panel collaboration-review-panel",
                 if open {
-                    form { id: "review-form", method: "post", action: format!("{url}/reviews{}", if split { "?view=split" } else { "" }), class: "collaboration-form-fields collaboration-review-form",
+                    form { id: "review-form", method: "post", action: format!("{url}/reviews{view}"), class: "collaboration-form-fields collaboration-review-form",
                         {csrf(&repo.csrf)}
                         div { class: "collaboration-review-body",
                             h3 { "Review changes" }
@@ -325,7 +322,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
                             }
                             if !reason.is_empty() { p { class: "collaboration-muted collaboration-review-reason", "{reason}" } }
                             // The header already names the box, so the label is for screen readers only.
-                            label { r#for: "review-body", class: "repo-sr-only", "Summary (Markdown)" }
+                            label { r#for: "review-body", class: "sr-only", "Summary (Markdown)" }
                             ReviewEditor { key: "{url}:review:{choice}:{body}:{preview}", commit, body, preview, references: references.clone() }
                         }
                         div { class: "collaboration-card-footer",
@@ -337,7 +334,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
                     details { class: "native-menu collaboration-review-discard",
                         summary { class: "btn btn-secondary", "Discard review" }
                         // Cancel reloads the Files changed page, which closes the dialog without JavaScript.
-                        {confirm_dialog(None, "Discard review", &format!("{url}/diff"), &format!("{url}/reviews/pending/discard"), rsx! {
+                        {confirm_dialog(None, "Discard review", &format!("{url}/diff{view}"), &format!("{url}/reviews/pending/discard{view}"), rsx! {
                             {csrf(&repo.csrf)}
                             strong { "Discard your review?" }
                             p { "This deletes {pending_text}. This cannot be undone." }
@@ -376,7 +373,8 @@ pub(in crate::webui::pages::repos) fn closed_review(draft: &ReviewDraft) -> Elem
             p { class: "collaboration-muted", "This pull request is closed; your text was not saved." }
             // DraftTextarea escapes the text as the textarea's content. A text node here would carry
             // hydration comment markers into the field.
-            DraftTextarea { name: "body", initial_value: draft.body.clone(), class: "collaboration-textarea", rows: 6u32, readonly: true }
+            label { r#for: "closed-review-body", class: "sr-only", "Review text that was not saved" }
+            DraftTextarea { id: "closed-review-body", name: "body", initial_value: draft.body.clone(), class: "collaboration-textarea", rows: 6u32, readonly: true }
         }
     }
 }
@@ -395,7 +393,7 @@ pub(in crate::webui::pages::repos) fn review_entry(
         article { id: format!("review-{}", review.id), class: "collaboration-panel collaboration-comment collaboration-review",
             header { class: "collaboration-panel-header",
                 {author_link(&review.author)} " " "{review_action(&review.state)}" " on "
-                code { title: review.commit.clone(), "{short(&review.commit)}" }
+                code { title: review.commit.clone(), "{short_sha(&review.commit)}" }
                 " "
                 {ago(&review.created)}
                 span { class: "collaboration-badge collaboration-review-state", "{review_badge(&review.state)}" }
@@ -410,7 +408,7 @@ pub(in crate::webui::pages::repos) fn review_entry(
                 {comment_entry(repo, url, (page, review.comments_offset), item_author, comment, references)}
             }
             if review.comments_start.is_some() || review.comments_more.is_some() {
-                nav { class: "collaboration-pagination", aria_label: "Review comments",
+                nav { class: "repo-pagination", aria_label: "Review comments",
                     if let Some(href) = &review.comments_start { NavLink { href: href.clone(), "First review comments" } }
                     if let Some(href) = &review.comments_more { NavLink { href: href.clone(), "More review comments" } }
                 }
@@ -520,24 +518,21 @@ fn reviewer_options(
                 for (name, pending) in rows {
                     PickerRow { key: "{name}", text: name.clone(),
                         if pending {
-                            form { method: "post", action: format!("{requests}/{}/remove", encode_component(name)), class: "collaboration-picker-form",
-                                {csrf(&repo.csrf)}
-                                button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: "true",
-                                    span { class: "collaboration-picker-check", aria_hidden: "true", "✓" }
-                                    Avatar { name: name.clone(), size: 20 }
-                                    "{name}"
-                                }
-                            }
+                            {picker_option(
+                                format!("{requests}/{}/remove", encode_component(name)),
+                                &repo.csrf,
+                                None,
+                                true,
+                                rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
+                            )}
                         } else {
-                            form { method: "post", action: requests.to_owned(), class: "collaboration-picker-form",
-                                {csrf(&repo.csrf)}
-                                input { r#type: "hidden", name: "username", value: name.clone() }
-                                button { r#type: "submit", class: "collaboration-picker-option", aria_pressed: "false",
-                                    span { class: "collaboration-picker-check", aria_hidden: "true" }
-                                    Avatar { name: name.clone(), size: 20 }
-                                    "{name}"
-                                }
-                            }
+                            {picker_option(
+                                requests.to_owned(),
+                                &repo.csrf,
+                                Some(("username", name.clone())),
+                                false,
+                                rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
+                            )}
                         }
                     }
                 }
@@ -557,7 +552,7 @@ fn reviewer_options(
 pub(in crate::webui::pages::repos) fn conversation_badges(conversation: &Conversation) -> Element {
     rsx! {
         if conversation.resolved { span { class: "collaboration-badge", "Resolved" } }
-        if conversation.outdated { span { class: "collaboration-badge", title: format!("Written on {}", short(&conversation.commit)), "Outdated" } }
+        if conversation.outdated { span { class: "collaboration-badge", title: format!("Written on {}", short_sha(&conversation.commit)), "Outdated" } }
     }
 }
 
@@ -736,7 +731,7 @@ pub(super) fn thread_block(
             if let Some(conversation) = &root.conversation {
                 if conversation.can_resolve && !thread.pending { {resolve_form(repo, url, root.id, conversation, true, split, (1, 0))} }
             }
-            if repo.signed_in {
+            if repo.signed_in && !repo.chrome.is_archived {
                 details { class: "collaboration-thread-reply-form", open: replying,
                     summary { "Reply" }
                     {line_composer(repo, url, revisions, &reply, references, split, None)}

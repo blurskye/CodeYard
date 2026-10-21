@@ -6,10 +6,8 @@
 mod contention;
 mod delivery;
 mod fixture;
-use crate::support::native_database as native;
-use crate::support::production_ci as production;
 mod provenance;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 mod session_inbox;
 
 use axum::{
@@ -429,7 +427,7 @@ async fn authority_contract(pg: bool) {
     let collision = f.repo(owner, Some(700000), "notification_collision").await;
     f.notify(700000, Some(collision), "collision-private").await;
     agrees(&f, 700000, &[]).await;
-    f.close().await;
+    f.finish().await;
 }
 
 async fn bounded_projection(pg: bool) {
@@ -532,7 +530,7 @@ async fn bounded_projection(pg: bool) {
             .filter(|r| r["repo"] == repo)
             .collect::<Vec<_>>()
     );
-    f.close().await;
+    f.finish().await;
 }
 
 async fn corrupt_row_privacy(pg: bool) {
@@ -636,7 +634,7 @@ async fn corrupt_row_privacy(pg: bool) {
     f.corrupt("UPDATE repositories SET owner_kind='user',owner_org_id=NULL,owner_user_id=900000 WHERE id=$1", &[malformed]).await;
     // A valid personal fork remains admin-readable; hidden corrupt rows do not.
     agrees(&f, recipient, &[account, fork_notice]).await;
-    f.close().await;
+    f.finish().await;
 }
 
 async fn assert_created_event(
@@ -684,11 +682,7 @@ async fn notice_count(pool: &db::DbPool, user_id: i64, kind: &str) -> usize {
 
 async fn idempotent_relationship_notifications(pg: bool) {
     let mut f = Fixture::new(pg).await;
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let owner_id = f.actor("idempotent_owner").await;
     let author_id = f.actor("idempotent_author").await;
     let reviewer_id = f.actor("idempotent_reviewer").await;
@@ -873,7 +867,7 @@ async fn idempotent_relationship_notifications(pg: bool) {
         1
     );
 
-    f.close().await;
+    f.finish().await;
 }
 
 // The notifications page model that a hydrated client receives. Requesting the model
@@ -900,13 +894,13 @@ pub(super) async fn notifications_model(client: &Client, path: &str) -> Value {
         .await
         .unwrap();
     let envelope: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(envelope["page"]["lane"], "Actions");
-    envelope["page"]["model"]["Notifications"].clone()
+    assert_eq!(envelope["page"]["lane"], "Notifications");
+    envelope["page"]["model"].clone()
 }
 
 async fn notification_history_pages(pg: bool) {
     let mut f = Fixture::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("history_owner").await;
     let user = f.actor("history_reader").await;
     let repo = f.repo(owner, None, "history_project").await;
@@ -1031,13 +1025,13 @@ async fn notification_history_pages(pg: bool) {
         let (status, _) = client.send("GET", path, "text/html", String::new()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
-    f.close().await;
+    f.finish().await;
 }
 
 // Acknowledging a row from an older page returns to that same page, not the newest one.
 async fn mark_read_keeps_history_position(pg: bool) {
     let mut f = Fixture::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let user = f.actor("position_reader").await;
     for index in 0..101 {
         f.notify(user, None, &format!("position-{index}")).await;
@@ -1073,7 +1067,7 @@ async fn mark_read_keeps_history_position(pg: bool) {
         reply.location.as_deref(),
         Some(format!("/notifications?before={cursor}").as_str())
     );
-    f.close().await;
+    f.finish().await;
 }
 
 #[tokio::test]

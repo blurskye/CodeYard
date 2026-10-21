@@ -6,16 +6,14 @@ use axum::{
 };
 use std::sync::Arc;
 
-use super::{
-    download::{asset_response, download_failure, download_response, parse_file_id},
-    Failure,
-};
+use super::download::{asset_response, download_failure, download_response, parse_file_id};
+use crate::backend::api::http::error::ApiFailure;
 
 pub async fn get_public_download_url(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(file_id): Path<String>,
-) -> Result<Response, Failure> {
+) -> Result<Response, ApiFailure> {
     let actor = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);
@@ -31,7 +29,7 @@ pub async fn public_file_redirect(
     method: Method,
     headers: HeaderMap,
     Path(file_id): Path<String>,
-) -> Result<Response, Failure> {
+) -> Result<Response, ApiFailure> {
     let actor = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);

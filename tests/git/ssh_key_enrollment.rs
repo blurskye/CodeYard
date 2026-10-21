@@ -2,12 +2,12 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client as clients;
 use crate::support::native_database as native;
-use crate::support::pull_requests as clients;
 
 use axum::http::StatusCode;
 use clients::Client;
-use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
+use codeyard::backend::db;
 use database::Database;
 use serde_json::json;
 use std::sync::Arc;
@@ -19,18 +19,11 @@ async fn contract(pg: bool) {
     use db::users::ssh_keys::SshKeyWriteRefusal as Refusal;
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let root = tempfile::tempdir().unwrap();
-    let router = create_router(AppState::new(
-        f.pool().clone(),
-        root.path().to_owned(),
-        Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
-        None,
-        Default::default(),
-        None,
-    ));
+    let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
     let bob = Client::login(&router, f.pool(), bob_id).await;
 
@@ -503,19 +496,9 @@ async fn session_enrollment_contract(pg: bool) {
                 .fetch_one(&mut *change)
                 .await
                 .unwrap();
-            let blocked = async {
-                loop {
-                    let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))")
-                        .bind(holder).fetch_one(raw).await.unwrap();
-                    if waiting {
-                        break;
-                    }
-                    tokio::task::yield_now().await;
-                }
-            };
             tokio::select! {
                 result = &mut enrollment => panic!("enrollment did not wait: {result:?}"),
-                result = tokio::time::timeout(std::time::Duration::from_secs(5), blocked) => result.expect("enrollment waits on account lock"),
+                () = database::wait_until_blocked(raw, holder, 1) => {}
             }
             sqlx::query("DELETE FROM sessions WHERE user_id=$1")
                 .bind(user.id)
@@ -606,9 +589,7 @@ async fn postgres_enrollment_locks_membership_before_accounts_and_fingerprints()
     )
     .await
     .unwrap();
-    let db::DbPool::Postgres(raw) = f.pool() else {
-        unreachable!()
-    };
+    let raw = f.pg();
     for deploy in [false, true] {
         let public =
             ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
@@ -649,13 +630,7 @@ async fn postgres_enrollment_locks_membership_before_accounts_and_fingerprints()
                 .map(|_| ())
             }
         });
-        tokio::time::timeout(std::time::Duration::from_secs(5),async {
-            loop {
-                let waiting:bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))").bind(holder).fetch_one(raw).await.unwrap();
-                if waiting { break; }
-                tokio::task::yield_now().await;
-            }
-        }).await.expect("enrollment waits for membership before taking rows or fingerprint");
+        database::wait_until_blocked(raw, holder, 1).await;
         sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE NOWAIT")
             .bind(actor)
             .fetch_one(&mut *gate)

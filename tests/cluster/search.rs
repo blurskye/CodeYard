@@ -240,7 +240,7 @@ async fn code_search_on_an_unreachable_storage_node_is_an_error_not_an_empty_rep
 
 #[tokio::test]
 async fn content_search_allows_transport_fallback_and_keeps_completed_repositories() {
-    use crate::support::{fake_webui_bundle, pull_requests::Client};
+    use crate::support::{fake_webui_bundle, http_client::Client};
     use codeyard::{
         backend::{api::create_router, app::AppState, ci::CiConfig, storage::ObjectStore},
         webui::{app::Page, pages::discovery},
@@ -309,9 +309,7 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
         Some(web.context.clone()),
     ));
     let client = Client::anonymous(&state);
-    let db::DbPool::Postgres(raw) = &database.pool else {
-        unreachable!()
-    };
+    let raw = &database.raw;
     let node = db::cluster::get_node_by_id(&database.pool, storage.context.node_id)
         .await
         .unwrap()

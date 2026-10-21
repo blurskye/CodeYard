@@ -89,7 +89,8 @@ pub async fn delete_organization_repository(
         return Ok(Conflict);
     };
     for file in files {
-        crate::backend::db::sqlite::files::delete_unlinked_release_file(&mut tx, file).await?;
+        crate::backend::db::sqlite::files::delete_unreferenced_file_in_transaction(&mut tx, file)
+            .await?;
     }
     tx.commit().await?;
     Ok(Applied(deleted))

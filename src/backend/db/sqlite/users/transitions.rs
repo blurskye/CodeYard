@@ -507,9 +507,6 @@ pub async fn compare_exchange_password(
     session: Option<&str>,
 ) -> Result<Option<User>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if clear_must_change {
-        owned_organizations_for_account_change(&mut tx, user_id).await?;
-    }
     if let Some(session) = session {
         if !current_password(&mut tx, user_id, expected, session, true).await? {
             return Ok(None);

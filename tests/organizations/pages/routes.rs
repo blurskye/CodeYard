@@ -256,6 +256,7 @@ pub async fn teams(f: &Fixture) {
                 .organization()
                 .selected_team
                 .unwrap()
+                .team
                 .slug,
             slug
         );
@@ -415,8 +416,8 @@ pub async fn teams(f: &Fixture) {
     let detail = f.get(&f.member, &path).await.organization();
     assert!(detail.teams.iter().all(|team| team.id != visible));
     let selected = detail.selected_team.as_ref().unwrap();
-    assert_eq!(selected.slug, "native_visible");
-    assert_eq!(selected.description, "Team description\nSecond line");
+    assert_eq!(selected.team.slug, "native_visible");
+    assert_eq!(selected.team.description, "Team description\nSecond line");
     // The URL names the section the page shows; an unknown name shows the overview.
     assert_eq!(
         f.get(&f.member, &format!("{path}&tab=teams"))
@@ -577,7 +578,7 @@ pub async fn teams(f: &Fixture) {
     .redirect(&path);
     let page = f.get(&f.owner, &path).await.organization();
     let detail = page.selected_team.as_ref().unwrap();
-    assert_eq!(detail.description, "Updated\nMultiline");
+    assert_eq!(detail.team.description, "Updated\nMultiline");
     assert_eq!(detail.team.name, "Renamed team");
     let source = html(page);
     assert!(source.contains("value=\"Renamed team\""), "{source}");

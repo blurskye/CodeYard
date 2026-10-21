@@ -4,7 +4,7 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as http;
+use crate::support::http_client as http;
 
 use axum::{
     body::{to_bytes, Body},
@@ -110,7 +110,7 @@ async fn contract(pg: bool) {
     // The HTML answers below render full pages, which need the browser bundle.
     bundle::install();
     let mut f = Database::new(pg).await;
-    f.execute("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE", &[]).await;
+    f.complete_setup().await;
     let owner = f.actor("upload_owner").await;
     let reader_id = f.actor("upload_reader").await;
     let root = tempfile::tempdir().unwrap();

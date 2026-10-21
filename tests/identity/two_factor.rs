@@ -3,8 +3,8 @@
 //! settings forms over HTTP. On SQLite and PostgreSQL.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::fake_webui_bundle as bundle;
+use crate::support::http_client::Client;
 use crate::support::native_database::token;
-use crate::support::pull_requests::Client;
 use crate::support::{database::Database, PASSWORD_WORK};
 use axum::{
     body::{to_bytes, Body},
@@ -35,12 +35,7 @@ const PASSWORD: &str = "correct horse battery";
 async fn fixture(pg: bool) -> Database {
     bundle::install();
     let database = Database::new(pg).await;
-    database
-        .execute(
-            "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-            &[],
-        )
-        .await;
+    database.complete_setup().await;
     database
 }
 
@@ -67,6 +62,7 @@ fn context<'a>(fresh: &'a str, user_agent: Option<&'a str>) -> SessionContext<'a
         initiating: InitiatingSession::Missing,
         fresh_id: fresh,
         user_agent,
+        client: None,
         expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
     }
 }

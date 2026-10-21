@@ -6,10 +6,9 @@
 
 use crate::support::database;
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::pull_requests as pulls;
+use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use base64::Engine as _;
 use codeyard::backend::{
     api::create_router,
     app::AppState,
@@ -33,11 +32,7 @@ struct App {
 
 async fn setup(f: &mut Database, root: &Path) -> App {
     bundle::install();
-    f.execute(
-        "INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE",
-        &[],
-    )
-    .await;
+    f.complete_setup().await;
     let owner = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
     let repository = codeyard::backend::repositories::lifecycle::provision(
@@ -137,40 +132,6 @@ fn has_file(path: &str, commit: &str, file: &str) -> bool {
 
 fn tree_has(tree: &git2::Tree, file: &str) -> bool {
     tree.get_name(file).is_some()
-}
-
-/// Saves `content` as `file` on `branch` through the editor API and returns the new tip.
-async fn save_text(client: &Client, branch: &str, file: &str, content: &str, tip: &str) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(content);
-    let saved = client
-        .expect(
-            "POST",
-            &format!("/api/repos/alice/proj/contents/{file}"),
-            json!({"content": encoded, "message": format!("Add {file}"), "branch": branch, "expected_revision": tip}),
-            StatusCode::CREATED,
-        )
-        .await;
-    saved["sha"].as_str().unwrap().to_owned()
-}
-
-/// Overwrites `file` on `branch` through the editor API and returns the new tip.
-async fn update_text(
-    client: &Client,
-    branch: &str,
-    file: &str,
-    content: &str,
-    tip: &str,
-) -> String {
-    let encoded = base64::engine::general_purpose::STANDARD.encode(content);
-    let saved = client
-        .expect(
-            "PUT",
-            &format!("/api/repos/alice/proj/contents/{file}"),
-            json!({"content": encoded, "message": format!("Change {file}"), "branch": branch, "expected_revision": tip}),
-            StatusCode::OK,
-        )
-        .await;
-    saved["commit"]["sha"].as_str().unwrap().to_owned()
 }
 
 /// Asks pull request `number` to join the stack its base branch names.
@@ -301,18 +262,28 @@ async fn middle_conflict_contract(pg: bool) {
     let path = app.repository.disk_path.clone();
     let main0 = app.alice.save("main", "README.md", "unborn").await;
     app.alice.branch("feature-1", &main0).await;
-    let one = save_text(&app.alice, "feature-1", "shared.txt", "A\n", &main0).await;
+    let one = app
+        .alice
+        .save_text("feature-1", "shared.txt", "A\n", &main0)
+        .await;
     app.alice.open_pull("One", "feature-1", "main").await;
     app.alice.branch("feature-2", &one).await;
-    let two = update_text(&app.alice, "feature-2", "shared.txt", "B\n", &one).await;
+    let two = app
+        .alice
+        .update_text("feature-2", "shared.txt", "B\n", &one)
+        .await;
     app.alice.open_pull("Two", "feature-2", "feature-1").await;
     app.alice.branch("feature-3", &two).await;
-    save_text(&app.alice, "feature-3", "top.txt", "3\n", &two).await;
+    app.alice
+        .save_text("feature-3", "top.txt", "3\n", &two)
+        .await;
     app.alice.open_pull("Three", "feature-3", "feature-2").await;
     join(&app.alice, 2).await;
     join(&app.alice, 3).await;
     // The bottom layer changes the line that the middle layer changes, so the middle conflicts.
-    update_text(&app.alice, "feature-1", "shared.txt", "X\n", &one).await;
+    app.alice
+        .update_text("feature-1", "shared.txt", "X\n", &one)
+        .await;
     let before = refs_of(&path);
 
     let (status, refused) = rebase(&app.alice, 1).await;
@@ -1020,7 +991,7 @@ async fn slow_ci_admission_contract(restack: bool) {
     )
     .await;
     let main = app.alice.save("main", "README.md", "unborn").await;
-    let main = save_text(&app.alice, "main", ".github/workflows/ci.yml", "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n", &main).await;
+    let main = app.alice.save_text("main", ".github/workflows/ci.yml", "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n", &main).await;
     app.alice.branch("feature-1", &main).await;
     let one = app.alice.save("feature-1", "one.txt", &main).await;
     app.alice.open_draft("One", "feature-1", "main").await;
@@ -1031,9 +1002,7 @@ async fn slow_ci_admission_contract(restack: bool) {
     app.alice.save("main", "new.txt", &main).await;
     f.execute("UPDATE pull_requests SET is_draft = FALSE", &[])
         .await;
-    let db::DbPool::Postgres(pool) = f.pool() else {
-        unreachable!()
-    };
+    let pool = f.pg();
     let mut lock = pool.begin().await.unwrap();
     sqlx::query("LOCK TABLE ci_runs IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *lock)

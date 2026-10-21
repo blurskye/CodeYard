@@ -2,7 +2,7 @@ use super::{
     detail::{ago, author_link, glyph, item_icon, labels, Glyph},
     filter_menu::{Choice, FilterMenu, Mark},
     label_hex,
-    search::search_text,
+    search::{search_text, SORTS},
     search_box::SearchBox,
     Item, Kind, ListCounts, ListFilters, Repository,
 };
@@ -31,6 +31,10 @@ pub(super) fn empty_title(kind: Kind, state: &str, query: &str) -> String {
     }
 }
 fn contribute(repo: &Repository, kind: Kind) -> Element {
+    // An archived repository takes no new issues or pull requests.
+    if repo.chrome.is_archived {
+        return rsx! {};
+    }
     rsx! {
         if repo.signed_in {
             NavLink { class: "btn btn-primary", href: format!("{}/new", repo.family_url(kind)), "New {kind.singular()}" }
@@ -86,23 +90,24 @@ fn row_state(kind: Kind, item: &Item) -> &str {
 /// The reviewers' state of a pull request row: a check mark when approved, a cross when changes
 /// are requested. The tooltip names the state.
 fn review_mark(state: &str) -> Element {
-    let (label, icon) = match state {
-        "approved" => ("Approved", Glyph::Check),
-        _ => ("Changes requested", Glyph::Cross),
-    };
-    rsx! {
-        span { class: "collaboration-row-state collaboration-row-state-{state}", title: label.to_owned(), role: "img", aria_label: label.to_owned(), {glyph(icon)} }
+    match state {
+        "approved" => row_mark(state, "Approved", Glyph::Check),
+        _ => row_mark(state, "Changes requested", Glyph::Cross),
     }
 }
 
 /// The checks state of a pull request row: a check mark when every run passed, a ring while they
 /// run, and a cross when one did not pass. The tooltip names the state.
 fn check_mark(state: &str) -> Element {
-    let (label, icon) = match state {
-        "success" => ("Checks passed", Glyph::Check),
-        "pending" => ("Checks running", Glyph::Pending),
-        _ => ("Checks failed", Glyph::Cross),
-    };
+    match state {
+        "success" => row_mark(state, "Checks passed", Glyph::Check),
+        "pending" => row_mark(state, "Checks running", Glyph::Pending),
+        _ => row_mark(state, "Checks failed", Glyph::Cross),
+    }
+}
+
+/// A small mark on a list row. Its tooltip and accessible name say what it means.
+fn row_mark(state: &str, label: &str, icon: Glyph) -> Element {
     rsx! {
         span { class: "collaboration-row-state collaboration-row-state-{state}", title: label.to_owned(), role: "img", aria_label: label.to_owned(), {glyph(icon)} }
     }
@@ -115,7 +120,7 @@ pub(in crate::webui::pages::repos) fn rows(url: &str, kind: Kind, items: &[Item]
     rsx! {
         for item in items {
             article { class: "collaboration-row",
-                div { class: "collaboration-row-icon", title: row_state(kind, item).to_owned(), {item_icon(kind, row_state(kind, item))} span { class: "repo-sr-only", "{row_state(kind, item)} {kind.singular()}" } }
+                div { class: "collaboration-row-icon", title: row_state(kind, item).to_owned(), {item_icon(kind, row_state(kind, item))} span { class: "sr-only", "{row_state(kind, item)} {kind.singular()}" } }
                 div { class: "collaboration-row-content",
                     div { class: "collaboration-row-title",
                         NavLink { class: "collaboration-title-link", href: format!("{url}/{}", item.number), "{item.title}" }
@@ -162,32 +167,6 @@ fn search_form(url: &str, kind: Kind, state: &str, query: &str, filters: &ListFi
     }
 }
 
-/// A filter menu: a button with the filter's name and a caret, and a panel of choices. It is a
-/// native menu, so it opens without scripts. It is marked when a filter in it is set.
-pub(in crate::webui::pages::repos) fn filter_menu(
-    title: &str,
-    set: bool,
-    choices: Element,
-) -> Element {
-    rsx! {
-        details { class: if set { "native-menu collaboration-filter-menu collaboration-filter-set" } else { "native-menu collaboration-filter-menu" },
-            summary { class: "collaboration-filter-button", span { "{title}" } {glyph(Glyph::Caret)} }
-            div { class: "native-menu-panel collaboration-filter-panel", {choices} }
-        }
-    }
-}
-
-/// One choice in a filter menu: a link to the list with that choice made. The choice in use is
-/// checked.
-pub(in crate::webui::pages::repos) fn choice(href: String, text: &str, chosen: bool) -> Element {
-    rsx! {
-        NavLink { class: if chosen { "collaboration-filter-option collaboration-filter-chosen" } else { "collaboration-filter-option" }, href: href, aria_current: chosen.then(|| "true".to_owned()),
-            span { class: "collaboration-filter-check", aria_hidden: "true", if chosen { {glyph(Glyph::Check)} } }
-            span { "{text}" }
-        }
-    }
-}
-
 /// Copies only selected values, never the choice catalogues used to render the menus.
 fn selected_filters(filters: &ListFilters) -> ListFilters {
     ListFilters {
@@ -223,14 +202,6 @@ pub(super) fn toggle_label(filters: &ListFilters, name: &str) -> ListFilters {
 /// that filter set, so picking one applies it at once. The labels menu adds or removes one label
 /// per link.
 fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> Element {
-    const SORTS: [(&str, &str); 6] = [
-        ("newest", "Newest"),
-        ("oldest", "Oldest"),
-        ("most-commented", "Most commented"),
-        ("least-commented", "Least commented"),
-        ("recently-updated", "Recently updated"),
-        ("least-recently-updated", "Least recently updated"),
-    ];
     let href = |change: ListFilters| list_href(url, state, query, &change);
     let sort = if filters.sort.is_empty() {
         "newest"
@@ -379,9 +350,9 @@ pub fn list(
                     header { class: "collaboration-panel-header collaboration-list-header",
                         nav { class: "collaboration-state-filters", aria_label: "Entry state",
                             for (value, title, count) in [("open", "Open", counts.open), ("closed", "Closed", counts.closed)] {
-                                NavLink { href: list_href(&url, value, query, filters), class: if state == value { "collaboration-filter-link collaboration-filter-active" } else { "collaboration-filter-link" },
+                                NavLink { href: list_href(&url, value, query, filters), class: if state == value { "collaboration-filter-link collaboration-filter-active" } else { "collaboration-filter-link" }, aria_current: (state == value).then(|| "page".to_owned()),
                                     {item_icon(kind, value)}
-                                    span { aria_current: if state == value { "page" } else { "false" }, "{count} {title}" }
+                                    span { "{count} {title}" }
                                 }
                             }
                         }
@@ -404,7 +375,7 @@ pub fn list(
                     {rows(&url, kind, items)}
                 }
                 if filters.page > 1 || filters.has_more {
-                    nav { class: "collaboration-pagination", aria_label: if kind == Kind::Issue { "Issue pages" } else { "Pull request pages" },
+                    nav { class: "repo-pagination", aria_label: if kind == Kind::Issue { "Issue pages" } else { "Pull request pages" },
                         if filters.page > 1 { NavLink { class: "btn btn-secondary", href: format!("{}&page={}", list_href(&url, state, query, filters), filters.page - 1), "Previous" } }
                         if filters.has_more { NavLink { class: "btn btn-secondary", href: format!("{}&page={}", list_href(&url, state, query, filters), filters.page + 1), "Next" } }
                     }

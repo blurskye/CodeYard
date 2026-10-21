@@ -32,13 +32,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=package /runtime/ /
-COPY --chmod=0755 scripts/act-local-runner.sh /usr/local/bin/act-local-runner
-ARG ACT_VERSION=0.2.89
 # Archive pin for v0.2.89 (published 2026-06-01), taken from the release's
 # checksums.txt and matched against the downloaded archive. Versions before
-# 0.2.86 have CVE-2026-34041 and CVE-2026-34042. A version override must still
-# match this hash; do not trust a checksum downloaded beside mutable bytes.
-RUN curl -fsSL "https://github.com/nektos/act/releases/download/v${ACT_VERSION}/act_Linux_x86_64.tar.gz" -o /tmp/codeyard-act.tar.gz \
+# 0.2.86 have CVE-2026-34041 and CVE-2026-34042. To change the version, change the
+# URL and the hash together; do not trust a checksum downloaded beside mutable bytes.
+RUN curl -fsSL "https://github.com/nektos/act/releases/download/v0.2.89/act_Linux_x86_64.tar.gz" -o /tmp/codeyard-act.tar.gz \
     && printf '%s\n' '0191d6f1f3b716b5c55820032605d05fc3c1cdbf581ebeff655019e5dd1524c0  /tmp/codeyard-act.tar.gz' | sha256sum -c - \
     && tar -xzf /tmp/codeyard-act.tar.gz -C /usr/local/bin act \
     && chown 0:0 /usr/local/bin/act \

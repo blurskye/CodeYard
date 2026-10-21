@@ -1,4 +1,4 @@
-use crate::backend::db::models::{RepoContributor, RepoLanguage};
+use crate::backend::db::models::RepoLanguage;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -104,54 +104,4 @@ pub async fn get_primary_repo_languages(
     }
     query.push(")) ranked WHERE rn = 1");
     Ok(query.build_query_as().fetch_all(pool).await?)
-}
-
-pub async fn upsert_repo_contributors(
-    pool: &PgPool,
-    repo_id: i64,
-    contributors: &[(String, String, i32, Option<i64>)],
-) -> Result<()> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
-        .bind(repo_id)
-        .fetch_one(&mut *tx)
-        .await?;
-    sqlx::query("DELETE FROM repo_contributors WHERE repo_id=$1")
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await?;
-
-    for (name, email, commits, user_id) in contributors {
-        sqlx::query(
-            r#"
-            INSERT INTO repo_contributors (repo_id, name, email, commits_count, user_id)
-            VALUES ($1, $2, $3, $4, $5)
-            "#,
-        )
-        .bind(repo_id)
-        .bind(name)
-        .bind(email)
-        .bind(commits)
-        .bind(user_id)
-        .execute(&mut *tx)
-        .await?;
-    }
-    tx.commit().await?;
-    Ok(())
-}
-
-pub async fn get_repo_contributors(
-    pool: &PgPool,
-    repo_id: i64,
-    limit: i64,
-) -> Result<Vec<RepoContributor>> {
-    let contributors = sqlx::query_as::<_, RepoContributor>(
-        "SELECT * FROM repo_contributors WHERE repo_id = $1 ORDER BY commits_count DESC LIMIT $2",
-    )
-    .bind(repo_id)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?;
-
-    Ok(contributors)
 }

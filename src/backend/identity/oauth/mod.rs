@@ -3,6 +3,7 @@
 pub mod providers;
 
 use crate::backend::{
+    crypto::is_hex_token,
     db::{
         users::{
             sessions as states,
@@ -11,7 +12,6 @@ use crate::backend::{
         DbPool,
     },
     identity::{
-        admission::{self, AdmissionError},
         sessions::{self, SessionContext, SessionIssueError},
         setup, AuthenticatedAccount,
     },
@@ -25,7 +25,6 @@ pub enum OAuthError {
     InvalidState,
     InvalidPkce,
     SetupRequired,
-    Admission(AdmissionError),
     StateUnavailable,
     AccountUnavailable,
     ClientUnavailable,
@@ -38,11 +37,7 @@ pub enum OAuthError {
 }
 
 pub fn validate_callback(code: &str, token: &str) -> Result<(), OAuthError> {
-    if code.is_empty()
-        || code.len() > 4096
-        || token.len() != 64
-        || !token.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
+    if code.is_empty() || code.len() > 4096 || !is_hex_token(token, 64) {
         return Err(OAuthError::InvalidCode);
     }
     Ok(())
@@ -70,9 +65,6 @@ pub async fn begin(
     let meta = providers::provider_meta(provider).ok_or(OAuthError::UnknownProvider)?;
     let (client, _) = providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
     require_setup(pool).await?;
-    admission::admit_login(pool, None, browser_nonce)
-        .await
-        .map_err(OAuthError::Admission)?;
     states::save_bound_oauth_state(
         pool,
         state_token,

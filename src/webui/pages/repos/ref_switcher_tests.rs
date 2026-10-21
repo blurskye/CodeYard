@@ -10,21 +10,16 @@ fn branch_menu_qualifies_names_even_when_the_name_starts_with_refs() {
 }
 
 #[test]
-fn option_urls_and_rendered_matches_are_bounded_and_borrowed() {
-    let names = (0..10_000)
+fn the_filter_reaches_names_past_the_drawn_limit() {
+    let names = (0..200)
         .map(|index| format!("branch-{index}"))
         .collect::<Vec<_>>();
     let options = ref_options("/u/r", "blob", &"a".repeat(3072), &names, "");
-    assert_eq!(options.len(), MAX_REF_OPTIONS);
-    assert!(
-        options
-            .iter()
-            .map(|option| option.href.len())
-            .sum::<usize>()
-            < 200_000
-    );
+    assert_eq!(options.len(), names.len());
     let matches = matching(&options, "branch-1");
+    assert_eq!(matches.len(), MAX_REF_OPTIONS);
     assert!(std::ptr::eq(matches[0], &options[1]));
+    assert_eq!(matching(&options, "branch-199").len(), 1);
     let html = crate::webui::tests::in_scope(|| {
         dioxus_ssr::render_element(rsx! {
             RefSwitcher { base: "/u/r", current: "main", branches: options.clone(), tags: vec![] }
