@@ -16,7 +16,7 @@ pub fn router() -> Router<Arc<AppState>> {
 }
 
 /// The name of the database engine in use.
-pub(super) fn database_name(pool: &db::DbPool) -> &'static str {
+fn database_name(pool: &db::DbPool) -> &'static str {
     match pool {
         db::DbPool::Postgres(_) => "PostgreSQL",
         db::DbPool::Sqlite(_) => "SQLite",

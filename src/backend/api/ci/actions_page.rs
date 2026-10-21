@@ -107,6 +107,37 @@ fn bounded_limit(
     }
 }
 
+/// The jobs and steps the run's workflow files list at its commit. A slow or failed read only
+/// means the steps appear as their logs arrive.
+async fn planned_jobs(
+    ctx: &PageContext,
+    repository: &db::models::Repository,
+    sha: Option<&str>,
+    paths: &str,
+) -> Vec<view_actions::PlannedJob> {
+    let Some(sha) = sha else {
+        return Vec::new();
+    };
+    let store = repo_store(repository, ctx.state.cluster.as_ref());
+    let listed = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::backend::ci::list_workflows_for_ref(&store, sha),
+    )
+    .await;
+    let Ok(Ok(definitions)) = listed else {
+        return Vec::new();
+    };
+    definitions
+        .into_iter()
+        .filter(|definition| paths.split(',').any(|path| path.trim() == definition.path))
+        .flat_map(|definition| definition.jobs)
+        .map(|job| view_actions::PlannedJob {
+            name: job.name,
+            steps: job.steps,
+        })
+        .collect()
+}
+
 fn run_matches_repository(run_repo_id: i64, scoped_repo_id: Option<i64>) -> bool {
     scoped_repo_id.is_none_or(|repo_id| repo_id == run_repo_id)
 }
@@ -407,12 +438,26 @@ async fn actions(
             Ok(None) => None,
             _ => return unavailable(&ctx),
         };
+        // When the workflow list above could not be read, the storage node is not answering,
+        // so the page does not wait on it a second time.
+        let planned = if workflow_warning.is_some() {
+            Vec::new()
+        } else {
+            planned_jobs(
+                &ctx,
+                &run_repository,
+                run.head_sha.as_deref(),
+                &run.workflow_path,
+            )
+            .await
+        };
         Some(view_actions::SelectedRun {
             run: map_run(run, &run_repository),
             logs,
             deployment,
             fetched_lines,
             logs_truncated: false,
+            planned,
         })
     } else {
         None

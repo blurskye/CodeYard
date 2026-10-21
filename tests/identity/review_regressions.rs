@@ -238,11 +238,12 @@ async fn sqlite_admin_search_matches_unicode_without_interpreting_regex_syntax()
         assert_eq!(
             db::users::accounts::count_matching_users(f.pool(), query)
                 .await
-                .unwrap(),
+                .unwrap()
+                .0,
             1
         );
         assert_eq!(
-            db::users::accounts::list_admin_users(f.pool(), query, 30, 0)
+            db::users::accounts::list_admin_users(f.pool(), query, "", 30, 0)
                 .await
                 .unwrap()
                 .len(),
@@ -252,7 +253,8 @@ async fn sqlite_admin_search_matches_unicode_without_interpreting_regex_syntax()
     assert_eq!(
         db::users::accounts::count_matching_users(f.pool(), ".*")
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         0
     );
     f.finish().await;

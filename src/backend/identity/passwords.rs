@@ -6,6 +6,7 @@ use argon2::{
 };
 use rand::rngs::OsRng;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::sync::Semaphore;
 
 pub const MAX_PASSWORD_BYTES: usize = 1024;
@@ -19,6 +20,9 @@ const MAX_ITERATIONS: u32 = 6;
 const MAX_PARALLELISM: u32 = 4;
 const DUMMY: &str = "$argon2id$v=19$m=19456,t=2,p=1$cHJvZHVjdGlvbi1kdW1teQ$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 static WORK: OnceLock<Arc<Semaphore>> = OnceLock::new();
+/// How long a hash waits for one of the four running ones to finish before the request is
+/// refused as busy. A burst of sign-ins queues briefly instead of failing at once.
+const PERMIT_WAIT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PasswordError {
@@ -85,6 +89,7 @@ async fn blocking<T: Send + 'static>(
 ) -> Result<T, PasswordError> {
     blocking_on(
         WORK.get_or_init(|| Arc::new(Semaphore::new(4))).clone(),
+        PERMIT_WAIT,
         work,
     )
     .await
@@ -92,9 +97,13 @@ async fn blocking<T: Send + 'static>(
 
 async fn blocking_on<T: Send + 'static>(
     gate: Arc<Semaphore>,
+    wait: Duration,
     work: impl FnOnce() -> Result<T, PasswordError> + Send + 'static,
 ) -> Result<T, PasswordError> {
-    let permit = gate.try_acquire_owned().map_err(|_| PasswordError::Busy)?;
+    let permit = tokio::time::timeout(wait, gate.acquire_owned())
+        .await
+        .map_err(|_| PasswordError::Busy)?
+        .map_err(|_| PasswordError::Failed)?;
     tokio::task::spawn_blocking(move || {
         // Cancellation of the awaiting task must NOT release a running KDF's permit.
         let _permit = permit;
@@ -224,7 +233,7 @@ mod tests {
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let work_gate = gate.clone();
         let task = tokio::spawn(async move {
-            blocking_on(work_gate, move || {
+            blocking_on(work_gate, Duration::ZERO, move || {
                 started_tx.send(()).unwrap();
                 release_rx.recv().unwrap();
                 Ok(())
@@ -234,7 +243,7 @@ mod tests {
         started_rx.await.unwrap();
         task.abort();
         assert_eq!(
-            blocking_on(gate.clone(), || Ok(())).await,
+            blocking_on(gate.clone(), Duration::ZERO, || Ok(())).await,
             Err(PasswordError::Busy)
         );
         release_tx.send(()).unwrap();

@@ -302,42 +302,21 @@ pub async fn update_user_profile(
     Ok(result)
 }
 
-pub async fn count_matching_users(pool: &PgPool, text: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0")
+/// Accounts that match the search: all of them, the administrators and the banned ones.
+pub async fn count_matching_users(pool: &PgPool, text: &str) -> Result<(i64, i64, i64)> {
+    Ok(sqlx::query_as("SELECT COUNT(*), COUNT(*) FILTER (WHERE is_admin), COUNT(*) FILTER (WHERE is_banned) FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0")
         .bind(text.trim().to_lowercase()).fetch_one(pool).await?)
 }
 
 pub async fn list_admin_users(
     pool: &PgPool,
     text: &str,
+    role: &str,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<AdminUser>> {
-    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0 ORDER BY username,id LIMIT $2 OFFSET $3")
-        .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
-}
-
-pub async fn admin_totals(pool: &PgPool) -> Result<(i64, i64, i64)> {
-    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM users WHERE is_banned), ((SELECT COALESCE(SUM(size_bytes),0) FROM repositories) + (SELECT COALESCE(SUM(file_size),0) FROM files WHERE is_active))::BIGINT")
-        .fetch_one(pool).await?)
-}
-
-/// Repositories, organizations and queued CI runs, for the admin overview.
-pub async fn admin_site_counts(pool: &PgPool) -> Result<(i64, i64, i64)> {
-    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM repositories), (SELECT COUNT(*) FROM organizations), (SELECT COUNT(*) FROM ci_runs WHERE status = 'queued')")
-        .fetch_one(pool)
-        .await?)
-}
-
-/// The five newest accounts as (id, username, created).
-pub async fn recent_admin_accounts(
-    pool: &PgPool,
-) -> Result<Vec<(i64, String, chrono::DateTime<chrono::Utc>)>> {
-    Ok(sqlx::query_as(
-        "SELECT id,username,created_at FROM users ORDER BY created_at DESC,id DESC LIMIT 5",
-    )
-    .fetch_all(pool)
-    .await?)
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0) AND CASE $4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE TRUE END ORDER BY username,id LIMIT $2 OFFSET $3")
+        .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
 }
 
 pub async fn list_admin_account_summaries(
@@ -455,58 +434,41 @@ pub async fn list_admin_activity_points(
                 INTERVAL '1 day'
             )::DATE AS day
         ),
-        contribution_daily AS (
-            SELECT day, SUM(weight)::BIGINT AS daily_contributions
+        count_daily AS (
+            SELECT day, SUM(commits)::BIGINT AS commits, SUM(pulls_opened)::BIGINT AS pulls_opened,
+                SUM(pulls_merged)::BIGINT AS pulls_merged, SUM(issues_opened)::BIGINT AS issues_opened,
+                SUM(issues_closed)::BIGINT AS issues_closed, SUM(runs)::BIGINT AS runs
             FROM (
-                SELECT DATE(cr.created_at) AS day, COUNT(*)::BIGINT AS weight
-                FROM ci_runs cr
-                WHERE cr.triggered_by_id IS NOT NULL
-                  AND cr.event = 'push'
-                  AND cr.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(cr.created_at)
+                SELECT DATE(rp.created_at) AS day, COALESCE(SUM(rp.commit_count), 0)::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT
+                FROM repository_pushes rp
+                WHERE rp.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                GROUP BY DATE(rp.created_at)
                 UNION ALL
-                SELECT DATE(pr.created_at) AS day, COUNT(*)::BIGINT AS weight
+                SELECT DATE(pr.created_at) AS day, 0::BIGINT, COUNT(*)::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT
                 FROM pull_requests pr
                 WHERE pr.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
                 GROUP BY DATE(pr.created_at)
                 UNION ALL
-                SELECT DATE(i.created_at) AS day, COUNT(*)::BIGINT AS weight
+                SELECT DATE(pr.merged_at) AS day, 0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT
+                FROM pull_requests pr
+                WHERE pr.merged_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                GROUP BY DATE(pr.merged_at)
+                UNION ALL
+                SELECT DATE(i.created_at) AS day, 0::BIGINT, 0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT, 0::BIGINT, 0::BIGINT
                 FROM issues i
                 WHERE i.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
                 GROUP BY DATE(i.created_at)
                 UNION ALL
-                SELECT DATE(ic.created_at) AS day, COUNT(*)::BIGINT AS weight
-                FROM issue_comments ic
-                WHERE ic.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(ic.created_at)
+                SELECT DATE(i.closed_at) AS day, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT, 0::BIGINT
+                FROM issues i
+                WHERE i.closed_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                GROUP BY DATE(i.closed_at)
                 UNION ALL
-                SELECT DATE(pc.created_at) AS day, COUNT(*)::BIGINT AS weight
-                FROM pr_comments pc
-                WHERE NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id = pc.review_id AND v.state = 'pending') AND pc.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(pc.created_at)
-                UNION ALL
-                SELECT DATE(prv.created_at) AS day, COUNT(*)::BIGINT AS weight
-                FROM pr_reviews prv
-                WHERE prv.state <> 'pending' AND prv.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(prv.created_at)
-                UNION ALL
-                SELECT DATE(rel.created_at) AS day, COUNT(*)::BIGINT AS weight
-                FROM releases rel
-                WHERE rel.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(rel.created_at)
-                UNION ALL
-                SELECT DATE(r.created_at) AS day, COUNT(*)::BIGINT AS weight
-                FROM repositories r
-                WHERE r.owner_kind = 'user'
-                  AND r.owner_user_id IS NOT NULL
-                  AND r.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(r.created_at)
-                UNION ALL
-                SELECT DATE(rc.created_at) AS day, COALESCE(SUM(rc.commit_count), 0)::BIGINT AS weight
-                FROM repository_pushes rc
-                WHERE rc.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-                GROUP BY DATE(rc.created_at)
-            ) contribution_events
+                SELECT DATE(cr.created_at) AS day, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, 0::BIGINT, COUNT(*)::BIGINT
+                FROM ci_runs cr
+                WHERE cr.created_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+                GROUP BY DATE(cr.created_at)
+            ) count_events(day, commits, pulls_opened, pulls_merged, issues_opened, issues_closed, runs)
             GROUP BY day
         ),
         repo_storage_recent AS (
@@ -565,12 +527,16 @@ pub async fn list_admin_activity_points(
         )
         SELECT
             d.day,
-            COALESCE(c.daily_contributions, 0)::BIGINT AS daily_contributions,
-            SUM(COALESCE(c.daily_contributions, 0)) OVER (ORDER BY d.day ASC)::BIGINT AS cumulative_contributions,
+            COALESCE(c.commits, 0)::BIGINT AS commits,
+            COALESCE(c.pulls_opened, 0)::BIGINT AS pulls_opened,
+            COALESCE(c.pulls_merged, 0)::BIGINT AS pulls_merged,
+            COALESCE(c.issues_opened, 0)::BIGINT AS issues_opened,
+            COALESCE(c.issues_closed, 0)::BIGINT AS issues_closed,
+            COALESCE(c.runs, 0)::BIGINT AS runs,
             COALESCE(s.daily_storage_bytes, 0)::BIGINT AS daily_storage_bytes,
             SUM(COALESCE(s.daily_storage_bytes, 0)) OVER (ORDER BY d.day ASC)::BIGINT AS cumulative_storage_bytes
         FROM day_span d
-        LEFT JOIN contribution_daily c ON c.day = d.day
+        LEFT JOIN count_daily c ON c.day = d.day
         LEFT JOIN storage_daily s ON s.day = d.day
         ORDER BY d.day ASC
         "#,

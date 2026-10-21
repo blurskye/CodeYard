@@ -8,7 +8,7 @@ use crate::webui::pages::repos::{
     ref_switcher::{RefOption, RefSwitcher},
 };
 use crate::webui::{
-    components::{compact_date, current_time, relative_date, short_sha, Avatar, CopyButton},
+    components::{compact_date, short_sha, Avatar, CopyButton, LiveTime},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -26,8 +26,7 @@ pub struct Commit {
 
 /// A commit date as an age ("3 days ago"), with the exact time as its hover text.
 pub(in crate::webui::pages::repos) fn commit_date(value: &str) -> Element {
-    let age = relative_date(value, current_time()).unwrap_or_else(|| compact_date(value));
-    rsx! { time { datetime: value.to_owned(), title: value.to_owned(), "{age}" } }
+    rsx! { LiveTime { value: value.to_owned(), title: Some(value.to_owned()) } }
 }
 
 /// The commit that last changed a file or folder, with its people, the rest of its message, and a

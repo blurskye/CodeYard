@@ -4,7 +4,7 @@ use super::{
     ActionsPage,
 };
 use crate::webui::{
-    components::{relative_time, short_sha},
+    components::{relative_time, short_sha, LiveTime},
     encode_component,
     navigation::{NavLink, RefreshLink},
 };
@@ -58,6 +58,15 @@ pub struct SelectedRun {
     pub fetched_lines: usize,
     #[serde(default)]
     pub logs_truncated: bool,
+    /// The jobs and steps the run's workflow file lists, shown before their logs arrive.
+    #[serde(default)]
+    pub planned: Vec<PlannedJob>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlannedJob {
+    pub name: String,
+    pub steps: Vec<String>,
 }
 
 pub(super) fn display_workflow(model: &ActionsPage, run: &Run) -> String {
@@ -138,7 +147,9 @@ pub(super) fn selected_run(model: &ActionsPage, selected: std::rc::Rc<SelectedRu
 #[component]
 fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> Element {
     let projection = use_memo(use_reactive((&selected,), |(selected,)| {
-        std::rc::Rc::new(logs::project_logs(&selected.logs, &selected.run.status))
+        let mut jobs = logs::project_logs(&selected.logs, &selected.run.status);
+        logs::add_planned_steps(&mut jobs, &selected.planned, &selected.run.status);
+        std::rc::Rc::new(jobs)
     }));
     let jobs = projection();
     let chosen = logs::selected_job(&jobs, model.value("workflow_job"));
@@ -224,7 +235,7 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                     section { class: "actions-summary-card", id: "run-summary", "aria-label": "Run summary",
                         dl { class: "actions-summary-grid",
                             div { dt { "Triggered" } dd { "via {run.event}" }
-                                dd { class: "actions-summary-secondary", span { title: logs::timestamp(run.created_at), "{relative_time(run.created_at)}" } }
+                                dd { class: "actions-summary-secondary", LiveTime { value: logs::rfc3339(run.created_at), title: Some(logs::timestamp(run.created_at)) } }
                             }
                             div { dt { "Status" } dd { {status_chip(&run.status)} } }
                             div { dt { "Total duration" } dd { "{run_duration(run)}" } }

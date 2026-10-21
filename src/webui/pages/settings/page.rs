@@ -188,15 +188,26 @@ pub fn settings_nav(current: &str) -> Element {
             ],
         ),
     ];
+    section_nav("Account settings", &groups, current)
+}
+
+/// One titled group of sidebar links: each link is its address, label, section id and icon.
+pub(crate) type NavGroup = (
+    &'static str,
+    Vec<(&'static str, &'static str, &'static str, ProfileIcon)>,
+);
+
+/// A settings sidebar: titled groups of section links, with the current one marked. A phone
+/// has no room for the column, so the same links are one menu there.
+pub(crate) fn section_nav(name: &str, groups: &[NavGroup], current: &str) -> Element {
     let label = groups
         .iter()
         .flat_map(|(_, tabs)| tabs)
         .find(|tab| tab.2 == current)
         .map_or("Settings", |tab| tab.1);
     rsx! {
-        // A phone has no room for the tab column, so the same links are one menu there.
         details { class: "identity-settings-picker",
-            summary { aria_label: "Account settings sections",
+            summary { aria_label: "{name} sections",
                 span { "{label}" }
                 svg { width: "16", height: "16", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true", path { d: "m6 9 6 6 6-6" } }
             }
@@ -211,7 +222,7 @@ pub fn settings_nav(current: &str) -> Element {
                 }
             }
         }
-        nav { class: "identity-settings-nav", aria_label: "Account settings",
+        nav { class: "identity-settings-nav", aria_label: "{name}",
             for (index, (title, tabs)) in groups.iter().enumerate() {
                 p {
                     class: if index == 0 { "identity-settings-nav-title" } else { "identity-settings-nav-title identity-settings-nav-section" },

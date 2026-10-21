@@ -389,7 +389,9 @@
 }
 .identity-settings-nav-link svg { flex-shrink: 0; color: var(--muted-foreground); }
 .identity-settings-nav-link:hover { background: var(--accent); }
-.identity-settings-nav-current { background: var(--accent); font-weight: 600; }
+.identity-settings-nav-current { position: relative; background: var(--accent); font-weight: 600; }
+/* The current section carries an accent bar at its edge, as GitHub's settings do. */
+.identity-settings-nav .identity-settings-nav-current::before { content: ""; position: absolute; top: 6px; bottom: 6px; left: -8px; width: 4px; border-radius: 6px; background: var(--primary); }
 .identity-settings-nav-current svg { color: var(--foreground); }
 .identity-settings-content { min-width: 0; }
 .identity-settings-section { padding-bottom: 28px; }
@@ -421,7 +423,6 @@
   .identity-avatar-buttons .btn { width: auto; }
 }
 .identity-row-list { overflow: hidden; border: 1px solid var(--border); border-radius: 6px; }
-.identity-admin-panel > .identity-row-list { margin-bottom: 20px; }
 .identity-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 16px; }
 .identity-row + .identity-row { border-top: 1px solid var(--border); }
 .identity-row-main { min-width: 0; }
@@ -445,26 +446,37 @@
   .org-settings-nav { flex-direction: row; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
   .org-settings-nav .identity-settings-nav-title { display: none; }
   .org-settings-nav .identity-settings-nav-link { flex: 0 0 auto; white-space: nowrap; }
+  .org-settings-nav .identity-settings-nav-current::before { content: none; }
 }
 @media (max-width: 520px) {
   .identity-settings-alert, .identity-row { align-items: flex-start; flex-direction: column; }
   .identity-avatar-editor { align-items: stretch; flex-direction: column; }
   .identity-row-actions { width: 100%; }
 }
-.identity-admin { display: flex; flex-direction: column; gap: 24px; }
-.identity-admin > [role="status"] { margin: -8px 0 0; }
-.identity-admin-panel { border: 1px solid var(--border); border-radius: 6px; background: var(--background); }
-.identity-admin-panel > :not(.identity-table-wrap):not(.identity-admin-list) { margin-left: 20px; margin-right: 20px; }
-.identity-admin-panel-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-top: 18px; margin-bottom: 18px; }
-.identity-admin-panel-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.identity-admin-panel-header p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 13px; }
+/* Administration: each section is a heading, then what it lists in one bordered box. */
+.identity-admin { display: flex; flex-direction: column; gap: 32px; }
+.identity-admin > [role="status"] { margin: -16px 0 0; }
+.identity-admin-panel { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.identity-admin-panel-header { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.identity-admin-panel-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.identity-admin-panel-header p { margin: 2px 0 0; color: var(--muted-foreground); font-size: 13px; }
+.identity-admin-box, .identity-admin-panel > :is(.identity-table-wrap, .identity-empty) { border: 1px solid var(--border); border-radius: 6px; }
+.identity-admin-box { margin: 0; padding: 12px 16px; }
+.identity-admin-panel .identity-table th { border-top: 0; }
+.identity-admin-panel > .identity-form { max-width: 560px; }
+.identity-fieldset { display: flex; flex-direction: column; gap: 12px; min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--border); border-radius: 6px; }
+.identity-fieldset > legend { padding: 0 6px; margin-left: -6px; font-size: 14px; font-weight: 600; }
+.identity-fieldset > .identity-form-hint { margin: 0; }
+.identity-field-row { display: grid; grid-template-columns: minmax(0, 1fr) 112px; gap: 12px; }
+.identity-admin-panel-header h2 > .identity-status { margin-left: 6px; vertical-align: 2px; }
 .identity-table-wrap { width: 100%; overflow-x: auto; }
 .identity-table { width: 100%; min-width: 700px; border-collapse: collapse; text-align: left; font-size: 13px; }
 .identity-table th { padding: 9px 12px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
 .identity-table td { padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .identity-table tbody tr:last-child td { border-bottom: 0; }
-/* On a phone each account is a card of labelled lines, so no column is cut off. */
-@media (max-width: 720px) {
+/* On a phone, or beside the section list on a narrow window, each account is a card of
+   labelled lines, so no column is cut off. */
+@media (max-width: 900px) {
   .identity-account-table { min-width: 0; }
   .identity-account-table thead { display: none; }
   .identity-account-table, .identity-account-table tbody, .identity-account-table tr { display: block; }
@@ -478,12 +490,14 @@
 }
 .identity-table td p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 11px; }
 .identity-table-action { text-align: right; white-space: nowrap; }
-.identity-row-menu { display: inline-block; text-align: right; }
+.identity-row-menu { display: inline-block; text-align: left; }
 .identity-row-menu-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
 .identity-row-menu-button:hover, .identity-row-menu[open] > .identity-row-menu-button { border-color: var(--border); background: var(--accent); color: var(--foreground); }
-.identity-row-menu-panel { display: grid; justify-items: end; gap: 6px; margin-top: 6px; }
-.identity-row-menu-danger { color: var(--destructive); font-size: 13px; text-decoration: none; }
-.identity-row-menu-danger:hover { text-decoration: underline; }
+.native-menu-panel.identity-row-menu-panel { top: calc(100% + 4px); width: 200px; white-space: normal; }
+.identity-row-menu-panel form { margin: 0; }
+.identity-row-menu-panel button.site-menu-link { font: inherit; font-size: 14px; cursor: pointer; }
+.site-menu-link.identity-menu-danger { color: var(--destructive); }
+.site-menu-link.identity-menu-danger:hover { background: var(--destructive); color: var(--destructive-foreground, #fff); }
 .identity-account-name { color: var(--primary); font-weight: 600; text-decoration: none; }
 .identity-account-name:hover { text-decoration: underline; }
 .identity-status { display: inline-flex; padding: 1px 7px; border: 1px solid var(--border); border-radius: 20px; font-size: 11px; font-weight: 600; }
@@ -496,12 +510,12 @@
 @media (max-width: 800px) {
   .identity-admin-columns { grid-template-columns: minmax(0, 1fr); }
 }
-.identity-admin-list { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--border); }
-.identity-admin-list li {
+.identity-admin-list { margin: 0; padding: 0; overflow: hidden; list-style: none; border: 1px solid var(--border); border-radius: 6px; }
+.identity-admin-list > :is(li, div) {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0;
-  padding: 10px 20px; border-bottom: 1px solid var(--border); font-size: 13px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 13px;
 }
-.identity-admin-list li:last-child { border-bottom: 0; }
+.identity-admin-list > :last-child { border-bottom: 0; }
 .identity-admin-list li > a, .identity-admin-list li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 .identity-admin-list li > .identity-muted { flex-shrink: 0; white-space: nowrap; }
 .identity-admin-period {
@@ -516,7 +530,7 @@
 .identity-admin-period-link[aria-current="page"] {
   background: var(--background); color: var(--foreground); font-weight: 600; box-shadow: 0 1px 2px rgb(0 0 0 / .12);
 }
-.identity-admin-crawlers { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; margin: 0 20px 20px; }
+.identity-admin-crawlers { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; max-width: 560px; }
 .identity-admin-crawlers-field { display: grid; flex: 1 1 280px; gap: 6px; min-width: 0; }
 .identity-admin-crawlers-field label { font-size: 13px; font-weight: 600; }
 .identity-admin-crawlers select { min-height: 36px; padding: 6px 10px; border-radius: 6px; font: inherit; color: var(--foreground); }
@@ -524,11 +538,28 @@
 @media (prefers-reduced-motion: reduce) {
   .identity-profile-repository-row, .identity-settings-nav-link, .identity-admin-period-link { transition: none; }
 }
-.identity-admin-search { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
-.identity-admin-search-input { flex: 1 1 220px; min-height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font: inherit; }
-.identity-admin-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; margin-top: 12px; margin-bottom: 12px; }
+.identity-admin-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.identity-admin-toolbar > .identity-admin-search { flex: 1 1 320px; }
+.identity-admin-search { display: flex; gap: 8px; }
+.identity-admin-search-input { flex: 1 1 auto; min-width: 0; min-height: 32px; padding: 0 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); color: var(--foreground); font: inherit; font-size: 14px; }
+.identity-admin-search-input:focus { outline: 2px solid var(--ring); outline-offset: -1px; }
+/* The account list: filter links over the table, in one box. The box does not clip, so a
+   row's menu can open past its bottom edge. */
+.identity-admin-listbox { border: 1px solid var(--border); border-radius: 6px; }
+.identity-admin-filters { display: flex; flex-wrap: wrap; gap: 4px 20px; padding: 10px 16px; border-bottom: 1px solid var(--border); border-radius: 6px 6px 0 0; background: var(--muted); }
+.identity-admin-filter { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 14px; text-decoration: none; }
+.identity-admin-filter:hover { color: var(--foreground); text-decoration: none; }
+.identity-admin-filter[aria-current="page"] { color: var(--foreground); font-weight: 600; }
+.identity-admin-filter-count { min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--secondary); color: var(--foreground); font-size: 12px; font-weight: 500; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.identity-admin-listbox .identity-table { min-width: 0; }
+.identity-admin-listbox .identity-table th { border-top: 0; background: transparent; }
+.identity-admin-audit-filters { flex-wrap: wrap; }
+.identity-admin-audit-filters > .identity-admin-search-input { flex: 1 1 200px; }
+.identity-admin-panel > p.identity-muted { margin: 0; font-size: 13px; }
+.identity-admin-audit > li { font-size: 14px; }
+.identity-admin-audit > li > .identity-muted { font-size: 12px; }
+.identity-admin-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px; }
 .identity-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; }
-.identity-row-menu-action { display: block; min-height: 44px; padding: 0; border: 0; background: none; color: var(--foreground); font: inherit; font-size: 13px; text-align: right; cursor: pointer; }
 
 .identity-recovery-codes {
   display: grid;

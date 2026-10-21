@@ -125,6 +125,7 @@ fn persisted_output_is_escaped_and_absent_deployment_is_honest() {
         deployment: None,
         fetched_lines: 1,
         logs_truncated: false,
+        planned: Vec::new(),
     });
     let mut dom = VirtualDom::new_with_props(|props: ActionsPage| actions_page(props), model);
     dom.rebuild_in_place();
@@ -151,6 +152,7 @@ fn only_a_failed_run_shows_the_error_banner() {
         deployment: None,
         fetched_lines: 0,
         logs_truncated: false,
+        planned: Vec::new(),
     });
     assert!(!html(model.clone()).contains("role=\"alert\""));
     let mut failed = run();
@@ -217,13 +219,12 @@ fn repository_list_uses_shared_chrome_and_preserves_original_actions_body() {
         "/alice/repo/issues",
         "/alice/repo/pulls",
         "/alice/repo/actions",
-        "/alice/repo/commits",
-        "/alice/repo/branches",
-        "/alice/repo/tags",
         "/alice/repo/settings",
     ] {
         assert!(tabs.contains(&format!("href=\"{href}\"")), "{href}");
     }
+    // Commits, branches and tags open from the code page, as on GitHub.
+    assert!(!tabs.contains("href=\"/alice/repo/commits\""));
     for action in ["watch-level", "unstar", "fork"] {
         assert!(header.contains(&format!("action=\"/alice/repo/_forms/{action}\"")));
     }
@@ -481,6 +482,7 @@ fn run_page_lists_the_inputs_a_manual_run_was_started_with() {
         deployment: None,
         fetched_lines: 0,
         logs_truncated: false,
+        planned: Vec::new(),
     });
     let rendered = html(model);
     assert!(rendered.contains("Input target"));
@@ -648,6 +650,7 @@ fn run_rows_and_empty_logs_present_clear_status_states() {
         deployment: None,
         fetched_lines: 0,
         logs_truncated: false,
+        planned: Vec::new(),
     });
     let rendered = html(page);
     assert!(rendered.contains("Waiting for the runner to start; logs appear here as the job runs."));
@@ -668,6 +671,7 @@ fn queued_run_header_states_its_status_once_and_what_it_waits_for() {
         deployment: None,
         fetched_lines: 0,
         logs_truncated: false,
+        planned: Vec::new(),
     });
     let rendered = html(page);
     assert!(rendered.contains("Waiting for a runner"));
@@ -697,6 +701,7 @@ fn act_step_markers_show_icons_and_keep_the_raw_line_as_title() {
         run: finished,
         fetched_lines: lines.len(),
         logs_truncated: false,
+        planned: Vec::new(),
         logs: lines,
         deployment: None,
     });
@@ -723,6 +728,7 @@ fn selected_summary_groups_metadata_and_only_shows_recorded_deployment() {
         deployment: None,
         fetched_lines: 0,
         logs_truncated: false,
+        planned: Vec::new(),
     });
     let rendered = html(page.clone());
     assert_eq!(rendered.matches("<h1").count(), 1);
@@ -780,6 +786,7 @@ fn restored_log_accordions_keep_all_markers_unknowns_failure_and_history_notice(
         run: finished,
         fetched_lines: lines.len(),
         logs_truncated: false,
+        planned: Vec::new(),
         logs: lines,
         deployment: None,
     });
@@ -809,6 +816,7 @@ fn byte_limited_logs_explain_truncation_and_link_to_history() {
         deployment: None,
         fetched_lines: 1100,
         logs_truncated: true,
+        planned: Vec::new(),
     });
     let rendered = html(page);
     assert!(rendered.contains("Recent logs were shortened to fit this page"));
@@ -958,6 +966,7 @@ fn log_filter_key_resets_local_controls_without_changing_the_run() {
             deployment: None,
             fetched_lines: 0,
             logs_truncated: false,
+            planned: Vec::new(),
         });
         let page = use_signal(|| initial);
         *props.0.borrow_mut() = Some(page);
@@ -1015,6 +1024,7 @@ fn typed_log_search_survives_new_log_lines() {
                 deployment: None,
                 fetched_lines: 0,
                 logs_truncated: false,
+                planned: Vec::new(),
             });
             page
         });
@@ -1134,6 +1144,7 @@ fn run_page_offers_cancel_and_rerun_forms_only_to_writers() {
         deployment: None,
         fetched_lines: 0,
         logs_truncated: false,
+        planned: Vec::new(),
     };
     let mut page = model();
     let mut running = run();

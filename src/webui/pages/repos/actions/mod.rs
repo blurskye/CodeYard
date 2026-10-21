@@ -10,7 +10,7 @@ mod tests;
 pub(in crate::webui::pages) use dispatch::recovery;
 pub use dispatch::{DispatchDraft, InputKind, WorkflowInput, TRIGGER_EVENTS};
 pub use polling::RunLogUpdate;
-pub use run::{Deployment, Run, RunProgress, SelectedRun};
+pub use run::{Deployment, PlannedJob, Run, RunProgress, SelectedRun};
 pub(in crate::webui::pages::repos) use runs::run_row;
 pub(in crate::webui::pages) use runs::ActionsView;
 pub use runs::{actions_page, matches_filters, query_url, workflow_name, ActionsPage, Workflow};

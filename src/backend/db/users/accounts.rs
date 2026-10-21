@@ -116,22 +116,10 @@ native_operation!(crate::backend::db::postgres::users::accounts::update_user_pro
 
 native_operation!(crate::backend::db::postgres::users::accounts::count_matching_users,
     crate::backend::db::sqlite::users::accounts::count_matching_users,
-    fn count_matching_users(pool: &DbPool, text: &str) -> Result<i64>);
+    fn count_matching_users(pool: &DbPool, text: &str) -> Result<(i64, i64, i64)>);
 native_operation!(crate::backend::db::postgres::users::accounts::list_admin_users,
     crate::backend::db::sqlite::users::accounts::list_admin_users,
-    fn list_admin_users(pool: &DbPool, text: &str, limit: i64, offset: i64) -> Result<Vec<AdminUser>>);
-
-native_operation!(crate::backend::db::postgres::users::accounts::admin_totals,
-    crate::backend::db::sqlite::users::accounts::admin_totals,
-    fn admin_totals(pool: &DbPool) -> Result<(i64, i64, i64)>);
-
-native_operation!(crate::backend::db::postgres::users::accounts::admin_site_counts,
-    crate::backend::db::sqlite::users::accounts::admin_site_counts,
-    fn admin_site_counts(pool: &DbPool) -> Result<(i64, i64, i64)>);
-
-native_operation!(crate::backend::db::postgres::users::accounts::recent_admin_accounts,
-    crate::backend::db::sqlite::users::accounts::recent_admin_accounts,
-    fn recent_admin_accounts(pool: &DbPool) -> Result<Vec<(i64, String, chrono::DateTime<chrono::Utc>)>>);
+    fn list_admin_users(pool: &DbPool, text: &str, role: &str, limit: i64, offset: i64) -> Result<Vec<AdminUser>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::list_admin_account_summaries,
     crate::backend::db::sqlite::users::accounts::list_admin_account_summaries,

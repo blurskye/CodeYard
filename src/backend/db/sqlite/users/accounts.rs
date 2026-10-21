@@ -229,9 +229,10 @@ pub async fn update_user_profile(
     Ok(user)
 }
 
-pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar(
-        "SELECT COUNT(*) FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1",
+/// Accounts that match the search: all of them, the administrators and the banned ones.
+pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<(i64, i64, i64)> {
+    Ok(sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(is_admin),0), COALESCE(SUM(is_banned),0) FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1",
     )
     .bind(super::super::search::contains(text.trim()))
     .fetch_one(pool)
@@ -241,34 +242,12 @@ pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<i64> 
 pub async fn list_admin_users(
     pool: &SqlitePool,
     text: &str,
+    role: &str,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<AdminUser>> {
-    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1 ORDER BY username,id LIMIT ?2 OFFSET ?3")
-        .bind(super::super::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).fetch_all(pool).await?)
-}
-
-pub async fn admin_totals(pool: &SqlitePool) -> Result<(i64, i64, i64)> {
-    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM users), (SELECT COUNT(*) FROM users WHERE is_banned), (SELECT COALESCE(SUM(size_bytes),0) FROM repositories) + (SELECT COALESCE(SUM(file_size),0) FROM files WHERE is_active)")
-        .fetch_one(pool).await?)
-}
-
-/// Repositories, organizations and queued CI runs, for the admin overview.
-pub async fn admin_site_counts(pool: &SqlitePool) -> Result<(i64, i64, i64)> {
-    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM repositories), (SELECT COUNT(*) FROM organizations), (SELECT COUNT(*) FROM ci_runs WHERE status = 'queued')")
-        .fetch_one(pool)
-        .await?)
-}
-
-/// The five newest accounts as (id, username, created).
-pub async fn recent_admin_accounts(
-    pool: &SqlitePool,
-) -> Result<Vec<(i64, String, chrono::DateTime<chrono::Utc>)>> {
-    Ok(sqlx::query_as(
-        "SELECT id,username,created_at FROM users ORDER BY created_at DESC,id DESC LIMIT 5",
-    )
-    .fetch_all(pool)
-    .await?)
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1) AND CASE ?4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE 1 END ORDER BY username,id LIMIT ?2 OFFSET ?3")
+        .bind(super::super::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
 }
 
 pub async fn list_admin_account_summaries(
@@ -314,27 +293,23 @@ pub async fn list_admin_activity_points(
         ), day_span(day) AS (
             SELECT day FROM window_start
             UNION ALL SELECT date(day,'+1 day') FROM day_span WHERE day<date('now')
-        ), contribution_events(day,weight) AS (
-            SELECT date(created_at),COUNT(*) FROM ci_runs,window_start WHERE triggered_by_id IS NOT NULL AND event='push'
-                AND created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COUNT(*) FROM pull_requests,window_start
+        ), count_events(day,commits,pulls_opened,pulls_merged,issues_opened,issues_closed,runs) AS (
+            SELECT date(created_at),COALESCE(SUM(commit_count),0),0,0,0,0,0 FROM repository_pushes,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COUNT(*) FROM issues,window_start
+            UNION ALL SELECT date(created_at),0,COUNT(*),0,0,0,0 FROM pull_requests,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COUNT(*) FROM issue_comments,window_start
+            UNION ALL SELECT date(merged_at),0,0,COUNT(*),0,0,0 FROM pull_requests,window_start
+                WHERE merged_at>=moment GROUP BY date(merged_at)
+            UNION ALL SELECT date(created_at),0,0,0,COUNT(*),0,0 FROM issues,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COUNT(*) FROM pr_comments,window_start
-                WHERE created_at>=moment AND NOT EXISTS (SELECT 1 FROM pr_reviews v WHERE v.id=pr_comments.review_id AND v.state='pending') GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COUNT(*) FROM pr_reviews,window_start
-                WHERE created_at>=moment AND state<>'pending' GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COUNT(*) FROM releases,window_start
+            UNION ALL SELECT date(closed_at),0,0,0,0,COUNT(*),0 FROM issues,window_start
+                WHERE closed_at>=moment GROUP BY date(closed_at)
+            UNION ALL SELECT date(created_at),0,0,0,0,0,COUNT(*) FROM ci_runs,window_start
                 WHERE created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COUNT(*) FROM repositories,window_start
-                WHERE owner_kind='user' AND owner_user_id IS NOT NULL AND created_at>=moment GROUP BY date(created_at)
-            UNION ALL SELECT date(created_at),COALESCE(SUM(commit_count),0) FROM repository_pushes,window_start
-                WHERE created_at>=moment GROUP BY date(created_at)
-        ), contribution_daily AS (
-            SELECT day,SUM(weight) AS daily FROM contribution_events GROUP BY day
+        ), count_daily AS (
+            SELECT day,SUM(commits) AS commits,SUM(pulls_opened) AS pulls_opened,SUM(pulls_merged) AS pulls_merged,
+                SUM(issues_opened) AS issues_opened,SUM(issues_closed) AS issues_closed,SUM(runs) AS runs
+            FROM count_events GROUP BY day
         ), repo_storage_recent AS (
             -- Use the time index; without it SQLite scans every snapshot to find the window.
             SELECT id,repo_id,recorded_at,size_bytes
@@ -362,11 +337,12 @@ pub async fn list_admin_activity_points(
             UNION ALL SELECT date(uploaded_at),file_size FROM upload_rate_limit,window_start
                 WHERE uploaded_at>=moment
         ), storage_daily AS (SELECT day,SUM(bytes) AS daily FROM storage_events GROUP BY day)
-        SELECT d.day,COALESCE(c.daily,0) AS daily_contributions,
-            SUM(COALESCE(c.daily,0)) OVER(ORDER BY d.day) AS cumulative_contributions,
+        SELECT d.day,COALESCE(c.commits,0) AS commits,COALESCE(c.pulls_opened,0) AS pulls_opened,
+            COALESCE(c.pulls_merged,0) AS pulls_merged,COALESCE(c.issues_opened,0) AS issues_opened,
+            COALESCE(c.issues_closed,0) AS issues_closed,COALESCE(c.runs,0) AS runs,
             COALESCE(s.daily,0) AS daily_storage_bytes,
             SUM(COALESCE(s.daily,0)) OVER(ORDER BY d.day) AS cumulative_storage_bytes
-        FROM day_span d LEFT JOIN contribution_daily c ON c.day=d.day LEFT JOIN storage_daily s ON s.day=d.day
+        FROM day_span d LEFT JOIN count_daily c ON c.day=d.day LEFT JOIN storage_daily s ON s.day=d.day
         ORDER BY d.day"#).bind(bounded).fetch_all(pool).await?)
 }
 

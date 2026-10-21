@@ -16,6 +16,7 @@ pub mod references;
 mod shell;
 pub mod task_lists;
 mod theme;
+mod time;
 pub mod webhooks;
 
 pub use avatar::Avatar;
@@ -34,6 +35,7 @@ pub use patch::patch_badges;
 pub(crate) use patch::{patch_gutter_digits, patch_rows, PatchRow};
 pub use shell::{shell, shell_at, SiteSearch};
 pub use theme::{ThemeForm, ThemeSaved};
+pub use time::{exact_time, LiveTime};
 
 /// The wording of every count badge: "1 node", "0 nodes", "2 branches".
 pub fn count_label(count: usize, singular: &str, plural: &str) -> String {
@@ -79,14 +81,15 @@ pub fn relative_date(value: &str, now: chrono::DateTime<chrono::Utc>) -> Option<
     Some(relative_age(then, now))
 }
 
-/// The age of `then` at `now`: "just now", "5 minutes ago", "3 months ago".
+/// The age of `then` at `now`: "just now", "20 seconds ago", "5 minutes ago", "3 months ago".
 pub fn relative_age(
     then: chrono::DateTime<chrono::Utc>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> String {
     let seconds = (now - then).num_seconds().max(0);
     let (count, unit) = match seconds {
-        0..=59 => return "just now".to_owned(),
+        0..=1 => return "just now".to_owned(),
+        2..=59 => (seconds, "second"),
         60..=3_599 => (seconds / 60, "minute"),
         3_600..=86_399 => (seconds / 3_600, "hour"),
         86_400..=2_591_999 => (seconds / 86_400, "day"),
@@ -135,6 +138,18 @@ mod tests {
         assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(152_067), "148.5 KiB");
         assert_eq!(format_bytes(3 * 1024 * 1024 * 1024), "3.0 GiB");
+    }
+
+    #[test]
+    fn ages_count_seconds_in_the_first_minute() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-10-02T09:30:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let age = |seconds| relative_age(now - chrono::Duration::seconds(seconds), now);
+        assert_eq!(age(1), "just now");
+        assert_eq!(age(20), "20 seconds ago");
+        assert_eq!(age(60), "1 minute ago");
+        assert_eq!(age(7_200), "2 hours ago");
     }
 
     #[test]

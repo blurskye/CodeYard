@@ -1146,7 +1146,7 @@ mod shell_tests {
         let html = include_str!("native.css");
         assert!(html
             .contains("a.patch-add::after { content: \"\"; position: absolute; inset: 0 -12px; }"));
-        assert!(html.contains(".site-header .repo-tabs-more > .native-menu-panel { position: fixed; top: 60px; right: 12px; left: 12px; max-height: calc(100dvh - 72px); overflow-y: auto; }"));
+        assert!(html.contains(".site-header .repo-tabs-more > .native-menu-panel { max-height: calc(100dvh - 140px); overflow-y: auto; }"));
     }
 
     #[test]

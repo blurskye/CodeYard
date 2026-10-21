@@ -78,7 +78,7 @@ async fn contract(pg: bool) {
     let chart = db::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap();
-    assert!(chart.last().unwrap().daily_contributions >= 5);
+    assert!(chart.last().unwrap().commits >= 5);
     // The GET did not scan the repository or record its size.
     let stored = db::repositories::records::get_repository_by_id(f.pool(), repository.id)
         .await

@@ -56,7 +56,21 @@ pub struct WorkflowDefinition {
     pub path: String,
     pub name: String,
     pub triggers: WorkflowTriggers,
+    /// The jobs and their steps, so a run page can list steps before they start.
+    #[serde(default)]
+    pub jobs: Vec<JobPlan>,
 }
+
+/// A job's name and its step names as act prints them.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct JobPlan {
+    pub name: String,
+    pub steps: Vec<String>,
+}
+
+const MAX_PLANNED_JOBS: usize = 32;
+const MAX_PLANNED_STEPS: usize = 64;
+const MAX_STEP_NAME_BYTES: usize = 128;
 
 pub const MAX_WORKFLOW_MATCH_WORK: u64 = 32 * 1024 * 1024;
 
@@ -437,7 +451,66 @@ pub(super) fn workflow_definition_from_yaml(
         path: path.to_string(),
         name,
         triggers,
+        jobs: job_plans(yaml),
     })
+}
+
+/// The jobs whose names act prints as written. A matrix or an expression in the name gives
+/// names known only at run time, so those jobs are left out.
+fn job_plans(yaml: &Value) -> Vec<JobPlan> {
+    let Some(jobs) = field(yaml, "jobs").and_then(Value::as_mapping) else {
+        return Vec::new();
+    };
+    jobs.iter()
+        .take(MAX_PLANNED_JOBS)
+        .filter_map(|(id, job)| {
+            let id = id.as_str()?;
+            if field(job, "strategy").is_some_and(|strategy| field(strategy, "matrix").is_some()) {
+                return None;
+            }
+            let name = text_field(job, "name").unwrap_or(id);
+            if name.contains("${{") {
+                return None;
+            }
+            let steps = field(job, "steps")
+                .and_then(Value::as_sequence)
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .take(MAX_PLANNED_STEPS)
+                        .filter_map(step_label)
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(JobPlan {
+                name: bounded(name),
+                steps,
+            })
+        })
+        .collect()
+}
+
+/// act names a step by its `name`, else its `uses`, else the first line of its `run`.
+fn step_label(step: &Value) -> Option<String> {
+    let text = ["name", "uses", "run"]
+        .into_iter()
+        .find_map(|key| text_field(step, key))?;
+    Some(bounded(text.lines().next().unwrap_or(text)))
+}
+
+fn text_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    field(value, key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+}
+
+fn bounded(text: &str) -> String {
+    let mut end = text.len().min(MAX_STEP_NAME_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
 }
 
 fn workflow_name(yaml: &Value, path: &str) -> Result<String> {
@@ -1377,6 +1450,32 @@ on: [push, pull_request]
     }
 
     #[test]
+    fn job_plans_name_steps_as_act_prints_them() {
+        let workflow = parse_workflow_definition(
+            ".github/workflows/ci.yml",
+            "on: push\njobs:\n  test:\n    name: Build and test\n    steps:\n      - uses: actions/checkout@v4\n      - name: Build\n        run: make\n      - run: |\n          make test\n          make lint\n  deploy:\n    steps:\n      - run: echo hi\n  matrix:\n    strategy: {matrix: {os: [a, b]}}\n    steps: [{run: echo}]\n  named:\n    name: ${{ github.ref }}\n    steps: [{run: echo}]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            workflow.jobs,
+            vec![
+                JobPlan {
+                    name: "Build and test".into(),
+                    steps: vec![
+                        "actions/checkout@v4".into(),
+                        "Build".into(),
+                        "make test".into()
+                    ],
+                },
+                JobPlan {
+                    name: "deploy".into(),
+                    steps: vec!["echo hi".into()],
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn aggregate_glob_work_is_bounded_across_valid_patterns() {
         let hostile = WorkflowDefinition {
             path: ".github/workflows/hostile.yml".into(),
@@ -1388,6 +1487,7 @@ on: [push, pull_request]
                 }),
                 ..Default::default()
             },
+            jobs: Vec::new(),
         };
         let changed = vec!["y".repeat(4_096)];
         assert!(hostile
@@ -1784,6 +1884,7 @@ pub(crate) fn parse_push_workflow(path: &str, text: &str) -> Result<WorkflowDefi
             push,
             ..WorkflowTriggers::default()
         },
+        jobs: Vec::new(),
     })
 }
 

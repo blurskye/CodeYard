@@ -854,12 +854,12 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
     bundle::install();
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
-    let contributions_before = db::users::accounts::list_admin_activity_points(f.pool(), 7)
+    let commits_before = db::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap()
         .last()
         .unwrap()
-        .daily_contributions;
+        .commits;
     let owner = f.actor("one_file").await;
     let root = tempfile::tempdir().unwrap();
     repository(
@@ -886,11 +886,8 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
     let activity = db::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap();
-    // The repository and its first commit both contribute.
-    assert_eq!(
-        activity.last().unwrap().daily_contributions,
-        contributions_before + 2
-    );
+    // The first commit counts on today's commit chart.
+    assert_eq!(activity.last().unwrap().commits, commits_before + 1);
     // Explicit content search must not query discussion tables for unrelated tab counts.
     f.execute("ALTER TABLE issues RENAME TO hidden_issues", &[])
         .await;

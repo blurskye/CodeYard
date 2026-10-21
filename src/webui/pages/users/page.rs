@@ -361,6 +361,11 @@ pub(crate) enum ProfileIcon {
     Shield,
     Building,
     Layers,
+    Chart,
+    Gear,
+    Mail,
+    Server,
+    Database,
 }
 
 /// Preserve the original profile/navbar/Avatar paths and stroke-based icon style.
@@ -481,6 +486,23 @@ pub(crate) fn profile_icon(icon: ProfileIcon) -> Element {
         },
         ProfileIcon::Layers => rsx! {
             path { d: "m12 2 10 5-10 5L2 7l10-5Z" } path { d: "m2 17 10 5 10-5" } path { d: "m2 12 10 5 10-5" }
+        },
+        ProfileIcon::Chart => {
+            rsx! { path { d: "M3 3v18h18" } path { d: "M8 17v-5" } path { d: "M13 17V8" } path { d: "M18 17v-8" } }
+        }
+        ProfileIcon::Gear => rsx! {
+            path { d: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" }
+            circle { cx: "12", cy: "12", r: "3" }
+        },
+        ProfileIcon::Mail => {
+            rsx! { rect { x: "2", y: "4", width: "20", height: "16", rx: "2" } path { d: "m22 7-10 6L2 7" } }
+        }
+        ProfileIcon::Server => rsx! {
+            rect { x: "2", y: "2", width: "20", height: "8", rx: "2" } rect { x: "2", y: "14", width: "20", height: "8", rx: "2" }
+            path { d: "M6 6h.01M6 18h.01" }
+        },
+        ProfileIcon::Database => rsx! {
+            ellipse { cx: "12", cy: "5", rx: "9", ry: "3" } path { d: "M3 5v14a9 3 0 0 0 18 0V5" } path { d: "M3 12a9 3 0 0 0 18 0" }
         },
     };
     rsx! { svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.75",

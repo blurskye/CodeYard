@@ -2641,7 +2641,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         "social":[repo.stars_count,repo.watchers_count,repo.forks_count],"followers":db::following::count_user_followers(pool,owner.id).await.unwrap(),"rule":[rule.required_status_checks,rule.push_allowances],
         "notification":db::notifications::records::list_notifications_for_user(pool,owner.id,10,false).await.unwrap()[0].metadata,"storage":[stats.total_files,stats.total_bytes,stats.avatar_count,stats.uploads_24h,stats.bytes_24h,stats.downloads_24h],
         "summaries":summaries.into_iter().map(|s|(s.username,s.total_files,s.total_bytes,s.commits_total,s.pushes_total,s.contributions_total)).collect::<Vec<_>>(),
-        "activity":activity.into_iter().map(|a|(a.daily_contributions,a.cumulative_contributions,a.daily_storage_bytes,a.cumulative_storage_bytes)).collect::<Vec<_>>(),"emails":emails.into_iter().map(|u|u.username).collect::<Vec<_>>(),"ids":ids.into_iter().map(|u|u.username).collect::<Vec<_>>()})
+        "activity":activity.into_iter().map(|a|(a.commits,a.pulls_opened,a.pulls_merged,a.issues_opened,a.issues_closed,a.runs,a.daily_storage_bytes,a.cumulative_storage_bytes)).collect::<Vec<_>>(),"emails":emails.into_iter().map(|u|u.username).collect::<Vec<_>>(),"ids":ids.into_iter().map(|u|u.username).collect::<Vec<_>>()})
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4335,11 +4335,13 @@ async fn check_activity_window_starts_at_midnight_utc(pool: &db::DbPool) {
     let first = &points[0];
     assert_eq!(first.day, first_day);
     // The issue just before midnight is outside the window; the two on the first day count.
-    assert_eq!(first.daily_contributions, 2);
+    assert_eq!(first.issues_opened, 2);
     // Growth on the first day is measured from the snapshot before midnight.
     assert_eq!(first.daily_storage_bytes, 3 * MIB);
-    // The repository created today is the only contribution after the first day.
-    assert_eq!(points.last().unwrap().cumulative_contributions, 3);
+    assert_eq!(
+        points.iter().map(|point| point.issues_opened).sum::<i64>(),
+        2
+    );
 }
 
 #[tokio::test]

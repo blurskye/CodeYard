@@ -5,7 +5,7 @@ use super::{
     DispatchDraft, Run, SelectedRun,
 };
 use crate::webui::{
-    components::{relative_time, short_sha, DraftSelect, SelectOption},
+    components::{short_sha, DraftSelect, LiveTime, SelectOption},
     encode_component,
     navigation::{NavLink, RefreshLink},
     pages::repos::{self, chrome::RepoChrome},
@@ -136,6 +136,7 @@ pub(super) fn status_label(status: &str) -> &'static str {
         "running" => "In progress",
         "queued" => "Queued",
         "cancelled" => "Cancelled",
+        "skipped" => "Skipped",
         _ => "Unknown",
     }
 }
@@ -157,6 +158,9 @@ pub(super) fn status_icon(status: &str) -> Element {
                 path { d: "m15 9-6 6M9 9l6 6" }
             } else if normalized == "running" {
                 path { d: "M21 12a9 9 0 1 1-6.219-8.56" }
+            } else if normalized == "skipped" {
+                circle { cx: "12", cy: "12", r: "10" }
+                path { d: "m5 19 14-14" }
             } else {
                 circle { cx: "12", cy: "12", r: "10" }
                 path { d: "M12 6v6h4" }
@@ -336,7 +340,7 @@ pub(in crate::webui::pages::repos) fn run_row(
             }
             span { class: "actions-branch-badge", title: run.branch.clone(), {icon("branches")} "{run.branch}" }
             div { class: "actions-run-time",
-                span { class: "actions-time-line", {icon("calendar")} span { title: logs::timestamp(run.created_at), "{relative_time(run.created_at)}" } }
+                span { class: "actions-time-line", {icon("calendar")} LiveTime { value: logs::rfc3339(run.created_at), title: Some(logs::timestamp(run.created_at)) } }
                 span { class: "actions-time-line actions-run-duration", {icon("duration")} "{run_duration(run)}" }
             }
         }

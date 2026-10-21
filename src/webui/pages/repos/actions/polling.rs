@@ -161,6 +161,7 @@ mod tests {
             deployment: None,
             fetched_lines: 0,
             logs_truncated: false,
+            planned: Vec::new(),
         });
         model.log_limit = 2;
         let update = |ids: &[i64], more| RunLogUpdate {

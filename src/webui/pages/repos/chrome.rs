@@ -84,11 +84,8 @@ const PRIMARY_TABS: [(&str, &str, &str); 3] = [
 ];
 
 /// Tabs that move behind the More menu on a phone. Settings is listed only for administrators.
-const SECONDARY_TABS: [(&str, &str, &str); 5] = [
+const SECONDARY_TABS: [(&str, &str, &str); 2] = [
     ("actions", "Actions", "/actions"),
-    ("commits", "Commits", "/commits"),
-    ("branches", "Branches", "/branches"),
-    ("tags", "Tags", "/tags"),
     ("settings", "Settings", "/settings"),
 ];
 
@@ -226,6 +223,8 @@ pub fn active_tab(base: &str, path: &str, suffix: &str) -> bool {
         return false;
     };
     if suffix.is_empty() {
+        // Commits, branches, tags and releases open from the code page, as on GitHub, so they
+        // belong to its tab.
         tail.is_empty()
             || tail == "/"
             || [
@@ -233,6 +232,9 @@ pub fn active_tab(base: &str, path: &str, suffix: &str) -> bool {
             ]
             .iter()
             .any(|prefix| tail.starts_with(prefix))
+            || ["/commits", "/commit", "/branches", "/tags", "/releases"]
+                .iter()
+                .any(|page| tail == *page || tail.starts_with(&format!("{page}/")))
     } else if suffix == "/pulls" && (tail == "/compare" || tail.starts_with("/compare/")) {
         // Comparing branches is part of the pull request workflow.
         true

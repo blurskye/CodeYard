@@ -10,10 +10,8 @@ async fn bounded_administration(pg: bool) {
     let admin = f.actor("pagination_admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
         .await;
-    let before = db::users::accounts::admin_totals(f.pool()).await.unwrap();
-    let mut last = 0;
     for index in 0..105 {
-        last = f.actor(&format!("page_user_{index:03}")).await;
+        f.actor(&format!("page_user_{index:03}")).await;
         db::users::signup_requests::create_signup_request(
             f.pool(),
             &format!("pending_{index:03}"),
@@ -24,14 +22,6 @@ async fn bounded_administration(pg: bool) {
         .unwrap();
         f.execute(&format!("INSERT INTO ssh_keys(user_id,name,fingerprint,public_key,key_type) VALUES($1,'key-{index}','fingerprint-{index}','{}','ssh-ed25519')", "x".repeat(32000)), &[admin]).await;
     }
-    let totals = db::users::accounts::admin_totals(f.pool()).await.unwrap();
-    assert_eq!(totals.0, before.0 + 105);
-    let recent = db::users::accounts::recent_admin_accounts(f.pool())
-        .await
-        .unwrap();
-    assert_eq!(recent.len(), 5);
-    assert_eq!(recent[0].0, last);
-    assert!(recent.windows(2).all(|rows| rows[0].0 > rows[1].0));
     assert_eq!(
         db::users::accounts::list_admin_account_summaries(f.pool(), 1000, 0)
             .await
@@ -79,66 +69,6 @@ async fn bounded_administration(pg: bool) {
         5
     );
 
-    let org = match db::organizations::create_organization(
-        f.pool(),
-        admin,
-        &db::organizations::NewOrganization::new(
-            "storage_org",
-            db::organizations::OrganizationProfile::new(None, None).unwrap(),
-        )
-        .unwrap(),
-    )
-    .await
-    .unwrap()
-    {
-        db::organizations::OrganizationOutcome::Applied(org) => org.id,
-        other => panic!("{other:?}"),
-    };
-    let repository = db::repositories::creation::insert_repository(
-        f.pool(),
-        db::repositories::creation::NewRepository {
-            owner: db::repositories::creation::RepositoryCreationOwner {
-                actor_id: admin,
-                target: db::repositories::creation::RepositoryTarget::Organization(org),
-            },
-            name: "stored",
-            description: None,
-            is_private: true,
-            disk_path: "/unused/stored.git",
-            storage_node_id: None,
-            source_id: None,
-        },
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    f.execute(
-        "UPDATE repositories SET size_bytes=1073741824 WHERE id=$1",
-        &[repository.id],
-    )
-    .await;
-    let file = db::files::reserve_upload(
-        f.pool(),
-        db::files::ReserveUpload {
-            user_id: admin,
-            filename: "asset.bin",
-            content_type: "application/octet-stream",
-            file_size: 13,
-            reason: db::models::FileReason::ReleaseAsset,
-            visibility: db::models::FileVisibility::Owner,
-            sha256_hex: &"a".repeat(64),
-        },
-    )
-    .await
-    .unwrap();
-    assert!(db::files::activate_upload(f.pool(), file.id, admin)
-        .await
-        .unwrap());
-    assert_eq!(
-        db::users::accounts::admin_totals(f.pool()).await.unwrap().2,
-        before.2 + 1073741824 + 13
-    );
-
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
     let client = Client::login(&router, f.pool(), admin).await;
@@ -147,10 +77,7 @@ async fn bounded_administration(pg: bool) {
     let Page::Identity(account::Page::Admin { model }) = page else {
         panic!("admin model")
     };
-    assert_eq!(model.accounts.len(), 5);
     assert_eq!(model.pending_requests, Some(105));
-    assert_eq!(model.storage_bytes, before.2 + 1073741824 + 13);
-    assert!(model.organizations >= 1 && model.repositories >= 1);
     let (status, page) = client.model("/admin/users").await;
     assert_eq!(status, StatusCode::OK);
     let Page::Identity(account::Page::AdminUsers { model, .. }) = page else {

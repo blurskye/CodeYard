@@ -220,6 +220,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
+            jobs: Vec::new(),
         });
         assert!(workflow.inputs[0].description.len() <= 1024);
         let model = view_actions::ActionsPage {

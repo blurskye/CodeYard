@@ -116,32 +116,10 @@ pub(super) async fn home(
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_trending_owners"),
     };
-    let assigned_issues = match db::issues::count_viewer_issues(
-        &ctx.state.pool,
-        user.id,
-        db::issues::IssueRelation::Assigned,
-    )
-    .await
-    {
-        Ok(counts) => counts.open,
-        Err(_) => return unavailable(&ctx, "home_assigned_issues"),
-    };
-    let open_pull_requests = match db::pull_requests::records::count_viewer_pull_requests(
-        &ctx.state.pool,
-        user.id,
-        db::pull_requests::records::PullRequestRelation::Involved,
-    )
-    .await
-    {
-        Ok(counts) => counts.open,
-        Err(_) => return unavailable(&ctx, "home_pull_request_counts"),
-    };
     ctx.page_model(
         "Dashboard",
         AppPage::Discovery(view::Page::Home(HomeModel {
             username: Some(username),
-            assigned_issues,
-            open_pull_requests,
             repositories,
             shared,
             trending,

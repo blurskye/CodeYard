@@ -2,8 +2,8 @@
 //! One `Page` covers them, and the app renders it through `render`.
 use crate::webui::pages::{
     admin::{
-        admin_audit_page, admin_page, admin_settings_page, admin_users_page, Admin, AdminAudit,
-        AdminSettings, AdminUsers,
+        admin_audit_page, admin_new_user_page, admin_page, admin_settings_page, admin_users_page,
+        Admin, AdminAudit, AdminSettings, AdminUsers,
     },
     auth::{
         auth_page, logout_page, password_help_page, reset_code_page, reset_password_page,
@@ -90,6 +90,12 @@ pub enum Page {
     },
     AdminUsers {
         model: AdminUsers,
+        csrf_token: String,
+        message: Option<String>,
+        is_error: bool,
+    },
+    AdminNewUser {
+        values: FormValues,
         csrf_token: String,
         message: Option<String>,
         is_error: bool,
@@ -206,6 +212,12 @@ pub fn render(page: Page) -> Element {
             message,
             is_error,
         } => admin_users_page(model, &csrf_token, message.as_deref(), is_error),
+        Page::AdminNewUser {
+            values,
+            csrf_token,
+            message,
+            is_error,
+        } => admin_new_user_page(values, &csrf_token, message.as_deref(), is_error),
         Page::AdminAudit { model } => admin_audit_page(model),
         Page::Profile {
             profile,
@@ -245,10 +257,7 @@ pub fn render(page: Page) -> Element {
 mod tests {
     use super::*;
     use crate::webui::pages::{
-        admin::{
-            Account, Activity, AdminAudit, AdminSettings, AdminUsers, AuditEntry, Signup,
-            SystemStatus,
-        },
+        admin::{Activity, AdminAudit, AdminSettings, AdminUsers, AuditEntry, Signup},
         fields::preserved_values,
         settings::{EmailVerification, Key},
     };
@@ -355,35 +364,22 @@ mod tests {
         pages.push((
             Page::Admin {
                 model: Admin {
-                    accounts: vec![Account {
-                        id: 2,
-                        username: "bob".into(),
-                        created: "2026-10-02".into(),
-                    }],
-                    users: 1,
-                    banned: 0,
-                    repositories: 2,
-                    organizations: 1,
                     pending_requests: Some(1),
-                    storage_bytes: 1024,
                     activity: vec![Activity {
                         date: "2026-10-02".into(),
-                        contributions: 6,
-                        cumulative_contributions: 6,
-                        bytes: 1024,
-                        cumulative_bytes: 1024,
+                        commits: 6,
+                        pulls_opened: 1,
+                        pulls_merged: 1,
+                        issues_opened: 2,
+                        issues_closed: 0,
+                        runs: 3,
+                        storage_bytes: 1024,
                     }],
                     days: 7,
-                    status: SystemStatus {
-                        version: "0.1.2".into(),
-                        database: "SQLite".into(),
-                        private: true,
-                        nodes: None,
-                        queued_runs: 0,
-                    },
+                    version: "0.1.2".into(),
                 },
             },
-            "System status",
+            "Commits pushed",
         ));
         pages.push((
             Page::AdminSettings {
@@ -413,10 +409,11 @@ mod tests {
                         created: "2026-10-02".into(),
                     }],
                     search: "bo".into(),
+                    role: String::new(),
+                    counts: [30, 1, 1],
                     page: 1,
                     pages: 2,
                     total: 30,
-                    values: FormValues::default(),
                     requests: vec![Signup {
                         id: 8,
                         username: "carol".into(),
@@ -433,15 +430,25 @@ mod tests {
             "Users",
         ));
         pages.push((
+            Page::AdminNewUser {
+                values: FormValues::default(),
+                csrf_token: "csrf-marker".into(),
+                message: Some("<b>Validation error</b>".into()),
+                is_error: true,
+            },
+            "New user",
+        ));
+        pages.push((
             Page::AdminAudit {
                 model: AdminAudit {
                     entries: vec![AuditEntry {
                         id: 1,
                         actor: "alice".into(),
                         action: "user.ban".into(),
-                        target: "user 2".into(),
-                        details: "{}".into(),
-                        time: "2026-10-02 09:30 UTC".into(),
+                        target: "bob".into(),
+                        org: String::new(),
+                        details: r#"{"banned":true}"#.into(),
+                        time: "2026-10-02T09:30:00+00:00".into(),
                     }],
                     action: String::new(),
                     actor: String::new(),
@@ -525,7 +532,7 @@ mod tests {
                 // The admin overview and the audit log only read, so they have no forms.
                 assert!(
                     output.contains("csrf-marker")
-                        || label == "System status"
+                        || label == "Commits pushed"
                         || label == "Audit log"
                 );
                 assert!(!output.contains("<script>"));

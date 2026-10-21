@@ -1,5 +1,6 @@
 //! robots.txt, ai.txt and X-Robots-Tag follow the administrator's AI crawler setting.
 //! Block is the default; the administrator can allow crawlers in the admin page or the admin API.
+//! The same page switches sign-up between open and by approval.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 
 use crate::support::database;
@@ -153,6 +154,45 @@ async fn contract(pg: bool) {
     assert!(!reply.status.is_success() && reply.location.is_none());
     let (_, _, robots) = fetch(&router, "/robots.txt").await;
     assert_blocked_robots(&robots);
+
+    // Sign-up by approval also asks visitors to sign in; open lets them browse again.
+    let (status, _, _) = fetch(&router, "/explore").await;
+    assert_eq!(status, StatusCode::OK);
+    let reply = admin
+        .form_reply("/admin/settings", &[("node_mode", "private")])
+        .await;
+    assert_eq!(
+        reply.location.as_deref(),
+        Some("/admin/settings?saved=signup")
+    );
+    let mode = |f: &Database| {
+        let pool = f.pool().clone();
+        async move {
+            db::node_config::get_node_configuration(&pool)
+                .await
+                .unwrap()
+                .unwrap()
+                .node_mode
+        }
+    };
+    assert_eq!(mode(&f).await, "private");
+    let (status, _, _) = fetch(&router, "/explore").await;
+    assert_ne!(status, StatusCode::OK);
+    let reply = member
+        .form_reply("/admin/settings", &[("node_mode", "public")])
+        .await;
+    assert!(reply.location.is_none());
+    let reply = admin
+        .form_reply("/admin/settings", &[("node_mode", "closed")])
+        .await;
+    assert!(!reply.status.is_success() && reply.location.is_none());
+    assert_eq!(mode(&f).await, "private");
+    admin
+        .form_reply("/admin/settings", &[("node_mode", "public")])
+        .await;
+    assert_eq!(mode(&f).await, "public");
+    let (status, _, _) = fetch(&router, "/explore").await;
+    assert_eq!(status, StatusCode::OK);
     f.finish().await;
 }
 

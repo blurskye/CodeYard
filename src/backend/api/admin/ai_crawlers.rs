@@ -1,5 +1,5 @@
-//! The site settings page and the site-wide AI crawler setting, changed from the page or the
-//! admin API.
+//! The site settings page: the sign-up mode, and the site-wide AI crawler setting, which the
+//! admin API can also change.
 use super::accounts::require_admin_user;
 use crate::backend::api::auth::errors::database_failure;
 use crate::backend::api::crawlers::{self, BLOCK};
@@ -117,6 +117,7 @@ pub(crate) async fn settings_get(
     };
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("crawlers") => Some("AI crawler setting saved."),
+        Some("signup") => Some("Sign-up setting saved."),
         _ => None,
     };
     settings_response(&ctx, StatusCode::OK, message).await
@@ -136,25 +137,42 @@ pub(crate) async fn settings_post(
     if let Err(response) = mutation_guard(&ctx, &form, true) {
         return response;
     }
-    let Some(value) = crawlers::setting_value(field(&form, "ai_crawlers")) else {
-        return settings_response(
-            &ctx,
-            StatusCode::BAD_REQUEST,
-            Some("Choose allow or block for AI crawlers."),
-        )
-        .await;
-    };
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match db::node_config::set_ai_crawlers(
-        &ctx.state.pool,
-        ctx.user.as_ref().expect("admin guard").id,
-        &session,
-        value,
-    )
-    .await
-    {
-        Ok(true) => ctx.redirect("/admin/settings?saved=crawlers"),
+    let actor = ctx.user.as_ref().expect("admin guard").id;
+    // Each section of the page posts its own field.
+    let (saved, section, failure) = if form.contains_key("node_mode") {
+        let Some(mode) = crate::backend::identity::setup::node_mode(field(&form, "node_mode"))
+        else {
+            return settings_response(
+                &ctx,
+                StatusCode::BAD_REQUEST,
+                Some("Choose open or by approval for sign-up."),
+            )
+            .await;
+        };
+        (
+            db::node_config::set_node_mode(&ctx.state.pool, actor, &session, mode).await,
+            "signup",
+            "Unable to save the sign-up setting.",
+        )
+    } else {
+        let Some(value) = crawlers::setting_value(field(&form, "ai_crawlers")) else {
+            return settings_response(
+                &ctx,
+                StatusCode::BAD_REQUEST,
+                Some("Choose allow or block for AI crawlers."),
+            )
+            .await;
+        };
+        (
+            db::node_config::set_ai_crawlers(&ctx.state.pool, actor, &session, value).await,
+            "crawlers",
+            "Unable to save the AI crawler setting.",
+        )
+    };
+    match saved {
+        Ok(true) => ctx.redirect(&format!("/admin/settings?saved={section}")),
         Ok(false) => {
             settings_response(
                 &ctx,
@@ -163,13 +181,6 @@ pub(crate) async fn settings_post(
             )
             .await
         }
-        Err(_) => {
-            settings_response(
-                &ctx,
-                StatusCode::SERVICE_UNAVAILABLE,
-                Some("Unable to save the AI crawler setting."),
-            )
-            .await
-        }
+        Err(_) => settings_response(&ctx, StatusCode::SERVICE_UNAVAILABLE, Some(failure)).await,
     }
 }

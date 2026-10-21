@@ -1,7 +1,7 @@
 //! Admin email page: the outgoing mail server, with a button that sends a test message.
 //! The password is never page data: the page only says whether one is set.
 use crate::webui::components::{DraftSelect, SelectOption};
-use crate::webui::pages::admin::{admin_header, Section};
+use crate::webui::pages::admin::{admin_layout, Section};
 use crate::webui::pages::fields::{csrf, notice, text_field, FIELD, SUBMIT};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -44,73 +44,108 @@ fn source_note(source: &str) -> &'static str {
     }
 }
 
+/// The badge beside the title: where the settings in use come from.
+fn source_badge(source: &str) -> Element {
+    let (class, label) = match source {
+        "database" => ("identity-status identity-status-success", "Set up"),
+        "environment" => (
+            "identity-status identity-status-success",
+            "From environment",
+        ),
+        _ => ("identity-status", "Not set up"),
+    };
+    rsx! { span { class, "{label}" } }
+}
+
 /// A component, so its select runs inside the renderer's runtime.
 #[component]
 fn EmailForm(page: Page) -> Element {
     let settings = &page.settings;
     rsx! {
-        form { method: "post", action: "/admin/email", class: "identity-form",
+        form { method: "post", action: "/admin/email", class: "identity-form identity-email-form",
             {csrf(&page.csrf_token)}
-            {text_field("host", "Server host", settings.host.clone(), "text", true, 255)}
-            {text_field("port", "Port (blank for the usual one)", settings.port.clone(), "text", false, 5)}
-            div { class: "space-y-2",
-                label { r#for: "security", class: "block text-sm font-semibold", "Encryption" }
-                DraftSelect { id: Some("security".to_owned()), name: "security", class: "border border-border bg-background",
-                    initial_value: if settings.security.is_empty() { "starttls".to_owned() } else { settings.security.clone() },
-                    options: vec![
-                        SelectOption::new("starttls", "STARTTLS (usually port 587)"),
-                        SelectOption::new("tls", "TLS (usually port 465)"),
-                        SelectOption::new("none", "None (usually port 25)"),
-                    ] }
+            fieldset { class: "identity-fieldset",
+                legend { "Server" }
+                div { class: "identity-field-row",
+                    {text_field("host", "Host", settings.host.clone(), "text", true, 255)}
+                    {text_field("port", "Port", settings.port.clone(), "text", false, 5)}
+                }
+                div { class: "space-y-2",
+                    label { r#for: "security", class: "block text-sm font-semibold", "Encryption" }
+                    DraftSelect { id: Some("security".to_owned()), name: "security", class: "border border-border bg-background",
+                        initial_value: if settings.security.is_empty() { "starttls".to_owned() } else { settings.security.clone() },
+                        options: vec![
+                            SelectOption::new("starttls", "STARTTLS (usually port 587)"),
+                            SelectOption::new("tls", "TLS (usually port 465)"),
+                            SelectOption::new("none", "None (usually port 25)"),
+                        ] }
+                }
+                p { class: "identity-form-hint", "Leave the port blank to use the usual one for the encryption." }
             }
-            {text_field("username", "Username (blank if the server needs none)", settings.username.clone(), "text", false, 255)}
-            div { class: "space-y-2",
-                label { r#for: "password", class: "block text-sm font-semibold", "Password" }
-                input { id: "password", name: "password", r#type: "password", autocomplete: "new-password", maxlength: "255",
-                    disabled: !page.can_store_password,
-                    placeholder: if settings.password_set { "Password set. Leave blank to keep it." } else { "" },
-                    class: FIELD }
-                if !page.can_store_password {
-                    p { class: "text-sm text-muted-foreground", "Set SECRETS_MASTER_KEY on the server to save a password here." }
+            fieldset { class: "identity-fieldset",
+                legend { "Sign-in" }
+                p { class: "identity-form-hint", "Leave both blank if the server needs no sign-in." }
+                {text_field("username", "Username", settings.username.clone(), "text", false, 255)}
+                div { class: "space-y-2",
+                    label { r#for: "password", class: "block text-sm font-semibold", "Password" }
+                    input { id: "password", name: "password", r#type: "password", autocomplete: "new-password", maxlength: "255",
+                        disabled: !page.can_store_password,
+                        placeholder: if settings.password_set { "Password set. Leave blank to keep it." } else { "" },
+                        class: FIELD }
+                    if !page.can_store_password {
+                        p { class: "identity-form-hint", "Set SECRETS_MASTER_KEY on the server to save a password here." }
+                    }
                 }
             }
-            {text_field("from_name", "From name", settings.from_name.clone(), "text", false, 255)}
-            {text_field("from_address", "From address", settings.from_address.clone(), "email", true, 255)}
-            {text_field("reply_to", "Reply-To address (optional)", settings.reply_to.clone(), "email", false, 255)}
+            fieldset { class: "identity-fieldset",
+                legend { "Sender" }
+                {text_field("from_name", "From name", settings.from_name.clone(), "text", false, 255)}
+                {text_field("from_address", "From address", settings.from_address.clone(), "email", true, 255)}
+                {text_field("reply_to", "Reply-To address (optional)", settings.reply_to.clone(), "email", false, 255)}
+            }
             div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Save" } }
         }
     }
 }
 
 pub fn render(page: Page) -> Element {
-    rsx! {
-        div { class: "page-shell max-w-5xl py-8 pb-14",
-            {admin_header(Section::Email, "Email", "Send notifications and account notices by email through your own mail server.")}
+    let configured = page.settings.source != "none";
+    admin_layout(
+        Section::Email,
+        "Email",
+        "Send notifications and account notices by email through your own mail server.",
+        rsx! {
             {notice(page.message.as_deref(), page.is_error)}
-            section { class: "panel overflow-hidden", aria_labelledby: "email-server-title",
-                header { class: "border-b border-border bg-muted/30 px-5 py-4",
-                    h2 { id: "email-server-title", class: "text-base font-semibold", "Mail server" }
-                    p { class: "mt-1 text-sm text-muted-foreground", {source_note(&page.settings.source)} }
-                    if page.public_url.is_empty() {
-                        p { class: "mt-1 text-sm text-muted-foreground", "Without PUBLIC_URL, emails contain codes but no links." }
-                    } else {
-                        p { class: "mt-1 text-sm text-muted-foreground break-all", "Links in emails start with " code { "{page.public_url}" } ", from PUBLIC_URL." }
+            section { class: "identity-admin-panel", aria_labelledby: "email-server-title",
+                header { class: "identity-admin-panel-header",
+                    div {
+                        h2 { id: "email-server-title", "Mail server " {source_badge(&page.settings.source)} }
+                        p { {source_note(&page.settings.source)} }
+                        if page.public_url.is_empty() {
+                            p { "Without PUBLIC_URL, emails contain codes but no links." }
+                        } else {
+                            p { class: "break-all", "Links in emails start with " code { "{page.public_url}" } ", from PUBLIC_URL." }
+                        }
                     }
                 }
-                div { class: "p-5", EmailForm { page: page.clone() } }
+                EmailForm { page: page.clone() }
             }
-            section { class: "panel mt-4 overflow-hidden", aria_labelledby: "email-test-title",
-                header { class: "border-b border-border bg-muted/30 px-5 py-4",
-                    h2 { id: "email-test-title", class: "text-base font-semibold", "Send a test email" }
-                    p { class: "mt-1 text-sm text-muted-foreground", "Sends a message to the address of your own account, so you see the server's answer." }
-                }
-                form { method: "post", action: "/admin/email/test", class: "p-5",
-                    {csrf(&page.csrf_token)}
-                    button { r#type: "submit", class: "btn", "Send test email" }
+            if configured {
+                section { class: "identity-admin-panel", aria_labelledby: "email-test-title",
+                    header { class: "identity-admin-panel-header",
+                        div {
+                            h2 { id: "email-test-title", "Send a test email" }
+                            p { "Sends a message to the address of your own account, so you see the server's answer." }
+                        }
+                    }
+                    form { method: "post", action: "/admin/email/test",
+                        {csrf(&page.csrf_token)}
+                        button { r#type: "submit", class: "btn", "Send test email" }
+                    }
                 }
             }
-        }
-    }
+        },
+    )
 }
 
 #[cfg(test)]
@@ -173,8 +208,11 @@ mod tests {
             dioxus_ssr::render_element(render(page("environment", false)))
                 .contains("CODEYARD_SMTP_*")
         );
-        assert!(dioxus_ssr::render_element(render(page("none", false)))
-            .contains("No mail server is set up"));
+        let none = dioxus_ssr::render_element(render(page("none", false)));
+        assert!(none.contains("No mail server is set up"));
+        assert!(none.contains("Not set up"));
+        // Without a server there is nothing to test.
+        assert!(!none.contains("action=\"/admin/email/test\""));
     }
 
     #[test]

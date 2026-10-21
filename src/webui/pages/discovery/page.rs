@@ -107,9 +107,6 @@ pub struct SharedRepositoryCard {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct HomeModel {
     pub username: Option<String>,
-    /// Open issues assigned to the viewer, and open pull requests the viewer created.
-    pub assigned_issues: i64,
-    pub open_pull_requests: i64,
     pub repositories: Vec<RepositoryCard>,
     pub shared: Vec<SharedRepositoryCard>,
     pub trending: Vec<RepositoryCard>,
@@ -493,16 +490,6 @@ pub fn home(model: HomeModel) -> Element {
     rsx! {
         div { class: if solo { "page-shell discovery-dashboard discovery-dashboard-solo" } else { "page-shell discovery-dashboard" },
             section { class: "discovery-dashboard-main", aria_labelledby: "dashboard-repositories-title",
-                div { class: "discovery-summary",
-                    NavLink { href: "/issues?tab=assigned&state=open", class: "focus-ring discovery-summary-card",
-                        span { class: "discovery-summary-count", "{model.assigned_issues}" }
-                        span { class: "discovery-summary-label", "Assigned issues" }
-                    }
-                    NavLink { href: "/pulls?tab=involved&state=open", class: "focus-ring discovery-summary-card",
-                        span { class: "discovery-summary-count", "{model.open_pull_requests}" }
-                        span { class: "discovery-summary-label", "Open pull requests" }
-                    }
-                }
                 header { class: "discovery-dashboard-header",
                     h1 { id: "dashboard-repositories-title",
                         "Your repositories"

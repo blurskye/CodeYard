@@ -1,5 +1,5 @@
-//! The audit log page: recorded administrative changes, newest first, filtered by action and
-//! actor.
+//! The audit log page: recorded administrative changes, newest first, filtered by the kind of
+//! change and the actor.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::app::AppState;
@@ -56,13 +56,11 @@ async fn load_audit(
         id: entry.id,
         actor: entry.actor.unwrap_or_default(),
         action: entry.action,
-        target: match (entry.target_type, entry.target_id) {
-            (Some(kind), Some(id)) => format!("{kind} {id}"),
-            (Some(kind), None) => kind,
-            _ => String::new(),
-        },
+        // A user target that no longer exists has no name, and the page says so.
+        target: entry.target_name.unwrap_or_default(),
+        org: entry.org_name.unwrap_or_default(),
         details: details_text(entry.details),
-        time: entry.created_at.format("%Y-%m-%d %H:%M UTC").to_string(),
+        time: entry.created_at.to_rfc3339(),
     })
     .collect();
     Ok(AdminAudit {

@@ -7,8 +7,8 @@ use super::{
 };
 use crate::webui::{
     components::{
-        compact_date, confirm_dialog, count_label, current_time, references::References,
-        relative_date, short_sha, Avatar, Markdown,
+        compact_date, confirm_dialog, count_label, references::References, short_sha, Avatar,
+        LiveTime, Markdown,
     },
     encode_component,
     navigation::NavLink,
@@ -61,8 +61,7 @@ pub(super) fn labels(values: &[Label]) -> Element {
 /// A time as "3 days ago", with the exact date as its tooltip. Text that is not a time is shown as
 /// it is.
 pub(in crate::webui::pages::repos) fn ago(value: &str) -> Element {
-    let text = relative_date(value, current_time()).unwrap_or_else(|| compact_date(value));
-    rsx! { time { datetime: value.to_owned(), title: compact_date(value), "{text}" } }
+    rsx! { LiveTime { value: value.to_owned(), title: Some(compact_date(value)) } }
 }
 /// The badge after a commenter's name: "Author" for the person who opened the item, "Owner" for
 /// the repository owner. A deleted account gets none.

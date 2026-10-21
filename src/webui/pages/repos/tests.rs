@@ -634,7 +634,8 @@ fn prerendered_repository_drafts_have_opaque_text_and_original_revision() {
 #[test]
 fn tabs_respect_segment_boundaries() {
     assert!(active_tab("/a/r", "/a/r/tree/feature/x", ""));
-    assert!(active_tab("/a/r", "/a/r/commits", "/commits"));
+    assert!(active_tab("/a/r", "/a/r/commits", ""));
+    assert!(active_tab("/a/r", "/a/r/commit/abc", ""));
     assert!(!active_tab("/a/r", "/a/repo", ""));
     assert!(!active_tab("/a/r", "/a/r/settings-extra", "/settings"));
     assert!(active_tab("/a/r", "/a/r/milestones", "/issues"));
@@ -643,6 +644,15 @@ fn tabs_respect_segment_boundaries() {
     assert!(!active_tab("/a/r", "/a/r/labels", "/pulls"));
     assert!(!active_tab("/a/r", "/a/r/milestones/1", "/pulls"));
     assert!(!active_tab("/a/r", "/a/r/milestonesx", "/issues"));
+    for page in [
+        "/a/r/branches",
+        "/a/r/tags",
+        "/a/r/releases",
+        "/a/r/releases/new",
+    ] {
+        assert!(active_tab("/a/r", page, ""), "{page}");
+    }
+    assert!(!active_tab("/a/r", "/a/r/branchesx", ""));
     for family in ["/issues", "/pulls"] {
         for tail in ["", "/new", "/7", "/7/edit", "/7/comments", "/7/diff"] {
             let path = format!("/a/r{family}{tail}");
@@ -2744,7 +2754,7 @@ fn repo_tabs_keep_the_primary_tabs_in_the_strip_and_list_the_rest_in_more() {
             owner: "alice".into(),
             name: "project".into(),
             can_admin: true,
-            current_path: "/alice/project/tags".into(),
+            current_path: "/alice/project/settings".into(),
             ..Default::default()
         };
         let html = dioxus_ssr::render_element(repo_tabs(&repo));
@@ -2761,15 +2771,11 @@ fn repo_tabs_keep_the_primary_tabs_in_the_strip_and_list_the_rest_in_more() {
         assert!(strip.contains("class=\"repo-tab repo-tab-active\""));
         assert!(more.contains("aria-label=\"More repository pages\""));
         assert!(more.contains("repo-tabs-more-current"));
-        for href in [
-            "/alice/project/commits",
-            "/alice/project/branches",
-            "/alice/project/tags",
-            "/alice/project/settings",
-        ] {
+        for href in ["/alice/project/actions", "/alice/project/settings"] {
             assert!(more.contains(&format!("href=\"{href}\"")), "{href}");
         }
         assert!(!more.contains("href=\"/alice/project/issues\""));
+        assert!(!more.contains("href=\"/alice/project/tags\""));
     });
 }
 

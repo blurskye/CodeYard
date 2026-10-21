@@ -756,11 +756,9 @@ fn dashboard_empty_states_offer_real_actions_without_fabricated_rows() {
 }
 
 #[test]
-fn dashboard_without_trending_drops_the_column_and_counts_link_to_their_lists() {
+fn dashboard_without_trending_drops_the_column() {
     let html = dioxus_ssr::render_element(home(HomeModel {
         username: Some("alice".into()),
-        assigned_issues: 2,
-        open_pull_requests: 1,
         ..Default::default()
     }));
     // Nothing is trending, so there is no Trending column, and the work takes the full width.
@@ -771,9 +769,8 @@ fn dashboard_without_trending_drops_the_column_and_counts_link_to_their_lists() 
         !html.contains("Nothing trending from other people yet."),
         "{html}"
     );
-    // The two counts open the matching filtered lists.
-    assert!(html.contains("href=\"/issues?tab=assigned"), "{html}");
-    assert!(html.contains("href=\"/pulls?tab=involved"), "{html}");
+    // The dashboard shows work, not counters.
+    assert!(!html.contains("href=\"/issues?tab=assigned"), "{html}");
     let with_trending = dioxus_ssr::render_element(home(HomeModel {
         username: Some("alice".into()),
         trending: vec![RepositoryCard {

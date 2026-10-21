@@ -60,7 +60,8 @@ pub enum SetupError {
     Session(SessionIssueError),
 }
 
-fn node_mode(mode: &str) -> Option<&'static str> {
+/// `public` or `private`, from any case and surrounding space.
+pub(crate) fn node_mode(mode: &str) -> Option<&'static str> {
     if mode.len() > 32 {
         return None;
     }

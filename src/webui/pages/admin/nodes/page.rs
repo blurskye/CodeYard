@@ -1,7 +1,8 @@
 //! Admin list of the cluster's nodes, with approve and revoke.
 use crate::webui::{
     components::{count_label, CopyButton},
-    pages::admin::{admin_header, Section},
+    pages::admin::{admin_layout, Section},
+    pages::fields::notice,
 };
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -29,29 +30,27 @@ pub struct Page {
 }
 
 pub fn render(page: Page) -> Element {
-    rsx! {
-        div { class: "page-shell max-w-5xl py-8 pb-14",
-            {admin_header(Section::Nodes, "Cluster nodes", &format!("{} connected to this installation.", count_label(page.nodes.len(), "node", "nodes")))}
-            if let Some(message) = &page.message {
-                p { role: "status", class: "mb-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-destructive", "{message}" }
-            }
-            section { class: "panel overflow-hidden", aria_label: "Cluster nodes",
+    admin_layout(
+        Section::Nodes,
+        "Cluster nodes",
+        &format!(
+            "{} connected to this installation.",
+            count_label(page.nodes.len(), "node", "nodes")
+        ),
+        rsx! {
+            {notice(page.message.as_deref(), true)}
+            section { class: "identity-admin-panel", aria_label: "Cluster nodes",
                 if page.nodes.is_empty() {
-                    div { class: "node-setup",
-                        svg { width: "28", height: "28", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.5", stroke_linecap: "round", stroke_linejoin: "round", "aria-hidden": "true",
-                            rect { x: "2", y: "3", width: "20", height: "7", rx: "2" }
-                            rect { x: "2", y: "14", width: "20", height: "7", rx: "2" }
-                            path { d: "M6 6.5h.01M6 17.5h.01" }
-                        }
-                        h2 { class: "text-base font-semibold", "No nodes have joined." }
-                        p { class: "mt-2 text-sm text-muted-foreground", "Connected nodes will appear here. A cluster needs PostgreSQL and this server running in cluster mode (see docs/CLUSTER.md). Then follow these steps." }
+                    div { class: "identity-admin-box node-setup",
+                        h2 { "No nodes have joined." }
+                        p { class: "identity-admin-hint", "Connected nodes will appear here. A cluster needs PostgreSQL and this server running in cluster mode (see docs/CLUSTER.md). Then follow these steps." }
                         ol { class: "node-setup-steps",
                             li {
                                 p { "On this server, create an invite for a storage node:" }
                                 {command_block("codeyard cluster invite --roles storage")}
                             }
                             li {
-                                p { "On the new machine, set " code { class: "font-mono text-foreground", "CLUSTER_JOIN_TOKEN" } " to the ticket." }
+                                p { "On the new machine, set " code { "CLUSTER_JOIN_TOKEN" } " to the ticket." }
                             }
                             li {
                                 p { "Then join the cluster from the new machine:" }
@@ -60,44 +59,39 @@ pub fn render(page: Page) -> Element {
                         }
                     }
                 } else {
-                    div { class: "overflow-x-auto", table { class: "min-w-full text-left text-sm",
-                        thead { class: "bg-muted text-xs text-muted-foreground", tr {
-                            th { class: "px-4 py-3 font-medium", "Node" }
-                            th { class: "px-4 py-3 font-medium", "Roles" }
-                            th { class: "px-4 py-3 font-medium", "Status" }
-                            th { class: "px-4 py-3 font-medium", "Version" }
-                            th { class: "px-4 py-3 font-medium", "Last seen" }
-                            th { class: "px-4 py-3 font-medium", "Free disk" }
-                            th { class: "px-4 py-3 text-right font-medium", "Action" }
+                    div { class: "identity-table-wrap", table { class: "identity-table",
+                        thead { tr {
+                            th { "Node" } th { "Roles" } th { "Status" } th { "Version" } th { "Last seen" } th { class: "identity-num", "Free disk" }
+                            th { class: "identity-table-action", "Action" }
                         } }
-                        tbody { for node in &page.nodes { tr { class: "border-t border-border",
-                            td { class: "px-4 py-3 font-mono font-medium", "{node.name}" }
-                            td { class: "px-4 py-3", "{node.roles}" }
-                            td { class: "px-4 py-3",
-                                span { class: if node.status == "active" && !node.offline { "rounded-full border border-border px-2 py-0.5 text-xs" } else { "rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 text-xs text-destructive" },
+                        tbody { for node in &page.nodes { tr {
+                            td { code { "{node.name}" } }
+                            td { "{node.roles}" }
+                            td {
+                                span { class: if node.status == "active" && !node.offline { "identity-status identity-status-success" } else { "identity-status identity-status-danger" },
                                     if node.offline { "Offline" } else { "{node.status}" }
                                 }
                             }
-                            td { class: "px-4 py-3 text-muted-foreground", "{node.version}" }
-                            td { class: "px-4 py-3 text-muted-foreground", "{node.last_seen}" }
-                            td { class: "px-4 py-3", "{node.disk_free}" }
-                            td { class: "px-4 py-3 text-right",
+                            td { class: "identity-muted", "{node.version}" }
+                            td { class: "identity-muted", "{node.last_seen}" }
+                            td { class: "identity-num", "{node.disk_free}" }
+                            td { class: "identity-table-action",
                                 form { method: "post", action: format!("/admin/nodes/{}/{}", node.name, if node.status == "active" { "revoke" } else { "approve" }),
                                     input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
                                     if node.status == "active" {
-                                        button { r#type: "submit", class: "rounded-md px-3 py-2 text-sm text-destructive hover:bg-accent", "Revoke" }
+                                        button { r#type: "submit", class: "btn btn-sm btn-danger", "Revoke" }
                                     } else {
-                                        button { r#type: "submit", class: "rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:bg-accent", "Approve" }
+                                        button { r#type: "submit", class: "btn btn-sm", "Approve" }
                                     }
                                 }
                             }
                         } } }
                     } }
                 }
+                p { class: "identity-admin-hint", "Revoked nodes lose access on their next connection." }
             }
-            p { class: "mt-3 text-xs text-muted-foreground", "Revoked nodes lose access on their next connection." }
-        }
-    }
+        },
+    )
 }
 
 /// A setup command in its own block, with a button that copies it.

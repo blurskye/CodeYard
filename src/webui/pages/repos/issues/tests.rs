@@ -1799,9 +1799,6 @@ fn every_collaboration_mode_reuses_the_complete_code_chrome_outside_content() {
                 ("Issues", "/issues"),
                 ("Pull requests", "/pulls"),
                 ("Actions", "/actions"),
-                ("Commits", "/commits"),
-                ("Branches", "/branches"),
-                ("Tags", "/tags"),
                 ("Settings", "/settings"),
             ] {
                 let link = tabs
@@ -1822,6 +1819,10 @@ fn every_collaboration_mode_reuses_the_complete_code_chrome_outside_content() {
                 );
             }
             assert_eq!(tabs.matches("repo-tab-active").count(), 1);
+            // Commits, branches and tags open from the code page, as on GitHub, not from a tab.
+            assert!(!tabs.contains("href=\"/alice/repo/commits\""));
+            assert!(!tabs.contains("href=\"/alice/repo/branches\""));
+            assert!(!tabs.contains("href=\"/alice/repo/tags\""));
             let engagement = dioxus_ssr::render_element(repos::chrome::repo_engagement(
                 &repo.chrome,
                 "repo-engagement",

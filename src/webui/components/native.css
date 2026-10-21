@@ -503,7 +503,8 @@ body {
 .site-header .repo-tabs-more > .native-menu-panel { position: absolute; top: calc(100% + 8px); right: 0; left: auto; }
 .repo-tabs-more-current, .repo-tabs-more-current:hover { border-bottom-color: #fd8c73; font-weight: 600; }
 @media (max-width: 767px) {
-  .site-header .repo-tabs-more > .native-menu-panel { position: fixed; top: 60px; right: 12px; left: 12px; max-height: calc(100dvh - 72px); overflow-y: auto; }
+  /* The strip is a size container, which would place a fixed panel against it, so the panel hangs from its button. */
+  .site-header .repo-tabs-more > .native-menu-panel { max-height: calc(100dvh - 140px); overflow-y: auto; }
   .site-header .repo-tab-bar { margin-bottom: -1px; }
   .site-header .repo-tab-strip > .repo-tabs { margin-bottom: 0; }
   .site-header .repo-tabs { padding-right: 8px; }
@@ -1160,28 +1161,39 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 .repo-content .collaboration-filter-active .collaboration-filter-count { background: var(--secondary, #21262d); color: var(--foreground, #e6edf3); }
 
 /* ---- Looks pass: admin overview, workflow version and token expiry ----------
-   The admin overview shows totals cards and a bar chart drawn on the server, so it
-   needs no script. The chart scales to the width of the page, phone included. The token
-   form picks Never expires or a day. */
-.identity-admin-totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
-.identity-admin-total { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); }
-.identity-admin-total span { color: var(--muted-foreground); font-size: 12px; }
-.identity-admin-total strong { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.identity-admin-chart-scroll { margin-bottom: 8px; }
-.identity-admin-chart { display: block; width: 100%; height: auto; }
-.identity-admin-grid { stroke: var(--border); stroke-width: 1; }
-.identity-admin-axis { fill: var(--muted-foreground); font-size: 11px; }
-.identity-admin-bar { fill: var(--chart-1); }
-.identity-admin-daily-details { margin-bottom: 16px; }
-.identity-admin-daily-details > summary { display: inline-flex; align-items: center; gap: 8px; padding: 8px 0; color: var(--primary); font-size: 14px; font-weight: 600; list-style: none; cursor: pointer; }
-.identity-admin-daily-details > summary::-webkit-details-marker { display: none; }
-.identity-admin-daily-details > summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .12s ease; }
-.identity-admin-daily-details[open] > summary::before { transform: rotate(45deg); }
-.identity-admin-daily-details > .identity-table-wrap { margin-top: 8px; }
-/* On a phone the chart keeps its whole window: the labels are drawn larger in the viewBox so they
-   stay readable once the 800-unit drawing is scaled down to the screen. */
-/* Every other date is dropped on a phone, where the chart is scaled down and neighbouring dates would touch. */
-@media (max-width: 639px) { .identity-admin-axis { font-size: 22px; } .identity-admin-axis-minor { display: none; } }
+   The admin overview draws small daily column charts on the server, so it needs no script.
+   Each chart stretches to its box; its labels are HTML so they keep their size. Two charts
+   share a row on a wide screen and stack on a phone. The token form picks Never expires or a day. */
+.identity-admin-attention {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); border-radius: 6px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent); font-size: 14px;
+}
+.identity-admin-attention p { margin: 0; }
+.identity-admin-activity { display: grid; gap: 12px; min-width: 0; }
+.identity-admin-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.identity-admin-chart { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; }
+.identity-admin-chart-wide { grid-column: 1 / -1; }
+.identity-admin-chart-caption { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.identity-admin-chart-caption h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.identity-admin-chart-caption span { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.identity-admin-chart-plot { position: relative; height: 96px; padding-top: 16px; border-bottom: 1px solid var(--border); }
+.identity-admin-chart-wide .identity-admin-chart-plot { height: 128px; }
+.identity-admin-chart-plot svg { display: block; width: 100%; height: 100%; }
+.identity-admin-chart-peak {
+  position: absolute; top: 0; left: 0; right: 0; border-bottom: 1px dashed var(--border);
+  color: var(--muted-foreground); font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums;
+}
+.identity-admin-chart-hit { fill: transparent; }
+.identity-admin-chart-bar { fill: var(--chart-1); }
+.identity-admin-chart g:hover .identity-admin-chart-hit { fill: var(--accent); }
+.identity-admin-chart g:hover .identity-admin-chart-bar { fill: var(--primary); }
+.identity-admin-chart-empty {
+  display: grid; place-items: center; height: 96px; margin: 0; border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground); font-size: 13px;
+}
+.identity-admin-chart-dates { display: flex; justify-content: space-between; color: var(--muted-foreground); font-size: 12px; }
+@media (max-width: 639px) { .identity-admin-charts { grid-template-columns: minmax(0, 1fr); } }
 .identity-expiry { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .identity-expiry legend { padding: 0; }
 .identity-expiry-option { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; }
@@ -1217,11 +1229,6 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 .repo-quick-setup-code { margin: 0; padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); font-family: ui-monospace, monospace; font-size: 13px; line-height: 20px; white-space: pre; overflow-x: auto; }
 
 /* Dashboard summary: the viewer's open issues and pull requests, each linking to its list. */
-.discovery-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
-.discovery-summary-card { display: grid; gap: 2px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--foreground); text-decoration: none; transition: background-color .12s ease, border-color .12s ease; }
-.discovery-summary-card:hover { border-color: var(--muted-foreground); background: var(--accent); text-decoration: none; }
-.discovery-summary-count { font-size: 24px; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
-.discovery-summary-label { color: var(--muted-foreground); font-size: 13px; }
 /* A code search match. The tint works in both themes, and the code keeps its own colours. */
 .search-match { color: inherit; background: color-mix(in srgb, var(--primary) 28%, transparent); border-radius: 2px; }
 /* With nothing trending, the dashboard drops its side column and the work takes the width. */
@@ -1531,20 +1538,10 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .identity-avatar-form input[type="file"]::file-selector-button { min-height: 32px; margin-right: 12px; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--secondary); color: var(--foreground); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
 .identity-avatar-form input[type="file"]::file-selector-button:hover { background: var(--accent); }
 
-/* Administration pages: title and one line of text, then the section tabs. The tabs wrap on a
-   narrow screen, so none is cut off. */
-.admin-top { margin-bottom: 24px; }
-.identity-admin > .admin-top { margin-bottom: 0; }
-.admin-header { margin-bottom: 16px; }
-.admin-header-main { min-width: 0; }
+/* Administration pages: the title and one line of text over a rule, as a settings subhead. */
+.admin-header { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .admin-header h1 { margin: 0; font-size: 24px; line-height: 1.25; font-weight: 600; letter-spacing: -.025em; }
 .admin-header p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 14px; }
-.admin-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
-.admin-tab { padding: 6px 12px; border-radius: 6px; color: var(--muted-foreground); font-size: 14px; text-decoration: none; }
-.admin-tab:hover { background: var(--accent); color: var(--foreground); }
-.admin-tab[aria-current="page"] { background: var(--accent); color: var(--foreground); font-weight: 600; }
-.admin-subtabs { margin-top: 8px; padding-bottom: 0; border-bottom: 0; }
-.admin-subtabs .admin-tab { padding: 4px 10px; font-size: 13px; }
 
 /* Actions runs toolbar: the workflow version is a compact field before the run menu. */
 .actions-page .actions-log-marker { display: inline-flex; align-items: center; gap: 6px; }
@@ -1578,17 +1575,8 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 /* Inbox: a row without an actor keeps the avatar's width, so its title lines up with the others. */
 .notification-avatar-spacer { flex: none; width: 32px; }
 
-/* Admin tables: numbers align right. The daily table scrolls sideways on a phone, so its disclosure
-   fades on the right edge to the panel colour. The fade sits over the scroll area, not under it,
-   because the table cells are transparent and would hide a background. */
+/* Admin tables: numbers align right. */
 .identity-num { text-align: right; font-variant-numeric: tabular-nums; }
-@media (max-width: 639px) {
-  .identity-admin-daily-details { position: relative; }
-  .identity-admin-daily-details::after {
-    content: ""; position: absolute; top: 0; right: 0; bottom: 0; width: 16px; pointer-events: none;
-    background: linear-gradient(to right, transparent, var(--background));
-  }
-}
 
 /* Keyboard focus: a 2px ring outside the control, on the buttons and links the polish wave shapes. */
 .btn:focus-visible, .actions-button:focus-visible, .notification-link:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -1780,8 +1768,8 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 }
 
 /* The empty cluster's setup: numbered steps, each command in its own block with a copy button. */
-.node-setup { padding: 24px; text-align: left; }
-.node-setup h2 { margin: 12px 0 0; }
+.node-setup { padding: 20px; text-align: left; }
+.node-setup h2 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
 .node-setup-steps { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; margin: 16px 0 0; padding-left: 20px; font-size: 14px; }
 .node-setup-steps p { margin: 0; }
 .node-setup-command { display: flex; align-items: center; gap: 8px; margin-top: 8px; min-width: 0; }

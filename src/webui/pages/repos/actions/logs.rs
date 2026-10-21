@@ -2,10 +2,10 @@
 use super::{
     run::run_duration,
     runs::{icon, preserved_inputs, status_icon, status_label},
-    ActionsPage, Run,
+    ActionsPage, PlannedJob, Run,
 };
 use crate::webui::{
-    components::{relative_time, DraftSelect, SelectOption},
+    components::{DraftSelect, LiveTime, SelectOption},
     navigation::NavLink,
 };
 use dioxus::prelude::*;
@@ -43,6 +43,7 @@ pub fn normalize_status(status: &str) -> &'static str {
         "running" | "in_progress" => "running",
         "queued" | "pending" => "queued",
         "cancelled" | "canceled" => "cancelled",
+        "skipped" => "skipped",
         _ => "unknown",
     }
 }
@@ -56,6 +57,13 @@ pub fn duration(seconds: i64) -> String {
     } else {
         format!("{}h {}m", seconds / 3600, (seconds % 3600) / 60)
     }
+}
+
+/// A Unix time in seconds as RFC 3339 text, for a live age. Empty when it is out of range.
+pub fn rfc3339(value: i64) -> String {
+    chrono::DateTime::from_timestamp(value, 0)
+        .map(|value| value.to_rfc3339())
+        .unwrap_or_default()
 }
 
 pub fn timestamp(value: i64) -> String {
@@ -342,6 +350,45 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
         .collect()
 }
 
+/// Adds the steps the workflow file lists but the logs have not reached: pending while the run
+/// is active, skipped once it has ended. A planned job with no logs yet is listed the same way.
+pub fn add_planned_steps(jobs: &mut Vec<WorkflowJob>, planned: &[PlannedJob], run_status: &str) {
+    let missing = if matches!(normalize_status(run_status), "queued" | "running") {
+        "pending"
+    } else {
+        "skipped"
+    };
+    for plan in planned.iter().filter(|plan| !plan.steps.is_empty()) {
+        let names = std::iter::once("Set up job")
+            .chain(plan.steps.iter().map(|step| step.as_str()))
+            .chain(std::iter::once("Complete job"));
+        let job = match jobs.iter().position(|job| job.name == plan.name) {
+            Some(index) => &mut jobs[index],
+            None => {
+                jobs.push(WorkflowJob {
+                    key: format!("planned:{}", plan.name),
+                    stage: String::new(),
+                    name: plan.name.clone(),
+                    steps: Vec::new(),
+                });
+                jobs.last_mut().expect("pushed job")
+            }
+        };
+        // Each missing step goes after the step the file lists before it.
+        let mut at = 0;
+        for name in names {
+            if let Some(index) = job.steps.iter().position(|step| step.name == name) {
+                at = at.max(index + 1);
+            } else {
+                let mut step = new_step(name.to_owned());
+                step.status = missing.to_owned();
+                job.steps.insert(at, step);
+                at += 1;
+            }
+        }
+    }
+}
+
 pub fn selected_job(jobs: &[WorkflowJob], selection: &str) -> Option<usize> {
     if selection.is_empty() {
         // The runner's own lines come first; open the first workflow job instead when there is one.
@@ -426,7 +473,7 @@ pub(super) fn LogOutput(
                         match normalize_status(&run.status) {
                             "queued" => rsx! {
                                 p { "Waiting for the runner to start; logs appear here as the job runs." }
-                                p { class: "actions-log-meta", "Queued " span { title: timestamp(run.created_at), "{relative_time(run.created_at)}" } }
+                                p { class: "actions-log-meta", "Queued " LiveTime { value: rfc3339(run.created_at), title: Some(timestamp(run.created_at)) } }
                             },
                             "running" => rsx! { p { "Waiting for the first log lines; logs appear here as the job runs." } },
                             _ => rsx! { p { "No logs were recorded for this run." } },
@@ -633,6 +680,49 @@ mod tests {
         assert_eq!(jobs[1].name, "Runner");
         assert_eq!(jobs[1].steps[0].lines[0].id, 4);
     }
+    #[test]
+    fn planned_steps_show_before_their_logs_and_are_skipped_after_the_run() {
+        let plan = vec![
+            PlannedJob {
+                name: "build".into(),
+                steps: vec!["checkout".into(), "test".into()],
+            },
+            PlannedJob {
+                name: "deploy".into(),
+                steps: vec!["ship".into()],
+            },
+        ];
+        let lines = vec![
+            log(1, "[CI/build] ⭐ Run Set up job"),
+            log(2, "[CI/build]   ✅  Success - Set up job"),
+            log(3, "[CI/build] ⭐ Run Main checkout"),
+        ];
+        let mut jobs = project_logs(&lines, "running");
+        add_planned_steps(&mut jobs, &plan, "running");
+        let steps: Vec<_> = jobs[0]
+            .steps
+            .iter()
+            .map(|step| (step.name.as_str(), step.status.as_str()))
+            .collect();
+        assert_eq!(
+            steps,
+            [
+                ("Set up job", "success"),
+                ("checkout", "running"),
+                ("test", "pending"),
+                ("Complete job", "pending"),
+            ]
+        );
+        assert_eq!(jobs[1].name, "deploy");
+        assert!(jobs[1].steps.iter().all(|step| step.status == "pending"));
+        assert_eq!(selected_job(&jobs, ""), Some(0));
+
+        let mut finished = project_logs(&lines, "failed");
+        add_planned_steps(&mut finished, &plan, "failed");
+        assert_eq!(finished[0].steps[2].status, "skipped");
+        assert_eq!(normalize_status("skipped"), "skipped");
+    }
+
     #[test]
     fn job_flag_lines_read_as_the_job_result() {
         assert_eq!(

@@ -54,6 +54,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/admin/users",
             get(users::users_get).post(users::managed_user_post),
         )
+        .route("/admin/users/new", get(users::new_user_get))
         .route(
             "/admin/users/requests/:request_id/resolve",
             post(users::signup_post),

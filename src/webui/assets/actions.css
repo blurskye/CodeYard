@@ -8,7 +8,7 @@
 .actions-page {
   --actions-success: #3fb950;
   --actions-running: #d29922;
-  --actions-log-bg: #0d1117;
+  --actions-log-bg: var(--background);
   margin: 0 auto;
   padding: 0 0 48px;
   color: var(--foreground);
@@ -595,21 +595,8 @@
 /* A select's list inside the log panel must not be clipped by the panel's corners. */
 .actions-page .actions-log-panel:has(.app-select-list) { overflow: visible; }
 
-/* Logs intentionally use a stable dark console in every appearance. */
+/* The log panel follows the page theme, with a muted step list and monospace lines. */
 .actions-page .actions-log-panel {
-  --background: #0d1117;
-  --foreground: #f0f6fc;
-  --card: #161b22;
-  --card-foreground: #f0f6fc;
-  --muted-foreground: #8b949e;
-  --border: #30363d;
-  --primary: #58a6ff;
-  --secondary: #21262d;
-  --accent: #30363d;
-  --destructive: #f85149;
-  --actions-success: #3fb950;
-  --actions-running: #d29922;
-  --actions-status-check: #0d1117;
   display: flex;
   min-height: 460px;
   flex-direction: column;
@@ -632,12 +619,7 @@
 .actions-page .actions-log-heading p { margin-top: 3px; color: var(--muted-foreground); font-size: 12px; }
 .actions-page .actions-log-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; max-width: 100%; }
 .actions-page .actions-log-search { width: 220px; max-width: 100%; }
-:is(.actions-page, .actions-repository .repo-content .actions-page) .actions-log-search input {
-  height: 34px;
-  border-color: #30363d;
-  background: #010409;
-  color: #f0f6fc;
-}
+:is(.actions-page, .actions-repository .repo-content .actions-page) .actions-log-search input { height: 34px; }
 /* The select is an ordinary select (border, radius and chevron from native.css); the icon sits beside it. */
 .actions-page .actions-wrap-control {
   display: inline-flex;
@@ -646,7 +628,7 @@
   color: var(--muted-foreground);
 }
 .actions-page .actions-log-job + .actions-log-job { margin-top: 8px; }
-.actions-page .actions-step-list { padding: 8px; background: var(--actions-log-bg); color: #e6edf3; }
+.actions-page .actions-step-list { padding: 8px; background: var(--actions-log-bg); color: var(--foreground); }
 .actions-page .actions-step-list > details + details { margin-top: 2px; }
 .actions-page .actions-step-heading {
   position: relative;
@@ -665,18 +647,18 @@
   position: absolute;
   top: 5px;
   left: 12px;
-  color: #8b949e;
+  color: var(--muted-foreground);
   font-size: 19px;
   transition: transform .18s ease;
 }
-.actions-page .actions-step[open] > .actions-step-heading { background: #21262d; }
+.actions-page .actions-step[open] > .actions-step-heading { background: var(--muted); }
 .actions-page .actions-step[open] > .actions-step-heading::before { transform: rotate(90deg); }
 .actions-page .actions-step[open] > .actions-log-lines { animation: actions-reveal .18s ease-out; }
-.actions-page .actions-step-heading:hover { background: #161b22; }
-.actions-page .actions-step-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: #c9d1d9; }
+.actions-page .actions-step-heading:hover { background: var(--muted); }
+.actions-page .actions-step-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: var(--foreground); }
 .actions-page .actions-step-name > span:not(.sr-only) { overflow-wrap: anywhere; }
 .actions-page .actions-step-outcome,
-.actions-page .actions-step-duration { color: #8b949e; font-size: 12px; }
+.actions-page .actions-step-duration { color: var(--muted-foreground); font-size: 12px; }
 .actions-page .actions-step-duration { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .actions-page .actions-log-lines {
   overflow-x: auto;
@@ -688,38 +670,41 @@
   grid-template-columns: 3.5rem minmax(0, 1fr);
   gap: 4px;
   padding: 2px 12px;
-  color: #f0f6fc;
+  color: var(--foreground);
 }
-.actions-page .actions-log-line.is-error { background: #26080b; color: #ffb4b4; }
-.actions-page .actions-log-line.is-warning { color: #f2cc60; }
-.actions-page .actions-log-line:target { outline: 1px solid #58a6ff; outline-offset: -1px; }
+.actions-page .actions-log-line.is-error {
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  color: var(--destructive);
+}
+.actions-page .actions-log-line.is-warning { color: var(--actions-running); }
+.actions-page .actions-log-line:target { outline: 1px solid var(--primary); outline-offset: -1px; }
 .actions-page .actions-log-line-number {
   padding-right: 8px;
-  color: #8b949e;
+  color: var(--muted-foreground);
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.actions-page .actions-log-line-number:hover { color: #58a6ff; }
+.actions-page .actions-log-line-number:hover { color: var(--primary); }
 .actions-page .actions-log-text { overflow-wrap: normal; white-space: pre; }
 .actions-page .actions-log-lines:not(.wrap-lines) > div { width: max-content; min-width: 100%; }
 .actions-page .actions-log-lines.wrap-lines .actions-log-text { overflow-wrap: anywhere; white-space: pre-wrap; }
 .actions-page .actions-log-empty {
   margin: 12px;
   padding: 28px 16px;
-  border: 1px dashed #30363d;
+  border: 1px dashed var(--border);
   border-radius: 6px;
-  color: #8b949e;
+  color: var(--muted-foreground);
   font-size: 12px;
   text-align: center;
 }
 .actions-page .actions-log-footer {
   margin-top: auto;
   padding: 12px 16px;
-  border-top: 1px solid #21262d;
-  color: #8b949e;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
   font-size: 12px;
 }
-.actions-page .actions-log-limit { margin-bottom: 8px; color: #d29922; }
+.actions-page .actions-log-limit { margin-bottom: 8px; color: var(--actions-running); }
 .actions-page .actions-help { color: var(--muted-foreground); font-size: 12px; }
 .actions-page .actions-help summary { padding: 6px 0; }
 .actions-page .actions-help p { margin: 8px 0; overflow-wrap: anywhere; }

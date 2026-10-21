@@ -42,21 +42,42 @@ pub async fn set_ai_crawlers(
     session: &str,
     value: &str,
 ) -> Result<bool> {
+    set_setting(pool, actor, session, "ai_crawlers", value).await
+}
+
+/// `public` or `private`. Returns false when the node is not set up yet.
+pub async fn set_node_mode(
+    pool: &SqlitePool,
+    actor: i64,
+    session: &str,
+    value: &str,
+) -> Result<bool> {
+    set_setting(pool, actor, session, "node_mode", value).await
+}
+
+/// Changes one column of the configuration row for a signed-in administrator, and logs it.
+async fn set_setting(
+    pool: &SqlitePool,
+    actor: i64,
+    session: &str,
+    column: &'static str,
+    value: &str,
+) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !super::users::transitions::active_admin(&mut tx, actor).await?
         || !super::users::transitions::live_session(&mut tx, actor, session).await?
     {
         return Ok(false);
     }
-    let result = sqlx::query(
-        "UPDATE node_configuration SET ai_crawlers = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = 1",
-    )
+    let result = sqlx::query(&format!(
+        "UPDATE node_configuration SET {column} = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = 1"
+    ))
     .bind(value)
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() == 1 {
-        sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'node.ai_crawlers','node_configuration',1,?2)")
-            .bind(actor).bind(serde_json::json!({"ai_crawlers":value}).to_string()).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,?2,'node_configuration',1,?3)")
+            .bind(actor).bind(format!("node.{column}")).bind(serde_json::json!({column:value}).to_string()).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(result.rows_affected() == 1)

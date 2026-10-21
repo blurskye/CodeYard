@@ -28,12 +28,12 @@ async fn administration(pg: bool) {
         db::users::accounts::count_matching_users(f.pool(), "LISTED-")
             .await
             .unwrap(),
-        31
+        (31, 0, 0)
     );
-    let first = db::users::accounts::list_admin_users(f.pool(), "listed-", 25, 0)
+    let first = db::users::accounts::list_admin_users(f.pool(), "listed-", "", 25, 0)
         .await
         .unwrap();
-    let second = db::users::accounts::list_admin_users(f.pool(), "listed-", 25, 25)
+    let second = db::users::accounts::list_admin_users(f.pool(), "listed-", "", 25, 25)
         .await
         .unwrap();
     assert_eq!((first.len(), second.len()), (25, 6));
@@ -41,13 +41,15 @@ async fn administration(pg: bool) {
     assert_eq!(
         db::users::accounts::count_matching_users(f.pool(), "needle@")
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         1
     );
     assert_eq!(
         db::users::accounts::count_matching_users(f.pool(), "%")
             .await
-            .unwrap(),
+            .unwrap()
+            .0,
         0
     );
     assert!(matches!(
@@ -62,6 +64,30 @@ async fn administration(pg: bool) {
             .unwrap(),
         db::users::transitions::BanChange::Updated(_)
     ));
+    // The filters on the users page: the target is now both an administrator and banned.
+    let (all, admins, banned) = db::users::accounts::count_matching_users(f.pool(), "")
+        .await
+        .unwrap();
+    assert_eq!((admins, banned), (2, 1));
+    for (role, expected) in [
+        ("admins", vec!["administrator", "target"]),
+        ("banned", vec!["target"]),
+    ] {
+        let names: Vec<String> = db::users::accounts::list_admin_users(f.pool(), "", role, 100, 0)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|account| account.username)
+            .collect();
+        assert_eq!(names, expected);
+    }
+    assert_eq!(
+        db::users::accounts::list_admin_users(f.pool(), "", "", 100, 0)
+            .await
+            .unwrap()
+            .len() as i64,
+        all
+    );
     let session = token();
     db::users::sessions::create_session(
         f.pool(),

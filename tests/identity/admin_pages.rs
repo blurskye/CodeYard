@@ -8,6 +8,7 @@ use crate::support::http_client::Client;
 
 use axum::http::StatusCode;
 use codeyard::backend::{db, identity::passwords};
+use codeyard::webui::{app::Page, pages::account};
 use db::users::signup_requests as requests;
 
 async fn user(f: &Database, name: &str) -> db::models::User {
@@ -45,7 +46,12 @@ async fn admin_forms(pg: bool) {
     let role = format!("/admin/accounts/{target}/role");
 
     // A member cannot open the pages or send any of the forms.
-    for path in ["/admin", "/admin/users", "/admin/settings"] {
+    for path in [
+        "/admin",
+        "/admin/users",
+        "/admin/users/new",
+        "/admin/settings",
+    ] {
         let (status, _) = outsider.model(path).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{path}");
     }
@@ -149,6 +155,28 @@ async fn admin_forms(pg: bool) {
         0
     );
 
+    // A refused account comes back to the new-user form with the name kept.
+    let (status, page) = client.model("/admin/users/new").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(matches!(
+        page,
+        Page::Identity(account::Page::AdminNewUser { .. })
+    ));
+    let reply = client
+        .form_reply(
+            "/admin/users",
+            &[("username", "forms_short"), ("password", "short")],
+        )
+        .await;
+    assert!(!reply.status.is_success() && reply.location.is_none());
+    let body = String::from_utf8(reply.body).unwrap();
+    assert!(body.contains("value=\"forms_short\""), "{body}");
+    // The refused form comes back as the New user page, not the account list.
+    assert!(
+        body.contains("New user") && !body.contains("Search accounts"),
+        "{body}"
+    );
+
     // An administrator creates an account with a temporary password.
     let reply = client
         .form_reply(
@@ -166,6 +194,23 @@ async fn admin_forms(pg: bool) {
     );
     let created = user(&f, "forms_created").await;
     assert!(created.must_change_password && created.is_admin);
+
+    // The audit log names the accounts, and the filter keeps to one kind of change.
+    let (status, page) = client.model("/admin/audit?action=user.ban").await;
+    assert_eq!(status, StatusCode::OK);
+    let Page::Identity(account::Page::AdminAudit { model }) = page else {
+        panic!("audit model")
+    };
+    assert!(!model.entries.is_empty());
+    assert!(model.entries.iter().all(|entry| entry.action == "user.ban"
+        && entry.actor == "forms_admin"
+        && entry.target == "forms_target"));
+    let (status, page) = client.model("/admin/audit?action=user.create").await;
+    assert_eq!(status, StatusCode::OK);
+    let Page::Identity(account::Page::AdminAudit { model }) = page else {
+        panic!("audit model")
+    };
+    assert_eq!(model.entries[0].target, "forms_created");
     f.finish().await;
 }
 

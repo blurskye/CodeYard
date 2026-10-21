@@ -73,15 +73,26 @@ pub async fn admin_create_user(
     ))
 }
 
-/// The users page's search and page position, read from a query string or a form.
+/// The users page's search, role filter and page position, read from a query string or a form.
 struct Listing<'a> {
     search: &'a str,
+    role: &'static str,
     page: usize,
 }
 
-fn listing_from_query(ctx: &PageContext) -> (String, usize) {
+/// The role filter: `admins`, `banned`, or empty for every account.
+fn role_filter(value: &str) -> &'static str {
+    match value {
+        "admins" => "admins",
+        "banned" => "banned",
+        _ => "",
+    }
+}
+
+fn listing_from_query(ctx: &PageContext) -> (String, &'static str, usize) {
     (
         ctx.query.get("q").cloned().unwrap_or_default(),
+        role_filter(ctx.query.get("role").map_or("", String::as_str)),
         ctx.query
             .get("page")
             .and_then(|page| page.parse().ok())
@@ -94,6 +105,9 @@ fn users_path(listing: &Listing, saved: &str) -> String {
     let mut query = url::form_urlencoded::Serializer::new(String::new());
     if !listing.search.is_empty() {
         query.append_pair("q", listing.search);
+    }
+    if !listing.role.is_empty() {
+        query.append_pair("role", listing.role);
     }
     if listing.page > 1 {
         query.append_pair("page", &listing.page.to_string());
@@ -109,26 +123,28 @@ fn users_path(listing: &Listing, saved: &str) -> String {
     }
 }
 
-async fn load_users(
-    ctx: &PageContext,
-    search: &str,
-    page: usize,
-    submitted: Option<&Fields>,
-) -> Result<AdminUsers, Response> {
+async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUsers, Response> {
     let admin = require_account(ctx, true)?;
-    let total = db::users::accounts::count_matching_users(&ctx.state.pool, search)
-        .await
-        .map_err(|_| {
-            ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load the accounts.",
-            )
-        })? as usize;
+    let (all, admins, banned) =
+        db::users::accounts::count_matching_users(&ctx.state.pool, listing.search)
+            .await
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load the accounts.",
+                )
+            })?;
+    let total = match listing.role {
+        "admins" => admins,
+        "banned" => banned,
+        _ => all,
+    } as usize;
     let pages = total.div_ceil(USERS_PER_PAGE).max(1);
-    let page = page.clamp(1, pages);
+    let page = listing.page.clamp(1, pages);
     let accounts: Vec<AccountMetadata> = db::users::accounts::list_admin_users(
         &ctx.state.pool,
-        search,
+        listing.search,
+        listing.role,
         USERS_PER_PAGE as i64,
         ((page - 1) * USERS_PER_PAGE) as i64,
     )
@@ -169,11 +185,12 @@ async fn load_users(
         managed_accounts,
         current_user_id: admin.id,
         accounts,
-        search: search.trim().to_owned(),
+        search: listing.search.trim().to_owned(),
+        role: listing.role.to_owned(),
+        counts: [all as usize, admins as usize, banned as usize],
         page,
         pages,
         total,
-        values: submitted.map(preserved_values).unwrap_or_default(),
         requests,
         requests_count,
         requests_page,
@@ -183,14 +200,13 @@ async fn load_users(
 async fn users_response(
     ctx: &PageContext,
     listing: Listing<'_>,
-    submitted: Option<&Fields>,
     status: StatusCode,
     message: Option<&str>,
 ) -> Response {
     let mut ctx = ctx.clone();
     ctx.return_to = Some(users_path(&listing, ""));
     let ctx = &ctx;
-    match load_users(ctx, listing.search, listing.page, submitted).await {
+    match load_users(ctx, &listing).await {
         Ok(model) => ctx.page_model_status(
             status,
             "Users",
@@ -209,6 +225,7 @@ async fn users_response(
 fn listing_from_form(form: &Fields) -> Listing<'_> {
     Listing {
         search: field(form, "q"),
+        role: role_filter(field(form, "role")),
         page: field(form, "page").parse().unwrap_or(1),
     }
 }
@@ -222,7 +239,7 @@ pub(crate) async fn users_get(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let (search, page) = listing_from_query(&ctx);
+    let (search, role, page) = listing_from_query(&ctx);
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("ban") => Some("Account ban status updated."),
         Some("role") => Some("Administrator role updated."),
@@ -235,9 +252,9 @@ pub(crate) async fn users_get(
         &ctx,
         Listing {
             search: &search,
+            role,
             page,
         },
-        None,
         StatusCode::OK,
         message,
     )
@@ -282,19 +299,58 @@ pub(crate) async fn managed_user_post(
         .map(|_| ())
         .map_err(auth::errors::managed_account_failure)
     };
-    let listing = listing_from_form(&form);
     match result {
-        Ok(()) => ctx.redirect(&users_path(&listing, "account")),
+        Ok(()) => ctx.redirect("/admin/users?saved=account"),
         Err(error) => {
-            users_response(
-                &ctx,
-                listing,
-                Some(&form),
-                error.0,
-                Some(public_api_message(&error.1 .0)),
-            )
-            .await
+            new_user_response(&ctx, &form, error.0, Some(public_api_message(&error.1 .0)))
         }
+    }
+}
+
+fn new_user_response(
+    ctx: &PageContext,
+    submitted: &Fields,
+    status: StatusCode,
+    message: Option<&str>,
+) -> Response {
+    if let Err(response) = require_account(ctx, true) {
+        return response;
+    }
+    ctx.page_model_status(
+        status,
+        "New user",
+        Page::Identity(account::Page::AdminNewUser {
+            values: preserved_values(submitted),
+            csrf_token: ctx.csrf_token.clone(),
+            message: message.map(str::to_owned),
+            is_error: !status.is_success(),
+        }),
+    )
+}
+
+/// The new-user form. Only a private node creates accounts for people, so a public one sends
+/// the administrator back to the list.
+pub(crate) async fn new_user_get(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = require_account(&ctx, true) {
+        return response;
+    }
+    match db::node_config::get_node_configuration(&ctx.state.pool).await {
+        Ok(config) if config.as_ref().is_some_and(|config| config.is_private()) => {
+            new_user_response(&ctx, &Fields::new(), StatusCode::OK, None)
+        }
+        Ok(_) => ctx.redirect("/admin/users"),
+        Err(_) => ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Unable to load account settings.",
+        ),
     }
 }
 
@@ -328,7 +384,6 @@ pub(crate) async fn signup_post(
             users_response(
                 &ctx,
                 listing,
-                Some(&form),
                 error.0,
                 Some(public_api_message(&error.1 .0)),
             )
@@ -359,7 +414,6 @@ pub(crate) async fn ban_post(
             return users_response(
                 &ctx,
                 listing,
-                Some(&form),
                 StatusCode::BAD_REQUEST,
                 Some("Confirm the ban before saving it."),
             )
@@ -376,7 +430,6 @@ pub(crate) async fn ban_post(
             users_response(
                 &ctx,
                 listing,
-                Some(&form),
                 error.0,
                 Some(public_api_message(&error.1 .0)),
             )
@@ -405,14 +458,7 @@ pub(crate) async fn two_factor_reset_post(
         Ok(()) => ctx.redirect(&users_path(&listing, "two-factor-reset")),
         Err(error) => {
             let (status, body) = auth::errors::two_factor_failure(error);
-            users_response(
-                &ctx,
-                listing,
-                Some(&form),
-                status,
-                Some(public_api_message(&body.0)),
-            )
-            .await
+            users_response(&ctx, listing, status, Some(public_api_message(&body.0))).await
         }
     }
 }
@@ -439,7 +485,6 @@ pub(crate) async fn role_post(
             return users_response(
                 &ctx,
                 listing,
-                Some(&form),
                 StatusCode::BAD_REQUEST,
                 Some("Choose whether the account is an administrator."),
             )
@@ -456,7 +501,6 @@ pub(crate) async fn role_post(
             users_response(
                 &ctx,
                 listing,
-                Some(&form),
                 failure.0,
                 Some(public_api_message(&failure.1 .0)),
             )

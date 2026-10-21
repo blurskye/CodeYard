@@ -72,10 +72,17 @@ pub struct AdminAccountSummary {
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+/// One day of the admin overview charts.
 pub struct AdminActivityPoint {
     pub day: NaiveDate,
-    pub daily_contributions: i64,
-    pub cumulative_contributions: i64,
+    /// Commits pushed, through Git or written in the web editor.
+    pub commits: i64,
+    pub pulls_opened: i64,
+    pub pulls_merged: i64,
+    pub issues_opened: i64,
+    pub issues_closed: i64,
+    /// Workflow runs started.
+    pub runs: i64,
     pub daily_storage_bytes: i64,
     pub cumulative_storage_bytes: i64,
 }
