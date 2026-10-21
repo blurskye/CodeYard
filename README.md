@@ -11,6 +11,8 @@ editor, organizations, notifications, and CI runs in the style of GitHub Actions
 
 ![From the home page to a repository, then a workflow run from start to finish](branding/demo.gif)
 
+![The admin panel: activity charts, users, site settings, email and the audit log](branding/admin.gif)
+
 ## Quick start
 
 You need a Rust toolchain, the Dioxus CLI 0.7.10 and the standalone Tailwind CSS 4.1.18.
