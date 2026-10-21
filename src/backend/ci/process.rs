@@ -1,6 +1,7 @@
 //! Running CI commands: own process group, deadline, cancellation and
 //! line-by-line output streaming.
 use anyhow::{bail, Result};
+use futures_util::FutureExt;
 use std::future::Future;
 use std::io;
 use std::process::{ExitStatus, Stdio};
@@ -73,17 +74,23 @@ where
     let mut group = ProcessGroup::new(child.id());
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let work = async {
-        let (_, _, status) = tokio::try_join!(
+    // Output is read until the group is gone, also while a cancelled or timed-out command shuts
+    // down: closing the pipes first would hand its handlers SIGPIPE before they could run.
+    let forwarding = async {
+        tokio::try_join!(
             forward(stdout, false, &on_line),
-            forward(stderr, true, &on_line),
-            async {
-                let status = child.wait().await?;
-                // Descendants can inherit the output pipes after the runner exits.
-                stop_process_group(&mut child, group.pid()).await?;
-                Ok::<_, anyhow::Error>(status)
-            }
-        )?;
+            forward(stderr, true, &on_line)
+        )
+    }
+    .fuse();
+    tokio::pin!(forwarding);
+    let work = async {
+        let (_, status) = tokio::try_join!(&mut forwarding, async {
+            let status = child.wait().await?;
+            // Descendants can inherit the output pipes after the runner exits.
+            stop_process_group(&mut child, group.pid()).await?;
+            Ok::<_, anyhow::Error>(status)
+        })?;
         Ok::<_, anyhow::Error>(status)
     };
     let result = tokio::select! {
@@ -93,7 +100,17 @@ where
         },
         _ = cancelled(cancel) => Err(Stopped::Cancelled.into()),
     };
-    stop_process_group(&mut child, group.pid()).await?;
+    let stopping = stop_process_group(&mut child, group.pid());
+    tokio::pin!(stopping);
+    loop {
+        tokio::select! {
+            stopped = &mut stopping => {
+                stopped?;
+                break;
+            }
+            _ = &mut forwarding => {}
+        }
+    }
     group.disarm();
     result
 }
@@ -510,25 +527,10 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
             let cancelled_at = Instant::now();
-            // The signal state of the shells, for the failure message.
-            let state: String = std::fs::read_to_string(&pids)
-                .unwrap()
-                .split_whitespace()
-                .map(|pid| {
-                    let status =
-                        std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap_or_default();
-                    let signals: Vec<&str> = status
-                        .lines()
-                        .filter(|line| line.starts_with("Sig") || line.starts_with("PPid"))
-                        .collect();
-                    format!("{pid}: {signals:?}")
-                })
-                .collect::<Vec<_>>()
-                .join("; ");
             tx.send(true).unwrap();
-            (cancelled_at, state)
+            cancelled_at
         };
-        let (result, (cancelled_at, state)) = tokio::join!(
+        let (result, cancelled_at) = tokio::join!(
             run(child, Duration::from_secs(60), cancel, |_, _| async {
                 Ok(())
             }),
@@ -538,7 +540,7 @@ mod tests {
         assert!(matches!(error.downcast_ref(), Some(Stopped::Cancelled)));
         assert!(
             term_marker.exists(),
-            "SIGTERM was not delivered before SIGKILL: {state}"
+            "SIGTERM was not delivered before SIGKILL"
         );
         assert!(cancelled_at.elapsed() >= TERM_GRACE);
         assert!(cancelled_at.elapsed() < TERM_GRACE + KILL_GRACE + Duration::from_secs(2));
@@ -549,6 +551,43 @@ mod tests {
         {
             assert_ne!(unsafe { libc::kill(pid, 0) }, 0);
         }
+    }
+
+    #[tokio::test]
+    async fn output_is_still_read_while_a_cancelled_command_shuts_down() {
+        let directory = tempfile::tempdir().unwrap();
+        let term_marker = directory.path().join("term");
+        let ready = directory.path().join("ready");
+        let mut child = command("/bin/sh");
+        child
+            .args([
+                "-c",
+                "trap 'echo goodbye; echo term > \"$1\"; exit 0' TERM; : > \"$2\"; while :; do echo tick; sleep .1; done",
+                "sh",
+            ])
+            .arg(&term_marker)
+            .arg(&ready);
+        let (tx, cancel) = watch::channel(false);
+        let lines = std::sync::Mutex::new(Vec::new());
+        let (result, ()) = tokio::join!(
+            run(child, Duration::from_secs(60), cancel, |line, _| {
+                lines.lock().unwrap().push(line);
+                async { Ok(()) }
+            }),
+            async {
+                while !ready.exists() {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                tx.send(true).unwrap();
+            }
+        );
+        assert!(matches!(
+            result.unwrap_err().downcast_ref(),
+            Some(Stopped::Cancelled)
+        ));
+        // A command that prints is not killed by a closed pipe before its handler runs.
+        assert!(term_marker.exists());
+        assert!(lines.lock().unwrap().iter().any(|line| line == "goodbye"));
     }
 
     #[tokio::test]
