@@ -18,7 +18,7 @@ pub async fn set_pull_request_file_viewed(
             sqlx::query(
                 "INSERT INTO pull_request_viewed_files (user_id, pull_request_id, path, blob_sha)
                  VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (user_id, pull_request_id, path) DO UPDATE SET blob_sha = EXCLUDED.blob_sha",
+                 ON CONFLICT (user_id, pull_request_id, md5(path)) DO UPDATE SET blob_sha = EXCLUDED.blob_sha",
             )
             .bind(user_id)
             .bind(pr_id)

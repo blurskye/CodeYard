@@ -146,11 +146,11 @@ pub fn profile_page(page: OrganizationProfile) -> Element {
                 } else if repositories.is_empty() {
                     section { id: "profile-repositories", class: "identity-profile-repositories", aria_label: "Repositories",
                         div { class: "identity-profile-empty", {profile_icon(ProfileIcon::Repository)} h3 { "{empty}" }
-                            if manage { NavLink { href: new_href, class: "identity-profile-button identity-profile-new", "New repository" } }
+                            if manage { NavLink { href: new_href.clone(), class: "identity-profile-button identity-profile-new", "New repository" } }
                         }
                     }
                 } else {
-                    ProfileRepositories { key: "{path}", path: path.clone(), repositories, own: false }
+                    ProfileRepositories { key: "{path}", path: path.clone(), repositories, own: false, new_href: manage.then(|| new_href.clone()) }
                     if more { NavLink { href: format!("{path}?tab=repositories&after={after}"), class: "org-pagination", "Next" } }
                 }
             }

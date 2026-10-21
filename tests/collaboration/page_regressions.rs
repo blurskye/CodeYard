@@ -332,7 +332,7 @@ async fn label_submissions(pg: bool) {
         assert!(html.contains("Issue created, but some details could not be applied"));
     }
     assert_eq!(
-        db::issues::count_repo_issues(database.pool(), repo.id, None)
+        db::issues::count_repo_issues(database.pool(), repo.id, &Default::default())
             .await
             .unwrap()
             .all,

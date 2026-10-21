@@ -431,18 +431,21 @@ pub(in crate::backend::api::repos) async fn write_form(
     if field(form, "intent") != "save" {
         return ctx.error(StatusCode::BAD_REQUEST, "Choose save or preview.");
     }
-    let mut message = editor.message.clone();
-    if !editor.description.trim().is_empty() {
-        message = format!("{message}\n\n{}", editor.description.trim_end());
-    }
-    let input = FileWrite {
+    let mut input = FileWrite {
         branch: editor.branch.clone(),
         path: editor.path.clone(),
-        message,
+        message: editor.message.clone(),
         expected_revision: editor.expected_revision.clone(),
         creating: editor.creating,
         deleting: false,
     };
+    // The description goes after the subject, so a blank message gets its default first.
+    if input.message.trim().is_empty() {
+        input.message = files::default_commit_message(&input);
+    }
+    if !editor.description.trim().is_empty() {
+        input.message = format!("{}\n\n{}", input.message, editor.description.trim_end());
+    }
     // The choice of a protected branch: the commit lands on a new branch, which starts there.
     let new_branch =
         (field(form, "commit_target") == "new_branch").then(|| editor.new_branch.clone());

@@ -138,10 +138,7 @@ fn validate_path(path: &str) -> Result<(), RepoError> {
 }
 
 fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoError> {
-    if branch.is_empty()
-        || branch.starts_with('-')
-        || crate::backend::git::branch_ref(branch).is_none()
-    {
+    if branch.is_empty() || crate::backend::git::branch_ref(branch).is_none() {
         return Err(invalid("Invalid branch name."));
     }
     if expected_revision != "unborn"

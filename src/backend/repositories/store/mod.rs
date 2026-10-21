@@ -143,6 +143,10 @@ impl RepoError {
         self.reason == Some(RepoErrorReason::StorageNodeUnavailable)
     }
 
+    pub fn is_sessions_busy(&self) -> bool {
+        self.reason == Some(RepoErrorReason::SessionsBusy)
+    }
+
     pub fn is_write_denied(&self) -> bool {
         self.reason == Some(RepoErrorReason::WriteDenied)
     }
@@ -433,7 +437,17 @@ impl From<anyhow::Error> for RepoError {
             }
             _ => ErrorKind::Unavailable,
         };
-        Self::new(kind, error.to_string())
+        // A request for a ref or commit this repository lacks is reported with its own words.
+        let message = match error.downcast_ref::<git2::Error>() {
+            Some(named)
+                if named.code() == git2::ErrorCode::InvalidSpec
+                    && named.class() == git2::ErrorClass::Invalid =>
+            {
+                named.message().to_owned()
+            }
+            _ => error.to_string(),
+        };
+        Self::new(kind, message)
     }
 }
 

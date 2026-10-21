@@ -253,7 +253,10 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             member.as_ref().map(|node| node.context.clone()),
         )
         .await?;
-        state.notification_broadcaster.start().await;
+        // Only the web socket subscribes to inbound notifications.
+        if config.roles.contains(NodeRole::Web) {
+            state.notification_broadcaster.start().await;
+        }
         Ok::<_, anyhow::Error>((transport, repos_path, state))
     };
     let prepared = tokio::select! {

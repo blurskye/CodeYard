@@ -93,18 +93,35 @@ pub async fn list_repo_issues(
     Ok(issues)
 }
 
+/// Counts by state for the items the filter picks; its state, sort and offset are ignored.
 pub async fn count_repo_issues(
     pool: &PgPool,
     repo_id: i64,
-    search: Option<&str>,
+    filter: &ListFilter<'_>,
 ) -> Result<StateCounts> {
+    let (assignee_mode, assignee_id) = filter.assignee.binding();
+    let (milestone_mode, milestone_id) = filter.milestone.binding();
+    let labels = super::discussions::label_names_array(filter.labels);
     let rows = sqlx::query_as::<_, (String, i64)>(
         r#"SELECT i.state, COUNT(*) FROM issues i WHERE i.repo_id = $1
             AND ($2::TEXT IS NULL OR LOWER(i.title COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\' OR LOWER(i.body COLLATE "C") LIKE LOWER($2::TEXT COLLATE "C") ESCAPE '\')
+            AND ($3::BIGINT IS NULL OR i.author_id = $3)
+            AND ($4::BIGINT = 0 OR ($4::BIGINT = 1 AND NOT EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id))
+                OR ($4::BIGINT = 2 AND EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id AND a.user_id = $5)))
+            AND ($6::BIGINT = 0 OR ($6::BIGINT = 1 AND i.milestone_id IS NULL) OR ($6::BIGINT = 2 AND i.milestone_id = $7))
+            AND ($8::TEXT[] IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name COLLATE "C")) FROM issue_labels il JOIN labels l ON l.id=il.label_id
+                WHERE il.issue_id = i.id AND LOWER(l.name COLLATE "C") = ANY(SELECT LOWER(n COLLATE "C") FROM unnest($8::TEXT[]) AS n))
+                = (SELECT COUNT(DISTINCT LOWER(n COLLATE "C")) FROM unnest($8::TEXT[]) AS n))
         GROUP BY i.state"#,
     )
     .bind(repo_id)
-    .bind(search.map(contains_pattern))
+    .bind(filter.search.map(contains_pattern))
+    .bind(filter.author_id)
+    .bind(assignee_mode)
+    .bind(assignee_id)
+    .bind(milestone_mode)
+    .bind(milestone_id)
+    .bind(labels)
     .fetch_all(pool)
     .await?;
     Ok(StateCounts::from_rows(rows))
@@ -396,6 +413,10 @@ pub async fn delete_issue_comment(
     .bind(comment_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM reactions WHERE subject_kind = 'issue_comment' AND subject_id = $1")
+        .bind(comment_id)
+        .execute(&mut *tx)
+        .await?;
     let removed = sqlx::query("DELETE FROM issue_comments WHERE id = $1")
         .bind(comment_id)
         .execute(&mut *tx)

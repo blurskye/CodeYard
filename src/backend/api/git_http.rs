@@ -61,7 +61,7 @@ fn basic_token(headers: &HeaderMap) -> Option<String> {
         return None;
     }
     let (scheme, encoded) = value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("basic") || encoded.len() > 1024 {
+    if !scheme.eq_ignore_ascii_case("basic") || encoded.len() > 2048 {
         return None;
     }
     let decoded = String::from_utf8(STANDARD.decode(encoded).ok()?).ok()?;

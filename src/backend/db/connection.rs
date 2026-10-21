@@ -55,7 +55,8 @@ fn postgres_options(database_url: &str) -> Result<PgConnectOptions> {
         ) || (name.starts_with("options[") && name.ends_with(']'));
         anyhow::ensure!(supported, "Unsupported PostgreSQL connection parameter");
     }
-    Ok(PgConnectOptions::from_str(database_url)?)
+    // Day boundaries in reports are UTC whatever the server's time zone is.
+    Ok(PgConnectOptions::from_str(database_url)?.options([("timezone", "UTC")]))
 }
 
 fn sqlite_memory(database_url: &str) -> bool {

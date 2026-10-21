@@ -407,6 +407,7 @@ fn engagement_form(repo: &RepoChrome, action: &str, label: &str, count: i32) -> 
     };
     rsx! { form { method: "post", action: repo.action(action),
         {csrf(&repo.csrf_token)}
+        {repository_id(repo.id)}
         button { r#type: "submit", class: if action == "unstar" { "repo-engagement-button repo-starred" } else { "repo-engagement-button" },
             {engagement_content(kind, label, count)}
         }

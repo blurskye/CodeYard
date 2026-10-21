@@ -215,17 +215,19 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
                 };
             }
         };
-        // A folder's header shows the newest commit that touched it. Each row already
-        // carries the newest commit that touched that entry, so the newest row is the
-        // folder's. The root has no path to scope to and keeps the branch head.
+        // A folder's header shows the newest commit that touched its path, including commits
+        // that only removed entries. The root has no path to scope to and keeps the branch head.
         let folder_commit = if resolved.path.is_empty() {
             Some(last.clone())
         } else {
-            entries
-                .iter()
-                .filter_map(|entry| entry.last_commit.as_ref())
-                .max_by_key(|info| info.committer_timestamp)
-                .cloned()
+            match store
+                .path_commits(&last.sha, &resolved.path, 0, 1, &Default::default())
+                .await
+            {
+                Ok(commits) => commits.into_iter().next(),
+                Err(error) if error.is_response_too_large() => None,
+                Err(error) => return Err(fail(error)),
+            }
         };
         let readme_entry = entries.iter().find(|entry| {
             entry.entry_type == "file" && entry.name.eq_ignore_ascii_case("readme.md")

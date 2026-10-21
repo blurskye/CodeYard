@@ -55,7 +55,8 @@ fn close_for_key(event: &web_sys::Event) {
     let Some(key) = event.dyn_ref::<web_sys::KeyboardEvent>() else {
         return;
     };
-    if key.key() != "Escape" {
+    // A control inside the menu, such as an open select, has already used this key.
+    if key.key() != "Escape" || event.default_prevented() {
         return;
     }
     let menus = open_menus();
@@ -69,7 +70,16 @@ fn close_for_key(event: &web_sys::Event) {
     for menu in &menus {
         close(menu);
     }
-    let summary = focused_menu.and_then(|menu| menu.query_selector("summary").ok().flatten());
+    // Every open menu is closed, so focus goes to the outermost one that held it: a nested
+    // menu's own button would sit inside a closed menu.
+    let outermost = focused_menu.and_then(|inner| {
+        let inner: &web_sys::Node = &inner;
+        menus
+            .iter()
+            .find(|menu| menu.contains(Some(inner)))
+            .cloned()
+    });
+    let summary = outermost.and_then(|menu| menu.query_selector("summary").ok().flatten());
     if let Some(button) =
         summary.and_then(|summary| summary.dyn_into::<web_sys::HtmlElement>().ok())
     {

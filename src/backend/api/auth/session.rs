@@ -38,11 +38,12 @@ pub async fn create_session(
             } else {
                 false
             };
+            let remaining = (session.expires_at - Utc::now()).num_seconds();
             return Ok((
                 StatusCode::OK,
                 [(
                     header::SET_COOKIE,
-                    session::build_session_cookie(&id, session::session_duration_days()),
+                    session::build_session_cookie_for(&id, remaining),
                 )],
                 Json(SessionResponse {
                     session_id: id,

@@ -4558,7 +4558,7 @@ async fn check_issue_and_pull_request_counts_and_search(pool: &db::DbPool) {
     .expect("the issue closes at its revision");
 
     assert_eq!(
-        issues::count_repo_issues(pool, repo.id, None)
+        issues::count_repo_issues(pool, repo.id, &ListFilter::default())
             .await
             .unwrap(),
         StateCounts {
@@ -4567,7 +4567,18 @@ async fn check_issue_and_pull_request_counts_and_search(pool: &db::DbPool) {
             all: 6
         }
     );
-    let counts = |search| issues::count_repo_issues(pool, repo.id, search);
+    let counted_repo = repo.id;
+    let counts = |search| async move {
+        issues::count_repo_issues(
+            pool,
+            counted_repo,
+            &ListFilter {
+                search,
+                ..ListFilter::default()
+            },
+        )
+        .await
+    };
     assert_eq!(
         counts(Some("startup")).await.unwrap(),
         StateCounts {
@@ -4688,7 +4699,7 @@ async fn check_issue_and_pull_request_counts_and_search(pool: &db::DbPool) {
     .expect("the pull request closes at its revision");
 
     assert_eq!(
-        records::count_repo_pull_requests(pool, repo.id, None)
+        records::count_repo_pull_requests(pool, repo.id, &ListFilter::default())
             .await
             .unwrap(),
         StateCounts {
@@ -4698,9 +4709,16 @@ async fn check_issue_and_pull_request_counts_and_search(pool: &db::DbPool) {
         }
     );
     assert_eq!(
-        records::count_repo_pull_requests(pool, repo.id, Some("crash"))
-            .await
-            .unwrap(),
+        records::count_repo_pull_requests(
+            pool,
+            repo.id,
+            &ListFilter {
+                search: Some("crash"),
+                ..ListFilter::default()
+            },
+        )
+        .await
+        .unwrap(),
         StateCounts {
             open: 0,
             closed: 1,

@@ -31,6 +31,10 @@ pub const LICENSE_CHOICES: [&str; 6] = [
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RepositoryCard {
+    /// Immutable repository ID, so a form rendered for one repository cannot act on another that
+    /// later takes its owner and name.
+    #[serde(default)]
+    pub id: i64,
     pub owner: String,
     pub name: String,
     pub description: Option<String>,
@@ -492,6 +496,12 @@ pub fn home(model: HomeModel) -> Element {
                         h2 { "No repositories match “{model.find}”" }
                         p { NavLink { href: "/", class: "focus-ring discovery-link", "Clear the filter" } }
                     }
+                } else if model.repositories.is_empty() && model.repository_count > 0 {
+                    // Only the shared list reaches this page number.
+                    div { class: "discovery-dashboard-empty",
+                        h2 { "No more of your repositories" }
+                        p { NavLink { href: "/", class: "focus-ring discovery-link", "Back to the first page" } }
+                    }
                 } else if model.repositories.is_empty() {
                     div { class: "discovery-dashboard-empty",
                         h2 { "No repositories yet" }
@@ -556,11 +566,11 @@ pub fn home(model: HomeModel) -> Element {
                         }
                     }
                 }
+                {page_links(
+                    (model.page > 1).then(|| format!("/?q={}&page={}", encode_component(&model.find), model.page - 1)),
+                    model.has_older.then(|| format!("/?q={}&page={}", encode_component(&model.find), model.page.max(1).saturating_add(1))),
+                    "Dashboard repository pages")}
             }
-            {page_links(
-                (model.page > 1).then(|| format!("/?q={}&page={}", encode_component(&model.find), model.page - 1)),
-                model.has_older.then(|| format!("/?q={}&page={}", encode_component(&model.find), model.page.max(1).saturating_add(1))),
-                "Dashboard repository pages")}
             if !solo {
                 aside { class: "discovery-dashboard-trending", aria_labelledby: "dashboard-trending-title",
                     header { class: "discovery-trending-header",
@@ -1030,6 +1040,7 @@ fn starred_repository(repo: &RepositoryCard, csrf_token: &str, return_to: &str) 
             form { method: "post", action, class: "stars-unstar-form",
                 input { r#type: "hidden", name: "csrf_token", value: csrf_token.to_owned() }
                 input { r#type: "hidden", name: "return_to", value: return_to.to_owned() }
+                input { r#type: "hidden", name: "repository_id", value: repo.id.to_string() }
                 button { r#type: "submit", class: "btn btn-sm stars-unstar", "aria-label": "Unstar {repo.owner}/{repo.name}", "Unstar" }
             }
         }
@@ -1934,6 +1945,7 @@ mod tests {
     fn dashboard_places_all_owned_repositories_before_secondary_trending() {
         let repositories = (1..=12)
             .map(|number| RepositoryCard {
+                id: i64::from(number),
                 owner: "alice".into(),
                 name: format!("owned-{number}"),
                 description: Some(format!("Project {number}")),

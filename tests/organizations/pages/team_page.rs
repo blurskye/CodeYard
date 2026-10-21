@@ -110,7 +110,8 @@ pub async fn contracts(f: &Fixture) {
     assert_eq!(page.members.len(), 1);
     assert_eq!(page.members[0].username, "ordinary_member");
     assert_eq!(page.members[0].role, "maintainer");
-    assert!(team_page(&f.get(&f.member, &path).await).manage);
+    // A team maintainer cannot manage the team, so the page offers no link.
+    assert!(!team_page(&f.get(&f.member, &path).await).manage);
     assert!(team_page(&f.get(&f.owner, &path).await).manage);
     let raw = f
         .request(

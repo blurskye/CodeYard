@@ -186,7 +186,16 @@ pub(crate) async fn native_detail(
             if pull_request.is_none() {
                 return Err(response);
             }
-            return Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(Kind::Pull), number)));
+            let mut location = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+            let page = ctx
+                .query
+                .get("page")
+                .and_then(|page| page.parse::<usize>().ok())
+                .filter(|page| (2..=crate::backend::issues::MAX_COMMENT_PAGE).contains(page));
+            if let Some(page) = page {
+                location.push_str(&format!("?page={page}"));
+            }
+            return Ok(ctx.redirect(&location));
         }
         Err(response) => return Err(response),
     };

@@ -291,12 +291,20 @@ async fn notification_list(
         }
         let ids: Vec<i64> = authorized.iter().map(|c| c.0).collect();
         if !ids.is_empty() {
-            let rows: Vec<Notification> =
-                sqlx::query_as("SELECT * FROM notifications WHERE user_id=$1 AND id=ANY($2)")
-                    .bind(user_id)
-                    .bind(&ids)
-                    .fetch_all(&mut *connection)
-                    .await?;
+            // A row changed since the candidate scan is dropped if it no longer matches.
+            let sql = format!(
+                "SELECT * FROM notifications WHERE user_id=$1 AND id=ANY($2) AND {FILTER_SQL}"
+            );
+            let rows: Vec<Notification> = sqlx::query_as(&sql)
+                .bind(user_id)
+                .bind(&ids)
+                .bind(filter.unread_only)
+                .bind(filter.view.as_str())
+                .bind(filter.repository_id)
+                .bind(filter.kinds.clone())
+                .bind(search.as_deref())
+                .fetch_all(&mut *connection)
+                .await?;
             let mut rows: std::collections::BTreeMap<_, _> =
                 rows.into_iter().map(|n| (n.id, n)).collect();
             for candidate in authorized {
@@ -544,6 +552,7 @@ pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
     Ok(sqlx::query_scalar::<_, i64>(&format!(
         "SELECT COUNT(*) FROM notifications
          WHERE user_id=$1 AND read_at IS NULL AND done_at IS NULL
+           AND EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)
            AND (scope_repository_id=0 OR scope_repository_id IN (
                SELECT r.id FROM repositories r
                JOIN users u ON u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password

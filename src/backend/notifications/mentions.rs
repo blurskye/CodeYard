@@ -104,7 +104,7 @@ pub async fn notify_mentions(
                 continue;
             }
         }
-        let _ = create_and_broadcast_notification(
+        let created = create_and_broadcast_notification(
             pool,
             broadcaster,
             NotificationRequest {
@@ -126,6 +126,9 @@ pub async fn notify_mentions(
             },
         )
         .await;
-        sent += 1;
+        // Only a notification that was created counts toward the budget.
+        if created.is_ok() {
+            sent += 1;
+        }
     }
 }

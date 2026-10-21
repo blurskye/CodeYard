@@ -140,7 +140,7 @@ pub(crate) fn two_factor_required_failure() -> Failure {
     failure(
         StatusCode::FORBIDDEN,
         "two_factor_required",
-        "This account signs in with two-factor authentication on the web. Use an access token for the API and Git.",
+        "This account signs in with two-factor authentication on the web. Sign in on the web for the API; use an access token for Git.",
     )
 }
 

@@ -45,13 +45,18 @@ pub fn parse_website(text: &str) -> Result<Option<String>> {
     if website.is_empty() {
         return Ok(None);
     }
-    let web_address = url::Url::parse(website)
-        .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some());
     let plain = !website.chars().any(|c| c.is_whitespace() || c.is_control());
-    if !web_address || !plain || website.len() > MAX_WEBSITE_LEN {
-        return Err(RepositorySettingsRefusal::InvalidWebsite.into());
+    // The stored text is the parsed address, so an uppercase scheme is saved in the form the
+    // page checks for.
+    let address = url::Url::parse(website)
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some());
+    match address {
+        Some(url) if plain && url.as_str().len() <= MAX_WEBSITE_LEN => {
+            Ok(Some(url.as_str().to_owned()))
+        }
+        _ => Err(RepositorySettingsRefusal::InvalidWebsite.into()),
     }
-    Ok(Some(website.to_owned()))
 }
 
 #[cfg(test)]

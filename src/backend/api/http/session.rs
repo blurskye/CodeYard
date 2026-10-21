@@ -50,10 +50,15 @@ pub(crate) fn generate_session_id() -> String {
 }
 
 pub(crate) fn build_session_cookie(session_id: &str, max_age_days: i64) -> String {
+    build_session_cookie_for(session_id, max_age_days.clamp(0, 365) * 24 * 60 * 60)
+}
+
+/// A session cookie that lasts `max_age_seconds`, for reissuing an existing session.
+pub(crate) fn build_session_cookie_for(session_id: &str, max_age_seconds: i64) -> String {
     let mut cookie = format!(
         "session_id={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
         session_id,
-        max_age_days.clamp(0, 365) * 24 * 60 * 60
+        max_age_seconds.max(0)
     );
 
     if let Some(domain) = cookie_domain() {

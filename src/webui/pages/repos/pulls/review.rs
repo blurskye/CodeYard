@@ -264,6 +264,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
     draft: Option<&ReviewDraft>,
     pending_comments: usize,
     references: &References,
+    split: bool,
 ) -> Element {
     let choice = draft.map_or("commented", |draft| draft.state.as_str());
     let body = draft.map_or_else(String::new, |draft| draft.body.clone());
@@ -288,7 +289,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
             }
             div { class: "native-menu-panel collaboration-review-panel",
                 if open {
-                    form { id: "review-form", method: "post", action: format!("{url}/reviews"), class: "collaboration-form-fields collaboration-review-form",
+                    form { id: "review-form", method: "post", action: format!("{url}/reviews{}", if split { "?view=split" } else { "" }), class: "collaboration-form-fields collaboration-review-form",
                         {csrf(&repo.csrf)}
                         div { class: "collaboration-review-body",
                             h3 { "Review changes" }
@@ -562,6 +563,7 @@ pub(in crate::webui::pages::repos) fn resolve_form(
     comment_id: i64,
     conversation: &Conversation,
     from_diff: bool,
+    split: bool,
     page: usize,
 ) -> Element {
     let (action, caption) = if conversation.resolved {
@@ -569,8 +571,14 @@ pub(in crate::webui::pages::repos) fn resolve_form(
     } else {
         ("resolve", "Resolve conversation")
     };
+    // The post names the side-by-side view so the diff comes back in it.
+    let view = if from_diff && split {
+        "?view=split"
+    } else {
+        ""
+    };
     rsx! {
-        form { method: "post", action: format!("{url}/comments/{comment_id}/{action}"), class: "collaboration-actions",
+        form { method: "post", action: format!("{url}/comments/{comment_id}/{action}{view}"), class: "collaboration-actions",
             {csrf(&repo.csrf)}
             if from_diff { input { r#type: "hidden", name: "from", value: "diff" } }
             if !from_diff { input { r#type: "hidden", name: "page", value: page.to_string() } }
@@ -718,7 +726,7 @@ pub(super) fn thread_block(
                 }
             }
             if let Some(conversation) = &root.conversation {
-                if conversation.can_resolve && !thread.pending { {resolve_form(repo, url, root.id, conversation, true, 1)} }
+                if conversation.can_resolve && !thread.pending { {resolve_form(repo, url, root.id, conversation, true, split, 1)} }
             }
             if repo.signed_in {
                 details { class: "collaboration-thread-reply-form", open: replying,

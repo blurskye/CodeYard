@@ -17,6 +17,20 @@ fn terminal_text(value: &str) -> String {
     text
 }
 
+/// Where a repository lives. One stored on another node has no path on this machine.
+fn storage_location(
+    repo: &db::models::Repository,
+    context: Option<&crate::backend::cluster::NodeContext>,
+    location: &str,
+) -> String {
+    match repo.storage_node_id {
+        Some(node) if context.is_none_or(|context| context.node_id != node) => {
+            format!("storage node {node}")
+        }
+        _ => terminal_text(location),
+    }
+}
+
 /// Copy every table between SQLite and PostgreSQL and print the row counts
 pub async fn copy_database_cmd(from: &str, to: &str) -> Result<()> {
     let counts = db::copy::copy_database(from, to).await?;
@@ -135,7 +149,7 @@ pub async fn add_key_from_file_cmd(
     pool: &DbPool,
     username: &str,
     key_name: &str,
-    key_path: &str,
+    key_path: &std::path::Path,
 ) -> Result<()> {
     let public_key = std::fs::read_to_string(key_path)?;
     add_key_cmd(pool, username, key_name, &public_key).await
@@ -172,7 +186,7 @@ pub async fn list_keys_cmd(pool: &DbPool, username: &str) -> Result<()> {
 pub async fn create_repo_cmd(
     pool: &DbPool,
     state_dir: &std::path::Path,
-    repos_path: &str,
+    repos_path: &std::path::Path,
     owner: &str,
     name: &str,
     description: Option<&str>,
@@ -183,12 +197,10 @@ pub async fn create_repo_cmd(
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", owner))?;
 
     crate::backend::repositories::lifecycle::validate_description(description.unwrap_or(""))?;
-    let context =
-        crate::backend::cluster::client_context(pool, state_dir, std::path::Path::new(repos_path))
-            .await?;
+    let context = crate::backend::cluster::client_context(pool, state_dir, repos_path).await?;
     let created = crate::backend::repositories::lifecycle::provision(
         (pool, context.as_ref()),
-        std::path::Path::new(repos_path),
+        repos_path,
         db::repositories::creation::RepositoryCreationOwner::personal(user.id),
         name,
         description,
@@ -202,7 +214,11 @@ pub async fn create_repo_cmd(
     let repo = created.map_err(anyhow::Error::from)?;
 
     println!("Created repository: {}/{}", owner, repo.name);
-    println!("Path: {}", repo_store(&repo, context.as_ref()).location());
+    let store = repo_store(&repo, context.as_ref());
+    println!(
+        "Path: {}",
+        storage_location(&repo, context.as_ref(), store.location())
+    );
     println!("Private: {}", if is_private { "yes" } else { "no" });
     Ok(())
 }
@@ -288,7 +304,10 @@ pub async fn repo_info_cmd(
     println!("Default branch: {}", terminal_text(&repo.default_branch));
     let context = crate::backend::cluster::client_context(pool, state_dir, repos_path).await?;
     let store = repo_store(&repo, context.as_ref());
-    println!("Disk path: {}", terminal_text(store.location()));
+    println!(
+        "Disk path: {}",
+        storage_location(&repo, context.as_ref(), store.location())
+    );
     println!(
         "Description: {}",
         terminal_text(repo.description.as_deref().unwrap_or_default())

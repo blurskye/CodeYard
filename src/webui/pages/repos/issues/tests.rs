@@ -3461,7 +3461,7 @@ fn labels_sort_by_most_used_and_count_the_items_on_each_label() {
             color: "#0075ca".into(),
             description: String::new(),
         };
-        let items = vec![label(1, "wontfix"), label(2, "release")];
+        let items = vec![label(2, "release"), label(1, "wontfix")];
         let usage = std::collections::BTreeMap::from([(1, 1), (2, 3)]);
         let html = dioxus_ssr::render_element(labels::list(
             &repository(),

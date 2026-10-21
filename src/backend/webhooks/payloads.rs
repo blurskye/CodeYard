@@ -115,13 +115,34 @@ pub fn issue_comment(
             "id": comment.id,
             "body": comment.body,
             "user": person(comment_author),
-            "html_url": format!("{}/issues/{}#issuecomment-{}", repository_url(owner, &repo.name), issue.number, comment.id),
+            "html_url": issue_comment_url(action, comment, issue, repo, owner),
             "created_at": time(comment.created_at),
             "updated_at": time(comment.updated_at),
         },
         "repository": repository(repo, owner),
         "sender": person(sender),
     })
+}
+
+/// The issue page resolves `?comment=` to the page that holds the comment. A deleted comment
+/// has no page, so it links to the issue.
+fn issue_comment_url(
+    action: &str,
+    comment: &IssueComment,
+    issue: &Issue,
+    repo: &Repository,
+    owner: &str,
+) -> String {
+    let base = format!(
+        "{}/issues/{}",
+        repository_url(owner, &repo.name),
+        issue.number
+    );
+    if action == "deleted" {
+        base
+    } else {
+        format!("{base}?comment={0}#comment-{0}", comment.id)
+    }
 }
 
 fn issue_json(issue: &Issue, author: &Person, repo: &Repository, owner: &str) -> Value {
@@ -244,13 +265,14 @@ pub fn pull_request_review_comment(
 }
 
 /// A conversation comment on a pull request. GitHub sends it as an issue_comment whose issue is
-/// the pull request.
+/// the pull request. `link` is the discussion page and anchor, such as `?page=2#comment-7`.
 pub fn pull_request_conversation_comment(
     action: &str,
     comment: &PullRequestComment,
     pull: &PullRequest,
     pull_author: &Person,
     comment_author: &Person,
+    link: &str,
     scope: Scope,
 ) -> Value {
     let Scope {
@@ -268,7 +290,7 @@ pub fn pull_request_conversation_comment(
             "id": comment.id,
             "body": comment.body,
             "user": person(comment_author),
-            "html_url": format!("{}/pulls/{}#issuecomment-{}", repository_url(owner, &repo.name), pull.number, comment.id),
+            "html_url": format!("{}/pulls/{}{link}", repository_url(owner, &repo.name), pull.number),
             "created_at": time(comment.created_at),
             "updated_at": time(comment.updated_at),
         },
@@ -296,7 +318,7 @@ pub fn release(action: &str, release: &Release, author: &Person, scope: Scope) -
             "author": person(author),
             "created_at": time(release.created_at),
             "published_at": optional_time(release.published_at),
-            "html_url": format!("{}/releases/tag/{}", repository_url(owner, &repo.name), release.tag_name),
+            "html_url": format!("{}/releases/tag/{}", repository_url(owner, &repo.name), crate::webui::encode_component(&release.tag_name)),
         },
         "repository": repository(repo, owner),
         "sender": person(sender),

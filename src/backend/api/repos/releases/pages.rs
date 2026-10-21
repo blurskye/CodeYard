@@ -250,6 +250,9 @@ async fn edit_form(
         latest: found.release.release.is_latest,
         preview: false,
     });
+    // The form shows the tag as fixed text, so a submitted draft carries none.
+    draft.tag = tag.clone();
+    draft.target = found.release.release.target_commitish.clone();
     if error.is_some() {
         draft.revision = crate::backend::db::releases::release_revision(&found.release.release);
     }
@@ -745,11 +748,12 @@ pub(crate) async fn download(
         &name,
         tag,
         asset,
+        method != axum::http::Method::HEAD,
     )
     .await
     {
         Ok(opened) => match asset_response(opened, method) {
-            Ok(response) => response,
+            Ok(response) => ctx.with_cookie(response),
             Err(failure) => failure.into_response(),
         },
         Err(error) => match chrome::load_database(&ctx, &owner, &name)

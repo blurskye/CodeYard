@@ -5,7 +5,7 @@ use crate::webui::components::{
 use crate::webui::document::Theme;
 use crate::webui::navigation::NavLink;
 use crate::webui::pages::admin::Signup;
-use crate::webui::pages::auth::password_field;
+use crate::webui::pages::auth::{password_field, password_field_with_id};
 use crate::webui::pages::fields::{
     access_forms, csrf, notice, text_field, FormValues, FIELD, SUBMIT,
 };
@@ -178,6 +178,9 @@ pub fn settings_nav(current: &str, manage_access: bool) -> Element {
 
 pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error: bool) -> Element {
     let values = &model.values;
+    // The header toggle changes the theme without reloading the settings model.
+    let current_theme = try_consume_context::<crate::webui::app::CurrentPage>()
+        .map_or(model.theme, |page| page.0.read().chrome.theme);
     rsx! {
         style { dangerous_inner_html: include_str!("../account.css") }
         div { class: "identity-settings page-shell",
@@ -374,10 +377,10 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                             strong { "{label}" }
                                             p { "{detail}" }
                                         }
-                                        if choice == model.theme {
+                                        if choice == current_theme {
                                             span { class: "count-badge", "Current" }
                                         }
-                                        button { r#type: "submit", class: "identity-button", "aria-current": if choice == model.theme { "true" } else { "false" }, "Use {label}" }
+                                        button { r#type: "submit", class: "identity-button", "aria-current": if choice == current_theme { "true" } else { "false" }, "Use {label}" }
                                     }
                                 }
                             }
@@ -407,11 +410,15 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                 h2 { id: "settings-email-title", "Email address" }
                                 p { "Your sign-in and account notices go to this address. Changing it needs your current password." }
                             }
-                            form { method: "post", action: "/settings/email", class: "identity-form",
-                                {csrf(token)}
-                                {text_field("email", "New email address", if values.get("email").is_empty() { model.email.clone() } else { values.get("email") }, "email", true, 255)}
-                                {password_field("current_password", "Current password", false)}
-                                div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Update email" } }
+                            if model.password_supported {
+                                form { method: "post", action: "/settings/email", class: "identity-form",
+                                    {csrf(token)}
+                                    {text_field("email", "New email address", if values.get("email").is_empty() { model.email.clone() } else { values.get("email") }, "email", true, 255)}
+                                    {password_field("current_password", "Current password", false)}
+                                    div { class: "identity-form-actions", button { r#type: "submit", class: SUBMIT, "Update email" } }
+                                }
+                            } else {
+                                div { class: "identity-empty", h3 { "Email changes aren't available" } p { "This account uses OAuth and does not support email changes." } }
                             }
                         }
                     } else if model.tab == "sessions" {
@@ -527,7 +534,7 @@ fn two_factor_section(two_factor: &TwoFactor, password_supported: bool, token: &
                         {csrf(token)}
                         strong { "Turn off two-factor authentication?" }
                         p { class: "text-sm", "Your password alone will sign you in, and every recovery code stops working." }
-                        {password_field("current_password", "Current password", false)}
+                        {password_field_with_id("disable-two-factor-password", "current_password", "Current password")}
                     }, "Turn off")}
                 }
             } else if let Some(setup) = &two_factor.setup {

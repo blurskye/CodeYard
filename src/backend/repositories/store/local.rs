@@ -645,7 +645,12 @@ impl LocalStore {
             if size > MAX_BLOB_RESPONSE_BYTES as u64 {
                 return Err(RepoError::response_too_large());
             }
-            String::from_utf8_lossy(&blob.bytes).into_owned()
+            // Invalid bytes become three-byte replacement characters, so check the result.
+            let text = String::from_utf8_lossy(&blob.bytes);
+            if text.len() > MAX_BLOB_RESPONSE_BYTES {
+                return Err(RepoError::response_too_large());
+            }
+            text.into_owned()
         };
         Ok(BlobContent {
             path: path.to_owned(),
@@ -1060,13 +1065,25 @@ impl LocalStore {
         git::publish_ref_create(self.path(), &reference, &target)
             .await
             .map_err(RepoError::from)?;
-        self.after_ref_change(
+        let followup = self
+            .after_ref_change(
+                pool,
+                repo_id,
+                actor,
+                &[(reference, editor::ZERO.to_owned(), target.clone())],
+            )
+            .await;
+        record_branch_update(
             pool,
             repo_id,
             actor,
-            &[(reference, editor::ZERO.to_owned(), target.clone())],
+            (self.path(), self.node_id),
+            name,
+            None,
+            &target,
         )
-        .await?;
+        .await;
+        followup?;
         Ok(target)
     }
 

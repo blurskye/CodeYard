@@ -311,11 +311,9 @@ pub async fn get_public_team(
         .bind(org).bind(team.id).fetch_one(&mut *tx).await?;
     let repository_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM team_repo_access a JOIN repositories r ON r.id=a.repo_id WHERE a.team_id=$1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=$2 AND r.owner_user_id IS NULL AND ($3 OR NOT r.is_private OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=$4 AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM team_repo_access g JOIN teams t ON t.id=g.team_id AND t.org_id=r.owner_org_id JOIN team_memberships tm ON tm.team_id=t.id AND tm.user_id=$4 AND tm.role IN ('member','maintainer') WHERE g.repo_id=r.id AND g.permission BETWEEN 1 AND 5 AND t.privacy IN ('visible','secret')))")
         .bind(team.id).bind(org).bind(administers(role)).bind(actor).fetch_one(&mut *tx).await?;
-    let maintainer: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM team_memberships WHERE team_id=$1 AND user_id=$2 AND role='maintainer')")
-        .bind(team.id).bind(actor).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(PublicTeam {
-        manage: administers(role) || maintainer,
+        manage: administers(role),
         team,
         member_count,
         repository_count,

@@ -149,9 +149,11 @@ pub(super) fn SearchBox(kind: Kind, value: String, filters: ListFilters) -> Elem
                     let position = input_caret(INPUT_ID).unwrap_or_else(|| utf16_index(&next, next.len()));
                     text.set(next);
                     caret.set(position);
+                    scroll.set(input_scroll(INPUT_ID));
                     active.set(None);
                     open.set(true);
                 },
+                onscroll: move |_| scroll.set(input_scroll(INPUT_ID)),
                 onkeydown: move |event| {
                     if !showing {
                         return;

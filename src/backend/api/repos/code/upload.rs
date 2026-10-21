@@ -359,9 +359,15 @@ pub(in crate::backend::api::repos) async fn post(
     .await;
     match saved {
         Ok(_) => ctx.redirect(&match &new_branch {
-            Some(name) => compare_url(&loaded.chrome.base(), &form.branch, name),
+            Some(name) if form.expected_revision != "unborn" => {
+                compare_url(&loaded.chrome.base(), &form.branch, name)
+            }
+            Some(name) => file_url(&loaded.chrome.base(), "tree", name, &form.directory),
             None => file_url(&loaded.chrome.base(), "tree", &form.branch, &form.directory),
         }),
-        Err(error) => refusal(&ctx, &loaded, form, write_status(&error), &error.message),
+        Err(error) => {
+            form.saved = error.kind == files::WriteFailure::SavedFollowupFailed;
+            refusal(&ctx, &loaded, form, write_status(&error), &error.message)
+        }
     }
 }

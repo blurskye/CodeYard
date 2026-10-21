@@ -266,6 +266,11 @@ impl CiHandler {
         if let Some(refusal) = self.refusal(peer).await {
             return Ok(Err(refusal.to_owned()));
         }
+        if let Ok(pool) = self.context.database() {
+            if let Err(error) = db::cluster::touch_node(pool, &peer.to_string()).await {
+                tracing::debug!(%error, "could not record a worker's last request");
+            }
+        }
         Ok(match self.execute(peer, request).await {
             Ok(value) => Ok(value),
             Err(error) => {

@@ -266,7 +266,7 @@ fn commits_by_day(rows: &[Commit]) -> Vec<(String, Vec<&Commit>)> {
 
 /// The date ranges the Date menu offers as links: the name the page reads, and its title.
 const DATE_PRESETS: [(&str, &str); 4] = [
-    ("day", "Past 24 hours"),
+    ("day", "Since yesterday"),
     ("week", "Past week"),
     ("month", "Past month"),
     ("year", "Past year"),

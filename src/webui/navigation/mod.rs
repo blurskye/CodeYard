@@ -22,12 +22,54 @@ pub(crate) fn RefreshLink(href: String) -> Element {
         a { class: "actions-button", href, onclick: move |event| {
             #[cfg(target_arch = "wasm32")]
             {
-                event.prevent_default();
-                crate::webui::navigation::refresh_page();
+                // A modified or middle click keeps the browser's own behaviour.
+                if event.modifiers().is_empty() && event.trigger_button() == Some(MouseButton::Primary) {
+                    event.prevent_default();
+                    crate::webui::navigation::refresh_page();
+                }
             }
             #[cfg(not(target_arch = "wasm32"))]
             let _ = event;
         }, "Refresh" }
+    }
+}
+
+/// Points the browser toolbar colour at the page's appearance. The server wrote these tags for
+/// the appearance it rendered; System follows the device through two tags with a media query.
+#[cfg(target_arch = "wasm32")]
+fn set_theme_color(document: &web_sys::Document, theme: super::document::Theme) {
+    use super::document::{Theme, CHROME_DARK, CHROME_LIGHT};
+    use wasm_bindgen::JsCast;
+    let Ok(Some(head)) = document.query_selector("head") else {
+        return;
+    };
+    if let Ok(old) = document.query_selector_all("meta[name=theme-color]") {
+        for index in 0..old.length() {
+            if let Some(tag) = old
+                .item(index)
+                .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+            {
+                tag.remove();
+            }
+        }
+    }
+    let tags: &[(&str, Option<&str>)] = match theme {
+        Theme::System => &[
+            (CHROME_DARK, Some("(prefers-color-scheme: dark)")),
+            (CHROME_LIGHT, Some("(prefers-color-scheme: light)")),
+        ],
+        Theme::Light => &[(CHROME_LIGHT, None)],
+        Theme::Dark => &[(CHROME_DARK, None)],
+    };
+    for (color, media) in tags {
+        if let Ok(tag) = document.create_element("meta") {
+            let _ = tag.set_attribute("name", "theme-color");
+            let _ = tag.set_attribute("content", color);
+            if let Some(media) = media {
+                let _ = tag.set_attribute("media", media);
+            }
+            let _ = head.append_child(&tag);
+        }
     }
 }
 
@@ -292,6 +334,7 @@ fn PageRouteView(target: String) -> Element {
                 if let Some(html) = document.document_element() {
                     html.set_class_name(page.chrome.theme.as_str());
                 }
+                set_theme_color(&document, page.chrome.theme);
             }
         });
     }

@@ -228,14 +228,23 @@ fn steps(lines: &[&LogLine], run_status: &str) -> Vec<Step> {
                         .is_some_and(|_| line.line.trim_start().starts_with('[')),
                 }
             });
-        // Late/mismatched outcomes must not mark an unrelated active step successful.
-        let target = outcome
-            .as_ref()
-            .and_then(|(name, _, _)| {
-                result
-                    .iter()
-                    .rposition(|step| step.name == *name && step.status == "running")
-            })
+        // Late/mismatched outcomes must not mark an unrelated active step successful. An outcome
+        // whose start line is not in the lines (a log window starts later) gets a step of its own.
+        let matched = outcome.as_ref().and_then(|(name, _, _)| {
+            // An error line marks the step failed before its end marker arrives.
+            active
+                .filter(|&index| result[index].name == *name)
+                .or_else(|| {
+                    result
+                        .iter()
+                        .rposition(|step| step.name == *name && step.status == "running")
+                })
+        });
+        if let (Some((name, _, _)), None) = (&outcome, matched) {
+            result.push(new_step(name.clone()));
+        }
+        let target = matched
+            .or(outcome.as_ref().and(result.len().checked_sub(1)))
             .or(active)
             .or(if repeat { closed } else { None })
             // The "Job succeeded" flag closes the last step.
@@ -662,6 +671,23 @@ mod tests {
         assert!(std::ptr::eq(found[0].0, &jobs[0].steps[0]));
         assert!(std::ptr::eq(found[0].1[0], &jobs[0].steps[0].lines[0]));
         assert!(search_steps(&jobs[0].steps, "absent").is_empty());
+    }
+    #[test]
+    fn an_outcome_without_its_start_line_keeps_its_status_and_time() {
+        let jobs = project_logs(
+            &[
+                log(1, "[CI/test] | late output"),
+                log(2, "[CI/test] ❌ Failure - Main test [2.1s]"),
+            ],
+            "failed",
+        );
+        let step = jobs[0]
+            .steps
+            .iter()
+            .find(|step| step.name == "test")
+            .unwrap();
+        assert_eq!(step.status, "failed");
+        assert_eq!(step.duration.as_deref(), Some("2.1s"));
     }
     #[test]
     fn only_last_unfinished_step_is_active() {

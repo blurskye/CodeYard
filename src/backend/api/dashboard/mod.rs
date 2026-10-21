@@ -97,6 +97,7 @@ async fn new_issue_page(
         };
     let mut choices: Vec<RepositoryChoice> = repos
         .into_iter()
+        .filter(|repo| !repo.is_archived)
         .filter_map(|repo| {
             let owner = owners.get(&repo.id)?.clone();
             Some(RepositoryChoice {

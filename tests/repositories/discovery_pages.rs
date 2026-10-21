@@ -685,11 +685,20 @@ async fn stars_unstar_contract(pg: bool) {
         "{html}"
     );
     assert!(html.contains("Unstar alice/rustacean"), "{html}");
+    let id = html
+        .split("name=\"repository_id\" value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("the Unstar form names its repository")
+        .to_owned();
 
     let reply = bob
         .form_reply(
             "/alice/rustacean/_forms/unstar",
-            &[("return_to", "/stars?sort=stars")],
+            &[
+                ("return_to", "/stars?sort=stars"),
+                ("repository_id", id.as_str()),
+            ],
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
@@ -706,11 +715,27 @@ async fn stars_unstar_contract(pg: bool) {
     let reply = bob
         .form_reply(
             "/alice/rustacean/_forms/unstar",
-            &[("return_to", "https://evil.example/stars")],
+            &[
+                ("return_to", "https://evil.example/stars"),
+                ("repository_id", id.as_str()),
+            ],
         )
         .await;
     assert_eq!(reply.location.as_deref(), Some("/alice/rustacean"));
     assert!(stars(&bob).await.is_empty());
+    // A form rendered for another repository does not unstar this one.
+    bob.expect(
+        "PUT",
+        "/api/repos/alice/rustacean/star",
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    let stale = bob
+        .form_reply("/alice/rustacean/_forms/unstar", &[("repository_id", "0")])
+        .await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    assert!(!stars(&bob).await.is_empty());
     site.database.finish().await;
 }
 

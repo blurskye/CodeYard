@@ -99,7 +99,7 @@ pub fn sidebar(repo: &RepoChrome, summary: &ReleasesSummary) -> Element {
                 NavLink { class: "repo-about-release-latest", href: release_url(repo, tag), "{tag}" }
                 span { class: "release-badge release-badge-latest", "Latest" }
             } else {
-                span { class: "collaboration-muted", "No published releases" }
+                span { class: "collaboration-muted", if summary.count > 0 { "No latest release" } else { "No published releases" } }
                 if repo.can_write {
                     NavLink { class: "repo-about-release-count", href: format!("{base}/releases/new"), "Create a new release" }
                 }

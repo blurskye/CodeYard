@@ -144,6 +144,9 @@ pub async fn accept_organization_invitation(
     let Ok(role) = role.parse::<OrgRole>() else {
         return Ok(Denied);
     };
+    if membership_role(&mut tx, org, actor).await?.is_some() {
+        return Ok(Conflict);
+    }
     let member = sqlx::query_as(
         "INSERT INTO org_memberships(org_id,user_id,role) VALUES($1,$2,$3) RETURNING *",
     )

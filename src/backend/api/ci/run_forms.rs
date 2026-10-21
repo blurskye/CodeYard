@@ -20,26 +20,25 @@ async fn readable_run(
     let user = ctx.require_user()?;
     let run_id = Uuid::parse_str(run_id)
         .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Run identifier must be a UUID."))?;
+    let unavailable = || {
+        ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Actions data is temporarily unavailable.",
+        )
+    };
     let repository = db::repositories::records::get_repository(&ctx.state.pool, owner, name)
         .await
-        .ok()
-        .flatten()
+        .map_err(|_| unavailable())?
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
     if !access::can_read(&ctx.state.pool, Some(user), &repository)
         .await
-        .map_err(|_| {
-            ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Actions data is temporarily unavailable.",
-            )
-        })?
+        .map_err(|_| unavailable())?
     {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository not found."));
     }
     let run = db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id)
         .await
-        .ok()
-        .flatten()
+        .map_err(|_| unavailable())?
         .filter(|run| run.repo_id == repository.id)
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Run not found in this repository."))?;
     Ok((repository, run))

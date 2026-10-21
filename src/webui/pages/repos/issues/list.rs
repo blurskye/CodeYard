@@ -200,10 +200,14 @@ fn selected_filters(filters: &ListFilters) -> ListFilters {
     }
 }
 
-/// The filters with one label added, or removed when it is already chosen.
+/// The filters with one label added, or removed when it is already chosen. Label names compare
+/// without regard to case, as the search does.
 pub(super) fn toggle_label(filters: &ListFilters, name: &str) -> ListFilters {
     let mut selected = filters.selected_labels.clone();
-    match selected.iter().position(|chosen| chosen.as_str() == name) {
+    match selected
+        .iter()
+        .position(|chosen| chosen.eq_ignore_ascii_case(name))
+    {
         Some(at) => {
             selected.remove(at);
         }
@@ -290,7 +294,10 @@ fn filter_menus(url: &str, state: &str, query: &str, filters: &ListFilters) -> E
             ..Choice::plain(
                 href(toggle_label(filters, &label.name)),
                 &label.name,
-                filters.selected_labels.contains(&label.name),
+                filters
+                    .selected_labels
+                    .iter()
+                    .any(|chosen| chosen.eq_ignore_ascii_case(&label.name)),
             )
         })
         .collect();

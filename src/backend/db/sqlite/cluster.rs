@@ -320,6 +320,16 @@ pub async fn record_node_heartbeat(
     Ok(result.rows_affected() > 0)
 }
 
+pub async fn touch_node(pool: &SqlitePool, public_key: &str) -> Result<()> {
+    sqlx::query(&format!(
+        "UPDATE nodes SET last_seen = {NOW} WHERE public_key = ?1 AND status = 'active'"
+    ))
+    .bind(public_key)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn clear_node_heartbeat(pool: &SqlitePool, public_key: &str) -> Result<()> {
     sqlx::query("UPDATE nodes SET last_seen = NULL WHERE public_key = ?1")
         .bind(public_key)

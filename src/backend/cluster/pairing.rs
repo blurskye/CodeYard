@@ -252,6 +252,9 @@ struct JoinBody {
     /// Roles the node wants; left out it takes everything the invite allows.
     #[serde(default)]
     roles: Option<Vec<String>>,
+    /// The joining binary's version, which nothing else reports for a worker without a database.
+    #[serde(default)]
+    version: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -340,6 +343,7 @@ async fn request_join(
         secret: hex::encode(ticket.secret),
         name: name.to_owned(),
         roles: roles.map(NodeRoles::names),
+        version: Some(env!("CARGO_PKG_VERSION").to_owned()),
     })?;
     // dial_node bounds each attempt itself, so the join needs no timeout of its own.
     let mut link = transport::dial_node(iroh, ticket.node, &ticket.address, ALPN_PAIR)
@@ -440,6 +444,17 @@ impl PairingHandler {
             return refuse(INVALID_INVITE);
         };
         let public_key = peer.to_string();
+        let version = body
+            .version
+            .as_deref()
+            .filter(|version| {
+                !version.is_empty()
+                    && version.len() <= 32
+                    && version
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))
+            })
+            .unwrap_or("unknown");
         let outcome = db::cluster::join_with_token(
             &self.pool,
             JoinRequest {
@@ -447,7 +462,7 @@ impl PairingHandler {
                 public_key: &public_key,
                 name: &name,
                 roles: roles.as_deref(),
-                version: env!("CARGO_PKG_VERSION"),
+                version,
             },
         )
         .await;

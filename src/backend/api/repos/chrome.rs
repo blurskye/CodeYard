@@ -137,15 +137,19 @@ pub(crate) async fn load_database(
         ..RepoChrome::default()
     };
     // The Issues and Pull requests tabs show open counts, and every reader of the repository sees them.
-    chrome.open_issues = db::issues::count_repo_issues(&ctx.state.pool, repository.id, None)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .open;
-    chrome.open_pulls =
-        db::pull_requests::records::count_repo_pull_requests(&ctx.state.pool, repository.id, None)
+    chrome.open_issues =
+        db::issues::count_repo_issues(&ctx.state.pool, repository.id, &Default::default())
             .await
             .map_err(|_| unavailable(ctx))?
             .open;
+    chrome.open_pulls = db::pull_requests::records::count_repo_pull_requests(
+        &ctx.state.pool,
+        repository.id,
+        &Default::default(),
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?
+    .open;
     if let Some(user) = &ctx.user {
         chrome.is_owner = repository.is_personal_owner(user.id);
         chrome.can_manage_collaborators = repository.is_personal_owner(user.id);
@@ -325,9 +329,8 @@ pub(crate) fn ensure_ref(
     loaded: &Loaded,
     reference: &str,
 ) -> Result<(), Response> {
-    if reference.starts_with('-')
-        || (!hex_revision(reference) && !ref_names(loaded).iter().any(|name| name == reference))
-    {
+    // The store resolves a known ref before Git sees it, so a name that starts with a hyphen is safe.
+    if !hex_revision(reference) && !ref_names(loaded).iter().any(|name| name == reference) {
         Err(ctx.repo_error(&loaded.chrome, StatusCode::NOT_FOUND, MISSING_REVISION))
     } else {
         Ok(())

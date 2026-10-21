@@ -7,7 +7,8 @@ use super::{
 };
 use crate::webui::{
     components::{
-        references::References, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, SelectOption,
+        references::References, DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, Markdown,
+        SelectOption,
     },
     encode_component,
     navigation::NavLink,
@@ -232,7 +233,7 @@ fn form_field(index: usize, field: &FormField, revision: &str) -> Element {
     let id = format!("form-field-{index}");
     let first = field.values.first().cloned().unwrap_or_default();
     if field.kind == FieldKind::Markdown {
-        return rsx! { p { class: "collaboration-muted collaboration-form-text", "{field.text}" } };
+        return rsx! { div { class: "collaboration-muted collaboration-form-text collaboration-markdown", Markdown { content: field.text.clone() } } };
     }
     rsx! {
         div { class: "collaboration-form-field",

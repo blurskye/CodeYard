@@ -285,6 +285,11 @@ pub(super) async fn resolve(
         request.environment = Some("production".to_owned());
     }
     if !pr_revision {
+        // A tag is stored under its full name, which can pass the column size when its short
+        // name does not.
+        if super::push::branch_name(&commit.full_ref).chars().count() > 255 {
+            return Err(AdmissionError::Invalid("CI ref name is too long"));
+        }
         request.branch = commit.full_ref;
     }
     request.head_sha = Some(commit.sha);

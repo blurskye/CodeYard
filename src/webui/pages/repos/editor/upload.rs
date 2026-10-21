@@ -28,6 +28,9 @@ pub struct UploadForm {
     pub message: String,
     pub description: String,
     pub error: Option<String>,
+    /// The files were committed and only the follow-up work failed.
+    #[serde(default)]
+    pub saved: bool,
     /// The branch refuses direct commits to this user, so the commit goes to `new_branch`.
     pub protected: bool,
     /// The name for the new branch, prefilled by the server and kept as the user typed it.
@@ -55,7 +58,8 @@ pub fn upload_page(repo: &RepoChrome, form: &UploadForm) -> Element {
                 }
                 // The root has no path to show, so the repository name would only repeat the page header.
                 if !form.directory.is_empty() { {breadcrumbs(repo, &form.branch, &form.directory, false)} }
-                if let Some(error) = &form.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { "Files were not uploaded" } p { "{error}" } } }
+                if let Some(error) = &form.error { div { class: "repo-alert repo-alert-error", role: "alert", strong { if form.saved { "{super::SAVED_FOLLOWUP_FAILED}" } else { "Files were not uploaded" } } p { "{error}" } } }
+                if !form.saved {
                 form { method: "post", action: form_action, class: "repo-upload-form", "enctype": "multipart/form-data",
                     {csrf(&repo.csrf_token)}
                     input { r#type: "hidden", name: "repository_id", value: "{form.repository_id}" }
@@ -79,6 +83,7 @@ pub fn upload_page(repo: &RepoChrome, form: &UploadForm) -> Element {
                             }
                         }
                     }
+                }
                 }
             }
         },
@@ -237,6 +242,7 @@ mod tests {
             message: "Add <b>notes</b>".into(),
             description: "Kept".into(),
             error: Some("Each file can be at most 25 MiB.".into()),
+            saved: false,
             protected: false,
             new_branch: String::new(),
         };

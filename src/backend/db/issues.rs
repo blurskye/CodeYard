@@ -33,7 +33,7 @@ native_operation!(crate::backend::db::postgres::issues::list_repo_issues,
 
 native_operation!(crate::backend::db::postgres::issues::count_repo_issues,
     crate::backend::db::sqlite::issues::count_repo_issues,
-    fn count_repo_issues(pool: &DbPool, repo_id: i64, search: Option<&str>) -> Result<StateCounts>);
+    fn count_repo_issues(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>) -> Result<StateCounts>);
 
 native_operation!(crate::backend::db::postgres::issues::update_issue,
     crate::backend::db::sqlite::issues::update_issue,

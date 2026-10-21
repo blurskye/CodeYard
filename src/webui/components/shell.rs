@@ -1,5 +1,6 @@
 use super::{Avatar, DraftInput, ThemeForm};
 use crate::webui::{
+    decode_component,
     document::Chrome,
     encode_component,
     navigation::NavLink,
@@ -304,13 +305,16 @@ fn HeaderContext(
     if first.is_empty() || matches!(first, "login" | "register" | "enter" | "logout") {
         return rsx! {};
     }
-    let owner = encode_component(first);
+    // The path is already percent-encoded; decode it to show the names and encode them once.
+    let first = decode_component(first);
+    let second = second.map(decode_component);
+    let owner = encode_component(&first);
     rsx! {
         nav { class: "site-context", "aria-label": "Current location",
             NavLink { href: format!("/{owner}"), class: "site-context-link".to_string(), "{first}" }
             if let Some(name) = second {
                 span { class: "site-context-slash", "aria-hidden": "true", "/" }
-                NavLink { href: format!("/{owner}/{}", encode_component(name)), class: "site-context-link site-context-repo".to_string(), "{name}" }
+                NavLink { href: format!("/{owner}/{}", encode_component(&name)), class: "site-context-link site-context-repo".to_string(), "{name}" }
             }
         }
     }

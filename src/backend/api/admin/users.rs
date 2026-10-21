@@ -89,7 +89,7 @@ fn listing_from_query(ctx: &PageContext) -> (String, usize) {
     )
 }
 
-/// The users page address after an action, with the search and page kept.
+/// The users page address, with the search and page kept and the saved notice if any.
 fn users_path(listing: &Listing, saved: &str) -> String {
     let mut query = url::form_urlencoded::Serializer::new(String::new());
     if !listing.search.is_empty() {
@@ -98,8 +98,15 @@ fn users_path(listing: &Listing, saved: &str) -> String {
     if listing.page > 1 {
         query.append_pair("page", &listing.page.to_string());
     }
-    query.append_pair("saved", saved);
-    format!("/admin/users?{}", query.finish())
+    if !saved.is_empty() {
+        query.append_pair("saved", saved);
+    }
+    let query = query.finish();
+    if query.is_empty() {
+        "/admin/users".to_owned()
+    } else {
+        format!("/admin/users?{query}")
+    }
 }
 
 async fn load_users(
@@ -172,6 +179,9 @@ async fn users_response(
     status: StatusCode,
     message: Option<&str>,
 ) -> Response {
+    let mut ctx = ctx.clone();
+    ctx.return_to = Some(users_path(&listing, ""));
+    let ctx = &ctx;
     match load_users(ctx, listing.search, listing.page, submitted).await {
         Ok(model) => ctx.page_model_status(
             status,

@@ -208,13 +208,18 @@ def pick_form(forms, action, has):
     raise Failure(f"no form with action={action!r} has={has!r}; {describe_forms(forms)}")
 
 
-def submit_target(form, action, submit):
-    """Where a browser posts: the formaction of the clicked button, else the form's action."""
+def submit_target(form, action, submit, wanted=None):
+    """Where a browser posts: the formaction of the clicked button, else the form's action.
+
+    When several buttons share the submit name and value, the one whose target is
+    `wanted` is the one clicked.
+    """
     name, _, value = (submit or "").partition("=")
-    for n, v, target in form.buttons if form else []:
-        if submit and n == name and v == value:
+    targets = [t for n, v, t in form.buttons if n == name and v == value] if form and submit else []
+    for target in targets:
+        if wanted is not None and (target == wanted or urllib.parse.urlsplit(target).path == wanted):
             return target
-    return action
+    return targets[0] if targets else action
 
 
 def apply_overrides(fields, sets, unsets, submit):
@@ -391,11 +396,7 @@ class Client:
         return response
 
     def csrf(self):
-        """Token for the current session, read from the sign-out form."""
-        session = self.cookies.get("session_id", "")
-        cached = self.cookies.get("_csrf", "")
-        if session and cached.startswith(session + ":"):
-            return cached.split(":", 1)[1]
+        """Current token for the session, read from the sign-out form."""
         response = self.request("GET", "/logout")
         if response.status != 200:
             raise Failure(f"GET /logout for a CSRF token: status {response.status}")
@@ -405,8 +406,6 @@ class Client:
                 token = form.get("csrf_token")
         if not token or not HEX64.match(token):
             raise Failure("the sign-out form has no 64-hex csrf_token")
-        self.cookies["_csrf"] = f"{self.cookies.get('session_id', '')}:{token}"
-        self._save()
         return token
 
 
@@ -617,7 +616,7 @@ def cmd_req(client, a):
                   and a.path.startswith("/api/")
                   and not (a.path == "/api/files" or a.path.startswith("/api/files/"))
                   and client.cookies.get("session_id")
-                  and "X-CSRF-Token" not in headers):
+                  and not any(k.lower() == "x-csrf-token" for k in headers)):
         headers["X-CSRF-Token"] = client.csrf()
     response = client.request(a.method.upper(), a.path, headers, body)
     response.skip_scripts = a.no_scripts
@@ -688,7 +687,7 @@ def cmd_form(client, a):
         if (form.attrs.get("enctype") or "").lower() != "multipart/form-data":
             raise Failure(f"form {form.action!r} sends files but its enctype is {form.attrs.get('enctype')!r}")
         files.append((name, path))
-    post_form(client, a, a.path, submit_target(form, form.action, a.submit), fields, form, files)
+    post_form(client, a, a.path, submit_target(form, form.action, a.submit, a.action), fields, form, files)
 
 
 def cmd_form_get(client, a):

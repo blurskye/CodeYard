@@ -118,6 +118,7 @@ fn repository_card(
     primary_language: Option<LanguageShare>,
 ) -> RepositoryCard {
     RepositoryCard {
+        id: repo.id,
         owner,
         name: repo.name,
         description: repo.description,

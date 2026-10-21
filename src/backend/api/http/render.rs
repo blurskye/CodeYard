@@ -203,7 +203,13 @@ pub(crate) fn accepts_page_model(headers: &HeaderMap) -> bool {
             accept.split(',').any(|part| {
                 let mut fields = part.trim().split(';');
                 fields.next() == Some(crate::webui::bootstrap::MODEL_CONTENT_TYPE)
-                    && !fields.any(|field| field.trim() == "q=0")
+                    && !fields.any(|field| {
+                        field
+                            .trim()
+                            .strip_prefix("q=")
+                            .and_then(|quality| quality.trim().parse::<f32>().ok())
+                            .is_some_and(|quality| quality <= 0.0)
+                    })
             })
         })
 }
@@ -306,7 +312,7 @@ pub(crate) async fn not_found(
             None => trimmed.to_owned(),
         };
         // Doubled slashes would make a protocol-relative address.
-        if !target.is_empty() && !target.starts_with("//") {
+        if !trimmed.is_empty() && !target.starts_with("//") {
             return Redirect::permanent(&target).into_response();
         }
     }

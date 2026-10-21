@@ -22,6 +22,10 @@ fn public_profile_never_links_executable_websites() {
         safe_website("https://example.org/path?q=1"),
         Some("https://example.org/path?q=1")
     );
+    assert_eq!(
+        safe_website("HTTPS://example.org"),
+        Some("HTTPS://example.org")
+    );
     let output = html(profile_page(
         Profile {
             username: "alice".into(),
@@ -452,6 +456,7 @@ fn profile_groups_activity_by_day_with_links_to_each_repository() {
 fn profile_stars_tab_counts_on_the_tab_and_lists_its_page_only_when_open() {
     use crate::webui::pages::discovery::RepositoryCard;
     let starred = RepositoryCard {
+        id: 1,
         owner: "bob".into(),
         name: "rustacean".into(),
         description: Some("Rust tools".into()),

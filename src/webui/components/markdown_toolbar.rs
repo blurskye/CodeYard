@@ -131,12 +131,46 @@ fn insert_markup(id: &str, markup: Markup) {
     let text = area.value();
     let start = byte_at(&text, area.selection_start().ok().flatten().unwrap_or(0));
     let end = byte_at(&text, area.selection_end().ok().flatten().unwrap_or(0)).max(start);
-    // A code selection over several lines becomes a fenced block; a single line gets backticks.
-    let fenced = matches!(markup, Markup::Code) && text[start..end].contains('\n');
-    let wrap = if fenced {
-        Some(("```\n", "\n```", "code"))
+    let selected_text = &text[start..end];
+    // The longest run of backticks inside the selection; code delimiters must be longer.
+    let longest_run = selected_text
+        .split(|ch: char| ch != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    // A code selection over several lines becomes a fenced block on lines of its own; a single
+    // line gets backticks, padded with spaces when the code itself starts or ends with one.
+    let wrap: Option<(String, String, &str)> = if matches!(markup, Markup::Code) {
+        if selected_text.contains('\n') {
+            let fence = "`".repeat((longest_run + 1).max(3));
+            let lead = if start > 0 && !text[..start].ends_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            let trail = if end < text.len() && !text[end..].starts_with('\n') {
+                "\n"
+            } else {
+                ""
+            };
+            Some((
+                format!("{lead}{fence}\n"),
+                format!("\n{fence}{trail}"),
+                "code",
+            ))
+        } else {
+            let fence = "`".repeat(longest_run + 1);
+            let pad = if selected_text.starts_with('`') || selected_text.ends_with('`') {
+                " "
+            } else {
+                ""
+            };
+            Some((format!("{fence}{pad}"), format!("{pad}{fence}"), "code"))
+        }
     } else {
-        markup.wrap()
+        markup
+            .wrap()
+            .map(|(before, after, placeholder)| (before.to_owned(), after.to_owned(), placeholder))
     };
     let (edited, from, to) = match wrap {
         Some((before, after, placeholder)) => {
@@ -156,7 +190,13 @@ fn insert_markup(id: &str, markup: Markup) {
         None => {
             let prefix = markup.line_prefix();
             let first = text[..start].rfind('\n').map_or(0, |at| at + 1);
-            let last = text[end..].find('\n').map_or(text.len(), |at| end + at);
+            // A selection that ends right after a newline does not reach the next line.
+            let reach = if end > start && text[..end].ends_with('\n') {
+                end - 1
+            } else {
+                end
+            };
+            let last = text[reach..].find('\n').map_or(text.len(), |at| reach + at);
             let lines = text[first..last]
                 .split('\n')
                 .map(|line| format!("{prefix}{line}"))

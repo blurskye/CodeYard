@@ -381,7 +381,14 @@ pub async fn change_email(
     .bind(user_id)
     .bind(email)
     .fetch_optional(&mut *tx)
-    .await?;
+    .await;
+    // A concurrent claim of the same address loses on the unique constraint.
+    let user = match user {
+        Err(sqlx::Error::Database(error)) if error.is_unique_violation() => {
+            return Ok(EmailChange::Taken);
+        }
+        other => other?,
+    };
     let Some(user) = user else {
         return Ok(EmailChange::Missing);
     };

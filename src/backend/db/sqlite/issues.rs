@@ -1,5 +1,5 @@
 use super::models::{Issue, IssueComment};
-use crate::backend::db::discussions::{contains_pattern, ListFilter, StateCounts};
+use crate::backend::db::discussions::{ListFilter, StateCounts};
 use crate::backend::db::issues::IssueCommentEntry;
 use crate::backend::db::issues::IssueListEntry;
 use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
@@ -69,7 +69,7 @@ pub async fn list_repo_issues(
     let issues = sqlx::query_as::<_, IssueListEntry>(&format!(
         r"SELECT i.*, {columns} FROM issues i JOIN users u ON u.id=i.author_id
         WHERE i.repo_id = ?1 AND (?2 IS NULL OR i.state = ?2)
-            AND (?3 IS NULL OR i.title LIKE ?3 ESCAPE '\' OR i.body LIKE ?3 ESCAPE '\')
+            AND (?3 IS NULL OR i.title REGEXP ?3 OR i.body REGEXP ?3)
             AND (?5 IS NULL OR i.author_id = ?5)
             AND (?6 = 0 OR (?6 = 1 AND NOT EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id))
                 OR (?6 = 2 AND EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id AND a.user_id = ?7)))
@@ -81,7 +81,7 @@ pub async fn list_repo_issues(
     ))
     .bind(repo_id)
     .bind(filter.state)
-    .bind(filter.search.map(contains_pattern))
+    .bind(filter.search.map(super::search::contains))
     .bind(limit)
     .bind(filter.author_id)
     .bind(assignee_mode)
@@ -96,18 +96,35 @@ pub async fn list_repo_issues(
     Ok(issues)
 }
 
+/// Counts by state for the items the filter picks; its state, sort and offset are ignored.
 pub async fn count_repo_issues(
     pool: &SqlitePool,
     repo_id: i64,
-    search: Option<&str>,
+    filter: &ListFilter<'_>,
 ) -> Result<StateCounts> {
+    let (assignee_mode, assignee_id) = filter.assignee.binding();
+    let (milestone_mode, milestone_id) = filter.milestone.binding();
+    let labels = super::discussions::label_names_json(filter.labels)?;
     let rows = sqlx::query_as::<_, (String, i64)>(
         r"SELECT i.state, COUNT(*) FROM issues i WHERE i.repo_id = ?1
-            AND (?2 IS NULL OR i.title LIKE ?2 ESCAPE '\' OR i.body LIKE ?2 ESCAPE '\')
+            AND (?2 IS NULL OR i.title REGEXP ?2 OR i.body REGEXP ?2)
+            AND (?3 IS NULL OR i.author_id = ?3)
+            AND (?4 = 0 OR (?4 = 1 AND NOT EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id))
+                OR (?4 = 2 AND EXISTS (SELECT 1 FROM issue_assignees a WHERE a.issue_id = i.id AND a.user_id = ?5)))
+            AND (?6 = 0 OR (?6 = 1 AND i.milestone_id IS NULL) OR (?6 = 2 AND i.milestone_id = ?7))
+            AND (?8 IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name)) FROM issue_labels il JOIN labels l ON l.id=il.label_id
+                WHERE il.issue_id = i.id AND LOWER(l.name) IN (SELECT LOWER(value) FROM json_each(?8)))
+                = (SELECT COUNT(DISTINCT LOWER(value)) FROM json_each(?8)))
         GROUP BY i.state",
     )
     .bind(repo_id)
-    .bind(search.map(contains_pattern))
+    .bind(filter.search.map(super::search::contains))
+    .bind(filter.author_id)
+    .bind(assignee_mode)
+    .bind(assignee_id)
+    .bind(milestone_mode)
+    .bind(milestone_id)
+    .bind(labels)
     .fetch_all(pool)
     .await?;
     Ok(StateCounts::from_rows(rows))
@@ -416,6 +433,10 @@ pub async fn delete_issue_comment(
     .bind(comment_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM reactions WHERE subject_kind = 'issue_comment' AND subject_id = ?1")
+        .bind(comment_id)
+        .execute(&mut *tx)
+        .await?;
     let removed = sqlx::query("DELETE FROM issue_comments WHERE id = ?1")
         .bind(comment_id)
         .execute(&mut *tx)

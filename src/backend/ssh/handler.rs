@@ -121,7 +121,7 @@ impl GitSshHandler {
     /// `None`. Called before the command waits for a session slot and again after it, so a key
     /// or grant revoked during the wait is refused.
     async fn git_credential(
-        &self,
+        &mut self,
         channel: ChannelId,
         session: &mut Session,
         repo: &Repository,
@@ -134,8 +134,7 @@ impl GitSshHandler {
                 .is_err()
             {
                 let msg = Self::deploy_key_denial_message(write);
-                let _ = session.data(channel, Bytes::from(msg));
-                let _ = session.channel_failure(channel);
+                self.refuse_channel(channel, session, msg.trim_end());
                 return Ok(None);
             }
             return Ok(Some(ReceiveCredential::DeployKey(key_id)));
@@ -168,8 +167,7 @@ impl GitSshHandler {
         };
         if !current || access < required_access || (write && repo.is_archived) {
             let msg = Self::repository_denial_message(Some((repo.is_private, access)), write);
-            let _ = session.data(channel, Bytes::from(msg));
-            let _ = session.channel_failure(channel);
+            self.refuse_channel(channel, session, msg.trim_end());
             return Ok(None);
         }
         Ok(Some(ReceiveCredential::SshKey(key_id)))
@@ -458,9 +456,7 @@ impl russh::server::Handler for GitSshHandler {
         let command = String::from_utf8_lossy(data).trim().to_owned();
 
         if self.user.is_none() && self.deploy_key.is_none() {
-            let msg = "Not authenticated\n";
-            let _ = session.data(channel, Bytes::from(msg.to_string()));
-            let _ = session.channel_failure(channel);
+            self.refuse_channel(channel, session, "Not authenticated");
             return Ok(());
         }
 
@@ -480,9 +476,11 @@ impl russh::server::Handler for GitSshHandler {
         let git_cmd = match validation::parse_command(&command) {
             Ok(cmd) => cmd,
             Err(_) => {
-                let msg = "Invalid command. Only git operations are allowed.\n";
-                let _ = session.data(channel, Bytes::from(msg.to_string()));
-                let _ = session.channel_failure(channel);
+                self.refuse_channel(
+                    channel,
+                    session,
+                    "Invalid command. Only git operations are allowed.",
+                );
                 return Ok(());
             }
         };
@@ -502,8 +500,7 @@ impl russh::server::Handler for GitSshHandler {
                 } else {
                     Self::repository_denial_message(None, git_cmd.write)
                 };
-                let _ = session.data(channel, Bytes::from(msg));
-                let _ = session.channel_failure(channel);
+                self.refuse_channel(channel, session, msg.trim_end());
                 return Ok(());
             }
         };
@@ -588,7 +585,11 @@ impl russh::server::Handler for GitSshHandler {
                 Ok(status) => status.code().unwrap_or(1).clamp(0, 255) as u32,
                 Err(error) => {
                     warn!("Git channel failed or was denied");
-                    let message = if error.is::<git_process::SessionsBusy>() {
+                    let message = if error.is::<git_process::SessionsBusy>()
+                        || error
+                            .downcast_ref::<crate::backend::repositories::store::RepoError>()
+                            .is_some_and(|error| error.is_sessions_busy())
+                    {
                         "Git sessions busy\n"
                     } else if error
                         .is::<crate::backend::repositories::git_sessions::PostReceiveFailed>(

@@ -366,7 +366,12 @@ mod tests {
         use crate::backend::{db, repositories::lifecycle, storage::ObjectStore};
         let native = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect("sqlite::memory:")
+            .connect_with(
+                "sqlite::memory:"
+                    .parse::<sqlx::sqlite::SqliteConnectOptions>()
+                    .unwrap()
+                    .with_regexp(),
+            )
             .await
             .unwrap();
         let pool = db::DbPool::from(native.clone());

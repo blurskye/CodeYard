@@ -570,19 +570,19 @@ body {
    shrinks its content box by 32px when a count has three digits. The tabs are narrower on a phone. */
 .repo-tab-strip-wide { padding-right: 32px; }
 @media (min-width: 641px) {
-@container (min-width: 543px) { .repo-tabs-secondary > .repo-tab:nth-child(1) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(1) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(1)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 655px) { .repo-tabs-secondary > .repo-tab:nth-child(2) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(2) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(2)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 769px) { .repo-tabs-secondary > .repo-tab:nth-child(3) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(3) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(3)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 543px) { .repo-tabs-secondary > .repo-tab:nth-child(1) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(1) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(1)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 655px) { .repo-tabs-secondary > .repo-tab:nth-child(2) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(2) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(2)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 769px) { .repo-tabs-secondary > .repo-tab:nth-child(3) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(3) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(3)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
 @container (min-width: 813px) { .repo-tab-strip:not(:has(.repo-tabs-secondary > :nth-child(5))) .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tab-strip:not(:has(.repo-tabs-secondary > :nth-child(5))) .repo-tabs-more { display: none; } }
-@container (min-width: 852px) { .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(4) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(4)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 852px) { .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(4) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(4)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
 @container (min-width: 918px) { .repo-tabs-secondary > .repo-tab:nth-child(5) { display: inline-flex; } .repo-tabs-more { display: none; } }
 }
 @media (max-width: 640px) {
-@container (min-width: 356px) { .repo-tabs-secondary > .repo-tab:nth-child(1) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(1) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(1)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 423px) { .repo-tabs-secondary > .repo-tab:nth-child(2) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(2) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(2)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 492px) { .repo-tabs-secondary > .repo-tab:nth-child(3) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(3) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(3)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 532px) { .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(4) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(4)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
-@container (min-width: 626px) { .repo-tabs-secondary > .repo-tab:nth-child(5) { display: inline-flex; } .repo-tabs-more .site-menu-links > :nth-child(5) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(5)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 356px) { .repo-tabs-secondary > .repo-tab:nth-child(1) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(1) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(1)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 423px) { .repo-tabs-secondary > .repo-tab:nth-child(2) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(2) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(2)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 492px) { .repo-tabs-secondary > .repo-tab:nth-child(3) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(3) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(3)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 532px) { .repo-tabs-secondary > .repo-tab:nth-child(4) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(4) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(4)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
+@container (min-width: 626px) { .repo-tabs-secondary > .repo-tab:nth-child(5) { display: inline-flex; } .repo-tabs-more .site-menu-links > .site-menu-link:nth-child(5) { display: none; } .repo-tabs-more:has(.repo-more-active:nth-child(5)) > .repo-tabs-more-current { border-bottom-color: transparent; font-weight: inherit; } }
 }
 @media (max-width: 640px) {
   .site-header .repo-tabs { gap: 0; padding-left: 12px; padding-right: 0; }
@@ -707,7 +707,7 @@ body {
 .syntax-code { white-space: pre; overflow-x: auto; }
 .markdown-body img { max-width: 100%; height: auto; }
 /* A heading's permalink is an empty link whose "#" glyph CSS draws; the CSP blocks inline images. It shows on hover or focus. */
-.markdown-body :is(h1, h2, h3, h4, h5, h6) { position: relative; }
+.markdown-body :is(h1, h2, h3, h4, h5, h6) { position: relative; scroll-margin-top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px) + 16px); }
 .markdown-body .heading-permalink { position: absolute; top: 50%; left: -22px; width: 16px; height: 16px; margin-top: -8px; color: var(--muted-foreground); opacity: 0; transition: opacity .15s ease; }
 .markdown-body :is(h1, h2, h3, h4, h5, h6):hover > .heading-permalink, .markdown-body .heading-permalink:focus-visible { opacity: 1; }
 .markdown-body .heading-permalink:hover { color: var(--foreground); }
@@ -777,7 +777,7 @@ body {
   .site-search-disclosure[open] > summary .site-search-close-icon { display: inline-flex; }
   /* While the sheet is open, the page behind it takes no focus, so Tab stays in the sheet. The
      sheet itself stays visible inside the hidden header. */
-  body:has(.site-search-disclosure[open]) :is(.skip-link, .site-header, .site-main) { visibility: hidden; }
+  body:has(.site-search-disclosure[open]) :is(.skip-link, .site-header, .site-main, .site-footer) { visibility: hidden; }
   .site-search-disclosure[open] { visibility: visible; }
   .site-search-sheet-form { display: flex; align-items: center; gap: 8px; margin-left: 48px; }
   .site-search-sheet-input { flex: 1 1 auto; min-width: 0; height: 44px; padding: 0 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); color: var(--foreground); font-size: 16px; }
@@ -1368,7 +1368,7 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 .repo-content .repo-blame-sha { color: var(--primary); text-decoration: none; }
 .repo-content .repo-blame-sha:hover { text-decoration: underline; }
 .repo-blame-author { color: var(--foreground); }
-.repo-blame-number { width: 1%; min-width: 3.5em; padding: 0 12px; text-align: right; white-space: nowrap; color: var(--muted-foreground); user-select: none; }
+.repo-blame-number { width: 1%; min-width: 3.5em; padding: 0 12px; text-align: right; white-space: nowrap; color: var(--muted-foreground); user-select: none; scroll-margin-top: calc(var(--site-header-height) + var(--repo-tabs-height) + 16px); }
 .repo-content .repo-blame-number a { color: inherit; text-decoration: none; }
 .repo-content .repo-blame-number a:hover { color: var(--foreground); text-decoration: underline; }
 .repo-blame-number:target { color: var(--foreground); font-weight: 600; }
@@ -1441,7 +1441,7 @@ input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb
 
 /* The picture of an account (components/avatar.rs). A round image sits before a name, in links,
    timelines and rows; the link keeps it on one line with the name. */
-.avatar { display: inline-block; flex: none; border-radius: 50%; background: var(--muted); object-fit: cover; vertical-align: middle; }
+.avatar { display: inline-block; flex: none; aspect-ratio: 1 / 1; border-radius: 50%; background: var(--muted); object-fit: cover; vertical-align: middle; }
 .collaboration-author:has(> .avatar) { display: inline-flex; align-items: center; gap: 6px; vertical-align: middle; }
 .org-row-link:has(> .avatar), .repo-commit-author:has(> .avatar) { display: inline-flex; align-items: center; gap: 6px; }
 .repo-history-author { display: flex; align-items: center; gap: 6px; min-width: 0; white-space: nowrap; }

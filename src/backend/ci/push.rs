@@ -115,6 +115,10 @@ pub(crate) async fn matching_push_workflows(
     message: Option<&str>,
     budget: &mut WorkflowMatchBudget,
 ) -> Result<Vec<WorkflowDefinition>> {
+    // A skipped push needs neither the ref filters nor the changed paths.
+    if message.is_some_and(super::workflows::should_skip_run_from_message) {
+        return Ok(Vec::new());
+    }
     let mut candidates = Vec::new();
     for workflow in workflows {
         if workflow.matches_event_with_budget("push", &update.reference, budget)? {

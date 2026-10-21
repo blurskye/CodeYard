@@ -59,8 +59,8 @@ pub struct TeamListing {
     pub member_count: i64,
 }
 
-/// A team as the public page shows it. `manage` is true for organization owners and admins
-/// and for the team's maintainers; the management page checks again before any change.
+/// A team as the public page shows it. `manage` is true for organization owners and admins;
+/// the management page checks again before any change.
 #[derive(Debug)]
 pub struct PublicTeam {
     pub team: Team,

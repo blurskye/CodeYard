@@ -908,32 +908,9 @@ fn form_page_suffix(action: &str) -> &'static str {
         | "protection-save"
         | "protection-delete" => "/settings",
         "label" | "edit-label" | "delete-label" => "/labels",
+        "deploy-key-add" | "deploy-key-delete" => "/settings?tab=deploy-keys",
         _ => "",
     }
-}
-
-/// `%XX` escapes decoded once; bytes that are not valid escapes stay as they are.
-fn percent_decoded(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    while at < bytes.len() {
-        let escaped = (bytes[at] == b'%')
-            .then(|| bytes.get(at + 1..at + 3))
-            .flatten()
-            .and_then(|hex| u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok());
-        match escaped {
-            Some(byte) => {
-                out.push(byte);
-                at += 3;
-            }
-            None => {
-                out.push(bytes[at]);
-                at += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The editor or delete page a rejected save names in `from`, when it is a page of this repository
@@ -948,7 +925,7 @@ fn editor_return<'a>(from: &'a str, base: &str) -> Option<&'a str> {
     }
     // The browser resolves `%2e%2e` as dot segments, so it is decoded once. `%252e` is a file
     // named `%2e` and stays allowed.
-    let decoded = percent_decoded(from);
+    let decoded = crate::webui::decode_component(from);
     let unsafe_text = decoded.contains("//")
         || decoded.chars().any(|c| c == '\\' || c.is_control())
         || decoded
@@ -1071,6 +1048,7 @@ pub(super) async fn post_form(
     // repository can take the old owner and name, and the form must not reach that one.
     let repository_id = loaded.repository.id.to_string();
     if [
+        "unstar",
         "create-branch",
         "delete-branch",
         "create-tag",

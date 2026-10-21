@@ -582,6 +582,7 @@ pub async fn add_asset(
     let (repository, _) = writable(pool, actor, owner, name).await?;
     if filename.is_empty()
         || filename.len() > 255
+        || matches!(filename, "." | "..")
         || filename.contains(['/', '\\'])
         || filename.chars().any(char::is_control)
     {
@@ -668,6 +669,11 @@ pub async fn delete_asset(
 }
 
 /// Opens an asset for a reader of the repository. Drafts stay hidden from everyone but writers.
+/// Only requests that send the body (`count`) add to the download count.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn download(
     pool: &db::DbPool,
     store: &ObjectStore,
@@ -676,6 +682,7 @@ pub async fn download(
     name: &str,
     tag: &str,
     asset_name: &str,
+    count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
     let repository = readable(pool, viewer, owner, name).await?;
     let release = db::releases::get_release_by_tag(pool, repository.id, tag)
@@ -697,8 +704,10 @@ pub async fn download(
     let opened = files::open_file(store, file)
         .await
         .map_err(ReleaseError::Download)?;
-    if let Err(error) = db::releases::count_asset_download(pool, asset.id).await {
-        tracing::warn!(%error, asset = asset.id, "could not count a release download");
+    if count {
+        if let Err(error) = db::releases::count_asset_download(pool, asset.id).await {
+            tracing::warn!(%error, asset = asset.id, "could not count a release download");
+        }
     }
     Ok(opened)
 }

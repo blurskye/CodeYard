@@ -5,10 +5,10 @@
 The mark is a mint dot, a commit in the yard, ringed by eight light rays on a deep violet tile.
 Colors: violet `#2a1b5c`, ice `#f3f0ff`, mint `#5eead4`.
 
-- [Vector master](../../src/webui/assets/logo.svg): 256×256 SVG, the source of the other files.
-- [Browser raster](../../src/webui/assets/logo.webp): 512×512 lossless WebP of the master, used on the
+- [Vector master](../src/webui/assets/logo.svg): 256×256 SVG, the source of the other files.
+- [Browser raster](../src/webui/assets/logo.webp): 512×512 lossless WebP of the master, used on the
   sign-in and home pages.
-- [Favicon](../../src/webui/assets/favicon.png): 128×128 PNG of the master, used for the browser tab and
+- [Favicon](../src/webui/assets/favicon.png): 128×128 PNG of the master, used for the browser tab and
   the shell brand mark.
 - [Banner source](banner.svg) and [banner PNG](banner.png): 1280×640 artwork for the README and the
   repository social preview. The PNG uses the Adwaita Sans typeface (SIL Open Font License).

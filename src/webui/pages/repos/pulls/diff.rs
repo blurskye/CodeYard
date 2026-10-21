@@ -134,7 +134,7 @@ pub fn diff_page(
                 div { class: "collaboration-diff-toolbar",
                     {view_toggle(&format!("{url}/diff"), split)}
                     if repo.signed_in && (open || pending_comments > 0) {
-                        {review::review_changes(repo, &url, head, open, author, vote, review, pending_comments, references)}
+                        {review::review_changes(repo, &url, head, open, author, vote, review, pending_comments, references, split)}
                     }
                 }
                 // A review refused after the pull request closed has no form to return to, so its text
@@ -269,7 +269,7 @@ fn file_cards(
         for (index, file) in diff.files.iter().enumerate() {
             if let Some(marks) = viewed {
                 // The Viewed button sits in the file's header and submits this form by id.
-                form { id: format!("viewed-form-{index}"), class: "collaboration-viewed-form", method: "post", action: marks.action.clone(),
+                form { id: format!("viewed-form-{index}"), class: "collaboration-viewed-form", method: "post", action: if split { format!("{}?view=split", marks.action) } else { marks.action.clone() },
                     input { r#type: "hidden", name: "csrf_token", value: marks.csrf.clone() }
                     input { r#type: "hidden", name: "path", value: file.filename.clone() }
                     input { r#type: "hidden", name: "expected_head", value: marks.head.clone() }
@@ -498,16 +498,17 @@ mod browser {
     }
 }
 
-/// The row a thread or composer sits under: the first row that shows its line on its side.
+/// The row a thread or composer sits under: the first row that shows its line on its side. A
+/// comment with no side sits on the new side, or on the old side when only that has the line.
 fn row_index(rows: &[PatchRow<'_>], side: &str, line: i32) -> Option<usize> {
     let number = u32::try_from(line).ok()?;
-    rows.iter().position(|row| {
-        if side == "LEFT" {
-            row.old == Some(number)
-        } else {
-            row.new == Some(number)
-        }
-    })
+    let old_side = || rows.iter().position(|row| row.old == Some(number));
+    let new_side = || rows.iter().position(|row| row.new == Some(number));
+    match side {
+        "LEFT" => old_side(),
+        "RIGHT" => new_side(),
+        _ => new_side().or_else(old_side),
+    }
 }
 
 /// One file's patch. A conversation whose line is no longer in the patch shows above it.

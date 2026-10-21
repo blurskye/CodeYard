@@ -10,6 +10,15 @@ pub(in crate::webui::pages) fn password_field(name: &str, label: &str, new: bool
     rsx! { PasswordField { key: "{name}-{new}", name: name.to_owned(), label: label.to_owned(), new_password: new } }
 }
 
+/// A password field whose element id differs from its form name, for a page with two of them.
+pub(in crate::webui::pages) fn password_field_with_id(
+    id: &str,
+    name: &str,
+    label: &str,
+) -> Element {
+    rsx! { PasswordField { key: "{id}", id: id.to_owned(), name: name.to_owned(), label: label.to_owned(), new_password: false } }
+}
+
 pub(super) fn password_strength(password: &str) -> u8 {
     if password.is_empty() {
         return 0;
@@ -23,7 +32,13 @@ pub(super) fn password_strength(password: &str) -> u8 {
 /// Hooks live at this component boundary, never in the page render dispatcher.
 /// Only a strength score is retained; password text stays in the native input.
 #[component]
-fn PasswordField(name: String, label: String, new_password: bool) -> Element {
+fn PasswordField(
+    name: String,
+    label: String,
+    new_password: bool,
+    #[props(default)] id: String,
+) -> Element {
+    let id = if id.is_empty() { name.clone() } else { id };
     let mut revealed = use_signal(|| false);
     let mut ready = use_signal(|| false);
     let mut strength = use_signal(|| 0u8);
@@ -37,9 +52,9 @@ fn PasswordField(name: String, label: String, new_password: bool) -> Element {
         _ => "Strong",
     };
     rsx! { div { class: "space-y-2",
-        label { r#for: name.clone(), class: "block text-sm font-semibold", "{label}" }
+        label { r#for: id.clone(), class: "block text-sm font-semibold", "{label}" }
         div { class: "flex gap-2 items-center",
-            input { id: name.clone(), name: name, r#type: if revealed() { "text" } else { "password" }, required: true,
+            input { id: id, name: name, r#type: if revealed() { "text" } else { "password" }, required: true,
                 maxlength: "4096", autocomplete: if new_password { "new-password" } else { "current-password" }, class: FIELD,
                 oninput: move |event| {
                     let value = event.value();

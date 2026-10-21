@@ -228,6 +228,9 @@ pub(crate) async fn admin_response(
     status: StatusCode,
     message: Option<&str>,
 ) -> Response {
+    let mut ctx = ctx.clone();
+    ctx.return_to = Some(format!("/admin?days={days}"));
+    let ctx = &ctx;
     match load_admin(ctx, days, submitted).await {
         Ok(model) => ctx.page_model_status(
             status,

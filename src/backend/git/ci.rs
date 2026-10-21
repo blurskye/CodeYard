@@ -37,6 +37,17 @@ pub struct CiWorkflowSource {
     pub content: String,
 }
 
+/// A ref or commit the request names that this repository does not have. It is reported as
+/// not found, not as a storage failure.
+fn not_found(message: &str) -> anyhow::Error {
+    git2::Error::new(
+        git2::ErrorCode::InvalidSpec,
+        git2::ErrorClass::Invalid,
+        message,
+    )
+    .into()
+}
+
 /// Picks the commit for a run. `reference` is a branch or tag name, or a full ref
 /// name. Without `sha` the ref's current tip is used. With `must_be_on_ref` the
 /// given `sha` has to be reachable from the ref's tip.
@@ -64,22 +75,20 @@ pub(crate) fn resolve_ci_commit(
     let tip = peel_to_commit_checked(&git, &full_ref).ok().map(|c| c.id());
     let oid = match sha {
         Some(sha) => {
-            ensure!(
-                sha.len() == 40 && sha.bytes().all(|c| c.is_ascii_hexdigit()),
-                "invalid CI SHA"
-            );
+            if sha.len() != 40 || !sha.bytes().all(|c| c.is_ascii_hexdigit()) {
+                return Err(not_found("invalid CI SHA"));
+            }
             let oid = Oid::from_str(sha)?;
             find_commit_checked(&git, oid).context("CI commit unavailable")?;
             if must_be_on_ref {
-                let tip = tip.context("CI ref unavailable")?;
-                ensure!(
-                    bounded_ancestor(&git, tip, oid)?,
-                    "CI SHA is unrelated to requested ref"
-                );
+                let tip = tip.ok_or_else(|| not_found("CI ref unavailable"))?;
+                if !bounded_ancestor(&git, tip, oid)? {
+                    return Err(not_found("CI SHA is unrelated to requested ref"));
+                }
             }
             oid
         }
-        None => tip.context("CI ref unavailable")?,
+        None => tip.ok_or_else(|| not_found("CI ref unavailable"))?,
     };
     Ok(CiCommit {
         full_ref,

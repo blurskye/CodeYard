@@ -48,7 +48,12 @@ pub fn profile_page(
                 }
                 div { class: "identity-profile-grid",
                     aside { class: "identity-profile-sidebar", "aria-label": "Profile",
-                        Avatar { name: profile.username.clone(), size: 256 }
+                        // An uploaded picture is linked by its own address; /avatars/NAME is cached.
+                        if let Some(avatar) = profile.avatar_url.as_deref() {
+                            img { class: "avatar", src: avatar, width: "256", height: "256", alt: "" }
+                        } else {
+                            Avatar { name: profile.username.clone(), size: 256 }
+                        }
                         div { class: "identity-profile-heading",
                             h1 { "{display}" }
                             p { "@{profile.username}" }
@@ -108,7 +113,7 @@ pub fn profile_page(
                         if stars.open {
                             ProfileStarList { path: path.clone(), stars: stars.clone(), own }
                         } else {
-                            ProfileRepositories { key: "{path}", path: path.clone(), repositories, own }
+                            ProfileRepositories { key: "{path}", path: path.clone(), repositories, own, new_href: own.then(|| "/new".to_owned()) }
                             {page_links(repositories_newer, repositories_older, "Profile repository pages")}
                             section { id: "profile-activity", class: "identity-profile-activity", "aria-labelledby": "profile-activity-heading",
                                 h2 { id: "profile-activity-heading", "Recent activity" }
@@ -234,10 +239,18 @@ pub(super) fn profile_repository_rows<'a>(
 }
 
 #[component]
-pub fn ProfileRepositories(path: String, repositories: Vec<Repository>, own: bool) -> Element {
+pub fn ProfileRepositories(
+    path: String,
+    repositories: Vec<Repository>,
+    own: bool,
+    // Where the New repository button goes; no button without it.
+    #[props(default)] new_href: Option<String>,
+) -> Element {
     let mut query = use_signal(String::new);
     let mut kind = use_signal(|| "all".to_owned());
     let mut sort = use_signal(|| "name".to_owned());
+    // Clearing the filters remounts the Type menu, which keeps its own copy of the choice.
+    let mut cleared = use_signal(|| 0_u32);
     let mut ready = use_signal(|| false);
     use_effect(move || ready.set(true));
     let query_value = query();
@@ -270,7 +283,7 @@ pub fn ProfileRepositories(path: String, repositories: Vec<Repository>, own: boo
                     }
                     label { class: "identity-profile-select",
                         span { "Type" }
-                        DraftSelect { name: "type", initial_value: kind_value, options: kind_options, disabled: !ready(),
+                        DraftSelect { key: "type-{cleared}", name: "type", initial_value: kind_value, options: kind_options, disabled: !ready(),
                             aria_label: Some("Repository type".to_owned()), on_value: move |value: String| kind.set(value) }
                     }
                     label { class: "identity-profile-select",
@@ -283,8 +296,8 @@ pub fn ProfileRepositories(path: String, repositories: Vec<Repository>, own: boo
                                 SelectOption::new("forks", "Forks"),
                             ] }
                     }
-                    if own {
-                        NavLink { href: "/new".to_owned(), class: "identity-profile-button identity-profile-new",
+                    if let Some(href) = new_href {
+                        NavLink { href, class: "identity-profile-button identity-profile-new",
                             {profile_icon(ProfileIcon::Repository)} "New repository"
                         }
                     }
@@ -293,7 +306,7 @@ pub fn ProfileRepositories(path: String, repositories: Vec<Repository>, own: boo
             if filtered {
                 div { class: "identity-profile-filter-result", role: "status",
                     p { "{rows.len()} of " {count_label(repositories.len(), "repository", "repositories")} }
-                    button { r#type: "button", onclick: move |_| { query.set(String::new()); kind.set("all".to_owned()); }, "Clear filters" }
+                    button { r#type: "button", onclick: move |_| { query.set(String::new()); kind.set("all".to_owned()); cleared.set(cleared() + 1); }, "Clear filters" }
                 }
             }
             div { class: "identity-profile-repository-list",
@@ -535,8 +548,13 @@ pub struct ProfileStars {
 /// Whitelist public website link schemes. Unsafe stored values remain editable text.
 pub(super) fn safe_website(raw: &str) -> Option<&str> {
     let value = raw.trim();
+    let has_scheme = |scheme: &str| {
+        value
+            .get(..scheme.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(scheme))
+    };
     if !value.chars().any(|c| c.is_control() || c == '\\')
-        && (value.starts_with("https://") || value.starts_with("http://"))
+        && (has_scheme("https://") || has_scheme("http://"))
     {
         let authority = value.split_once("://")?.1.split(['/', '?', '#']).next()?;
         if !authority.is_empty() && !authority.contains('@') {

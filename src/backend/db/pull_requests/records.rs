@@ -147,7 +147,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::list_rep
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::count_repo_pull_requests,
     crate::backend::db::sqlite::pull_requests::records::count_repo_pull_requests,
-    fn count_repo_pull_requests(pool: &DbPool, repo_id: i64, search: Option<&str>) -> Result<StateCounts>);
+    fn count_repo_pull_requests(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>) -> Result<StateCounts>);
 
 /// The pull requests a signed-in user is involved in: assigned to them, opened by them, or waiting
 /// for their review. `Involved` is all three, each pull request once.

@@ -6,7 +6,7 @@ use crate::webui::pages::repos::{
     },
     chrome::{chrome, RepoChrome},
     commits::{commit_date, latest_commit_bar, Commit},
-    ref_path::file_url,
+    ref_path::{file_url, is_markdown_path},
 };
 use dioxus::prelude::*;
 use std::collections::HashMap;
@@ -76,6 +76,12 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
         &page.reference,
         &page.path,
     ));
+    // Markdown opens as a preview by default, so Code asks for the source.
+    let code_url = if is_markdown_path(&page.path) {
+        format!("{url}?view=code")
+    } else {
+        url
+    };
     let content = rsx! {
         {title_row(repo, &page.reference, &page.path, true, rsx! {})}
         section { class: "repo-blob repo-blame border border-border rounded-md bg-card",
@@ -84,7 +90,7 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
             }
             div { class: "repo-blob-header",
                 div { class: "repo-blob-heading",
-                    {view_switch(&[FileView { label: "Code", href: url, active: false }, FileView { label: "Blame", href: blame_url, active: true }])}
+                    {view_switch(&[FileView { label: "Code", href: code_url, active: false }, FileView { label: "Blame", href: blame_url, active: true }])}
                     span { class: "repo-blob-stats", "{stats}" }
                 }
                 div { class: "repo-blob-actions",

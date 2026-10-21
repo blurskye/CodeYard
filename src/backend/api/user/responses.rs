@@ -115,7 +115,9 @@ pub(crate) fn within_bounds(form: &Fields) -> bool {
                         // A sign-in name may be an email address or a long Unicode username.
                         // Identity checks the real limits.
                         "username" => 1024,
-                        "display_name" | "name" => 100,
+                        "display_name" => 100,
+                        // Titles hold 100 characters, up to four bytes each.
+                        "name" => 400,
                         "email" => 320,
                         "location" => 200,
                         "website" | "redirect" => 2048,
@@ -199,8 +201,14 @@ pub(crate) fn public_api_message(error: &ApiError) -> &'static str {
         "Cannot ban the last active admin" => "Cannot ban the last active administrator.",
         "User not found" => "User not found.",
         "Action must be either 'approve' or 'reject'" => "Choose approve or reject.",
+        "This setup expired. Start again." => "This setup expired. Start again.",
+        "Two-factor authentication is already on" => "Two-factor authentication is already on.",
+        "Two-factor authentication is not on" => "Two-factor authentication is not on.",
         _ => match error.error.as_str() {
             "rate_limited" => "Too many attempts. Try again later.",
+            "invalid_two_factor_code" => "That code does not match. Check your app and try again.",
+            "two_factor_expired" => "Your sign-in expired. Sign in again.",
+            "two_factor_unavailable" => "Two-factor authentication is unavailable on this node.",
             "invalid_session_cookie" => "Clear malformed or duplicate session cookies before signing in.",
             "password_change_required" => "Change your temporary password before continuing.",
             "database_error" | "session_error" => "The account service is unavailable. The action may be incomplete; check its state before retrying.",

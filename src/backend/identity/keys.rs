@@ -21,7 +21,7 @@ pub enum KeyError {
 }
 
 pub fn validate_name(name: &str) -> Result<(), KeyError> {
-    if name.is_empty() || name.len() > 100 || name.contains('\0') {
+    if name.is_empty() || name.chars().count() > 100 || name.contains('\0') {
         Err(KeyError::InvalidName)
     } else {
         Ok(())

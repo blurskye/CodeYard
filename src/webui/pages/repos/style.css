@@ -216,7 +216,7 @@
 .repo-line-numbers { flex: none; padding-right: 16px; text-align: right; color: var(--muted-foreground, #8b949e); user-select: none; }
 .repo-line-numbers a { display: block; color: inherit; text-decoration: none; }
 .repo-line-numbers a:hover { text-decoration: underline; }
-.repo-code-line { display: block; min-height: 1lh; }
+.repo-code-line { display: block; min-height: 1lh; scroll-margin-top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px) + 16px); }
 .repo-code-line:target { background: rgb(56 139 253 / 20%); }
 .repo-commit-row { padding: 12px 16px; }
 .repo-history-message { font-weight: 600; }
@@ -512,7 +512,7 @@
 }
 .repo-full-sha-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .repo-compare-empty { margin: 16px 0 0; padding: 16px; }
-.repo-editor-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: 0; z-index: 5; padding: 8px 0; background: var(--background, #0d1117); }
+.repo-editor-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: calc(var(--site-header-height, 52px) + var(--repo-tabs-height, 44px)); z-index: 5; padding: 8px 0; background: var(--background, #0d1117); }
 .repo-editor-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .repo-content .repo-file-name-inner a { color: var(--foreground, #f0f6fc); }
 .repo-content .repo-file-name-inner a:hover { color: var(--repo-link); text-decoration: underline; }
@@ -782,7 +782,8 @@ li.collaboration-picker-hidden { display: none; }
    coloured, and the suggestions drop below it. */
 .collaboration-search-field { position: relative; flex: 1 1 200px; min-width: 0; }
 .repo-content .collaboration-search-field .collaboration-input { width: 100%; height: 32px; padding: 5px 12px; font-size: 14px; line-height: 20px; }
-.collaboration-search-field.is-enhanced .collaboration-input { position: relative; z-index: 1; background: transparent; color: transparent; caret-color: var(--foreground); }
+/* The mirror shows the text, so the field itself must stay clear whatever the generic field rule sets. */
+.collaboration-search-field.is-enhanced .collaboration-input { position: relative; z-index: 1; background: transparent !important; color: transparent !important; caret-color: var(--foreground); }
 .collaboration-search-field.is-enhanced .collaboration-input::placeholder { color: var(--muted-foreground); }
 .collaboration-search-mirror { position: absolute; inset: 0; z-index: 0; display: flex; align-items: center; padding: 0 13px; overflow: hidden; border-radius: 6px; background: var(--background); color: var(--foreground); font-size: 14px; line-height: 20px; white-space: pre; pointer-events: none; }
 .collaboration-token { color: var(--link-color); }
@@ -1025,7 +1026,8 @@ span.collaboration-reaction { cursor: default; }
 .collaboration-markdown .task-box { display: inline-block; flex: none; width: 16px; height: 16px; margin: 0 6px 0 0; vertical-align: -2px; border: 1px solid var(--muted-foreground); border-radius: 4px; background: var(--background); cursor: pointer; }
 .collaboration-markdown .task-box:hover { border-color: var(--foreground); }
 .collaboration-markdown .task-box:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.collaboration-markdown .task-box-done { border-color: var(--primary); background: var(--primary) no-repeat center / 10px 8px url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 8'%3E%3Cpath d='M1 4l3 3 5-6' fill='none' stroke='white' stroke-width='1.8'/%3E%3C/svg%3E"); }
+.collaboration-markdown .task-box-done { position: relative; border-color: var(--primary); background: var(--primary); }
+.collaboration-markdown .task-box-done::after { content: ""; position: absolute; left: 4px; top: 1px; box-sizing: content-box; width: 3px; height: 7px; border: solid white; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .collaboration-task-count { margin-left: 8px; font-size: 12px; white-space: nowrap; }
 .collaboration-template-list { display: grid; gap: 8px; margin: 0 0 16px; padding: 0; list-style: none; }
 .collaboration-template-card { display: flex; flex-direction: column; gap: 4px; min-height: 44px; padding: 12px 16px; color: var(--foreground); text-decoration: none; }

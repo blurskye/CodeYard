@@ -137,7 +137,9 @@ pub async fn write_file(
     content: String,
     new_branch: Option<&str>,
 ) -> Result<String, WriteError> {
-    if content.len() > MAX_EDITOR_BYTES {
+    // A browser form turns every newline into CRLF, so the text can be twice the file. The
+    // file's own size is checked once the newlines are restored.
+    if content.len() > MAX_EDITOR_BYTES * 2 {
         return Err(WriteError {
             kind: WriteFailure::TooLarge,
             message: "The native editor supports files up to 1 MiB.".into(),
@@ -179,12 +181,27 @@ pub async fn direct_commit_refused(
     )
 }
 
+const MAX_SUGGESTED_USERNAME_BYTES: usize = 200;
+
 /// The name a commit on a new branch gets when the user has not typed one: `<user>-patch-N` for
 /// the lowest N that no branch in `refs` uses.
 pub fn free_branch_name(username: &str, refs: &HashMap<String, String>) -> String {
+    // A long username is cut at a character boundary so the whole ref stays within limits.
+    let mut end = username.len().min(MAX_SUGGESTED_USERNAME_BYTES);
+    while !username.is_char_boundary(end) {
+        end -= 1;
+    }
+    let username = &username[..end];
     (1..)
         .map(|number| format!("{username}-patch-{number}"))
-        .find(|name| !refs.contains_key(&format!("refs/heads/{name}")))
+        .find(|name| {
+            let reference = format!("refs/heads/{name}");
+            // A name also conflicts with a branch that lives under it as a directory.
+            !refs.contains_key(&reference)
+                && !refs
+                    .keys()
+                    .any(|existing| existing.starts_with(&format!("{reference}/")))
+        })
         .unwrap_or_default()
 }
 
@@ -305,7 +322,7 @@ pub async fn delete_file(
 
 /// The commit message a save gets when the editor or the API leaves it blank. It is the text
 /// the commit box shows as its placeholder.
-fn default_commit_message(input: &FileWrite) -> String {
+pub(crate) fn default_commit_message(input: &FileWrite) -> String {
     if input.deleting {
         format!("Delete {}", input.path)
     } else if input.creating {
@@ -416,11 +433,11 @@ async fn save_file(
             if let Some(name) = new_branch {
                 check_new_branch_name(name)?;
             }
-            let size = match &content {
-                FileContent::Text(text) => text.len(),
-                FileContent::Bytes(bytes) => bytes.len(),
+            let too_large = match &content {
+                FileContent::Text(text) => text.len() > MAX_EDITOR_BYTES * 2,
+                FileContent::Bytes(bytes) => bytes.len() > MAX_EDITOR_BYTES,
             };
-            if size > MAX_EDITOR_BYTES {
+            if too_large {
                 return Err(WriteError {
                     kind: WriteFailure::TooLarge,
                     message: "File writes support at most 1 MiB.".into(),

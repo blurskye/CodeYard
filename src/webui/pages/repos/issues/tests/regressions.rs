@@ -84,6 +84,7 @@ fn review_summary_keeps_its_commit_snapshot_when_the_head_refreshes() {
             None,
             0,
             &References::default(),
+            false,
         )
     }
     let control = Rc::new(RefCell::new(None));

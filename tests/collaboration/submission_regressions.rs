@@ -150,10 +150,12 @@ async fn stale_comment_and_milestone_forms(pg: bool) {
         .await;
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text());
     assert!(refused.text().contains("Confidential milestone"));
-    assert_eq!(
-        hidden_value(&refused.text(), "repository_id"),
-        original_repo
-    );
+    // The header's star and watch forms carry the current id too; the draft form keeps the old one.
+    let page = refused.text();
+    let draft_form = &page[page
+        .find("collaboration-milestone-form")
+        .expect("milestone form")..];
+    assert_eq!(hidden_value(draft_form, "repository_id"), original_repo);
     assert!(db::milestones::list_milestone_choices(pool, replacement.id)
         .await
         .unwrap()

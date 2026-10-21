@@ -258,6 +258,17 @@ pub(super) async fn respond_with_hook_draft(
     draft: Fields,
     hook_draft: Option<crate::webui::components::webhooks::HookDraft>,
 ) -> Response {
+    // A refused form is shown at its POST-only address, so the appearance switch returns to the
+    // settings page instead.
+    let refused_ctx;
+    let ctx = if status.is_success() {
+        ctx
+    } else {
+        let mut copy = ctx.clone();
+        copy.return_to = Some(destination(ctx, org, false));
+        refused_ctx = copy;
+        &refused_ctx
+    };
     let actor = match ctx.require_user() {
         Ok(user) => user.id,
         Err(response) => return response,

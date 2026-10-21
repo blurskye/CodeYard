@@ -70,6 +70,12 @@ pub async fn add_organization_member(
     if membership_role(&mut tx, org, target).await?.is_some() {
         return Ok(Conflict);
     }
+    // A direct addition replaces any pending invitation.
+    sqlx::query("DELETE FROM organization_invitations WHERE org_id=?1 AND user_id=?2")
+        .bind(org)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
     let member = sqlx::query_as(
         "INSERT INTO org_memberships(org_id,user_id,role) VALUES(?1,?2,?3) RETURNING *",
     )

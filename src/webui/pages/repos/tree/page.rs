@@ -1,7 +1,8 @@
 use crate::webui::pages::discovery::topic_url;
 use crate::webui::pages::repos::{
     blob::{
-        add_file_menu, more_menu, outline_menu, title_row, FilesPanel, FolderListing, GoToFile,
+        add_file_menu, can_commit_on, more_menu, outline_menu, title_row, FilesPanel,
+        FolderListing, GoToFile,
     },
     chrome::{chrome, csrf, icon, repository_id, RepoChrome},
     commits::{commit_date, latest_commit_bar, Commit},
@@ -161,7 +162,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
                         h2 { class: "repo-readme-title", {icon("readme")} "README" }
                         div { class: "repo-readme-actions",
                             if outline.len() > 1 { {outline_menu(&outline)} }
-                            if repo.can_write {
+                            if can_commit_on(repo, &page.reference, &page.branches) {
                                 if let Some(path) = &readme_path {
                                     NavLink { class: "repo-readme-edit icon-tooltip".to_owned(), href: file_url(&base, "edit", &page.reference, path), aria_label: Some("Edit README".to_owned()), {icon("edit")} }
                                 }
@@ -196,7 +197,7 @@ pub fn tree(repo: &RepoChrome, page: &TreePage) -> Element {
             div { class: "repo-blob-layout",
                 if !page.empty {
                     input { r#type: "checkbox", id: "repo-files-toggle", class: "repo-sr-only repo-files-toggle" }
-                    FilesPanel { base: base.clone(), reference: page.reference.clone(), path: page.path.clone(), directory: page.path.clone(), folders: page.folders.clone(), branches: branch_options, tags: tag_options, can_write: repo.can_write, default_branch: repo.default_branch.clone() }
+                    FilesPanel { base: base.clone(), reference: page.reference.clone(), path: page.path.clone(), directory: page.path.clone(), folders: page.folders.clone(), branches: branch_options, tags: tag_options, can_write: can_commit_on(repo, &page.reference, &page.branches), default_branch: repo.default_branch.clone() }
                 }
                 {main}
             }
@@ -218,7 +219,7 @@ fn ref_counts(repo: &RepoChrome, page: &TreePage) -> Element {
 
 /// Add file for this folder or the root. An empty repository offers both choices in its body instead.
 fn add_file(repo: &RepoChrome, page: &TreePage) -> Element {
-    if !repo.can_write || page.empty {
+    if !can_commit_on(repo, &page.reference, &page.branches) || page.empty {
         return rsx! {};
     }
     add_file_menu(
@@ -310,8 +311,12 @@ fn about_column(repo: &RepoChrome, page: &TreePage) -> Element {
     let license = page.entries.iter().find(|entry| {
         entry.kind == "file" && entry.name.to_ascii_lowercase().starts_with("license")
     });
-    let website_is_link =
-        repo.website.starts_with("https://") || repo.website.starts_with("http://");
+    let has_scheme = |scheme: &str| {
+        repo.website
+            .get(..scheme.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(scheme))
+    };
+    let website_is_link = has_scheme("https://") || has_scheme("http://");
     rsx! {
         aside { class: "repo-about", "aria-label": "About",
             div { class: "repo-about-header",

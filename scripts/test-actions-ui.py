@@ -48,7 +48,7 @@ def login(context):
         base + "/api/auth/login",
         data={
             "username": args.username,
-            "password": args.password_file.read_text().strip(),
+            "password": args.password_file.read_text().rstrip("\r\n"),
         },
     )
     assert response.ok, f"Login failed: {response.status} {response.text()}"

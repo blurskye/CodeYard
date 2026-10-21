@@ -448,18 +448,35 @@ pub async fn count_viewer_pull_requests(
     Ok(StateCounts::from_rows(rows))
 }
 
+/// Counts by state for the pull requests the filter picks; its state, sort and offset are ignored.
 pub async fn count_repo_pull_requests(
     pool: &SqlitePool,
     repo_id: i64,
-    search: Option<&str>,
+    filter: &ListFilter<'_>,
 ) -> Result<StateCounts> {
+    let (assignee_mode, assignee_id) = filter.assignee.binding();
+    let (milestone_mode, milestone_id) = filter.milestone.binding();
+    let labels = super::super::discussions::label_names_json(filter.labels)?;
     let rows = sqlx::query_as::<_, (String, i64)>(
         r"SELECT CASE WHEN i.state = 'merged' THEN 'closed' ELSE i.state END AS bucket, COUNT(*) FROM pull_requests i WHERE i.repo_id = ?1
             AND (?2 IS NULL OR i.title LIKE ?2 ESCAPE '\' OR i.body LIKE ?2 ESCAPE '\')
+            AND (?3 IS NULL OR i.author_id = ?3)
+            AND (?4 = 0 OR (?4 = 1 AND NOT EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id))
+                OR (?4 = 2 AND EXISTS (SELECT 1 FROM pr_assignees a WHERE a.pull_request_id = i.id AND a.user_id = ?5)))
+            AND (?6 = 0 OR (?6 = 1 AND i.milestone_id IS NULL) OR (?6 = 2 AND i.milestone_id = ?7))
+            AND (?8 IS NULL OR (SELECT COUNT(DISTINCT LOWER(l.name)) FROM pr_labels pl JOIN labels l ON l.id=pl.label_id
+                WHERE pl.pull_request_id = i.id AND LOWER(l.name) IN (SELECT LOWER(value) FROM json_each(?8)))
+                = (SELECT COUNT(DISTINCT LOWER(value)) FROM json_each(?8)))
         GROUP BY bucket",
     )
     .bind(repo_id)
-    .bind(search.map(contains_pattern))
+    .bind(filter.search.map(contains_pattern))
+    .bind(filter.author_id)
+    .bind(assignee_mode)
+    .bind(assignee_id)
+    .bind(milestone_mode)
+    .bind(milestone_id)
+    .bind(labels)
     .fetch_all(pool)
     .await?;
     Ok(StateCounts::from_rows(rows))

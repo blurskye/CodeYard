@@ -248,6 +248,7 @@ fn fixtures() -> Vec<Page> {
                 message: "</textarea><script>alert(1)</script>".into(),
                 description: String::new(),
                 error: Some("Each file can be at most 25 MiB.".into()),
+                saved: false,
                 protected: false,
                 new_branch: String::new(),
             },
@@ -1351,7 +1352,7 @@ fn commit_history_groups_by_day_and_pages_with_newer_and_older() {
     assert!(html.contains("Filter by author"), "{html}");
     assert!(html.contains("/avatars/Ada"), "{html}");
     assert!(html.contains("since=week"), "{html}");
-    assert!(html.contains("Past 24 hours"), "{html}");
+    assert!(html.contains("Since yesterday"), "{html}");
 }
 
 #[test]
@@ -2126,6 +2127,19 @@ fn add_file_menus_hold_both_choices_on_the_home_and_on_a_folder() {
         assert!(menus
             .iter()
             .any(|menu| menu.contains("aria-label=\"Add file\"")));
+    });
+}
+
+#[test]
+fn tag_views_offer_no_file_writing_controls() {
+    crate::webui::tests::in_scope(|| {
+        let Page::Tree { repo, mut page } = fixtures().remove(0) else {
+            unreachable!()
+        };
+        page.reference = "v1/release".into();
+        let html = dioxus_ssr::render_element(tree(&repo, &page));
+        assert!(!html.contains("Create new file"), "{html}");
+        assert!(!html.contains("Edit README"), "{html}");
     });
 }
 
@@ -3221,7 +3235,7 @@ fn upload_links_are_offered_to_writers_only() {
         releases: None,
         reference: "main".into(),
         path: "docs".into(),
-        branches: vec![],
+        branches: vec!["main".into()],
         tags: vec![],
         entries: vec![],
         readme: None,

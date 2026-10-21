@@ -199,9 +199,11 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
         }
         if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the 32 MiB download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
         if page.truncated { p { class: "text-sm text-muted-foreground", "Showing a bounded preview starting at byte {page.offset}." if downloadable { " Raw contains the complete file." } } }
-        nav { class: "flex gap-4", "aria-label": "File preview",
-            if let Some(offset) = page.previous { NavLink { href: format!("{url}?offset={offset}"), "Previous" } }
-            if let Some(offset) = page.next { NavLink { href: format!("{url}?offset={offset}"), "Next" } }
+        if !page.binary {
+            nav { class: "flex gap-4", "aria-label": "File preview",
+                if let Some(offset) = page.previous { NavLink { href: format!("{url}?offset={offset}"), "Previous" } }
+                if let Some(offset) = page.next { NavLink { href: format!("{url}?offset={offset}"), "Next" } }
+            }
         }
     };
     chrome(
@@ -216,6 +218,17 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
             content,
         ),
     )
+}
+
+/// Whether the viewer can commit files on `reference`: they can write, and it names a branch. A tag
+/// or a commit cannot take new commits.
+pub(in crate::webui::pages::repos) fn can_commit_on(
+    repo: &RepoChrome,
+    reference: &str,
+    branches: &[String],
+) -> bool {
+    let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
+    repo.can_write && branches.iter().any(|branch| branch == name)
 }
 
 /// The layout every file page shares: the Files panel on the left and `content` beside it. The blob
@@ -236,7 +249,7 @@ pub(in crate::webui::pages::repos) fn file_layout(
     rsx! {
         div { class: "repo-blob-layout",
             input { r#type: "checkbox", id: "repo-files-toggle", class: "repo-sr-only repo-files-toggle" }
-            FilesPanel { key: "{reference}/{path}", base: base.clone(), reference: reference.to_owned(), path: path.to_owned(), directory: directory.to_owned(), folders: folders.to_vec(), branches: branch_options, tags: tag_options, can_write: repo.can_write, default_branch: repo.default_branch.clone() }
+            FilesPanel { key: "{reference}/{path}", base: base.clone(), reference: reference.to_owned(), path: path.to_owned(), directory: directory.to_owned(), folders: folders.to_vec(), branches: branch_options, tags: tag_options, can_write: can_commit_on(repo, reference, branches), default_branch: repo.default_branch.clone() }
             div { class: "repo-blob-main", {content} }
         }
     }

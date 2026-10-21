@@ -409,6 +409,10 @@ impl S3Store {
         if head.content_length() != Some(upload.bytes) {
             return Err(StorageError::Rejected);
         }
+        // A type without a signature check accepts any bytes, so there is nothing to read.
+        if media_signature_matches(upload.content_type, &[]) {
+            return Ok(());
+        }
         let object = self
             .client
             .get_object()

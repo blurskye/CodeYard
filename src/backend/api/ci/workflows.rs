@@ -70,18 +70,24 @@ pub async fn list_ci_workflows(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(&repository.default_branch);
 
-    let workflows =
-        list_workflows_for_ref(&repo_store(&repository, state.cluster.as_ref()), git_ref)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError::new(
-                        "ci_error",
-                        "Workflow definitions are unavailable",
-                    )),
-                )
-            })?;
+    let store = repo_store(&repository, state.cluster.as_ref());
+    let workflows = async {
+        // A repository with no commits has no workflows yet.
+        if store.refs().await?.is_empty() {
+            return Ok(Vec::new());
+        }
+        list_workflows_for_ref(&store, git_ref).await
+    }
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::new(
+                "ci_error",
+                "Workflow definitions are unavailable",
+            )),
+        )
+    })?;
 
     Ok(Json(ListWorkflowsResponse {
         workflows: workflows

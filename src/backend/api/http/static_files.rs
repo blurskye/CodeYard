@@ -6,8 +6,9 @@ use axum::{
 };
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::OnceLock,
+    sync::{Mutex, OnceLock},
 };
 
 struct RuntimeBundle {
@@ -15,6 +16,8 @@ struct RuntimeBundle {
     module: String,
 }
 static RUNTIME: OnceLock<RuntimeBundle> = OnceLock::new();
+/// Each embedded asset's ETag, hashed on first use and keyed by the asset's address.
+static ETAGS: Mutex<BTreeMap<usize, String>> = Mutex::new(BTreeMap::new());
 static DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(16);
 
 fn runtime() -> Result<&'static RuntimeBundle, ()> {
@@ -113,7 +116,12 @@ pub async fn asset(uri: Uri, headers: HeaderMap) -> Response {
         _ => None,
     };
     if let Some((bytes, mime)) = native {
-        let etag = format!("W/\"{:x}\"", Sha256::digest(bytes));
+        let etag = ETAGS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(bytes.as_ptr() as usize)
+            .or_insert_with(|| format!("W/\"{:x}\"", Sha256::digest(bytes)))
+            .clone();
         return asset_response(Body::from(bytes), mime, &etag, &headers);
     }
     match runtime() {

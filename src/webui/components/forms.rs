@@ -358,27 +358,23 @@ pub mod draft_text {
         }
     }
 
-    /// Keeps the text as the draft, or drops the draft when the field is empty. `revision` is the
-    /// revision of the page the text was typed on.
+    /// Keeps the text as the draft, including empty text, so a cleared field stays cleared.
+    /// `revision` is the revision of the page the text was typed on.
     pub fn save(key: &str, text: &str, revision: Option<&str>) {
-        if text.is_empty() {
-            clear(key);
-        } else {
-            #[cfg(target_arch = "wasm32")]
-            if let Some(storage) = storage() {
-                let _ = storage.set_item(key, text);
-                match revision {
-                    Some(revision) => {
-                        let _ = storage.set_item(&revision_key(key), revision);
-                    }
-                    None => {
-                        let _ = storage.remove_item(&revision_key(key));
-                    }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = storage() {
+            let _ = storage.set_item(key, text);
+            match revision {
+                Some(revision) => {
+                    let _ = storage.set_item(&revision_key(key), revision);
+                }
+                None => {
+                    let _ = storage.remove_item(&revision_key(key));
                 }
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            let _ = revision;
         }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (key, text, revision);
     }
 
     pub fn clear(key: &str) {
@@ -993,7 +989,14 @@ pub fn DraftSelect(
                     #[cfg(target_arch = "wasm32")]
                     { use wasm_bindgen::JsCast;
                       if let Some(element) = event.data().downcast::<web_sys::Element>() {
-                          if let Some(input) = element.dyn_ref::<web_sys::HtmlSelectElement>() { value.set(input.value()); }
+                          if let Some(input) = element.dyn_ref::<web_sys::HtmlSelectElement>() {
+                              // A choice made before hydration reaches the caller too.
+                              let chosen = input.value();
+                              if chosen != *value.peek() {
+                                  value.set(chosen.clone());
+                                  on_value.call(chosen);
+                              }
+                          }
                       }
                     }
                     #[cfg(not(target_arch = "wasm32"))]

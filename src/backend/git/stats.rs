@@ -151,11 +151,15 @@ fn parse_language_stats(output: &[u8]) -> Result<Vec<LanguageStat>> {
         let size = size.ok_or_else(|| anyhow::anyhow!("Missing Git blob size"))?;
         let size = std::str::from_utf8(size)?.parse::<u64>()?;
         let filepath = String::from_utf8_lossy(filepath);
-        if let Some(language) = Path::new(filepath.as_ref())
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .and_then(extension_to_language)
-        {
+        let path = Path::new(filepath.as_ref());
+        let language = if path.file_name().is_some_and(|name| name == "Dockerfile") {
+            Some("Dockerfile")
+        } else {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .and_then(extension_to_language)
+        };
+        if let Some(language) = language {
             let bytes = lang_bytes.entry(language.to_owned()).or_insert(0);
             *bytes = bytes
                 .checked_add(size)

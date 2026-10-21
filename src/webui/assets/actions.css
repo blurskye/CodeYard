@@ -611,6 +611,8 @@
 .actions-page .actions-log-panel {
   --background: #0d1117;
   --foreground: #f0f6fc;
+  --card: #161b22;
+  --card-foreground: #f0f6fc;
   --muted-foreground: #8b949e;
   --border: #30363d;
   --primary: #58a6ff;

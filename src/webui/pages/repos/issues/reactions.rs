@@ -41,7 +41,9 @@ pub(in crate::webui::pages::repos) fn reaction_bar(
     field: Option<(&str, i64)>,
     reactions: &[Reaction],
 ) -> Element {
-    if reactions.is_empty() && !repo.signed_in {
+    // An archived repository takes no new reactions.
+    let can_react = repo.signed_in && !repo.chrome.is_archived;
+    if reactions.is_empty() && !can_react {
         return rsx! {};
     }
     rsx! {
@@ -53,7 +55,7 @@ pub(in crate::webui::pages::repos) fn reaction_bar(
                     let (face, label) = emoji(&reaction.content);
                     let class = if reaction.mine { "collaboration-reaction is-mine" } else { "collaboration-reaction" };
                     rsx! {
-                        if repo.signed_in {
+                        if can_react {
                             button { key: "{reaction.content}", r#type: "submit", name: "content", value: reaction.content.clone(), class, title: label, "aria-pressed": reaction.mine.to_string(),
                                 span { "{face}" } span { class: "collaboration-reaction-count", "{reaction.count}" }
                             }
@@ -65,7 +67,7 @@ pub(in crate::webui::pages::repos) fn reaction_bar(
                     }
                 }
             }
-            if repo.signed_in {
+            if can_react {
                 details { class: "native-menu collaboration-reaction-add",
                     summary { class: "collaboration-reaction", title: "Add reaction", "aria-label": "Add reaction", {icon("smile")} }
                     div { class: "native-menu-panel collaboration-reaction-panel",

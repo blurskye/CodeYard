@@ -157,7 +157,7 @@ async fn in_pending_review(
 
 /// Sends the webhook for a saved comment. A comment on a file is a review comment. A conversation
 /// comment is sent as an issue comment, which is how GitHub sends those on pull requests.
-pub(super) fn emit_comment_webhook(
+pub(super) async fn emit_comment_webhook(
     pool: &db::DbPool,
     repository: &db::models::Repository,
     pull_request: &db::models::PullRequest,
@@ -170,6 +170,14 @@ pub(super) fn emit_comment_webhook(
         events::PULL_REQUEST_REVIEW_COMMENT
     } else {
         events::ISSUE_COMMENT
+    };
+    // The conversation link carries the discussion page, taken from the saved position.
+    let link = if on_file {
+        String::new()
+    } else if action == "deleted" {
+        format!("#comment-{}", comment.id)
+    } else {
+        saved_comment_link(pool, "", comment).await
     };
     let (comment_for_hook, pull_for_hook, repository_for_hook) =
         (comment.clone(), pull_request.clone(), repository.clone());
@@ -206,6 +214,7 @@ pub(super) fn emit_comment_webhook(
                     &pull_for_hook,
                     &pull_author,
                     &comment_author,
+                    &link,
                     scope,
                 )
             }
@@ -222,7 +231,7 @@ async fn check_diff_anchor(
     path: &str,
     line: Option<i32>,
     side: Option<&str>,
-) -> Result<(), OperationError> {
+) -> Result<Option<&'static str>, OperationError> {
     let refusal = |message: &str| OperationError::Invalid {
         code: "validation_error",
         message: message.to_owned(),
@@ -254,19 +263,25 @@ async fn check_diff_anchor(
         .find(|file| file.filename == path)
         .ok_or_else(|| refusal("path must be a file this pull request changes"))?;
     let Some(line) = line else {
-        return Ok(());
+        return Ok(None);
     };
     let number =
         u32::try_from(line).map_err(|_| refusal("line must be a line of the pull request diff"))?;
-    let found = crate::webui::components::patch_rows(&file.patch)
-        .iter()
-        .any(|row| match side {
-            Some("LEFT") => row.old == Some(number),
-            Some(_) => row.new == Some(number),
-            None => row.old == Some(number) || row.new == Some(number),
-        });
+    let rows = crate::webui::components::patch_rows(&file.patch);
+    let on_left = rows.iter().any(|row| row.old == Some(number));
+    let on_right = rows.iter().any(|row| row.new == Some(number));
+    let found = match side {
+        Some("LEFT") => on_left,
+        Some(_) => on_right,
+        None => on_left || on_right,
+    };
     if found {
-        Ok(())
+        // Without a side the comment is stored on the side that has the line, so it is shown
+        // under that line.
+        Ok(match side {
+            Some(_) => None,
+            None => Some(if on_right { "RIGHT" } else { "LEFT" }),
+        })
     } else {
         Err(refusal(
             "line must be a line of the pull request diff on that side",
@@ -357,7 +372,7 @@ pub async fn create_pull_request_comment(
         .as_deref()
         .map(str::trim)
         .filter(|sha| !sha.is_empty())
-        .map(str::to_string)
+        .map(str::to_ascii_lowercase)
         .or_else(|| req.path.as_ref().map(|_| pull_request.head_sha.clone()));
 
     let mut reply_root = None;
@@ -386,21 +401,14 @@ pub async fn create_pull_request_comment(
         // A reply to a reply joins the thread of its root.
         reply_root = Some(thread_root(pool, &parent_comment).await?);
         reply_parent = Some((parent_comment.id, parent_comment.author_id));
-        if path.is_none() {
-            path = parent_comment.path.clone();
-        }
-        if line.is_none() {
-            line = parent_comment.line;
-        }
-        if side.is_none() {
-            side = parent_comment
-                .side
-                .as_deref()
-                .map(|value| value.trim().to_uppercase());
-        }
-        if commit_sha.is_none() {
-            commit_sha = parent_comment.commit_sha;
-        }
+        // A reply sits where its thread sits, whatever position the caller sent.
+        path = parent_comment.path.clone();
+        line = parent_comment.line;
+        side = parent_comment
+            .side
+            .as_deref()
+            .map(|value| value.trim().to_uppercase());
+        commit_sha = parent_comment.commit_sha;
     }
 
     if path
@@ -469,7 +477,7 @@ pub async fn create_pull_request_comment(
                     });
                 }
             }
-            check_diff_anchor(
+            let inferred = check_diff_anchor(
                 cluster,
                 &repository,
                 &pull_request,
@@ -478,6 +486,9 @@ pub async fn create_pull_request_comment(
                 side.as_deref(),
             )
             .await?;
+            if let Some(inferred) = inferred {
+                side = Some(inferred.to_owned());
+            }
         }
     }
 
@@ -610,7 +621,8 @@ pub async fn create_pull_request_comment(
         &comment,
         "created",
         user.id,
-    );
+    )
+    .await;
     Ok(comment)
 }
 
@@ -841,7 +853,8 @@ pub async fn edit_pull_request_comment(
         &comment,
         "edited",
         user.id,
-    );
+    )
+    .await;
     Ok(comment)
 }
 
@@ -881,7 +894,8 @@ pub async fn delete_pull_request_comment(
             &previous,
             "deleted",
             user.id,
-        );
+        )
+        .await;
         Ok(())
     } else {
         Err(OperationError::Denied {

@@ -332,6 +332,9 @@ pub(crate) async fn native_index(
     uri: Uri,
 ) -> ResultPage<Response> {
     let mut ctx = PageContext::load(state, headers, &uri).await?;
+    // The filters are read out of the query below, so the theme switch returns to the address
+    // as requested.
+    ctx.return_to = Some(ctx.location.clone());
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     // The milestones name each row and feed the milestone filter, so they are read once.
@@ -404,7 +407,7 @@ pub(crate) async fn native_index(
     let totals;
     match kind {
         Kind::Issue => {
-            totals = db::issues::count_repo_issues(&ctx.state.pool, repo.record.id, search)
+            totals = db::issues::count_repo_issues(&ctx.state.pool, repo.record.id, &list)
                 .await
                 .map_err(|_| unavailable(&ctx))?;
             let mut entries =
@@ -455,7 +458,7 @@ pub(crate) async fn native_index(
             totals = db::pull_requests::records::count_repo_pull_requests(
                 &ctx.state.pool,
                 repo.record.id,
-                search,
+                &list,
             )
             .await
             .map_err(|_| unavailable(&ctx))?;

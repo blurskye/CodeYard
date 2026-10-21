@@ -239,6 +239,9 @@ pub(crate) async fn settings_response(
     status: StatusCode,
     message: Option<&str>,
 ) -> Response {
+    let mut ctx = ctx.clone();
+    ctx.return_to = Some(format!("/settings?tab={tab}"));
+    let ctx = &ctx;
     match load_settings(ctx, tab, submitted).await {
         Ok(model) => ctx.page_model_status(
             status,

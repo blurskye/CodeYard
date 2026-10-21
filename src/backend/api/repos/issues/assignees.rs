@@ -110,7 +110,7 @@ pub(crate) async fn native_assign(
         .map_err(assignment_error),
         None => Err(assignment_error(AssignmentRefusal::Unassignable.into())),
     };
-    if outcome.is_ok() {
+    if matches!(outcome, Ok(Some(_))) {
         db::timeline::record_for(
             &ctx.state.pool,
             repo.record.id,

@@ -958,6 +958,10 @@ pub async fn delete_pull_request_comment(
     .bind(comment_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM reactions WHERE subject_kind = 'pr_comment' AND subject_id = $1")
+        .bind(comment_id)
+        .execute(&mut *tx)
+        .await?;
     let removed = sqlx::query("DELETE FROM pr_comments WHERE id = $1")
         .bind(comment_id)
         .execute(&mut *tx)

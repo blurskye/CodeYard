@@ -774,7 +774,7 @@ pub(in crate::webui::pages::repos) fn comment_entry(
             {reaction_bar(repo, &react_action(url, page), Some(("comment", comment.id)), &comment.reactions)}
             if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references, page)} }
             if let Some(conversation) = &comment.conversation {
-                if conversation.can_resolve { {review::resolve_form(repo, url, comment.id, conversation, false, page)} }
+                if conversation.can_resolve { {review::resolve_form(repo, url, comment.id, conversation, false, false, page)} }
             }
         }
     };
@@ -793,13 +793,20 @@ fn merge_box(
     compare: &Comparison,
     default_method: Option<&str>,
     reviewers: &[Reviewer],
+    events: &[Event],
 ) -> Element {
     if item.state != "open" {
         if item.state == "merged" {
+            // A layer merged through a stack keeps its own base; the timeline names the branch
+            // the merge landed on.
+            let destination = events
+                .iter()
+                .find(|event| event.kind == "merged")
+                .map_or(compare.base.as_str(), |event| event.detail.as_str());
             if let Some(sha) = compare.merged_commit.as_deref() {
                 let commit_url = format!("{}/commit/{}", repo.url(), encode_component(sha));
                 let short = sha.get(..7).unwrap_or(sha);
-                return rsx! { p { class: "collaboration-state-banner", "This pull request was merged into {compare.base} as " NavLink { class: "collaboration-merge-sha", href: commit_url, "{short}" } "." } };
+                return rsx! { p { class: "collaboration-state-banner", "This pull request was merged into {destination} as " NavLink { class: "collaboration-merge-sha", href: commit_url, "{short}" } "." } };
             }
             return rsx! { p { class: "collaboration-state-banner", "This pull request was merged." } };
         }
@@ -1099,7 +1106,7 @@ pub fn detail(
                             }
                             if let Some(compare) = &item.comparison {
                                 if kind == Kind::Pull {
-                                    {merge_box(repo, &url, item, compare, default_method.as_deref(), reviewers)}
+                                    {merge_box(repo, &url, item, compare, default_method.as_deref(), reviewers, &comments.events)}
                                 }
                             }
                             if repo.signed_in {

@@ -56,7 +56,7 @@ pub fn render(page: Page) -> Element {
                             path { d: "M6 6.5h.01M6 17.5h.01" }
                         }
                         h2 { class: "text-base font-semibold", "No nodes have joined." }
-                        p { class: "mt-2 text-sm text-muted-foreground", "Connected nodes will appear here. To add one, follow these steps." }
+                        p { class: "mt-2 text-sm text-muted-foreground", "Connected nodes will appear here. A cluster needs PostgreSQL and this server running in cluster mode (see docs/CLUSTER.md). Then follow these steps." }
                         ol { class: "node-setup-steps",
                             li {
                                 p { "On this server, create an invite for a storage node:" }

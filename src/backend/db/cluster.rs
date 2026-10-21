@@ -132,6 +132,12 @@ native_operation!(crate::backend::db::postgres::cluster::record_node_heartbeat,
     disk_free: Option<i64>,
 ) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::cluster::touch_node,
+    crate::backend::db::sqlite::cluster::touch_node,
+    /// Records a sign of life for a node that has no heartbeat of its own, such as a worker
+    /// without a database, when it makes an authenticated request.
+    fn touch_node(pool: &DbPool, public_key: &str) -> Result<()>);
+
 native_operation!(crate::backend::db::postgres::cluster::clear_node_heartbeat,
     crate::backend::db::sqlite::cluster::clear_node_heartbeat,
     /// Stops counting the node as live until its next heartbeat. Called when it shuts down.

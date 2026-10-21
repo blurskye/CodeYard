@@ -96,9 +96,9 @@ fn usage_text(count: i64) -> String {
     )
 }
 
-/// The labels page. The search matches a label's name and description. The sort is by name unless
-/// the newest, the oldest or the most used label is asked for. `usage` counts, by label id, the
-/// issues and pull requests each label is on.
+/// The labels page. The search matches a label's name and description. `items` is one page, already
+/// filtered and in the order `sort` names: by name unless the newest, the oldest or the most used
+/// label is asked for. `usage` counts, by label id, the issues and pull requests each label is on.
 pub fn list(
     repo: &Repository,
     items: &[Label],
@@ -108,25 +108,12 @@ pub fn list(
     page_number: usize,
     has_next: bool,
 ) -> Element {
-    let can_admin = repo.can_admin;
+    // The database refuses label changes in an archived repository.
+    let can_admin = repo.can_admin && !repo.chrome.is_archived;
     let url = format!("{}/labels", repo.url());
     let sort = if sort.is_empty() { "name" } else { sort };
-    let needle = query.trim().to_lowercase();
-    // The server filters the complete label set before paging it.
-    let mut shown: Vec<&Label> = items.iter().collect();
-    match sort {
-        "newest" => shown.sort_by_key(|label| std::cmp::Reverse(label.id)),
-        "oldest" => shown.sort_by_key(|label| label.id),
-        "most-used" => shown.sort_by_key(|label| {
-            (
-                std::cmp::Reverse(usage.get(&label.id).copied().unwrap_or(0)),
-                label.name.to_lowercase(),
-            )
-        }),
-        _ => shown.sort_by_key(|label| label.name.to_lowercase()),
-    }
-    let none_match = !needle.is_empty() && shown.is_empty();
-    let count = count_label(shown.len(), "label", "labels");
+    let none_match = !query.trim().is_empty() && items.is_empty();
+    let count = count_label(items.len(), "label", "labels");
     let sorts = [
         ("name", "Name"),
         ("newest", "Newest"),
@@ -195,7 +182,7 @@ pub fn list(
                     header { class: "collaboration-panel-header collaboration-list-header",
                         h3 { class: "collaboration-count", "{count}" }
                     }
-                    if items.is_empty() {
+                    if items.is_empty() && !none_match {
                         div { class: "collaboration-empty",
                             h3 { "No labels yet" }
                             p { if can_admin { "Create a label to sort issues and pull requests by topic." } else { "This repository has no labels yet." } }
@@ -204,7 +191,7 @@ pub fn list(
                     if none_match {
                         div { class: "collaboration-empty", h3 { "No labels match your search" } }
                     }
-                    for label in shown {
+                    for label in items {
                         article { key: "{label.id}", class: "collaboration-row collaboration-label-row",
                             div { class: "collaboration-row-content",
                                 div { class: "collaboration-row-title", {label_chip(label)} }

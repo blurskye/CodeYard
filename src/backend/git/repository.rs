@@ -519,8 +519,8 @@ impl CommitFilter {
                 let person = commit.author();
                 let signature = format!(
                     "{} <{}>",
-                    person.name().unwrap_or(""),
-                    person.email().unwrap_or("")
+                    String::from_utf8_lossy(person.name_bytes()),
+                    String::from_utf8_lossy(person.email_bytes())
                 );
                 signature.to_lowercase().contains(&author.to_lowercase())
             }
@@ -1031,11 +1031,7 @@ pub(crate) async fn list_tree_with_history(
         }
     }
 
-    entries.sort_by(|a, b| match (&a.entry_type[..], &b.entry_type[..]) {
-        ("dir", "file") => std::cmp::Ordering::Less,
-        ("file", "dir") => std::cmp::Ordering::Greater,
-        _ => a.name.cmp(&b.name),
-    });
+    entries.sort_by(|a, b| (a.entry_type != "dir", &a.name).cmp(&(b.entry_type != "dir", &b.name)));
     Ok(entries)
 }
 
@@ -1649,12 +1645,13 @@ pub(crate) async fn search_code(
     let mut group = process::ProcessGroup(child.id());
     let stdout = child.stdout.take().context("git stdout")?;
     let prefix = format!("{tip}:");
+    let needle = text.to_lowercase();
     let mut records = BufReader::new(stdout);
     let mut matches = Vec::new();
     let mut skipped = 0;
     let read = async {
         while let Some(record) = read_grep_record(&mut records).await? {
-            let Some(found) = parse_code_match(&record, &prefix) else {
+            let Some(found) = parse_code_match(&record, &prefix, &needle) else {
                 continue;
             };
             if skipped < offset {
@@ -1724,17 +1721,23 @@ async fn read_delimited(
 }
 
 /// The match in one record, which holds `path`, a line number and the line. Git writes the path
-/// after the revision and a colon, and this strips that prefix.
-fn parse_code_match(record: &[u8], prefix: &str) -> Option<CodeMatch> {
+/// after the revision and a colon, and this strips that prefix. A long line is cut to a window
+/// around the first occurrence of `needle` (lowercase), so the shown text holds the match.
+fn parse_code_match(record: &[u8], prefix: &str, needle: &str) -> Option<CodeMatch> {
     let record = String::from_utf8_lossy(record);
     let mut parts = record.splitn(3, '\0');
     let path = parts.next()?.strip_prefix(prefix)?;
     let line_number = parts.next()?.parse().ok()?;
-    let text = parts.next()?;
+    let text = parts.next()?.trim();
+    let lower = text.to_lowercase();
+    let skip = lower
+        .find(needle)
+        .map_or(0, |at| lower[..at].chars().count())
+        .saturating_sub(MAX_CODE_LINE_CHARS / 4);
     Some(CodeMatch {
         path: path.to_owned(),
         line_number,
-        line: text.trim().chars().take(MAX_CODE_LINE_CHARS).collect(),
+        line: text.chars().skip(skip).take(MAX_CODE_LINE_CHARS).collect(),
     })
 }
 
@@ -1932,10 +1935,10 @@ pub(crate) fn commit_info(commit: &git2::Commit<'_>) -> CommitInfo {
     CommitInfo {
         sha: format!("{}", commit.id()),
         message: commit_message(commit),
-        author_name: author.name().unwrap_or("").to_string(),
-        author_email: author.email().unwrap_or("").to_string(),
-        committer_name: committer.name().unwrap_or("").to_string(),
-        committer_email: committer.email().unwrap_or("").to_string(),
+        author_name: String::from_utf8_lossy(author.name_bytes()).into_owned(),
+        author_email: String::from_utf8_lossy(author.email_bytes()).into_owned(),
+        committer_name: String::from_utf8_lossy(committer.name_bytes()).into_owned(),
+        committer_email: String::from_utf8_lossy(committer.email_bytes()).into_owned(),
         timestamp: author.when().seconds(),
         committer_timestamp: committer.when().seconds(),
         parents,
@@ -2097,12 +2100,11 @@ pub(crate) fn prepare_create_tag(
     let reference =
         crate::backend::git::tag_ref(tag_name).ok_or_else(|| anyhow!("Invalid tag name"))?;
     if repo.find_reference(&reference).is_ok() {
-        return Err(anyhow!("Tag '{tag_name}' already exists"));
+        return Err(RefConflict(format!("Tag '{tag_name}' already exists")).into());
     }
-    let oid =
-        git2::Oid::from_str(target_sha).map_err(|_| anyhow!("Invalid commit SHA: {target_sha}"))?;
-    let commit =
-        find_commit_checked(&repo, oid).map_err(|_| anyhow!("Commit '{target_sha}' not found"))?;
+    let oid = commit_oid(target_sha)?;
+    let commit = find_commit_checked(&repo, oid)
+        .with_context(|| format!("Commit '{target_sha}' not found"))?;
     let (target, date) = if let Some(message) = message {
         let signature = git2::Signature::now(tagger_name, tagger_email)?;
         let target =
@@ -2171,13 +2173,24 @@ pub(crate) fn prepare_create_branch(
     let reference = crate::backend::git::branch_ref(branch_name)
         .ok_or_else(|| anyhow!("Invalid branch name"))?;
     if repo.find_reference(&reference).is_ok() {
-        return Err(anyhow!("Branch '{branch_name}' already exists"));
+        return Err(RefConflict(format!("Branch '{branch_name}' already exists")).into());
     }
-    let oid =
-        git2::Oid::from_str(source_sha).map_err(|_| anyhow!("Invalid commit SHA: {source_sha}"))?;
+    let oid = commit_oid(source_sha)?;
     find_commit_checked(&repo, oid)
         .map(|commit| commit.id().to_string())
-        .map_err(|_| anyhow!("Commit '{source_sha}' not found"))
+        .with_context(|| format!("Commit '{source_sha}' not found"))
+}
+
+/// A commit ID from a request. A malformed one is reported like a missing commit.
+fn commit_oid(sha: &str) -> Result<git2::Oid> {
+    git2::Oid::from_str(sha).map_err(|_| {
+        git2::Error::new(
+            git2::ErrorCode::InvalidSpec,
+            git2::ErrorClass::Invalid,
+            format!("Invalid commit SHA: {sha}"),
+        )
+        .into()
+    })
 }
 
 pub(crate) fn prepare_delete_branch(repo_path: &Path, branch_name: &str) -> Result<String> {
@@ -2414,10 +2427,11 @@ fn parse_diff_metadata(output: &[u8]) -> Result<Vec<DiffFileMetadata>> {
             .and_then(|status| status.first())
             .copied()
             .ok_or_else(|| anyhow!("Malformed git diff status"))?;
-        // The raw header is `:old-mode new-mode old-blob new-blob status`.
+        // The raw header is `:old-mode new-mode old-blob new-blob status`. A deletion has no new
+        // blob, so its viewed mark follows the deleted contents.
         let blob_sha = header
             .split(|byte| *byte == b' ')
-            .nth(3)
+            .nth(if status == b'D' { 2 } else { 3 })
             .ok_or_else(|| anyhow!("Malformed git diff blob"))?;
         let blob_sha = String::from_utf8_lossy(blob_sha).into_owned();
         let old_path = nul_field(output, &mut cursor)?;

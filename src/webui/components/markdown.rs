@@ -130,7 +130,10 @@ fn heading_target(fragment: &str) -> String {
     if fragment.starts_with("user-content-") || fragment.is_empty() {
         fragment.to_owned()
     } else {
-        format!("user-content-{}", fragment_slug(fragment))
+        format!(
+            "user-content-{}",
+            fragment_slug(&crate::webui::decode_component(fragment))
+        )
     }
 }
 
@@ -1004,7 +1007,11 @@ impl<'r> Emitter<'r> {
                 url = next_bare_url(text, range.end);
             } else if let Some(colon) = colon {
                 search = colon + 1;
-                if let Some((length, emoji)) = emoji_at(text, colon) {
+                let in_code = self
+                    .open
+                    .iter()
+                    .any(|open| matches!(open.name(), "code" | "pre"));
+                if let Some((length, emoji)) = emoji_at(text, colon).filter(|_| !in_code) {
                     self.plain(text, done..colon, opaque)?;
                     self.write(emoji)?;
                     done = colon + length;
@@ -1547,9 +1554,17 @@ impl LinkBase {
         };
         let joined = parts.join("/");
         // Headings in a Markdown file carry the `user-content-` prefix, so its fragments do too.
-        let markdown_file = path.to_ascii_lowercase().ends_with(".md");
+        let markdown_file = crate::webui::pages::repos::ref_path::is_markdown_path(path);
         let suffix = match suffix.split_once('#') {
-            Some((query, fragment)) if markdown_file && !fragment.is_empty() => {
+            // The code view keeps the file's line anchors as they are.
+            Some((query, fragment))
+                if markdown_file
+                    && !fragment.is_empty()
+                    && !query
+                        .trim_start_matches('?')
+                        .split('&')
+                        .any(|pair| pair == "view=code") =>
+            {
                 format!("{query}#{}", heading_target(fragment))
             }
             _ => suffix.to_owned(),
@@ -1932,6 +1947,22 @@ mod tests {
         let guide = "/alice/demo/blob/main/docs/guide.md#user-content-details";
         assert!(html.contains(&format!("href=\"{guide}\"")));
         assert!(html.contains("href=\"/alice/demo/blob/main/docs/main.rs#L10\""));
+    }
+
+    #[test]
+    fn fragments_decode_percent_escapes_and_cover_every_markdown_extension() {
+        let html = base()
+            .rewrite(&parse_markdown(
+                "[a](#caf%C3%A9) [b](guide.markdown#setup) [c](guide.mdx#setup) [d](guide.md?view=code#L10)",
+            ))
+            .unwrap();
+        assert!(html.contains("href=\"#user-content-café\""), "{html}");
+        assert!(
+            html.contains("guide.markdown#user-content-setup\""),
+            "{html}"
+        );
+        assert!(html.contains("guide.mdx#user-content-setup\""), "{html}");
+        assert!(html.contains("guide.md?view=code#L10\""), "{html}");
     }
 
     #[test]
@@ -3059,6 +3090,8 @@ fn main() {}
         assert!(html.contains("alt=\":tada:\""));
         assert!(html.contains("<h1 id=\"user-content-ship-rocket\""));
         assert!(html.contains(">Ship 🚀</h1>"));
+        let raw = parse_markdown("Example <code>:rocket:</code>");
+        assert!(raw.contains(":rocket:</code>"), "{raw}");
     }
 
     #[test]

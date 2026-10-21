@@ -292,7 +292,8 @@ pub async fn create_pull_request_review(
             &entry.comment,
             "created",
             user.id,
-        );
+        )
+        .await;
     }
 
     if review.state != "pending" {

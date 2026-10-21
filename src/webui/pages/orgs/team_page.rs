@@ -18,7 +18,7 @@ pub struct TeamPage {
     pub description: String,
     pub member_count: i64,
     pub repository_count: i64,
-    /// Owners, admins and maintainers get a link to the management panel, which checks again.
+    /// Owners and admins get a link to the management panel, which checks again.
     pub manage: bool,
     /// Shows the repositories tab instead of the members tab.
     pub show_repositories: bool,

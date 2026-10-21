@@ -10,7 +10,7 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::pull_requests::reviews::{PullRequestCommentEntry, PullRequestReviewEntry};
 use crate::backend::issues::{discussion_link, discussion_page};
-use crate::backend::repositories::code_owners::load_rules;
+use crate::backend::repositories::code_owners::{load_rules, resolve_owners};
 use crate::backend::repositories::pull_requests::comments as comment_rules;
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 use crate::backend::repositories::pull_requests::reviews as review_rules;
@@ -240,10 +240,20 @@ pub(crate) async fn reviewers(
             .unwrap_or_default()
     };
     let owned = rules.owned_paths(&changed).unwrap_or_default();
-    let owners: HashSet<&str> = owned
+    let names: Vec<&str> = owned
         .iter()
         .flat_map(|(_, names)| names.iter().map(String::as_str))
         .collect();
+    let owner_ids: HashSet<i64> = if names.is_empty() {
+        HashSet::new()
+    } else {
+        resolve_owners(&ctx.state.pool, &repo.record, names)
+            .await
+            .unwrap_or_default()
+            .into_values()
+            .flatten()
+            .collect()
+    };
     let mut reviewers: Vec<pulls::Reviewer> = decisions
         .into_iter()
         .filter_map(|decision| {
@@ -253,7 +263,7 @@ pub(crate) async fn reviewers(
                 "dismissed" => pulls::ReviewerStatus::Dismissed,
                 _ => return None,
             };
-            let code_owner = owners.contains(format!("@{}", decision.username).as_str());
+            let code_owner = owner_ids.contains(&decision.author_id);
             Some(pulls::Reviewer {
                 username: decision.username,
                 status,
@@ -269,7 +279,7 @@ pub(crate) async fn reviewers(
             .iter()
             .any(|reviewer| reviewer.username == user.username)
         {
-            let code_owner = owners.contains(format!("@{}", user.username).as_str());
+            let code_owner = owner_ids.contains(&user.id);
             reviewers.push(pulls::Reviewer {
                 username: user.username,
                 status: pulls::ReviewerStatus::Requested,
@@ -802,7 +812,12 @@ pub(crate) async fn native_set_viewed(
         ));
     }
     let index = field(&form, "index").parse::<usize>().unwrap_or(0);
-    Ok(ctx.redirect(&format!("{base}/diff#diff-file-{index}")))
+    let view = if ctx.query.get("view").is_some_and(|view| view == "split") {
+        "?view=split"
+    } else {
+        ""
+    };
+    Ok(ctx.redirect(&format!("{base}/diff{view}#diff-file-{index}")))
 }
 
 /// Discards the viewer's pending review and its comments, then returns to the Files changed page.
@@ -860,7 +875,12 @@ async fn set_resolution(
     {
         Ok(_) => {
             let location = if from_diff {
-                format!("{base}/diff#thread-{comment_id}")
+                let view = if ctx.query.get("view").is_some_and(|view| view == "split") {
+                    "?view=split"
+                } else {
+                    ""
+                };
+                format!("{base}/diff{view}#thread-{comment_id}")
             } else {
                 match field(&form, "page").parse::<usize>() {
                     Ok(page) if page > 1 => format!("{base}?page={page}#thread-{comment_id}"),

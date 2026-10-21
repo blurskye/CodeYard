@@ -547,7 +547,7 @@ async fn list_paging_and_merged_counts(pg: bool) {
     let counts = db::pull_requests::records::count_repo_pull_requests(
         w.database.pool(),
         w.repository.id,
-        None,
+        &Default::default(),
     )
     .await
     .unwrap();
@@ -940,9 +940,13 @@ async fn viewed_entries_and_base_staleness(pg: bool) {
     assert!(marks
         .iter()
         .any(|(path, sha)| path == "vendor" && sha == &w.head));
+    // The file became a directory, so its mark follows the deleted contents.
+    let deleted = git2::Oid::hash_object(git2::ObjectType::Blob, b"README.md\n")
+        .unwrap()
+        .to_string();
     assert!(marks
         .iter()
-        .any(|(path, sha)| path == "README.md" && sha == &"0".repeat(40)));
+        .any(|(path, sha)| path == "README.md" && sha == &deleted));
     let preview = w
         .alice
         .form_reply(

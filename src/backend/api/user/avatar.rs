@@ -17,7 +17,6 @@ use axum::extract::multipart::MultipartRejection;
 use axum::extract::{DefaultBodyLimit, Form, Multipart, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
-use axum::routing::post;
 use axum::{Json, Router};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -96,11 +95,15 @@ pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/settings/avatar",
-            post(upload).layer(DefaultBodyLimit::max(pictures::BODY_LIMIT)),
+            super::back_to_settings("profile")
+                .post(upload)
+                .layer(DefaultBodyLimit::max(pictures::BODY_LIMIT)),
         )
         .route(
             "/settings/avatar/remove",
-            post(remove_form).layer(DefaultBodyLimit::max(16 * 1024)),
+            super::back_to_settings("profile")
+                .post(remove_form)
+                .layer(DefaultBodyLimit::max(16 * 1024)),
         )
 }
 

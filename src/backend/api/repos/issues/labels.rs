@@ -63,6 +63,7 @@ pub async fn add_issue_labels(
             .map_err(label_write_error)?;
     for label in labels
         .iter()
+        .filter(|label| req.labels.contains(&label.id))
         .filter(|label| !before.iter().any(|old| old.id == label.id))
     {
         db::timeline::record(
@@ -269,7 +270,8 @@ pub(crate) async fn native_remove_label(
     }
     .map_err(crate::backend::api::repos::labels::label_write_error);
     match removed {
-        Ok(_) => {
+        Ok(false) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),
+        Ok(true) => {
             let name = value
                 .labels
                 .iter()

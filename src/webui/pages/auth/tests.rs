@@ -370,29 +370,31 @@ fn auth_text_defaults_stay_uncontrolled_and_styles_stay_compact_and_scoped() {
 
 #[test]
 fn oauth_only_accounts_have_no_password_mutation_form() {
-    let output = html(settings_page(
-        Settings {
-            two_factor: Default::default(),
-            theme: crate::webui::document::Theme::System,
-            profile: Profile::default(),
-            email: String::new(),
-            tab: "password".into(),
-            keys: vec![],
-            tokens: vec![],
-            sessions: vec![],
-            new_token: None,
-            password_supported: false,
-            must_change_password: false,
-            manage_access: false,
-            requests: vec![],
-            requests_count: 0,
-            requests_page: 1,
-            values: FormValues::default(),
-        },
-        "token",
-        None,
-        false,
-    ));
+    let output = crate::webui::tests::in_scope(|| {
+        html(settings_page(
+            Settings {
+                two_factor: Default::default(),
+                theme: crate::webui::document::Theme::System,
+                profile: Profile::default(),
+                email: String::new(),
+                tab: "password".into(),
+                keys: vec![],
+                tokens: vec![],
+                sessions: vec![],
+                new_token: None,
+                password_supported: false,
+                must_change_password: false,
+                manage_access: false,
+                requests: vec![],
+                requests_count: 0,
+                requests_page: 1,
+                values: FormValues::default(),
+            },
+            "token",
+            None,
+            false,
+        ))
+    });
     assert!(output.contains("uses OAuth"));
     assert!(!output.contains("action=\"/settings/password\""));
 }

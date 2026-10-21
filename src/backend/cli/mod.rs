@@ -320,13 +320,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     file,
                 } => {
                     if let Some(key_path) = file {
-                        self::add_key_from_file_cmd(
-                            &pool,
-                            &username,
-                            &name,
-                            key_path.to_str().unwrap(),
-                        )
-                        .await?;
+                        self::add_key_from_file_cmd(&pool, &username, &name, &key_path).await?;
                     } else if let Some(public_key) = key {
                         self::add_key_cmd(&pool, &username, &name, &public_key).await?;
                     } else {
@@ -352,7 +346,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     self::create_repo_cmd(
                         &pool,
                         &cli.state_dir,
-                        cli.repos_path.to_str().unwrap(),
+                        &cli.repos_path,
                         &owner,
                         &name,
                         description.as_deref(),

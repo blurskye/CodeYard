@@ -61,18 +61,6 @@ pub(crate) async fn native_react(
         (None, Some(id)) if kind == Kind::Pull => (Subject::PullRequestReview, id),
         _ => return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid reaction target.")),
     };
-    // The write checks the reactor's access, the archive state and the target in its transaction.
-    db::reactions::toggle_reaction(
-        pool,
-        ctx.require_user()?.id,
-        repo.record.id,
-        item_id,
-        subject,
-        subject_id,
-        content,
-    )
-    .await
-    .map_err(|error| reaction_error(&ctx, error))?;
     let base = format!("{}/{}", repo.view.family_url(kind), number);
     let page = if ctx.query.get("from").is_some_and(|from| from == "diff") {
         let split = if ctx.query.get("view").is_some_and(|view| view == "split") {
@@ -88,6 +76,18 @@ pub(crate) async fn native_react(
             page => format!("{base}?page={page}"),
         }
     };
+    // The write checks the reactor's access, the archive state and the target in its transaction.
+    db::reactions::toggle_reaction(
+        pool,
+        ctx.require_user()?.id,
+        repo.record.id,
+        item_id,
+        subject,
+        subject_id,
+        content,
+    )
+    .await
+    .map_err(|error| reaction_error(&ctx, error))?;
     Ok(ctx.redirect(&match (comment_id, review_id) {
         (Some(id), _) => format!("{page}#comment-{id}"),
         (None, Some(id)) => format!("{page}#review-{id}"),

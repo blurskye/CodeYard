@@ -9,7 +9,7 @@ use crate::backend::api::repos::chrome::{
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::backend::git::MAX_BLAME_FILE_BYTES;
+use crate::backend::git::{MAX_BLAME_FILE_BYTES, MAX_BLAME_LINES};
 use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
     repo_store, BlobBytes, BlobRange, RepoError, RepoStore, MAX_EDITOR_BYTES,
@@ -392,25 +392,34 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         size,
         offset: start,
     } = preview;
+    // Blame refuses a file with too many lines. The line count is known only when the preview
+    // holds the whole file.
+    let too_many_lines = !binary
+        && start == 0
+        && bytes.len() as u64 == size
+        && size > MAX_BLAME_LINES as u64
+        && String::from_utf8_lossy(&bytes).lines().count() > MAX_BLAME_LINES;
     let (start, end, content) = if binary {
         (start, start + bytes.len() as u64, String::new())
     } else {
         let window = limit_lines(text_window(start, &bytes, size));
         (window.start, window.end, window.text)
     };
-    let editable = if !binary && size <= MAX_EDITOR_BYTES as u64 {
-        if start == 0 && end == size {
-            files::editor_text(&bytes, false).is_ok()
-        } else {
-            store
-                .blob_by_id(&id)
-                .await
-                .is_ok_and(|bytes| files::editor_text(&bytes, binary).is_ok())
-        }
-    } else {
-        false
-    };
     let on_branch = is_branch(loaded, &resolved.reference);
+    // A file is fetched whole for the editor check only where an Edit control can show.
+    let editable =
+        if !binary && on_branch && loaded.chrome.can_write && size <= MAX_EDITOR_BYTES as u64 {
+            if start == 0 && end == size {
+                files::editor_text(&bytes, false).is_ok()
+            } else {
+                store
+                    .blob_by_id(&id)
+                    .await
+                    .is_ok_and(|bytes| files::editor_text(&bytes, binary).is_ok())
+            }
+        } else {
+            false
+        };
     let mut page = view::blob::BlobPage {
         reference: if !on_branch && !resolved.reference.starts_with("refs/") {
             head.sha.clone()
@@ -423,14 +432,18 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         size,
         offset: start,
         first_line: Some(first_line),
-        next: if end < size { Some(end) } else { None },
-        previous: if start > 0 {
+        next: if end < size && !binary {
+            Some(end)
+        } else {
+            None
+        },
+        previous: if start > 0 && !binary {
             Some(start.saturating_sub(256 * 1024))
         } else {
             None
         },
         truncated: !binary && (start > 0 || end < size),
-        can_blame: !binary && size <= MAX_BLAME_FILE_BYTES as u64,
+        can_blame: !binary && size <= MAX_BLAME_FILE_BYTES as u64 && !too_many_lines,
         editable: editable && on_branch,
         deletable: on_branch,
         code_view: ctx.query.get("view").is_some_and(|view| view == "code"),

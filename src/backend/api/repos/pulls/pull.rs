@@ -1111,14 +1111,19 @@ pub(crate) async fn render_detail(
     let edit_page = match draft.editing {
         Some(id) => {
             let position = match kind {
-                Kind::Issue => db::issues::issue_comment_position(&ctx.state.pool, id).await,
+                Kind::Issue => match db::issues::get_issue_comment(&ctx.state.pool, id).await {
+                    Ok(Some(comment)) if comment.issue_id == shown.id => {
+                        db::issues::issue_comment_position(&ctx.state.pool, id).await
+                    }
+                    _ => Err(anyhow::anyhow!("Comment not found")),
+                },
                 Kind::Pull => match db::pull_requests::reviews::get_pull_request_comment_by_id(
                     &ctx.state.pool,
                     id,
                 )
                 .await
                 {
-                    Ok(Some(comment)) => {
+                    Ok(Some(comment)) if comment.pull_request_id == shown.id => {
                         db::pull_requests::reviews::count_discussion_items_through(
                             &ctx.state.pool,
                             comment.pull_request_id,

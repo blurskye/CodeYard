@@ -75,7 +75,7 @@ with sync_playwright() as playwright:
             base + "/api/auth/login",
             data={
                 "username": args.username,
-                "password": args.password_file.read_text().strip(),
+                "password": args.password_file.read_text().rstrip("\r\n"),
             },
         )
         assert login.ok, f"Login failed: {login.status} {login.text()}"

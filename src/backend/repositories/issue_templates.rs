@@ -189,12 +189,14 @@ fn is_missing(error: &RepoError) -> bool {
 
 /// `blank_issues_enabled: false` in the template directory's `config.yml`.
 pub fn blank_issues_allowed(config: &str) -> bool {
-    !config.lines().any(|line| {
-        line.split_once(':').is_some_and(|(key, value)| {
-            key.trim() == "blank_issues_enabled"
-                && value.trim().trim_matches(['"', '\'']) == "false"
-        })
-    })
+    let setting = serde_yaml::from_str::<serde_yaml::Value>(config)
+        .ok()
+        .and_then(|root| root.get("blank_issues_enabled").cloned());
+    !match setting {
+        Some(serde_yaml::Value::Bool(enabled)) => !enabled,
+        Some(serde_yaml::Value::String(text)) => text.trim() == "false",
+        _ => false,
+    }
 }
 
 fn parse_template(path: &str, text: &str) -> IssueTemplate {
@@ -413,8 +415,8 @@ pub fn compose_form_body(form: &[FormElement], answers: &[Vec<String>]) -> Strin
     sections.join("\n\n")
 }
 
-/// The first element the answers leave unfinished, by its label: a required field with no text, or
-/// a required checkbox left unticked.
+/// The first element the answers leave unfinished, by its label: a required field with no text,
+/// a required checkbox left unticked, or a required group with nothing ticked.
 pub fn first_missing_answer<'a>(
     form: &'a [FormElement],
     answers: &[Vec<String>],
@@ -426,10 +428,17 @@ pub fn first_missing_answer<'a>(
             FormKind::Input | FormKind::Textarea | FormKind::Dropdown => {
                 element.required && given.iter().all(|text| text.trim().is_empty())
             }
-            FormKind::Checkboxes => element
-                .options
-                .iter()
-                .any(|option| option.required && !given.contains(&option.label)),
+            FormKind::Checkboxes => {
+                (element.required
+                    && !element
+                        .options
+                        .iter()
+                        .any(|option| given.contains(&option.label)))
+                    || element
+                        .options
+                        .iter()
+                        .any(|option| option.required && !given.contains(&option.label))
+            }
         };
         missing.then_some(element.label.as_str())
     })
@@ -531,6 +540,9 @@ mod tests {
         assert!(blank_issues_allowed(""));
         assert!(blank_issues_allowed("blank_issues_enabled: true\n"));
         assert!(!blank_issues_allowed("blank_issues_enabled: false\n"));
+        assert!(!blank_issues_allowed(
+            "blank_issues_enabled: false # use a template\n"
+        ));
         assert!(!blank_issues_allowed(
             "contact_links: []\nblank_issues_enabled: 'false'\n"
         ));

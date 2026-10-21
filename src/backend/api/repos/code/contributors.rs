@@ -69,10 +69,28 @@ pub async fn get_repo_contributors(
     let users = db::users::accounts::get_users_by_emails(&state.pool, &emails)
         .await
         .unwrap_or_default();
-    let users_by_email: HashMap<_, _> = users
+    // Commits made on the forge for an account without an email carry its no-reply address.
+    let usernames: Vec<String> = emails
         .iter()
-        .filter_map(|user| user.email.as_deref().map(|email| (email, user)))
+        .filter_map(|email| email.strip_suffix("@users.noreply"))
+        .map(str::to_owned)
         .collect();
+    let noreply_users = if usernames.is_empty() {
+        Vec::new()
+    } else {
+        db::users::accounts::get_users_by_usernames(&state.pool, &usernames)
+            .await
+            .unwrap_or_default()
+    };
+    let mut users_by_email: HashMap<String, _> = users
+        .iter()
+        .filter_map(|user| user.email.clone().map(|email| (email, user)))
+        .collect();
+    users_by_email.extend(
+        noreply_users
+            .iter()
+            .map(|user| (user.noreply_email(), user)),
+    );
     let responses = contributors
         .into_iter()
         .map(|contributor| {

@@ -793,9 +793,11 @@ CREATE TABLE IF NOT EXISTS pull_request_viewed_files (
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
     path TEXT NOT NULL,
-    blob_sha TEXT NOT NULL,
-    PRIMARY KEY (user_id, pull_request_id, path)
+    blob_sha TEXT NOT NULL
 );
+-- The index holds a digest of the path, because a long path overflows an index entry.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pull_request_viewed_files_path
+    ON pull_request_viewed_files (user_id, pull_request_id, md5(path));
 
 --------------------------------------------------------------------------------
 -- PART 14: RELEASES

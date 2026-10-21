@@ -2,6 +2,10 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// The browser toolbar colours that go with the dark and light appearances.
+pub const CHROME_DARK: &str = "#010409";
+pub const CHROME_LIGHT: &str = "#f6f8fa";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
     #[default]
@@ -95,11 +99,11 @@ fn document(title: &str, theme: Theme, body: Element) -> String {
                 meta { name: "color-scheme", content: "dark light" }
                 match theme {
                     Theme::System => rsx! {
-                        meta { name: "theme-color", content: "#010409", "media": "(prefers-color-scheme: dark)" }
-                        meta { name: "theme-color", content: "#f6f8fa", "media": "(prefers-color-scheme: light)" }
+                        meta { name: "theme-color", content: CHROME_DARK, "media": "(prefers-color-scheme: dark)" }
+                        meta { name: "theme-color", content: CHROME_LIGHT, "media": "(prefers-color-scheme: light)" }
                     },
-                    Theme::Light => rsx! { meta { name: "theme-color", content: "#f6f8fa" } },
-                    Theme::Dark => rsx! { meta { name: "theme-color", content: "#010409" } },
+                    Theme::Light => rsx! { meta { name: "theme-color", content: CHROME_LIGHT } },
+                    Theme::Dark => rsx! { meta { name: "theme-color", content: CHROME_DARK } },
                 }
                 title { "{title}" }
                 link { rel: "icon", r#type: "image/png", href: "/assets/favicon.png" }
