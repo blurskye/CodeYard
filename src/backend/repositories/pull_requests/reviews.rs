@@ -262,7 +262,7 @@ pub async fn create_pull_request_review(
             Vec::new()
         });
     for entry in &published {
-        let comment_link = super::comments::saved_comment_link(pool, &base, &entry.comment).await;
+        let comment_link = format!("{base}?comment={0}#comment-{0}", entry.comment.id);
         notify_mentions(
             pool,
             broadcaster,

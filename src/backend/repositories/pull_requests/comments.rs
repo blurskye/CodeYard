@@ -68,19 +68,22 @@ async fn thread_root(
     Ok(root_id)
 }
 
-/// The discussion page and anchor of a saved pull request comment. The position is read only when
-/// a notification names this link.
-pub(crate) async fn pull_request_comment_link(
-    pool: &db::DbPool,
+/// The stored link to a pull request comment. The pull request page finds the comment's current
+/// page when the link is followed, so deleting earlier comments does not break it.
+pub(crate) fn pull_request_comment_link(
     owner: &str,
     repo: &str,
     pull_request: &db::models::PullRequest,
     comment: &db::models::PullRequestComment,
 ) -> String {
-    let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
-    saved_comment_link(pool, &base, comment).await
+    format!(
+        "/{owner}/{repo}/pulls/{}?comment={id}#comment-{id}",
+        pull_request.number,
+        id = comment.id
+    )
 }
 
+/// The page and anchor of a comment where it is now.
 pub(crate) async fn saved_comment_link(
     pool: &db::DbPool,
     base: &str,
@@ -171,13 +174,13 @@ pub(super) async fn emit_comment_webhook(
     } else {
         events::ISSUE_COMMENT
     };
-    // The conversation link carries the discussion page, taken from the saved position.
+    // The conversation link names the comment; the pull request page finds its page.
     let link = if on_file {
         String::new()
     } else if action == "deleted" {
         format!("#comment-{}", comment.id)
     } else {
-        saved_comment_link(pool, "", comment).await
+        format!("?comment={0}#comment-{0}", comment.id)
     };
     let (comment_for_hook, pull_for_hook, repository_for_hook) =
         (comment.clone(), pull_request.clone(), repository.clone());
@@ -536,7 +539,7 @@ pub async fn create_pull_request_comment(
         reply_parent.filter(|(_, author)| *author != user.id && *author != pull_request.author_id);
     if notifies_author || reply_to.is_some() || mentions_anyone(&req.body) {
         // One link serves every notification of this comment.
-        let link = pull_request_comment_link(pool, &owner, &repo, &pull_request, &comment).await;
+        let link = pull_request_comment_link(&owner, &repo, &pull_request, &comment);
         if notifies_author {
             let title = format!(
                 "{} commented on pull request #{}",
@@ -822,7 +825,7 @@ pub async fn edit_pull_request_comment(
     // Only the names the edit adds notify; the others were notified when first written. The
     // author's notice for the comment is not a mention, so the author is not excluded here.
     if mentions_anyone(&body) {
-        let link = pull_request_comment_link(pool, &owner, &repo, &pull_request, &comment).await;
+        let link = pull_request_comment_link(&owner, &repo, &pull_request, &comment);
         notify_mentions(
             pool,
             broadcaster,

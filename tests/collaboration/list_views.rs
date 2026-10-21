@@ -251,6 +251,12 @@ async fn issue_list_contract(pg: bool) {
         assert_eq!(status, StatusCode::BAD_REQUEST, "{query}");
     }
 
+    // A milestone title that matches nothing is refused, even when it reads as `none` or a number.
+    for query in ["q=milestone:none", "q=milestone:9"] {
+        let (status, _) = alice.page(&format!("/alice/proj/issues?{query}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}");
+    }
+
     // A milestone titled `none` is still a milestone: `no:milestone` lists the issues in none.
     let none = db::milestones::create_milestone(pool, alice_id, repo, "none", None, None)
         .await

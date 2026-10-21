@@ -426,7 +426,7 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                     }
                 }
                 for notification in &model.notifications {
-                    article { class: if is_unread(notification) { "notification-row is-unread" } else { "notification-row" },
+                    article { key: "{notification.id}", class: if is_unread(notification) { "notification-row is-unread" } else { "notification-row" },
                         span { class: "notification-dot", aria_label: if is_unread(notification) { "Unread" } else { "Read" } }
                         if let Some(actor) = &notification.actor {
                             Avatar { name: actor.clone(), size: 32 }

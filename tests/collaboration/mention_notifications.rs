@@ -585,7 +585,7 @@ async fn pull_request_mentions(pg: bool) {
     assert!(
         links
             .iter()
-            .any(|link| link.starts_with("/alice/proj/pulls/1#comment-")),
+            .any(|link| link.starts_with("/alice/proj/pulls/1?comment=")),
         "{links:?}"
     );
     world.close().await;

@@ -2102,6 +2102,8 @@ fn review(id: i64, state: &str, created: &str) -> Review {
         comments: Vec::new(),
         comments_more: None,
         comments_start: None,
+        comments_offset: 0,
+        can_dismiss: false,
         reactions: Vec::new(),
     }
 }
@@ -2178,6 +2180,30 @@ fn a_review_shows_its_reaction_bar_under_its_summary() {
     );
     assert!(html.contains("name=\"review\" value=\"9\""), "{html}");
     assert!(html.contains("collaboration-reaction-count\">1<"), "{html}");
+}
+
+#[test]
+fn a_review_keeps_its_comment_offset_in_reactions_and_shows_dismiss_only_when_allowed() {
+    use crate::webui::pages::repos::pulls::review::review_entry;
+    let mut approval = review(9, "approved", "2026-10-02T12:00:00+00:00");
+    approval.comments_offset = 100;
+    approval.comments = vec![comment_at(5, "2026-10-02T12:00:00+00:00")];
+    let references = References::default();
+    let render = |review: &Review| {
+        crate::webui::tests::in_scope(|| {
+            dioxus_ssr::render_element(rsx! {
+                {review_entry(&repository(), "/alice/repo/pulls/7", 1, "bob", review, &references)}
+            })
+        })
+    };
+    let hidden = render(&approval);
+    assert!(
+        hidden.contains("action=\"/alice/repo/pulls/7/react?review_comments=100\""),
+        "{hidden}"
+    );
+    assert!(!hidden.contains("/reviews/9/dismiss"), "{hidden}");
+    approval.can_dismiss = true;
+    assert!(render(&approval).contains("/reviews/9/dismiss"));
 }
 
 #[test]
@@ -2354,8 +2380,10 @@ fn review_changes_menu_keeps_a_refused_review_and_counts_pending_comments() {
 fn discussion_merges_reviews_by_time_and_marks_stale_and_dismissed_reviews() {
     crate::webui::tests::in_scope(|| {
         let mut stale = review(5, "approved", "2026-10-02T12:30:00+00:00");
+        stale.can_dismiss = true;
         stale.stale = true;
         let mut dismissed = review(6, "dismissed", "2026-10-02T13:30:00+00:00");
+        dismissed.can_dismiss = true;
         dismissed.dismissed_reason = Some("Superseded".into());
         let comments = CommentPage {
             events_next: None,
@@ -2729,7 +2757,8 @@ fn list_tabs_count_each_state_and_the_search_is_a_plain_get_form() {
         assert!(form.contains("name=\"q\""));
         // The box shows the state as a qualifier, then the search words.
         assert!(form.contains("value=\"is:issue state:open crash\""));
-        assert!(form.contains("maxlength=\"200\""));
+        // The server limits the words after the qualifiers, so the field has no length limit.
+        assert!(!form.contains("maxlength"));
         assert!(!form.contains("method=\"post\""));
     });
 }

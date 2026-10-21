@@ -693,7 +693,9 @@ fn discussion_entry(
             review::review_entry(repo, url, page, item_author, review, references)
         }
         Entry::Event(event) => event_row(event, kind),
-        Entry::Comment(comment) => comment_entry(repo, url, page, item_author, comment, references),
+        Entry::Comment(comment) => {
+            comment_entry(repo, url, (page, 0), item_author, comment, references)
+        }
     }
 }
 
@@ -741,7 +743,7 @@ fn comment_controls(
 pub(in crate::webui::pages::repos) fn comment_entry(
     repo: &Repository,
     url: &str,
-    page: usize,
+    (page, review_comments): (usize, usize),
     item_author: &str,
     comment: &Comment,
     references: &References,
@@ -771,10 +773,10 @@ pub(in crate::webui::pages::repos) fn comment_entry(
                     input { r#type: "hidden", name: "comment_revision", value: comment.revision.clone() }
                 }
             }
-            {reaction_bar(repo, &react_action(url, page), Some(("comment", comment.id)), &comment.reactions)}
+            {reaction_bar(repo, &react_action(url, page, review_comments), Some(("comment", comment.id)), &comment.reactions)}
             if comment.can_edit || comment.can_delete { {comment_controls(repo, url, comment, references, page)} }
             if let Some(conversation) = &comment.conversation {
-                if conversation.can_resolve { {review::resolve_form(repo, url, comment.id, conversation, false, false, page)} }
+                if conversation.can_resolve { {review::resolve_form(repo, url, comment.id, conversation, false, false, (page, review_comments))} }
             }
         }
     };
@@ -1086,7 +1088,7 @@ pub fn detail(
                                             input { r#type: "hidden", name: "expected_updated", value: item.updated.clone() }
                                         }
                                     }
-                                    {reaction_bar(repo, &react_action(&url, page), None, &item.reactions)}
+                                    {reaction_bar(repo, &react_action(&url, page, 0), None, &item.reactions)}
                                 }
                                 for entry in review::timeline(&comments.comments, &comments.reviews, &comments.events) {
                                     {discussion_entry(repo, &url, page, &item.author, entry, references, kind)}

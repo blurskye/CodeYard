@@ -252,6 +252,7 @@ impl RemoteStore {
                     is_binary: metadata.is_binary,
                     size: metadata.size,
                     offset: metadata.offset,
+                    mode: metadata.mode,
                 })
             }
             Err(Failure::Repository(error)) => Err(error),

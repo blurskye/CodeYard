@@ -104,13 +104,37 @@ pub(crate) fn discussion_page(position: anyhow::Result<i64>) -> usize {
     }
 }
 
+/// The largest `review_comments` offset a URL can name.
+pub(crate) const MAX_REVIEW_COMMENT_OFFSET: usize = 1_000_000;
+
 /// The link to `anchor` on discussion `page` of `base`.
 pub(crate) fn discussion_link(base: &str, page: usize, anchor: &str) -> String {
-    if page == 1 {
-        format!("{base}#{anchor}")
-    } else {
-        format!("{base}?page={page}#{anchor}")
+    discussion_link_at(base, page, 0, anchor)
+}
+
+/// Like `discussion_link`, and keeps the `review_comments` offset of the reader's place inside
+/// the reviews of that page. An empty `anchor` names no fragment.
+pub(crate) fn discussion_link_at(
+    base: &str,
+    page: usize,
+    review_comments: usize,
+    anchor: &str,
+) -> String {
+    let mut query = Vec::new();
+    if page > 1 {
+        query.push(format!("page={page}"));
     }
+    if review_comments > 0 {
+        query.push(format!("review_comments={review_comments}"));
+    }
+    let mut link = base.to_owned();
+    if !query.is_empty() {
+        link = format!("{link}?{}", query.join("&"));
+    }
+    if !anchor.is_empty() {
+        link = format!("{link}#{anchor}");
+    }
+    link
 }
 
 /// The discussion page and anchor of a comment that is already saved.

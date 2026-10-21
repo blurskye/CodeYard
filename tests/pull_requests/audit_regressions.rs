@@ -624,7 +624,7 @@ async fn collaboration_metadata_and_recovery(pg: bool) {
     assert_eq!(preview.status, StatusCode::OK, "{}", preview.text());
     assert!(preview
         .text()
-        .contains("name=\"return_to\" value=\"/alice/proj/issues/2#\""));
+        .contains("name=\"return_to\" value=\"/alice/proj/issues/2\""));
     for page in ["0", "50000000000000000", "9223372036854775807"] {
         let (status, _) = w
             .alice

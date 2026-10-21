@@ -1230,9 +1230,25 @@ async fn reviews_share_the_conversation_pages(pg: bool) {
         )
         .await;
     let reply_id = reply["id"].as_i64().unwrap();
+    // The stored link names the comment, and following it finds the comment's page.
+    let links = notification_links(&world, world.bob_id, "pull_request_comment_reply").await;
     assert_eq!(
-        notification_links(&world, world.bob_id, "pull_request_comment_reply").await,
-        [format!("{page}?page=2#comment-{reply_id}")]
+        links,
+        [format!("{page}?comment={reply_id}#comment-{reply_id}")]
+    );
+    let followed = world
+        .bob
+        .exchange(
+            "GET",
+            links[0].split('#').next().unwrap(),
+            "text/html",
+            Vec::new(),
+        )
+        .await;
+    assert!(followed.status.is_redirection(), "{}", followed.text());
+    assert_eq!(
+        followed.location.unwrap(),
+        format!("{page}?page=2#comment-{reply_id}")
     );
     world.database.finish().await;
 }

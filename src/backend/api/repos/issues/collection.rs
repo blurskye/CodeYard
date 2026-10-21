@@ -345,12 +345,14 @@ pub(crate) async fn native_index(
     // parameters the menus and links use, and the words left over are the search.
     let mut typed_search = view::parse_search(ctx.query.get("q").map(String::as_str).unwrap_or(""));
     if let Some(view::MilestoneFilter::Title(title)) = typed_search.milestone.as_mut() {
-        if let Some(found) = milestones
+        // A title that names no milestone is refused, so it is never read as a number or as `none`.
+        let found = milestones
             .iter()
             .find(|summary| summary.title.eq_ignore_ascii_case(title))
-        {
-            *title = found.number.to_string();
-        }
+            .ok_or_else(|| {
+                ctx.error(StatusCode::BAD_REQUEST, "Choose a milestone from the list.")
+            })?;
+        *title = found.number.to_string();
     }
     typed_search.apply_to(&mut ctx.query);
     let search_labels = std::mem::take(&mut typed_search.labels);

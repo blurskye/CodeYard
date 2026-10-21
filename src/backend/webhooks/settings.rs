@@ -247,6 +247,7 @@ async fn ping_payload(
                 .remove(&id)
                 .unwrap_or_default();
             payload["repository"] = payloads::repository(&repo, &owner_name);
+            super::set_open_issues(pool, id, &mut payload).await;
         }
         HookOwner::Organization(id) => {
             payload["organization"] = json!({ "id": id });

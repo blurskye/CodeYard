@@ -222,6 +222,38 @@ pub(crate) async fn native_detail(
             );
         }
     }
+    // A pull request comment link names the comment; the page and review offset come from where
+    // the comment is now.
+    if kind == Kind::Pull {
+        if let Some(id) = ctx.query.get("comment") {
+            let id = id
+                .parse::<i64>()
+                .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment."))?;
+            let pull = db::pull_requests::records::get_pull_request(
+                &ctx.state.pool,
+                repo.record.id,
+                number,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
+            let comment =
+                db::pull_requests::reviews::get_pull_request_comment_by_id(&ctx.state.pool, id)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?
+                    .filter(|comment| comment.pull_request_id == pull.id)
+                    .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?;
+            let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
+            let location =
+                crate::backend::repositories::pull_requests::comments::saved_comment_link(
+                    &ctx.state.pool,
+                    &base,
+                    &comment,
+                )
+                .await;
+            return Ok(ctx.redirect(&location));
+        }
+    }
     render_detail(
         &ctx,
         &repo,

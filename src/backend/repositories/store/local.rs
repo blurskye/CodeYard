@@ -542,6 +542,14 @@ impl LocalStore {
             .map_err(RepoError::from)
     }
 
+    /// The advertised default branch alone, for callers that already hold the refs.
+    pub(super) async fn default_branch(&self) -> Result<String, RepoError> {
+        let branch = git::repository::default_branch(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        Ok(branch.unwrap_or_else(|| "main".into()))
+    }
+
     pub(super) async fn commit_count(&self) -> Result<u64, RepoError> {
         git::count_commits(self.path())
             .await
@@ -605,6 +613,7 @@ impl LocalStore {
         &self,
         id: &str,
         size: u64,
+        mode: u32,
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
         let (offset, length) = normalize_blob_range(range, size)?;
@@ -622,12 +631,13 @@ impl LocalStore {
             is_binary,
             size,
             offset,
+            mode,
         })
     }
 
     pub(super) async fn blob(&self, git_ref: &str, path: &str) -> Result<BlobContent, RepoError> {
         let (owned_ref, owned_path) = (git_ref.to_owned(), path.to_owned());
-        let (id, size) = self
+        let (id, size, mode) = self
             .blocking(move |repo| git::blob_metadata(repo, &owned_ref, &owned_path))
             .await?;
         let range = if size <= MAX_BLOB_RESPONSE_BYTES as u64 {
@@ -638,7 +648,7 @@ impl LocalStore {
                 length: 0,
             }
         };
-        let blob = self.read_blob_object_range(&id, size, range).await?;
+        let blob = self.read_blob_object_range(&id, size, mode, range).await?;
         let content = if blob.is_binary {
             format!("[Binary file, {} bytes]", size)
         } else {
@@ -667,10 +677,10 @@ impl LocalStore {
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
         let (git_ref, path) = (git_ref.to_owned(), path.to_owned());
-        let (id, size) = self
+        let (id, size, mode) = self
             .blocking(move |repo| git::blob_metadata(repo, &git_ref, &path))
             .await?;
-        self.read_blob_object_range(&id, size, range).await
+        self.read_blob_object_range(&id, size, mode, range).await
     }
 
     pub(super) async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
@@ -780,8 +790,9 @@ impl LocalStore {
         base_ref: &str,
         head_ref: &str,
         endpoints: bool,
+        renames: bool,
     ) -> Result<Vec<String>, RepoError> {
-        git::changed_paths(self.path(), base_ref, head_ref, endpoints)
+        git::changed_paths(self.path(), base_ref, head_ref, endpoints, renames)
             .await
             .map_err(RepoError::from)
     }

@@ -35,10 +35,7 @@ pub async fn refs_and_default(
     repository: &db::models::Repository,
     cluster: Option<&NodeContext>,
 ) -> Result<(HashMap<String, String>, String), RepoError> {
-    let store = repo_store(repository, cluster);
-    let refs = store.refs().await?;
-    let info = store.info().await?;
-    Ok((refs, info.default_branch))
+    repo_store(repository, cluster).refs_and_default().await
 }
 
 #[cfg(test)]

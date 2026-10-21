@@ -844,7 +844,7 @@ pub(crate) async fn item(
             // Tab counts use metadata only; their full payloads are loaded by the selected tab.
             let file_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .changed_paths(&compare.base_sha, &compare.head_sha)
+                    .diff_paths(&compare.base_sha, &compare.head_sha)
                     .await
                     .ok()
                     .map(|paths| paths.len() as i64),

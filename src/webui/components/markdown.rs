@@ -1545,9 +1545,10 @@ impl LinkBase {
                 part => parts.push(part),
             }
         }
+        // The repository root is a directory, which has no blob page.
         let root = if image {
             &self.raw
-        } else if path.ends_with('/') {
+        } else if path.ends_with('/') || parts.is_empty() {
             &self.tree
         } else {
             &self.blob
@@ -1935,6 +1936,12 @@ mod tests {
         assert!(html.contains("href=\"/alice/demo/blob/main/README.md\""));
         assert!(html.contains("href=\"/alice/demo/tree/main/src\""));
         assert!(html.contains("src=\"/alice/demo/raw/main/docs/img/a.png\""));
+    }
+
+    #[test]
+    fn a_link_to_the_repository_root_opens_the_tree() {
+        let html = base().rewrite(&parse_markdown("[root](..)")).unwrap();
+        assert!(html.contains("href=\"/alice/demo/tree/main\""), "{html}");
     }
 
     #[test]

@@ -391,6 +391,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         is_binary: binary,
         size,
         offset: start,
+        mode,
     } = preview;
     // Blame refuses a file with too many lines. The line count is known only when the preview
     // holds the whole file.
@@ -406,20 +407,25 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         (window.start, window.end, window.text)
     };
     let on_branch = is_branch(loaded, &resolved.reference);
-    // A file is fetched whole for the editor check only where an Edit control can show.
-    let editable =
-        if !binary && on_branch && loaded.chrome.can_write && size <= MAX_EDITOR_BYTES as u64 {
-            if start == 0 && end == size {
-                files::editor_text(&bytes, false).is_ok()
-            } else {
-                store
-                    .blob_by_id(&id)
-                    .await
-                    .is_ok_and(|bytes| files::editor_text(&bytes, binary).is_ok())
-            }
+    // A file is fetched whole for the editor check only where an Edit control can show. The
+    // editor writes regular files only, so a symlink offers Delete but not Edit.
+    let editable = if !binary
+        && on_branch
+        && loaded.chrome.can_write
+        && matches!(mode, 0o100644 | 0o100755)
+        && size <= MAX_EDITOR_BYTES as u64
+    {
+        if start == 0 && end == size {
+            files::editor_text(&bytes, false).is_ok()
         } else {
-            false
-        };
+            store
+                .blob_by_id(&id)
+                .await
+                .is_ok_and(|bytes| files::editor_text(&bytes, binary).is_ok())
+        }
+    } else {
+        false
+    };
     let mut page = view::blob::BlobPage {
         reference: if !on_branch && !resolved.reference.starts_with("refs/") {
             head.sha.clone()

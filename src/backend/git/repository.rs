@@ -370,15 +370,19 @@ pub(crate) fn template_texts(
         .collect()
 }
 
-/// Resolves a path without materializing its blob and returns its object ID and size.
-pub(crate) fn blob_metadata(repo_path: &Path, git_ref: &str, path: &str) -> Result<(String, u64)> {
+/// Resolves a path without materializing its blob and returns its object ID, size and file mode.
+pub(crate) fn blob_metadata(
+    repo_path: &Path,
+    git_ref: &str,
+    path: &str,
+) -> Result<(String, u64, u32)> {
     let repo = Repository::open_bare(repo_path)?;
     let commit = peel_to_commit_checked(&repo, git_ref)?;
     let entry = tree_entry(&repo, &commit, path)?;
     anyhow::ensure!(entry.kind() == Some(ObjectType::Blob), NotFile);
     let (size, kind) = repo.odb()?.read_header(entry.id())?;
     anyhow::ensure!(kind == ObjectType::Blob, "Not a blob");
-    Ok((entry.id().to_string(), size as u64))
+    Ok((entry.id().to_string(), size as u64, entry.filemode() as u32))
 }
 
 /// Reads only the requested part of a known blob. Git is stopped once the range and
@@ -1965,6 +1969,10 @@ pub(crate) async fn get_commit_diff(repo_path: &Path, sha: &str) -> Result<DiffI
 pub struct TagInfo {
     pub name: String,
     pub sha: String,
+    /// The commit the tag finally points at, which differs from `sha` for an annotated tag.
+    /// Empty when the tag points at something else.
+    #[serde(default)]
+    pub commit: String,
     pub message: Option<String>,
     /// When the tag was made: the tagger's time for an annotated tag, else its commit's time.
     #[serde(default)]
@@ -2065,9 +2073,14 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
                 .checked_add(bytes)
                 .filter(|total| *total <= MAX_TAG_RESPONSE_BYTES)
                 .ok_or(ObjectTooLarge)?;
+            let commit = match peel_revision(&repo, &oid.to_string()) {
+                Ok((commit, ObjectType::Commit)) => commit.to_string(),
+                _ => String::new(),
+            };
             tags.push(TagInfo {
                 name,
                 sha: oid.to_string(),
+                commit,
                 message,
                 date,
             });
@@ -2116,6 +2129,7 @@ pub(crate) fn prepare_create_tag(
     Ok(TagInfo {
         name: tag_name.to_owned(),
         sha: target.to_string(),
+        commit: commit.id().to_string(),
         message: message.map(str::to_owned),
         date: Some(date),
     })
@@ -2319,13 +2333,15 @@ pub const MAX_CI_CHANGED_PATH_TOTAL_BYTES: usize = 1024 * 1024;
 /// Returns only path names for a three-dot comparison (what a pull request adds to its
 /// base), or for a comparison of the two trees themselves when `endpoints` is set (what a
 /// push changed, including a rewind). Every path is returned when the base is the
-/// all-zero unborn revision. Output is bounded while Git is running; patch bodies are
-/// never requested or materialized.
+/// all-zero unborn revision. With `renames`, a rename is one path, as the diff view shows it;
+/// otherwise both its old and new path are returned. Output is bounded while Git is running;
+/// patch bodies are never requested or materialized.
 pub(crate) async fn changed_paths(
     repo_path: &Path,
     base_ref: &str,
     head_ref: &str,
     endpoints: bool,
+    renames: bool,
 ) -> Result<Vec<String>> {
     let repo = Repository::open_bare(repo_path)?;
     let unborn = base_ref.len() == 40 && base_ref.bytes().all(|byte| byte == b'0');
@@ -2341,7 +2357,11 @@ pub(crate) async fn changed_paths(
         "diff",
         "--no-ext-diff",
         "--no-textconv",
-        "--no-renames",
+        if renames {
+            "--find-renames"
+        } else {
+            "--no-renames"
+        },
         "--name-only",
         "-z",
     ]);
@@ -2864,15 +2884,17 @@ mod read_limit_tests {
         }
         let (first, second) = (commits[0].to_string(), commits[1].to_string());
         assert_eq!(
-            changed_paths(directory.path(), &second, &first, true)
+            changed_paths(directory.path(), &second, &first, true, false)
                 .await
                 .unwrap(),
             vec!["a.txt".to_owned()]
         );
-        assert!(changed_paths(directory.path(), &second, &first, false)
-            .await
-            .unwrap()
-            .is_empty());
+        assert!(
+            changed_paths(directory.path(), &second, &first, false, false)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 
     /// A bare repository with a normal history on `main`, a commit over the size limit on
@@ -3072,6 +3094,10 @@ mod read_limit_tests {
         let path = directory.path();
 
         assert_eq!(blob_metadata(path, "main", "docs/a.txt").unwrap().1, 6);
+        assert_eq!(
+            blob_metadata(path, "main", "docs/a.txt").unwrap().2,
+            0o100644
+        );
         let file = read_ci_workflow(path, &sha, ".github/workflows/ci.yml").unwrap();
         assert_eq!(file.content, "on: push\n");
         assert_eq!(list_ci_workflow_files(path, "main").unwrap().len(), 1);
@@ -3165,7 +3191,7 @@ mod read_limit_tests {
         assert_too_large(list_tree(path, "refs/heads/huge", "").await);
         assert_too_large(get_commit_diff(path, "huge-tag").await);
         assert_too_large(get_diff(path, "main", "refs/heads/huge").await);
-        assert_too_large(changed_paths(path, "main", "refs/heads/huge", false).await);
+        assert_too_large(changed_paths(path, "main", "refs/heads/huge", false, false).await);
         assert_too_large(compare_repositories(path, path, "main", "refs/heads/huge").await);
         assert_too_large(resolve_archive_revision(path, "refs/heads/huge"));
     }

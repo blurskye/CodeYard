@@ -54,6 +54,12 @@ pub struct Review {
     pub comments_more: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comments_start: Option<String>,
+    /// Where this page's review comments start, so forms in them return to the same place.
+    #[serde(default)]
+    pub comments_offset: usize,
+    /// The viewer may dismiss this review.
+    #[serde(default)]
+    pub can_dismiss: bool,
     /// The reactions on the review itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reactions: Vec<Reaction>,
@@ -376,7 +382,7 @@ pub(in crate::webui::pages::repos) fn closed_review(draft: &ReviewDraft) -> Elem
 }
 
 /// One review in the discussion, with the inline comments filed in it. The dismiss form appears
-/// to administrators only.
+/// only to people who may dismiss it.
 pub(in crate::webui::pages::repos) fn review_entry(
     repo: &Repository,
     url: &str,
@@ -399,9 +405,9 @@ pub(in crate::webui::pages::repos) fn review_entry(
             if let Some(body) = review.body.as_deref().filter(|body| !body.trim().is_empty()) {
                 div { class: "collaboration-markdown", Markdown { content: body.to_owned(), references: references.clone() } }
             }
-            {reaction_bar(repo, &react_action(url, page), Some(("review", review.id)), &review.reactions)}
+            {reaction_bar(repo, &react_action(url, page, review.comments_offset), Some(("review", review.id)), &review.reactions)}
             for comment in &review.comments {
-                {comment_entry(repo, url, page, item_author, comment, references)}
+                {comment_entry(repo, url, (page, review.comments_offset), item_author, comment, references)}
             }
             if review.comments_start.is_some() || review.comments_more.is_some() {
                 nav { class: "collaboration-pagination", aria_label: "Review comments",
@@ -409,7 +415,7 @@ pub(in crate::webui::pages::repos) fn review_entry(
                     if let Some(href) = &review.comments_more { NavLink { href: href.clone(), "More review comments" } }
                 }
             }
-            if repo.can_admin && matches!(review.state.as_str(), "approved" | "changes_requested") {
+            if review.can_dismiss && matches!(review.state.as_str(), "approved" | "changes_requested") {
                 details { class: "disclosure",
                     summary { "Dismiss review" }
                     form { method: "post", action: format!("{url}/reviews/{}/dismiss", review.id), class: "collaboration-form-fields",
@@ -556,7 +562,7 @@ pub(in crate::webui::pages::repos) fn conversation_badges(conversation: &Convers
 }
 
 /// Resolves or reopens a conversation. `from_diff` returns the reviewer to the diff; otherwise the
-/// discussion page they were on is kept.
+/// discussion page and review comment offset they were on, `place` as (page, offset), are kept.
 pub(in crate::webui::pages::repos) fn resolve_form(
     repo: &Repository,
     url: &str,
@@ -564,8 +570,9 @@ pub(in crate::webui::pages::repos) fn resolve_form(
     conversation: &Conversation,
     from_diff: bool,
     split: bool,
-    page: usize,
+    place: (usize, usize),
 ) -> Element {
+    let (page, review_comments) = place;
     let (action, caption) = if conversation.resolved {
         ("unresolve", "Reopen conversation")
     } else {
@@ -582,6 +589,7 @@ pub(in crate::webui::pages::repos) fn resolve_form(
             {csrf(&repo.csrf)}
             if from_diff { input { r#type: "hidden", name: "from", value: "diff" } }
             if !from_diff { input { r#type: "hidden", name: "page", value: page.to_string() } }
+            if !from_diff && review_comments > 0 { input { r#type: "hidden", name: "review_comments", value: review_comments.to_string() } }
             button { r#type: "submit", class: "btn btn-secondary", "{caption}" }
         }
     }
@@ -726,7 +734,7 @@ pub(super) fn thread_block(
                 }
             }
             if let Some(conversation) = &root.conversation {
-                if conversation.can_resolve && !thread.pending { {resolve_form(repo, url, root.id, conversation, true, split, 1)} }
+                if conversation.can_resolve && !thread.pending { {resolve_form(repo, url, root.id, conversation, true, split, (1, 0))} }
             }
             if repo.signed_in {
                 details { class: "collaboration-thread-reply-form", open: replying,

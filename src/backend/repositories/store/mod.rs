@@ -508,6 +508,8 @@ pub struct BlobBytes {
     pub is_binary: bool,
     pub size: u64,
     pub offset: u64,
+    /// The Git file mode of the entry, such as 0o100644 or 0o120000.
+    pub mode: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -528,6 +530,7 @@ pub(crate) struct BlobMetadata {
     pub is_binary: bool,
     pub size: u64,
     pub offset: u64,
+    pub mode: u32,
 }
 
 pub const MAX_BLOB_RESPONSE_BYTES: usize = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES;
@@ -805,6 +808,17 @@ impl RepoStore {
             Backend::Local(local) => local.replica_listing().await,
             Backend::Remote(_) => Err(rpc::wire::invalid("replica refs are listed on their node")),
         }
+    }
+
+    /// All refs and the default branch. A local repository reads the default from HEAD, so
+    /// the branches are listed once.
+    pub async fn refs_and_default(&self) -> Result<(HashMap<String, String>, String), RepoError> {
+        let refs = self.refs().await?;
+        let default_branch = match &self.0 {
+            Backend::Local(local) => local.default_branch().await?,
+            Backend::Remote(_) => self.info().await?.default_branch,
+        };
+        Ok((refs, default_branch))
     }
 
     /// Branch names and the default branch, without traversing history.
@@ -1223,7 +1237,17 @@ impl RepoStore {
         base_ref: &str,
         head_ref: &str,
     ) -> Result<Vec<String>, RepoError> {
-        self.changed_paths_comparison(base_ref, head_ref, false)
+        self.changed_paths_comparison(base_ref, head_ref, false, false)
+            .await
+    }
+
+    /// Changed paths of a three-dot comparison as the diff view lists them: a rename is one path.
+    pub async fn diff_paths(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+    ) -> Result<Vec<String>, RepoError> {
+        self.changed_paths_comparison(base_ref, head_ref, false, true)
             .await
     }
 
@@ -1233,7 +1257,7 @@ impl RepoStore {
         base_ref: &str,
         head_ref: &str,
     ) -> Result<Vec<String>, RepoError> {
-        self.changed_paths_comparison(base_ref, head_ref, true)
+        self.changed_paths_comparison(base_ref, head_ref, true, false)
             .await
     }
 
@@ -1242,9 +1266,14 @@ impl RepoStore {
         base_ref: &str,
         head_ref: &str,
         endpoints: bool,
+        renames: bool,
     ) -> Result<Vec<String>, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.changed_paths(base_ref, head_ref, endpoints).await,
+            Backend::Local(local) => {
+                local
+                    .changed_paths(base_ref, head_ref, endpoints, renames)
+                    .await
+            }
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -1252,6 +1281,7 @@ impl RepoStore {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
                             endpoints,
+                            renames,
                         },
                         b"",
                     )

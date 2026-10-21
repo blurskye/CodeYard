@@ -265,7 +265,7 @@ pub fn pull_request_review_comment(
 }
 
 /// A conversation comment on a pull request. GitHub sends it as an issue_comment whose issue is
-/// the pull request. `link` is the discussion page and anchor, such as `?page=2#comment-7`.
+/// the pull request. `link` is the comment link, such as `?comment=7#comment-7`.
 pub fn pull_request_conversation_comment(
     action: &str,
     comment: &PullRequestComment,

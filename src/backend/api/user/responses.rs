@@ -204,6 +204,7 @@ pub(crate) fn public_api_message(error: &ApiError) -> &'static str {
         "This setup expired. Start again." => "This setup expired. Start again.",
         "Two-factor authentication is already on" => "Two-factor authentication is already on.",
         "Two-factor authentication is not on" => "Two-factor authentication is not on.",
+        "Two-factor enrollment requires an account password" => "Two-factor enrollment requires an account password.",
         _ => match error.error.as_str() {
             "rate_limited" => "Too many attempts. Try again later.",
             "invalid_two_factor_code" => "That code does not match. Check your app and try again.",

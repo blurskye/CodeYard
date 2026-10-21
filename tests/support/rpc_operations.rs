@@ -138,6 +138,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base_ref: sha.into(),
                 head_ref: sha.into(),
                 endpoints: false,
+                renames: false,
             },
             false,
         ),

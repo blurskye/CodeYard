@@ -793,9 +793,24 @@ async fn nested_comment_links(pg: bool) {
             })
             .unwrap();
         let link = notice.link.as_ref().unwrap();
-        assert!(link.contains("review_comments="), "{link}");
+        // The stored link names the comment; following it lands on the comment's page and its
+        // review comment offset.
+        assert!(link.contains("?comment="), "{link}");
         let id = notice.metadata["pull_request_comment_id"].as_i64().unwrap();
-        let model = bounded_model(&w.alice, link).await;
+        let followed = w
+            .alice
+            .exchange(
+                "GET",
+                link.split('#').next().unwrap(),
+                "text/html",
+                Vec::new(),
+            )
+            .await;
+        let location = followed
+            .location
+            .expect("the link redirects to the comment");
+        assert!(location.contains("review_comments="), "{location}");
+        let model = bounded_model(&w.alice, &location).await;
         let Page::Collaboration(model) = model.page else {
             panic!("not collaboration")
         };

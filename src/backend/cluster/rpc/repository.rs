@@ -490,6 +490,7 @@ impl RpcHandler {
                     is_binary: blob.is_binary,
                     size: blob.size,
                     offset: blob.offset,
+                    mode: blob.mode,
                 })
                 .map_err(|_| Failure::Repository(unavailable()))?
             }
@@ -558,9 +559,12 @@ impl RpcHandler {
                 base_ref,
                 head_ref,
                 endpoints,
+                renames,
             } => {
                 if endpoints {
                     json!(store.push_changed_paths(&base_ref, &head_ref))
+                } else if renames {
+                    json!(store.diff_paths(&base_ref, &head_ref))
                 } else {
                     json!(store.changed_paths(&base_ref, &head_ref))
                 }

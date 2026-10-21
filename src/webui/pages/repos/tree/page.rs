@@ -288,7 +288,7 @@ fn home_toolbar(repo: &RepoChrome, page: &TreePage) -> Element {
                 }
                 {ref_counts(repo, page)}
                 if !page.empty {
-                    GoToFile { base: base.clone(), reference: page.reference.clone(), folders: page.folders.clone() }
+                    GoToFile { base: base.clone(), reference: page.reference.clone(), folders: vec![FolderListing { path: String::new(), entries: page.entries.clone() }] }
                 }
             }
             div { class: "repo-home-actions",

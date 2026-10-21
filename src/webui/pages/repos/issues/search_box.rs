@@ -124,7 +124,7 @@ pub(super) fn SearchBox(kind: Kind, value: String, filters: ListFilters) -> Elem
                     }
                 }
             }
-            input { id: INPUT_ID, r#type: "search", name: "q", class: "collaboration-input", value: "{current}", maxlength: "200", placeholder: "{placeholder}", aria_label: "{placeholder}", autocomplete: "off",
+            input { id: INPUT_ID, r#type: "search", name: "q", class: "collaboration-input", value: "{current}", placeholder: "{placeholder}", aria_label: "{placeholder}", autocomplete: "off",
                 role: if enhanced() { Some("combobox".to_owned()) } else { None },
                 "aria-autocomplete": if enhanced() { Some("list".to_owned()) } else { None },
                 "aria-expanded": if enhanced() { Some((if showing { "true" } else { "false" }).to_owned()) } else { None },

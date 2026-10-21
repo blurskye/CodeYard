@@ -1599,12 +1599,16 @@ async fn assert_pull_notification_link(alice: &Client, bob: &Client, main: &str)
     let inbox = alice
         .expect("GET", "/api/notifications", Value::Null, StatusCode::OK)
         .await;
+    // The stored link names the comment; following it redirects to the comment's current page.
+    let base = target.strip_suffix("?page=2").unwrap();
+    let comment_id = fragment.trim_start_matches("comment-");
+    let stored = format!("{base}?comment={comment_id}#{fragment}");
     let notification = inbox["notifications"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|item| item["link"] == *location)
-        .expect("pull request notification uses comment redirect");
+        .find(|item| item["link"] == stored)
+        .expect("pull request notification names the comment");
     assert_eq!(
         fragment,
         format!("comment-{}", notification["metadata"]["comment_id"])

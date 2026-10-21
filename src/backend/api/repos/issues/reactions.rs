@@ -4,7 +4,7 @@ use crate::backend::api::repos::chrome;
 use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::db;
 use crate::backend::db::reactions::{ReactionRefusal, Subject, CONTENTS};
-use crate::backend::issues::MAX_COMMENT_PAGE;
+use crate::backend::issues::{discussion_link_at, MAX_COMMENT_PAGE, MAX_REVIEW_COMMENT_OFFSET};
 use crate::webui::pages::repos::issues::{CommentPage, Item, Kind, Reaction};
 use crate::webui::pages::repos::pulls::Thread;
 use axum::extract::{Form, Path, State};
@@ -62,19 +62,29 @@ pub(crate) async fn native_react(
         _ => return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid reaction target.")),
     };
     let base = format!("{}/{}", repo.view.family_url(kind), number);
-    let page = if ctx.query.get("from").is_some_and(|from| from == "diff") {
+    let anchor = match (comment_id, review_id) {
+        (Some(id), _) => format!("comment-{id}"),
+        (None, Some(id)) => format!("review-{id}"),
+        (None, None) => String::new(),
+    };
+    let location = if ctx.query.get("from").is_some_and(|from| from == "diff") {
         let split = if ctx.query.get("view").is_some_and(|view| view == "split") {
             "?view=split"
         } else {
             ""
         };
-        format!("{base}/diff{split}")
-    } else {
-        // The discussion page the form was on, so the reaction comes back to it.
-        match chrome::number(&ctx, "page", 1, MAX_COMMENT_PAGE)? {
-            1 => base,
-            page => format!("{base}?page={page}"),
+        let diff = format!("{base}/diff{split}");
+        if anchor.is_empty() {
+            diff
+        } else {
+            format!("{diff}#{anchor}")
         }
+    } else {
+        // The discussion page and review comment offset the form was on, so the reaction comes
+        // back to the same place.
+        let page = chrome::number(&ctx, "page", 1, MAX_COMMENT_PAGE)?;
+        let offset = chrome::number(&ctx, "review_comments", 0, MAX_REVIEW_COMMENT_OFFSET)?;
+        discussion_link_at(&base, page, offset, &anchor)
     };
     // The write checks the reactor's access, the archive state and the target in its transaction.
     db::reactions::toggle_reaction(
@@ -88,11 +98,7 @@ pub(crate) async fn native_react(
     )
     .await
     .map_err(|error| reaction_error(&ctx, error))?;
-    Ok(ctx.redirect(&match (comment_id, review_id) {
-        (Some(id), _) => format!("{page}#comment-{id}"),
-        (None, Some(id)) => format!("{page}#review-{id}"),
-        (None, None) => page,
-    }))
+    Ok(ctx.redirect(&location))
 }
 
 /// The page for a reaction the write refused. A target that is not on the item is a 404. Other

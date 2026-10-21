@@ -133,6 +133,7 @@ async fn move_head(
         current.head_sha = to.to_owned();
         let (author_id, repository) = (current.author_id, base.clone());
         let before = from.to_owned();
+        let store = repo_store(base, ci.cluster.as_ref());
         webhooks::emit(
             pool,
             base,
@@ -140,6 +141,19 @@ async fn move_head(
             vec![author_id, actor_id],
             move |owner, people| {
                 let (author, sender) = (people.get(author_id), people.get(actor_id));
+                // The pull request row does not keep change counts, so read them from its diff.
+                let diff = tokio::runtime::Handle::current()
+                    .block_on(store.diff(&current.base_sha, &current.head_sha));
+                match diff {
+                    Ok(diff) => {
+                        current.additions = diff.additions;
+                        current.deletions = diff.deletions;
+                        current.changed_files = diff.changed_files;
+                    }
+                    Err(error) => {
+                        tracing::warn!(pull_id, %error, "could not count pull request changes")
+                    }
+                }
                 let mut payload = payloads::pull_request(
                     "synchronize",
                     &current,

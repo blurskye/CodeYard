@@ -107,7 +107,16 @@ async fn commit_page(ctx: &PageContext, loaded: &Loaded, sha: &str) -> Result<Re
         .commit_diff(&info.sha)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
-    let (branches, tags) = refs_at(loaded, &info.sha);
+    let (branches, mut tags) = refs_at(loaded, &info.sha);
+    // An annotated tag's ref names the tag object, so it is matched by the commit it points at.
+    if let Ok(all) = store.tags().await {
+        for tag in all {
+            if tag.commit == info.sha && !tags.contains(&tag.name) {
+                tags.push(tag.name);
+            }
+        }
+        tags.sort();
+    }
     let info = commit(info);
     Ok(ctx.page_model(
         "Commit",

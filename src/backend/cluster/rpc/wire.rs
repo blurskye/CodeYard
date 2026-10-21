@@ -139,6 +139,8 @@ pub enum Operation {
         head_ref: String,
         #[serde(default)]
         endpoints: bool,
+        #[serde(default)]
+        renames: bool,
     },
     DiffFrom {
         source: Uuid,

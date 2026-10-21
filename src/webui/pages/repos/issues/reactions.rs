@@ -23,13 +23,24 @@ fn emoji(content: &str) -> (&'static str, &'static str) {
         .map_or(("", ""), |(_, emoji, label)| (emoji, label))
 }
 
-/// The URL a reaction bar posts to. On a later discussion page the form names that page, so the
-/// reaction comes back to it.
-pub(in crate::webui::pages::repos) fn react_action(url: &str, page: usize) -> String {
+/// The URL a reaction bar posts to. On a later discussion page, or further into the review
+/// comments, the form names that place, so the reaction comes back to it.
+pub(in crate::webui::pages::repos) fn react_action(
+    url: &str,
+    page: usize,
+    review_comments: usize,
+) -> String {
+    let mut query = Vec::new();
     if page > 1 {
-        format!("{url}/react?page={page}")
-    } else {
+        query.push(format!("page={page}"));
+    }
+    if review_comments > 0 {
+        query.push(format!("review_comments={review_comments}"));
+    }
+    if query.is_empty() {
         format!("{url}/react")
+    } else {
+        format!("{url}/react?{}", query.join("&"))
     }
 }
 

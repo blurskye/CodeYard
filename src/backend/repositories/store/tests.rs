@@ -1247,6 +1247,8 @@ async fn reads_return_owned_values_that_survive_json() {
     let tags = round_trip(&f.store.tags().await.unwrap());
     assert_eq!(tags[0].name, "v1");
     assert!(tags[0].message.as_deref().unwrap().contains("release one"));
+    assert_ne!(tags[0].sha, first);
+    assert_eq!(tags[0].commit, first);
 
     let archive = f
         .store
@@ -1264,6 +1266,36 @@ async fn reads_return_owned_values_that_survive_json() {
     assert!(!f.store.is_ancestor(&second, &first).await.unwrap());
     assert!(f.store.exists().await);
     assert!(f.store.size_bytes().await.unwrap() > 0);
+}
+
+#[tokio::test]
+async fn a_rename_is_one_diff_path_and_two_changed_paths() {
+    let f = fixture().await;
+    let parent = f.repo.find_commit(f.second).unwrap();
+    let tree = parent.tree().unwrap();
+    let readme = tree.get_name("README.md").unwrap();
+    let mut builder = f.repo.treebuilder(Some(&tree)).unwrap();
+    builder.remove("README.md").unwrap();
+    builder.insert("GUIDE.md", readme.id(), 0o100644).unwrap();
+    let renamed = f.repo.find_tree(builder.write().unwrap()).unwrap();
+    let author = signature();
+    let head = f
+        .repo
+        .commit(
+            Some("refs/heads/rename"),
+            &author,
+            &author,
+            "rename",
+            &renamed,
+            &[&parent],
+        )
+        .unwrap();
+    let (base, head) = (f.second.to_string(), head.to_string());
+    assert_eq!(
+        f.store.diff_paths(&base, &head).await.unwrap(),
+        ["GUIDE.md"]
+    );
+    assert_eq!(f.store.changed_paths(&base, &head).await.unwrap().len(), 2);
 }
 
 #[tokio::test]

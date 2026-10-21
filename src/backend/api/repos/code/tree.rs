@@ -243,24 +243,23 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
             _ => None,
         };
         // The Files panel shows the folders on the way down to this one, open, so each is listed.
-        let parent = resolved
-            .path
-            .rsplit_once('/')
-            .map_or("", |(parent, _)| parent);
-        let mut folders = if resolved.path.is_empty() {
-            Vec::new()
-        } else {
-            super::blob::folder_listings(&store, &last.sha, parent)
-                .await
-                .map_err(fail)?
-        };
+        // The repository root has no Files panel; its toolbar searches `entries`.
         let listing = view_entries(entries);
-        folders.push(view::blob::FolderListing {
-            path: resolved.path.clone(),
-            entries: listing.clone(),
-        });
+        if !resolved.path.is_empty() {
+            let parent = resolved
+                .path
+                .rsplit_once('/')
+                .map_or("", |(parent, _)| parent);
+            let mut folders = super::blob::folder_listings(&store, &last.sha, parent)
+                .await
+                .map_err(fail)?;
+            folders.push(view::blob::FolderListing {
+                path: resolved.path.clone(),
+                entries: listing.clone(),
+            });
+            page.folders = folders;
+        }
         page.entries = listing;
-        page.folders = folders;
         page.permalink = format!(
             "{}{}",
             crate::backend::api::http::config::public_origin(),

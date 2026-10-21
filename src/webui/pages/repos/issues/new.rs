@@ -217,7 +217,7 @@ pub fn new(
                     }
                     if picks {
                         aside { class: "collaboration-new-help collaboration-sidebar", aria_label: "Issue details",
-                            {issue_pickers(repo, draft, choices, repo.can_admin)}
+                            IssuePickers { key: "{draft.repository_id}:{draft.template}:{draft.template_revision}", draft: draft.clone(), choices: choices.clone(), labels_url: format!("{}/labels", repo.url()), can_label: repo.can_admin }
                         }
                     }
                 }
@@ -267,37 +267,43 @@ fn form_field(index: usize, field: &FormField, revision: &str) -> Element {
 }
 
 /// The assignee, label and milestone pickers of a new issue. Each menu names the form beside this
-/// sidebar, so the picks are sent with the title and body when the issue is created. Writers only.
-fn issue_pickers(
-    repo: &Repository,
-    draft: &NewDraft,
-    choices: &IssueChoices,
+/// sidebar, so the picks are sent with the title and body when the issue is created. The picks live
+/// in signals, so the summaries under the headings follow the menus. Writers only.
+#[component]
+fn IssuePickers(
+    draft: NewDraft,
+    choices: IssueChoices,
+    labels_url: String,
     can_label: bool,
 ) -> Element {
-    let assignees = if draft.assignees.is_empty() {
+    let assignees = use_signal(|| draft.assignees.clone());
+    let labels = use_signal(|| draft.labels.clone());
+    let milestone = use_signal(|| draft.milestone.clone());
+    let assignee_text = if assignees().is_empty() {
         "No one".to_owned()
     } else {
-        draft.assignees.join(", ")
+        assignees().join(", ")
     };
+    let picked = labels();
     let chosen: Vec<&Label> = choices
         .labels
         .iter()
-        .filter(|entry| draft.labels.contains(&entry.id.to_string()))
+        .filter(|entry| picked.contains(&entry.id.to_string()))
         .collect();
     let none_chosen = chosen.is_empty();
-    let milestone = choices
+    let milestone_text = choices
         .milestones
         .iter()
-        .find(|entry| entry.number.to_string() == draft.milestone)
+        .find(|entry| entry.number.to_string() == milestone())
         .map_or("No milestone".to_owned(), |entry| entry.title.clone());
     rsx! {
         section { class: "collaboration-sidebar-section",
-            {picker_heading("Assignees", Some(assignee_checks(draft, choices)))}
-            p { class: "collaboration-muted", "{assignees}" }
+            {picker_heading("Assignees", Some(assignee_checks(&choices, assignees)))}
+            p { class: "collaboration-muted", "{assignee_text}" }
         }
         if can_label {
             section { class: "collaboration-sidebar-section",
-                {picker_heading("Labels", Some(label_checks(repo, draft, choices)))}
+                {picker_heading("Labels", Some(label_checks(&labels_url, &choices, labels)))}
                 div { class: "collaboration-labels",
                     for entry in chosen { {label_chip(entry)} }
                 }
@@ -305,14 +311,23 @@ fn issue_pickers(
             }
         }
         section { class: "collaboration-sidebar-section",
-            {picker_heading("Milestone", Some(milestone_choices(draft, choices)))}
-            p { class: "collaboration-muted", "{milestone}" }
+            {picker_heading("Milestone", Some(milestone_choices(&choices, milestone)))}
+            p { class: "collaboration-muted", "{milestone_text}" }
         }
     }
 }
 
+/// Adds `value` to the picks or removes it, as its checkbox says.
+fn set_picked(mut picks: Signal<Vec<String>>, value: &str, checked: bool) {
+    let mut list = picks.write();
+    list.retain(|entry| entry != value);
+    if checked {
+        list.push(value.to_owned());
+    }
+}
+
 /// The assignee checkboxes of the new issue's picker.
-fn assignee_checks(draft: &NewDraft, choices: &IssueChoices) -> Element {
+fn assignee_checks(choices: &IssueChoices, assignees: Signal<Vec<String>>) -> Element {
     rsx! {
         PickerPopover { title: "Assign people to this issue",
             if choices.assignable.is_empty() { p { class: "collaboration-muted", "No one to assign." } }
@@ -320,7 +335,12 @@ fn assignee_checks(draft: &NewDraft, choices: &IssueChoices) -> Element {
                 for name in &choices.assignable {
                     PickerRow { key: "{name}", text: name.clone(),
                         label { class: "collaboration-picker-option",
-                            input { r#type: "checkbox", name: "assignees", value: name.clone(), form: NEW_FORM, checked: draft.assignees.contains(name) }
+                            input { r#type: "checkbox", name: "assignees", value: name.clone(), form: NEW_FORM, checked: assignees().contains(name),
+                                oninput: {
+                                    let name = name.clone();
+                                    move |event: FormEvent| set_picked(assignees, &name, event.checked())
+                                }
+                            }
                             span { "{name}" }
                         }
                     }
@@ -331,7 +351,7 @@ fn assignee_checks(draft: &NewDraft, choices: &IssueChoices) -> Element {
 }
 
 /// The label checkboxes of the new issue's picker, with a link to the labels page.
-fn label_checks(repo: &Repository, draft: &NewDraft, choices: &IssueChoices) -> Element {
+fn label_checks(labels_url: &str, choices: &IssueChoices, labels: Signal<Vec<String>>) -> Element {
     rsx! {
         PickerPopover { title: "Apply labels to this issue",
             p { class: "collaboration-muted", "Choose at most 100 labels." }
@@ -340,33 +360,45 @@ fn label_checks(repo: &Repository, draft: &NewDraft, choices: &IssueChoices) -> 
                 for entry in &choices.labels {
                     PickerRow { key: "{entry.id}", text: entry.name.clone(),
                         label { class: "collaboration-picker-option",
-                            input { r#type: "checkbox", name: "labels", value: entry.id.to_string(), form: NEW_FORM, checked: draft.labels.contains(&entry.id.to_string()) }
+                            input { r#type: "checkbox", name: "labels", value: entry.id.to_string(), form: NEW_FORM, checked: labels().contains(&entry.id.to_string()),
+                                oninput: {
+                                    let id = entry.id.to_string();
+                                    move |event: FormEvent| set_picked(labels, &id, event.checked())
+                                }
+                            }
                             {label_option_text(entry)}
                         }
                     }
                 }
             }
-            NavLink { class: "collaboration-manage-labels", href: format!("{}/labels", repo.url()), "Edit labels" }
+            NavLink { class: "collaboration-manage-labels", href: labels_url.to_owned(), "Edit labels" }
         }
     }
 }
 
 /// The milestone radio buttons of the new issue's picker. "No milestone" is the first choice.
-fn milestone_choices(draft: &NewDraft, choices: &IssueChoices) -> Element {
+fn milestone_choices(choices: &IssueChoices, mut milestone: Signal<String>) -> Element {
     rsx! {
         PickerPopover { title: "Set milestone",
             ul { class: "collaboration-picker-list",
                 PickerRow { text: "No milestone".to_owned(),
                     label { class: "collaboration-picker-option",
-                        input { r#type: "radio", name: "milestone", value: "", form: NEW_FORM, checked: draft.milestone.is_empty() }
+                        input { r#type: "radio", name: "milestone", value: "", form: NEW_FORM, checked: milestone().is_empty(),
+                            oninput: move |_| milestone.set(String::new())
+                        }
                         span { "No milestone" }
                     }
                 }
-                for milestone in &choices.milestones {
-                    PickerRow { key: "{milestone.number}", text: milestone.title.clone(),
+                for entry in &choices.milestones {
+                    PickerRow { key: "{entry.number}", text: entry.title.clone(),
                         label { class: "collaboration-picker-option",
-                            input { r#type: "radio", name: "milestone", value: milestone.number.to_string(), form: NEW_FORM, checked: draft.milestone == milestone.number.to_string() }
-                            span { "{milestone.title}" }
+                            input { r#type: "radio", name: "milestone", value: entry.number.to_string(), form: NEW_FORM, checked: milestone() == entry.number.to_string(),
+                                oninput: {
+                                    let number = entry.number.to_string();
+                                    move |_| milestone.set(number.clone())
+                                }
+                            }
+                            span { "{entry.title}" }
                         }
                     }
                 }

@@ -9,7 +9,9 @@ use crate::backend::api::repos::pulls::pull::*;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::pull_requests::reviews::{PullRequestCommentEntry, PullRequestReviewEntry};
-use crate::backend::issues::{discussion_link, discussion_page};
+use crate::backend::issues::{
+    discussion_link, discussion_link_at, discussion_page, MAX_REVIEW_COMMENT_OFFSET,
+};
 use crate::backend::repositories::code_owners::{load_rules, resolve_owners};
 use crate::backend::repositories::pull_requests::comments as comment_rules;
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
@@ -157,6 +159,8 @@ fn review_view(entry: PullRequestReviewEntry, head: &str) -> pulls::Review {
         comments_more: None,
         comments_start: None,
         reactions: Vec::new(),
+        comments_offset: 0,
+        can_dismiss: false,
     }
 }
 
@@ -168,7 +172,12 @@ pub(crate) async fn page_reviews(
     entries: Vec<PullRequestReviewEntry>,
 ) -> ResultPage<Vec<pulls::Review>> {
     let ids: Vec<i64> = entries.iter().map(|entry| entry.review.id).collect();
-    let offset = crate::backend::api::repos::chrome::number(ctx, "review_comments", 0, 1_000_000)?;
+    let offset = crate::backend::api::repos::chrome::number(
+        ctx,
+        "review_comments",
+        0,
+        MAX_REVIEW_COMMENT_OFFSET,
+    )?;
     let comments =
         db::pull_requests::reviews::list_review_comments_page(&ctx.state.pool, &ids, offset as i64)
             .await
@@ -199,6 +208,17 @@ pub(crate) async fn page_reviews(
         repo.view.family_url(Kind::Pull),
         pull.number
     );
+    // Dismissing needs repository admin, and on a personal repository the owner or a site admin.
+    let can_dismiss = repo.view.can_admin
+        && ctx.user.as_ref().is_some_and(|user| {
+            repo.record.owner_kind != "user"
+                || user.is_admin
+                || repo.record.is_personal_owner(user.id)
+        });
+    for review in &mut reviews {
+        review.comments_offset = offset;
+        review.can_dismiss = can_dismiss;
+    }
     if let Some(last) = reviews.last_mut() {
         last.comments_more =
             has_more.then(|| format!("{base}&review_comments={next}#review-{}", last.id));
@@ -882,10 +902,13 @@ async fn set_resolution(
                 };
                 format!("{base}/diff{view}#thread-{comment_id}")
             } else {
-                match field(&form, "page").parse::<usize>() {
-                    Ok(page) if page > 1 => format!("{base}?page={page}#thread-{comment_id}"),
-                    _ => format!("{base}#thread-{comment_id}"),
-                }
+                let page = field(&form, "page").parse::<usize>().unwrap_or(1);
+                let offset = field(&form, "review_comments")
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|offset| *offset <= MAX_REVIEW_COMMENT_OFFSET)
+                    .unwrap_or(0);
+                discussion_link_at(&base, page, offset, &format!("thread-{comment_id}"))
             };
             Ok(ctx.redirect(&location))
         }

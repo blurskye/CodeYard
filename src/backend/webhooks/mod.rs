@@ -269,13 +269,14 @@ where
             .and_then(|mut names| names.remove(&repo.id))
             .unwrap_or_default();
         let people = people(&pool, user_ids).await;
-        let payload = match TASKS.spawn_blocking(move || build(&owner, &people)).await {
+        let mut payload = match TASKS.spawn_blocking(move || build(&owner, &people)).await {
             Ok(payload) => payload,
             Err(error) => {
                 tracing::warn!(repo_id = repo.id, %error, "could not build a webhook payload");
                 return;
             }
         };
+        set_open_issues(&pool, repo.id, &mut payload).await;
         let json = payload.to_string();
         if json.len() > MAX_PAYLOAD_BYTES {
             tracing::warn!(event, "webhook payload is too large; an event was dropped");
@@ -294,6 +295,20 @@ where
             }
         }
     });
+}
+
+/// The repository's `open_issues_count` is counted when the payload is made, because the
+/// stored column is not kept up to date.
+pub(crate) async fn set_open_issues(pool: &DbPool, repo_id: i64, payload: &mut Value) {
+    let Some(repository) = payload.get_mut("repository").and_then(Value::as_object_mut) else {
+        return;
+    };
+    match db::issues::count_repo_issues(pool, repo_id, &Default::default()).await {
+        Ok(counts) => {
+            repository.insert("open_issues_count".into(), counts.open.into());
+        }
+        Err(error) => tracing::warn!(repo_id, %error, "could not count open issues for a webhook"),
+    }
 }
 
 async fn people(pool: &DbPool, mut ids: Vec<i64>) -> People {

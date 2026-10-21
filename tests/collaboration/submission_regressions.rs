@@ -538,7 +538,7 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
             .text()
             .contains(&format!("edit-comment-{}", comment.id)));
         let text = reply.text();
-        assert!(text.contains("name=\"return_to\" value=\"/alice/proj/issues/1?page=2#\""));
+        assert!(text.contains("name=\"return_to\" value=\"/alice/proj/issues/1?page=2\""));
         let composer = text
             .split(
                 "class=\"collaboration-panel collaboration-comment-form collaboration-composer\"",
