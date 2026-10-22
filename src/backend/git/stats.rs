@@ -283,21 +283,26 @@ fn parse_contributors(output: &[u8]) -> Result<Vec<ContributorInfo>> {
     Ok(contributors)
 }
 
-struct ContributorSnapshot {
+/// A result read from history, kept until a ref moves. `key` names anything else the result
+/// depends on, such as the branch and the first week of a chart.
+struct Snapshot<T> {
     refs: HashMap<String, String>,
-    contributors: Vec<ContributorInfo>,
+    key: String,
+    value: T,
 }
 
-type ContributorCache = Arc<tokio::sync::Mutex<Option<ContributorSnapshot>>>;
-static CONTRIBUTOR_CACHES: LazyLock<Mutex<VecDeque<(PathBuf, ContributorCache)>>> =
-    LazyLock::new(Mutex::default);
+type RefCache<T> = Arc<tokio::sync::Mutex<Option<Snapshot<T>>>>;
+/// The repositories whose results are kept, least recently used first.
+type RefCaches<T> = Mutex<VecDeque<(PathBuf, RefCache<T>)>>;
 
-fn contributor_cache(path: &Path) -> ContributorCache {
-    let mut caches = CONTRIBUTOR_CACHES
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+static CONTRIBUTOR_CACHES: LazyLock<RefCaches<Vec<ContributorInfo>>> =
+    LazyLock::new(Mutex::default);
+static CODE_FREQUENCY_CACHES: LazyLock<RefCaches<Vec<WeekChanges>>> = LazyLock::new(Mutex::default);
+
+fn ref_cache<T>(caches: &RefCaches<T>, path: &Path) -> RefCache<T> {
+    let mut caches = caches.lock().unwrap_or_else(|error| error.into_inner());
     if let Some(at) = caches.iter().position(|(key, _)| key == path) {
-        let entry = caches.remove(at).expect("cached contributor entry");
+        let entry = caches.remove(at).expect("cached history entry");
         let cache = entry.1.clone();
         caches.push_back(entry);
         return cache;
@@ -317,7 +322,7 @@ fn contributor_cache(path: &Path) -> ContributorCache {
     cache
 }
 
-async fn contributor_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
+async fn current_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     let path = repo_path.to_owned();
     let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
     tokio::task::spawn_blocking(move || {
@@ -327,33 +332,150 @@ async fn contributor_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     .await?
 }
 
-pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
-    let cache = contributor_cache(repo_path);
+/// The cached value while the refs and `key` are the same, or `read`'s fresh one. A ref that
+/// moved while `read` ran leaves the cache empty, so the next call reads again.
+async fn cached_by_refs<T, F, Fut>(
+    caches: &RefCaches<T>,
+    repo_path: &Path,
+    key: String,
+    read: F,
+) -> Result<T>
+where
+    T: Clone,
+    F: FnOnce(HashMap<String, String>) -> Fut,
+    Fut: std::future::Future<Output = Result<T>>,
+{
+    let cache = ref_cache(caches, repo_path);
     let mut cached = tokio::time::timeout(process::RPC_TIMEOUT, cache.lock()).await?;
-    let refs = contributor_refs(repo_path).await?;
-    if let Some(snapshot) = cached.as_ref().filter(|snapshot| snapshot.refs == refs) {
-        return Ok(snapshot.contributors.clone());
+    let refs = current_refs(repo_path).await?;
+    if let Some(snapshot) = cached
+        .as_ref()
+        .filter(|snapshot| snapshot.refs == refs && snapshot.key == key)
+    {
+        return Ok(snapshot.value.clone());
     }
-    let mut command = process::git_command()?;
-    command
-        .args(["shortlog", "-sne", "--all"])
-        .current_dir(repo_path);
-    let (status, output) = process::buffered(
-        command,
-        b"",
-        MAX_CONTRIBUTOR_OUTPUT_BYTES,
-        process::RPC_TIMEOUT,
-    )
-    .await?;
-    ensure!(status.success(), "Git contributor listing failed");
-    let contributors = parse_contributors(&output)?;
-    if refs == contributor_refs(repo_path).await? {
-        *cached = Some(ContributorSnapshot {
+    let value = read(refs.clone()).await?;
+    if refs == current_refs(repo_path).await? {
+        *cached = Some(Snapshot {
             refs,
-            contributors: contributors.clone(),
+            key,
+            value: value.clone(),
         });
     }
-    Ok(contributors)
+    Ok(value)
+}
+
+pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
+    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, String::new(), |_| async {
+        let mut command = process::git_command()?;
+        command
+            .args(["shortlog", "-sne", "--all"])
+            .current_dir(repo_path);
+        let (status, output) = process::buffered(
+            command,
+            b"",
+            MAX_CONTRIBUTOR_OUTPUT_BYTES,
+            process::RPC_TIMEOUT,
+        )
+        .await?;
+        ensure!(status.success(), "Git contributor listing failed");
+        parse_contributors(&output)
+    })
+    .await
+}
+
+/// Lines added and removed on a branch in one week.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WeekChanges {
+    /// The Monday that starts the week, `YYYY-MM-DD`.
+    pub week: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+/// A year of weeks, as GitHub's code frequency chart shows.
+pub const CODE_FREQUENCY_WEEKS: usize = 52;
+const MAX_CODE_FREQUENCY_OUTPUT_BYTES: usize = 32 * 1024 * 1024;
+
+fn week_start(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    date - chrono::Days::new(u64::from(date.weekday().num_days_from_monday()))
+}
+
+/// Sums `git log --format=@%ct --shortstat` into the weeks from `first` on.
+fn parse_week_changes(output: &[u8], first: chrono::NaiveDate) -> Vec<WeekChanges> {
+    let mut weeks: Vec<WeekChanges> = (0..CODE_FREQUENCY_WEEKS as u64)
+        .map(|week| WeekChanges {
+            week: (first + chrono::Days::new(week * 7)).to_string(),
+            additions: 0,
+            deletions: 0,
+        })
+        .collect();
+    let mut current = None;
+    for line in String::from_utf8_lossy(output).lines() {
+        if let Some(time) = line.strip_prefix('@') {
+            current = time
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .and_then(|time| chrono::DateTime::from_timestamp(time, 0))
+                .map(|time| (time.date_naive() - first).num_days())
+                .filter(|days| *days >= 0)
+                .map(|days| days as usize / 7)
+                .filter(|week| *week < weeks.len());
+            continue;
+        }
+        let Some(week) = current.and_then(|week| weeks.get_mut(week)) else {
+            continue;
+        };
+        for part in line.split(',') {
+            let mut words = part.split_whitespace();
+            let (Some(count), Some(kind)) = (words.next(), words.next()) else {
+                continue;
+            };
+            let Ok(count) = count.parse::<u64>() else {
+                continue;
+            };
+            if kind.starts_with("insertion") {
+                week.additions = week.additions.saturating_add(count);
+            } else if kind.starts_with("deletion") {
+                week.deletions = week.deletions.saturating_add(count);
+            }
+        }
+    }
+    weeks
+}
+
+/// Lines added and removed on `branch` in each of the last 52 weeks, oldest first. A branch
+/// that does not exist yet has none.
+pub(crate) async fn get_code_frequency(repo_path: &Path, branch: &str) -> Result<Vec<WeekChanges>> {
+    let today = chrono::Utc::now().date_naive();
+    let first = week_start(today) - chrono::Days::new((CODE_FREQUENCY_WEEKS as u64 - 1) * 7);
+    let reference = format!("refs/heads/{branch}");
+    let key = format!("{reference} {first}");
+    cached_by_refs(&CODE_FREQUENCY_CACHES, repo_path, key, |refs| async move {
+        if !refs.contains_key(&reference) {
+            return Ok(parse_week_changes(b"", first));
+        }
+        let mut command = process::git_command()?;
+        // A merge's lines were counted on the commits it brings in.
+        command
+            .args(["log", "--no-merges", "--format=@%ct", "--shortstat"])
+            .arg(format!("--since={first} 00:00:00 +0000"))
+            .arg(&reference)
+            .arg("--")
+            .current_dir(repo_path);
+        let (status, output) = process::buffered(
+            command,
+            b"",
+            MAX_CODE_FREQUENCY_OUTPUT_BYTES,
+            process::RPC_TIMEOUT,
+        )
+        .await?;
+        ensure!(status.success(), "Git code frequency listing failed");
+        Ok(parse_week_changes(&output, first))
+    })
+    .await
 }
 
 /// An entry that another push removed while this scan ran (a quarantine directory, a lock
@@ -409,6 +531,69 @@ pub(crate) fn directory_size(path: &Path) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn code_frequency_sums_each_week_and_skips_older_commits() {
+        let first = chrono::NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+        let monday = first.and_hms_opt(12, 0, 0).unwrap().and_utc().timestamp();
+        let day = 86_400;
+        let output = format!(
+            "@{monday}\n\n 2 files changed, 10 insertions(+), 3 deletions(-)\n\
+             @{}\n\n 1 file changed, 1 insertion(+)\n\
+             @{}\n\n 1 file changed, 4 deletions(-)\n\
+             @{}\n\n 1 file changed, 9 insertions(+)\n",
+            monday + day,
+            monday + 7 * day,
+            monday - 3 * day,
+        );
+        let weeks = parse_week_changes(output.as_bytes(), first);
+        assert_eq!(weeks.len(), CODE_FREQUENCY_WEEKS);
+        assert_eq!(
+            weeks[0],
+            WeekChanges {
+                week: "2026-01-05".into(),
+                additions: 11,
+                deletions: 3
+            }
+        );
+        assert_eq!(weeks[1].week, "2026-01-12");
+        assert_eq!((weeks[1].additions, weeks[1].deletions), (0, 4));
+        assert!(weeks[2..]
+            .iter()
+            .all(|week| week.additions == 0 && week.deletions == 0));
+        assert_eq!(week_start(first + chrono::Days::new(6)), first);
+    }
+
+    #[tokio::test]
+    async fn code_frequency_reads_the_branch_and_a_missing_one_is_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = Repository::init_bare(root.path()).unwrap();
+        let empty = get_code_frequency(root.path(), "main").await.unwrap();
+        assert_eq!(empty.len(), CODE_FREQUENCY_WEEKS);
+        assert!(empty.iter().all(|week| week.additions == 0));
+        let signature = git2::Signature::now("Test", "test@example.invalid").unwrap();
+        let blob = repo.blob(b"one\ntwo\nthree\n").unwrap();
+        let mut builder = repo.treebuilder(None).unwrap();
+        builder.insert("notes.txt", blob, 0o100644).unwrap();
+        let tree = repo.find_tree(builder.write().unwrap()).unwrap();
+        repo.commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            "notes",
+            &tree,
+            &[],
+        )
+        .unwrap();
+        let weeks = get_code_frequency(root.path(), "main").await.unwrap();
+        let last = weeks.last().unwrap();
+        assert_eq!((last.additions, last.deletions), (3, 0));
+        assert!(get_code_frequency(root.path(), "other")
+            .await
+            .unwrap()
+            .iter()
+            .all(|week| week.additions == 0));
+    }
 
     #[tokio::test]
     async fn contributors_are_cached_until_refs_change() {

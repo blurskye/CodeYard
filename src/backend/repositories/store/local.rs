@@ -11,7 +11,7 @@ use crate::backend::{
     git::{
         self, repository::process, BlobContent, BranchStatus, CiCommit, CiWorkflowFile,
         CiWorkflowSource, CommitFilter, CommitInfo, ContributorInfo, DiffInfo, FileBlame, FileList,
-        LanguageStat, RepoInfo, TagInfo, TreeEntry,
+        LanguageStat, RepoInfo, TagInfo, TreeEntry, WeekChanges,
     },
     repositories::{
         access, languages,
@@ -842,6 +842,12 @@ impl LocalStore {
 
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
         git::get_contributors(self.path())
+            .await
+            .map_err(RepoError::from)
+    }
+
+    pub(super) async fn code_frequency(&self, branch: &str) -> Result<Vec<WeekChanges>, RepoError> {
+        git::get_code_frequency(self.path(), branch)
             .await
             .map_err(RepoError::from)
     }

@@ -84,8 +84,9 @@ const PRIMARY_TABS: [(&str, &str, &str); 3] = [
 ];
 
 /// Tabs that move behind the More menu on a phone. Settings is listed only for administrators.
-const SECONDARY_TABS: [(&str, &str, &str); 2] = [
+const SECONDARY_TABS: [(&str, &str, &str); 3] = [
     ("actions", "Actions", "/actions"),
+    ("insights", "Insights", "/insights"),
     ("settings", "Settings", "/settings"),
 ];
 
@@ -416,6 +417,32 @@ fn engagement_content(kind: &str, label: &str, count: i32) -> Element {
 }
 
 /// The icon named `kind`. A name that has no icon draws a gear.
+/// A page's sections as one menu, for a phone: a row of tabs has no room there, and a wrapped
+/// row looks broken. Each link is its href, its label and whether it is the current page.
+pub(crate) fn section_menu(name: &str, links: &[(String, &str, bool)]) -> Element {
+    let label = links
+        .iter()
+        .find(|(_, _, current)| *current)
+        .or(links.first())
+        .map_or("", |(_, label, _)| *label);
+    rsx! {
+        details { class: "native-menu repo-menu repo-settings-picker",
+            summary { class: "btn btn-secondary", aria_label: "{name}", span { "{label}" } {icon("chevron")} }
+            div { class: "repo-menu-panel",
+                for (href, text, current) in links {
+                    NavLink {
+                        key: "{href}",
+                        class: "repo-menu-item".to_owned(),
+                        href: href.clone(),
+                        aria_current: current.then(|| "page".to_owned()),
+                        "{text}"
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(crate) fn icon(kind: &str) -> Element {
     rsx! {
         svg { class: "repo-icon", view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "2", stroke_linecap: "round", stroke_linejoin: "round", width: "16", height: "16", "aria-hidden": "true", "focusable": "false",
@@ -429,6 +456,7 @@ pub(crate) fn icon(kind: &str) -> Element {
                 "issues" => rsx! { circle { cx: "12", cy: "12", r: "10" } circle { cx: "12", cy: "12", r: "1" } },
                 "pulls" => rsx! { circle { cx: "18", cy: "18", r: "3" } circle { cx: "6", cy: "6", r: "3" } path { d: "M13 6h3a2 2 0 0 1 2 2v7M6 9v12" } },
                 "actions" => rsx! { circle { cx: "12", cy: "12", r: "9" } path { d: "m10 8 6 4-6 4z" } },
+                "insights" => rsx! { path { d: "M3 3v16a2 2 0 0 0 2 2h16M7 16v-4M12 16V8M17 16v-7" } },
                 "commits" => rsx! { path { d: "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8M3 3v5h5M12 7v5l4 2" } },
                 "branches" => rsx! { path { d: "M6 3v12M18 9a9 9 0 0 1-9 9" } circle { cx: "18", cy: "6", r: "3" } circle { cx: "6", cy: "18", r: "3" } },
                 "smile" => rsx! { circle { cx: "12", cy: "12", r: "10" } path { d: "M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01" } },

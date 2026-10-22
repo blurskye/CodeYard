@@ -7,6 +7,8 @@ use crate::backend::api::repos::responses::{
 };
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::db::models::Repository;
+use crate::backend::db::DbPool;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -110,6 +112,37 @@ pub async fn check_fork(
     }))
 }
 
+/// One page of a repository's forks, newest first, without the private ones `viewer` may not
+/// read, and whether another page follows. Pages count every fork, so a hidden one never moves
+/// another between pages.
+pub(crate) async fn visible_forks(
+    pool: &DbPool,
+    viewer: Option<i64>,
+    repo_id: i64,
+    limit: i64,
+    offset: i64,
+) -> anyhow::Result<(Vec<Repository>, bool)> {
+    let mut forks =
+        db::repositories::discovery::list_forks(pool, repo_id, limit + 1, offset).await?;
+    let more = forks.len() as i64 > limit;
+    forks.truncate(limit as usize);
+    let private_ids: Vec<_> = forks
+        .iter()
+        .filter(|fork| fork.is_private)
+        .map(|fork| fork.id)
+        .collect();
+    let readable = if private_ids.is_empty() || viewer.is_none() {
+        Vec::new()
+    } else {
+        db::repositories::access::readable_repository_ids(pool, viewer, &private_ids).await?
+    };
+    let visible = forks
+        .into_iter()
+        .filter(|fork| !fork.is_private || readable.contains(&fork.id))
+        .collect();
+    Ok((visible, more))
+}
+
 pub async fn list_forks(
     State(state): State<Arc<AppState>>,
     Path((owner, repo)): Path<(String, String)>,
@@ -118,44 +151,16 @@ pub async fn list_forks(
 ) -> Result<Json<Vec<RepoResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let forks = db::repositories::discovery::list_forks(
+    let user = crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
+    let (visible_forks, _) = visible_forks(
         &state.pool,
+        user.map(|user| user.id),
         repository.id,
         limit as i64,
         offset as i64,
     )
     .await
     .map_err(|_| repository_unavailable())?;
-    let user = if forks.iter().any(|fork| fork.is_private) {
-        crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?
-    } else {
-        None
-    };
-    // Preserve candidate-page pagination, but authorize the private candidates together.
-    let private_ids: Vec<_> = forks
-        .iter()
-        .filter(|fork| fork.is_private)
-        .map(|fork| fork.id)
-        .collect();
-    let readable = if private_ids.is_empty() || user.is_none() {
-        Vec::new()
-    } else {
-        db::repositories::access::readable_repository_ids(
-            &state.pool,
-            user.as_ref().map(|user| user.id),
-            &private_ids,
-        )
-        .await
-        .map_err(|_| {
-            super::super::access::access_error(
-                crate::backend::repositories::access::AccessError::Unavailable,
-            )
-        })?
-    };
-    let visible_forks: Vec<_> = forks
-        .into_iter()
-        .filter(|fork| !fork.is_private || readable.contains(&fork.id))
-        .collect();
     let ids = std::iter::once(repository.id)
         .chain(visible_forks.iter().map(|fork| fork.id))
         .collect::<Vec<_>>();

@@ -7,6 +7,7 @@ pub mod commits;
 pub mod compare;
 pub mod editor;
 pub mod find;
+pub mod insights;
 pub mod issues;
 mod labels;
 mod milestones;

@@ -1,4 +1,5 @@
 mod avatar;
+pub mod charts;
 pub mod code;
 mod confirm;
 mod copy;

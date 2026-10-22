@@ -1,6 +1,6 @@
 //! Admin page contracts: the timeframe control, the overview, the users page, site settings and the chart.
-use super::page::{columns, timeframe_control};
 use super::*;
+use crate::webui::components::charts::{columns, normalize_days, timeframe_links, DailyActivity};
 use crate::webui::pages::fields::FormValues;
 use crate::webui::pages::settings::settings_tab;
 use dioxus::prelude::*;
@@ -11,7 +11,7 @@ fn html(element: Element) -> String {
 
 #[test]
 fn timeframe_choices_are_plain_links_with_the_current_one_marked() {
-    let output = html(timeframe_control(30));
+    let output = html(timeframe_links("/admin", 30));
     for days in [7, 30, 90, 180] {
         assert!(output.contains(&format!("href=\"/admin?days={days}\"")));
     }
@@ -33,23 +33,22 @@ fn account(id: i64, username: &str, admin: bool, banned: bool) -> AccountMetadat
     }
 }
 
-fn day(date: &str, commits: i64, pulls_merged: i64, storage_bytes: i64) -> Activity {
-    Activity {
+fn day(date: &str, commits: i64, pulls_merged: i64, storage_bytes: i64) -> (DailyActivity, i64) {
+    let point = DailyActivity {
         date: date.into(),
         commits,
-        pulls_opened: 0,
         pulls_merged,
-        issues_opened: 0,
-        issues_closed: 0,
-        runs: 0,
-        storage_bytes,
-    }
+        ..Default::default()
+    };
+    (point, storage_bytes)
 }
 
-fn overview(activity: Vec<Activity>, days: i32) -> Admin {
+fn overview(days_seen: Vec<(DailyActivity, i64)>, days: i32) -> Admin {
+    let (activity, storage_bytes) = days_seen.into_iter().unzip();
     Admin {
         pending_requests: None,
         activity,
+        storage_bytes,
         days,
         version: "0.1.2".into(),
     }
@@ -83,7 +82,7 @@ fn overview_charts_each_kind_of_activity_without_counters() {
     }
     // A quiet series says so instead of drawing empty columns.
     assert_eq!(output.matches("None in this period").count(), 4);
-    assert_eq!(output.matches("identity-admin-chart-wide").count(), 1);
+    assert_eq!(output.matches("column-chart-wide").count(), 1);
     // Counts with their own page and every action stay off the overview.
     for text in [
         "Recent signups",

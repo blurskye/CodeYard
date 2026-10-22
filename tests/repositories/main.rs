@@ -11,6 +11,7 @@ mod discovery_pages;
 mod editor_save;
 mod find;
 mod initial_files;
+mod insights;
 mod label_authority;
 mod language_cache;
 mod languages;

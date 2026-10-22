@@ -2,7 +2,7 @@ use crate::backend::db::models::RepoLanguage;
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::backend::db::repository_stats::LanguageSource;
+use crate::backend::db::repository_stats::{LanguageSource, RepoActivityPoint, WorkflowUsage};
 
 pub async fn language_source(pool: &PgPool, repo_id: i64) -> Result<Option<LanguageSource>> {
     Ok(sqlx::query_as("SELECT id AS repo_id,default_branch,storage_node_id,write_version FROM repositories WHERE id=$1")
@@ -104,4 +104,57 @@ pub async fn get_primary_repo_languages(
     }
     query.push(")) ranked WHERE rn = 1");
     Ok(query.build_query_as().fetch_all(pool).await?)
+}
+
+pub async fn list_repo_activity_points(
+    pool: &PgPool,
+    repo_id: i64,
+    days: i32,
+) -> Result<Vec<RepoActivityPoint>> {
+    Ok(sqlx::query_as(r#"
+        WITH window_start AS (SELECT CURRENT_DATE - ($2::INT - 1) * INTERVAL '1 day' AS moment),
+        day_span AS (
+            SELECT generate_series((SELECT moment FROM window_start)::DATE, CURRENT_DATE, INTERVAL '1 day')::DATE AS day
+        ),
+        events AS (
+            SELECT DATE(created_at) AS day, commit_count::BIGINT AS commits, 0::BIGINT AS pulls_opened, 0::BIGINT AS pulls_merged,
+                0::BIGINT AS issues_opened, 0::BIGINT AS issues_closed, 0::BIGINT AS runs
+            FROM repository_pushes WHERE repo_id = $1 AND created_at >= (SELECT moment FROM window_start)
+            UNION ALL SELECT DATE(created_at), 0, 1, 0, 0, 0, 0 FROM pull_requests
+                WHERE repo_id = $1 AND created_at >= (SELECT moment FROM window_start)
+            UNION ALL SELECT DATE(merged_at), 0, 0, 1, 0, 0, 0 FROM pull_requests
+                WHERE repo_id = $1 AND merged_at >= (SELECT moment FROM window_start)
+            UNION ALL SELECT DATE(created_at), 0, 0, 0, 1, 0, 0 FROM issues
+                WHERE repo_id = $1 AND created_at >= (SELECT moment FROM window_start)
+            UNION ALL SELECT DATE(closed_at), 0, 0, 0, 0, 1, 0 FROM issues
+                WHERE repo_id = $1 AND closed_at >= (SELECT moment FROM window_start)
+            UNION ALL SELECT DATE(created_at), 0, 0, 0, 0, 0, 1 FROM ci_runs
+                WHERE repo_id = $1 AND created_at >= (SELECT moment FROM window_start)
+        ),
+        daily AS (
+            SELECT day, SUM(commits)::BIGINT AS commits, SUM(pulls_opened)::BIGINT AS pulls_opened,
+                SUM(pulls_merged)::BIGINT AS pulls_merged, SUM(issues_opened)::BIGINT AS issues_opened,
+                SUM(issues_closed)::BIGINT AS issues_closed, SUM(runs)::BIGINT AS runs
+            FROM events GROUP BY day
+        )
+        SELECT d.day, COALESCE(e.commits, 0) AS commits, COALESCE(e.pulls_opened, 0) AS pulls_opened,
+            COALESCE(e.pulls_merged, 0) AS pulls_merged, COALESCE(e.issues_opened, 0) AS issues_opened,
+            COALESCE(e.issues_closed, 0) AS issues_closed, COALESCE(e.runs, 0) AS runs
+        FROM day_span d LEFT JOIN daily e ON e.day = d.day ORDER BY d.day"#)
+        .bind(repo_id).bind(days.clamp(7, 730)).fetch_all(pool).await?)
+}
+
+pub async fn list_workflow_usage(
+    pool: &PgPool,
+    repo_id: i64,
+    days: i32,
+) -> Result<Vec<WorkflowUsage>> {
+    Ok(sqlx::query_as(r#"
+        SELECT workflow_path, COUNT(*) AS runs,
+            COUNT(*) FILTER (WHERE status = 'success') AS succeeded,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+            (AVG(EXTRACT(EPOCH FROM completed_at - started_at)))::FLOAT8 AS average_seconds
+        FROM ci_runs WHERE repo_id = $1 AND created_at >= CURRENT_DATE - ($2::INT - 1) * INTERVAL '1 day'
+        GROUP BY workflow_path ORDER BY runs DESC, workflow_path LIMIT 100"#)
+        .bind(repo_id).bind(days.clamp(7, 730)).fetch_all(pool).await?)
 }

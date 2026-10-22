@@ -3,8 +3,12 @@ use crate::backend::api::repos::access::{access_error, readable_repository};
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::db::models::User;
+use crate::backend::db::DbPool;
 use crate::backend::repositories::access::AccessError;
-use crate::backend::repositories::store::{repo_store, RepoError, MAX_CONTRIBUTOR_RESPONSE_BYTES};
+use crate::backend::repositories::store::{
+    repo_store, ContributorInfo, RepoError, MAX_CONTRIBUTOR_RESPONSE_BYTES,
+};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
@@ -18,6 +22,39 @@ fn add_identity_bytes(total: &mut usize, name: &str, email: &str) -> Result<(), 
         .filter(|bytes| *bytes <= MAX_CONTRIBUTOR_RESPONSE_BYTES)
         .ok_or_else(RepoError::response_too_large)?;
     Ok(())
+}
+
+/// The account behind each contributor's email, by email. Commits made on the forge for an
+/// account without an email carry its no-reply address.
+pub(crate) async fn contributor_accounts(
+    pool: &DbPool,
+    contributors: &[ContributorInfo],
+) -> anyhow::Result<HashMap<String, User>> {
+    let emails: Vec<_> = contributors
+        .iter()
+        .map(|contributor| contributor.email.clone())
+        .collect();
+    let users = db::users::accounts::get_users_by_emails(pool, &emails).await?;
+    let usernames: Vec<String> = emails
+        .iter()
+        .filter_map(|email| email.strip_suffix("@users.noreply"))
+        .map(str::to_owned)
+        .collect();
+    let noreply_users = if usernames.is_empty() {
+        Vec::new()
+    } else {
+        db::users::accounts::get_users_by_usernames(pool, &usernames).await?
+    };
+    let mut users_by_email: HashMap<String, User> = users
+        .into_iter()
+        .filter_map(|user| user.email.clone().map(|email| (email, user)))
+        .collect();
+    users_by_email.extend(
+        noreply_users
+            .into_iter()
+            .map(|user| (user.noreply_email(), user)),
+    );
+    Ok(users_by_email)
 }
 
 #[derive(Serialize)]
@@ -46,36 +83,9 @@ pub async fn get_repo_contributors(
         add_identity_bytes(&mut response_bytes, &contributor.name, &contributor.email)
             .map_err(|error| repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE))?;
     }
-    let emails: Vec<_> = contributors
-        .iter()
-        .map(|contributor| contributor.email.clone())
-        .collect();
-    let unavailable = || access_error(AccessError::Unavailable);
-    let users = db::users::accounts::get_users_by_emails(&state.pool, &emails)
+    let users_by_email = contributor_accounts(&state.pool, &contributors)
         .await
-        .map_err(|_| unavailable())?;
-    // Commits made on the forge for an account without an email carry its no-reply address.
-    let usernames: Vec<String> = emails
-        .iter()
-        .filter_map(|email| email.strip_suffix("@users.noreply"))
-        .map(str::to_owned)
-        .collect();
-    let noreply_users = if usernames.is_empty() {
-        Vec::new()
-    } else {
-        db::users::accounts::get_users_by_usernames(&state.pool, &usernames)
-            .await
-            .map_err(|_| unavailable())?
-    };
-    let mut users_by_email: HashMap<String, _> = users
-        .iter()
-        .filter_map(|user| user.email.clone().map(|email| (email, user)))
-        .collect();
-    users_by_email.extend(
-        noreply_users
-            .iter()
-            .map(|user| (user.noreply_email(), user)),
-    );
+        .map_err(|_| access_error(AccessError::Unavailable))?;
     let responses = contributors
         .into_iter()
         .map(|contributor| {

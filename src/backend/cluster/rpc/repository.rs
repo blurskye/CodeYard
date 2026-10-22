@@ -71,6 +71,7 @@ pub fn authorize_operation(
         Operation::FilePaths { .. } => ("FilePaths", false),
         Operation::Blame { .. } => ("Blame", false),
         Operation::Contributors => ("Contributors", false),
+        Operation::CodeFrequency { .. } => ("CodeFrequency", false),
         Operation::IsAncestor { .. } => ("IsAncestor", false),
         Operation::BranchStatuses { .. } => ("BranchStatuses", false),
         Operation::ResolveCiCommit { .. } => ("ResolveCiCommit", false),
@@ -624,6 +625,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Contributors => json!(store.contributors()),
+            Operation::CodeFrequency { branch } => json!(store.code_frequency(&branch)),
             Operation::IsAncestor {
                 ancestor,
                 descendant,

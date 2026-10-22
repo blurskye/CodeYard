@@ -167,6 +167,9 @@ pub enum Operation {
         path: String,
     },
     Contributors,
+    CodeFrequency {
+        branch: String,
+    },
     IsAncestor {
         ancestor: String,
         descendant: String,
@@ -309,6 +312,7 @@ impl Operation {
             | Self::FilePaths { .. }
             | Self::Blame { .. }
             | Self::Contributors
+            | Self::CodeFrequency { .. }
             | Self::BranchStatuses { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,

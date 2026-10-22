@@ -2,7 +2,7 @@ use crate::backend::db::models::RepoLanguage;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
-use crate::backend::db::repository_stats::LanguageSource;
+use crate::backend::db::repository_stats::{LanguageSource, RepoActivityPoint, WorkflowUsage};
 
 pub async fn language_source(pool: &SqlitePool, repo_id: i64) -> Result<Option<LanguageSource>> {
     Ok(sqlx::query_as("SELECT id AS repo_id,default_branch,storage_node_id,write_version FROM repositories WHERE id=?1")
@@ -104,4 +104,54 @@ pub async fn get_primary_repo_languages(
     }
     query.push(")) ranked WHERE rn = 1");
     Ok(query.build_query_as().fetch_all(pool).await?)
+}
+
+pub async fn list_repo_activity_points(
+    pool: &SqlitePool,
+    repo_id: i64,
+    days: i32,
+) -> Result<Vec<RepoActivityPoint>> {
+    // Stored timestamps are canonical UTC text, so they compare directly with `moment`.
+    Ok(sqlx::query_as(r#"WITH RECURSIVE
+        window_start(moment) AS (SELECT strftime('%Y-%m-%dT00:00:00.000000Z','now',printf('%d days',1-?2))),
+        day_span(day) AS (
+            SELECT date('now',printf('%d days',1-?2))
+            UNION ALL SELECT date(day,'+1 day') FROM day_span WHERE day<date('now')
+        ), events(day,commits,pulls_opened,pulls_merged,issues_opened,issues_closed,runs) AS (
+            SELECT date(created_at),commit_count,0,0,0,0,0 FROM repository_pushes,window_start
+                WHERE repo_id=?1 AND created_at>=moment
+            UNION ALL SELECT date(created_at),0,1,0,0,0,0 FROM pull_requests,window_start
+                WHERE repo_id=?1 AND created_at>=moment
+            UNION ALL SELECT date(merged_at),0,0,1,0,0,0 FROM pull_requests,window_start
+                WHERE repo_id=?1 AND merged_at>=moment
+            UNION ALL SELECT date(created_at),0,0,0,1,0,0 FROM issues,window_start
+                WHERE repo_id=?1 AND created_at>=moment
+            UNION ALL SELECT date(closed_at),0,0,0,0,1,0 FROM issues,window_start
+                WHERE repo_id=?1 AND closed_at>=moment
+            UNION ALL SELECT date(created_at),0,0,0,0,0,1 FROM ci_runs,window_start
+                WHERE repo_id=?1 AND created_at>=moment
+        ), daily AS (
+            SELECT day,SUM(commits) AS commits,SUM(pulls_opened) AS pulls_opened,SUM(pulls_merged) AS pulls_merged,
+                SUM(issues_opened) AS issues_opened,SUM(issues_closed) AS issues_closed,SUM(runs) AS runs
+            FROM events GROUP BY day
+        )
+        SELECT d.day,COALESCE(e.commits,0) AS commits,COALESCE(e.pulls_opened,0) AS pulls_opened,
+            COALESCE(e.pulls_merged,0) AS pulls_merged,COALESCE(e.issues_opened,0) AS issues_opened,
+            COALESCE(e.issues_closed,0) AS issues_closed,COALESCE(e.runs,0) AS runs
+        FROM day_span d LEFT JOIN daily e ON e.day=d.day ORDER BY d.day"#)
+        .bind(repo_id).bind(days.clamp(7, 730)).fetch_all(pool).await?)
+}
+
+pub async fn list_workflow_usage(
+    pool: &SqlitePool,
+    repo_id: i64,
+    days: i32,
+) -> Result<Vec<WorkflowUsage>> {
+    Ok(sqlx::query_as(r#"SELECT workflow_path,COUNT(*) AS runs,
+            SUM(status='success') AS succeeded,SUM(status='failed') AS failed,
+            AVG(CASE WHEN started_at IS NOT NULL AND completed_at IS NOT NULL
+                THEN (julianday(completed_at)-julianday(started_at))*86400.0 END) AS average_seconds
+        FROM ci_runs WHERE repo_id=?1 AND created_at>=strftime('%Y-%m-%dT00:00:00.000000Z','now',printf('%d days',1-?2))
+        GROUP BY workflow_path ORDER BY runs DESC,workflow_path LIMIT 100"#)
+        .bind(repo_id).bind(days.clamp(7, 730)).fetch_all(pool).await?)
 }

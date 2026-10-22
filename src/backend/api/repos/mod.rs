@@ -15,6 +15,7 @@ pub mod collection;
 pub mod deploy_keys;
 pub mod discussion;
 pub mod forms;
+pub mod insights;
 pub mod issues;
 pub mod labels;
 pub mod milestones;
@@ -83,6 +84,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(code::page_router())
         .merge(refs::page_router())
         .merge(releases::page_router())
+        .merge(insights::page_router())
         .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024));
     Router::new()
         .merge(json)

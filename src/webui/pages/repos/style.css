@@ -1002,3 +1002,23 @@ span.collaboration-reaction { cursor: default; }
 .collaboration-template-card:hover { background: var(--muted); }
 .collaboration-template-card:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .collaboration-markdown li:has(> .task-box) { list-style: none; }
+/* Repository insights: the settings page's section list, a heading with the timeframe beside it,
+   then charts or one list. Each list row wraps on a phone instead of cutting its numbers off. */
+.repo-insights-content { display: grid; gap: 16px; min-width: 0; }
+.repo-insights-heading { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.repo-insights-heading h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.repo-insights-heading p { margin: 4px 0 0; color: var(--muted-foreground); font-size: 14px; }
+.repo-insights-list { margin: 0; padding: 0; list-style: none; }
+.repo-insights-list > li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.repo-insights-list > li:last-child { border-bottom: 0; }
+.repo-insights-rank { min-width: 2ch; color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; }
+.repo-insights-who { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.repo-insights-meter { flex: 1 1 120px; height: 8px; overflow: hidden; border-radius: 4px; background: var(--muted); }
+.repo-insights-meter > span { display: block; height: 100%; border-radius: 4px; background: var(--chart-1); }
+.repo-insights-count, .repo-insights-stats, .repo-insights-note { color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
+.repo-insights-count { white-space: nowrap; }
+.repo-insights-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-left: auto; }
+.repo-insights-note { margin: 0; }
+.repo-insights-list > .repo-insights-fork { display: grid; gap: 4px; }
+.repo-insights-fork .repo-insights-stats { margin-left: 0; }
+.repo-insights-description { margin: 0; color: var(--muted-foreground); font-size: 13px; overflow-wrap: anywhere; }

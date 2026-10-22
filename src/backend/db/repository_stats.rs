@@ -38,3 +38,36 @@ native_operation!(crate::backend::db::postgres::repository_stats::get_repo_langu
 native_operation!(crate::backend::db::postgres::repository_stats::get_primary_repo_languages,
     crate::backend::db::sqlite::repository_stats::get_primary_repo_languages,
     fn get_primary_repo_languages(pool: &DbPool, repo_ids: &[i64]) -> Result<Vec<RepoLanguage>>);
+
+/// What happened in one repository on one day.
+#[derive(Debug, sqlx::FromRow)]
+pub struct RepoActivityPoint {
+    pub day: chrono::NaiveDate,
+    /// Commits pushed, through Git or written in the web editor.
+    pub commits: i64,
+    pub pulls_opened: i64,
+    pub pulls_merged: i64,
+    pub issues_opened: i64,
+    pub issues_closed: i64,
+    /// Workflow runs started.
+    pub runs: i64,
+}
+
+/// One workflow's runs in a timeframe.
+#[derive(Debug, sqlx::FromRow)]
+pub struct WorkflowUsage {
+    pub workflow_path: String,
+    pub runs: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+    /// The mean time from start to finish of the runs that finished.
+    pub average_seconds: Option<f64>,
+}
+
+native_operation!(crate::backend::db::postgres::repository_stats::list_repo_activity_points,
+    crate::backend::db::sqlite::repository_stats::list_repo_activity_points,
+    fn list_repo_activity_points(pool: &DbPool, repo_id: i64, days: i32) -> Result<Vec<RepoActivityPoint>>);
+
+native_operation!(crate::backend::db::postgres::repository_stats::list_workflow_usage,
+    crate::backend::db::sqlite::repository_stats::list_workflow_usage,
+    fn list_workflow_usage(pool: &DbPool, repo_id: i64, days: i32) -> Result<Vec<WorkflowUsage>>);

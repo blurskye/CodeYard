@@ -5,12 +5,14 @@ use super::chrome::{active_tab, chrome, repo_engagement, repo_tabs, RepoChrome};
 use super::commits::{commit_detail, commits, Commit, HistoryFilter};
 use super::editor::{delete_file, editor, upload_page, DeleteFile, Editor, UploadForm};
 use super::find::{find, FindPage};
+use super::insights::{self, Contributor, Fork, Page as InsightsPage, Week, WorkflowUsage};
 use super::issues;
 use super::page::{render, Page};
 use super::pulls::{Diff, DiffFile, PullSummary};
 use super::ref_path::file_url;
 use super::settings::{rejected_form, settings, BranchRule, Collaborator, RuleDraft, Settings};
 use super::tree::{tree, TreeEntry, TreePage, MAX_README_BYTES};
+use crate::webui::components::charts::DailyActivity;
 use crate::webui::components::code::{self, themed_highlight};
 use crate::webui::components::compact_date;
 use crate::webui::components::languages::LanguageShare;
@@ -85,7 +87,8 @@ fn fixtures() -> Vec<Page> {
         new_branch: String::new(),
         description: String::new(),
     };
-    vec![
+    let insights_repo = repo.clone();
+    let mut pages = vec![
         Page::Tree {
             repo: repo.clone(),
             page: TreePage {
@@ -312,6 +315,82 @@ fn fixtures() -> Vec<Page> {
                 can_write: false,
             },
         },
+    ];
+    pages.extend(insight_pages().into_iter().map(|page| Page::Insights {
+        repo: insights_repo.clone(),
+        page,
+    }));
+    pages
+}
+
+/// One page of each insights section, with text that must be escaped.
+fn insight_pages() -> Vec<InsightsPage> {
+    let hostile = "</h3><script>alert(1)</script>";
+    vec![
+        InsightsPage::Pulse {
+            days: 7,
+            activity: vec![
+                DailyActivity {
+                    date: "2026-10-01".into(),
+                    commits: 3,
+                    issues_opened: 1,
+                    ..Default::default()
+                },
+                DailyActivity {
+                    date: "2026-10-02".into(),
+                    ..Default::default()
+                },
+            ],
+        },
+        InsightsPage::Contributors {
+            rows: vec![
+                Contributor {
+                    name: hostile.into(),
+                    username: Some("alice".into()),
+                    commits: 8,
+                },
+                Contributor {
+                    name: "Bob".into(),
+                    username: None,
+                    commits: 2,
+                },
+            ],
+        },
+        InsightsPage::CodeFrequency {
+            weeks: vec![
+                Week {
+                    week: "2026-09-28".into(),
+                    additions: 120,
+                    deletions: 4,
+                },
+                Week {
+                    week: "2026-10-05".into(),
+                    additions: 0,
+                    deletions: 0,
+                },
+            ],
+        },
+        InsightsPage::Actions {
+            days: 30,
+            workflows: vec![WorkflowUsage {
+                path: ".github/workflows/ci <x>.yml".into(),
+                runs: 4,
+                succeeded: 3,
+                failed: 1,
+                average_seconds: Some(75),
+            }],
+        },
+        InsightsPage::Forks {
+            rows: vec![Fork {
+                owner: "bob".into(),
+                name: "project".into(),
+                description: hostile.into(),
+                stars: 1,
+                updated_at: "2026-10-02T00:00:00Z".into(),
+            }],
+            page: 2,
+            has_more: true,
+        },
     ]
 }
 
@@ -408,6 +487,7 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
                 Page::Releases { repo, page } => {
                     crate::webui::pages::repos::releases::render(repo, page.clone())
                 }
+                Page::Insights { repo, page } => insights::render(repo, page.clone()),
             };
             let expected = dioxus_ssr::render_element(expected);
             let decoded: Page =
@@ -3573,4 +3653,76 @@ fn blob_page_offers_delete_to_writers_for_binary_files_too() {
     };
     let html = dioxus_ssr::render_element(super::blob::blob(&reader, &page));
     assert!(!html.contains("/delete/refs/heads/main/logo.png"), "{html}");
+}
+
+#[test]
+fn insights_sections_link_each_other_and_show_their_numbers() {
+    let repo = RepoChrome {
+        owner: "alice".into(),
+        name: "project".into(),
+        default_branch: "main".into(),
+        current_path: "/alice/project/insights/contributors".into(),
+        ..Default::default()
+    };
+    let html = |page: InsightsPage| dioxus_ssr::render_element(insights::render(&repo, page));
+    let [pulse, contributors, frequency, actions, forks]: [InsightsPage; 5] =
+        insight_pages().try_into().unwrap();
+
+    let output = html(pulse);
+    for suffix in ["", "/contributors", "/code-frequency", "/actions", "/forks"] {
+        assert!(output.contains(&format!("href=\"/alice/project/insights{suffix}\"")));
+    }
+    // The section list and the phone menu each mark the current section.
+    assert_eq!(
+        output.matches("aria-current=\"page\"").count(),
+        3,
+        "{output}"
+    );
+    assert!(output.contains("href=\"/alice/project/insights?days=30\""));
+    assert!(output.contains("<title>Oct 1: 3 commits</title>"));
+
+    let output = html(contributors);
+    assert!(output.contains("href=\"/alice\""));
+    assert!(output.contains("width: 100.0%") && output.contains("width: 25.0%"));
+    assert!(output.contains("8 commits") && output.contains("2 commits"));
+    assert!(!output.contains("<script>"));
+
+    let output = html(frequency);
+    assert!(output.contains("on main each week"));
+    assert!(output.contains("<title>Week of Sep 28: 120 lines</title>"));
+    assert!(output.contains(">Lines removed</h3>"));
+
+    let output = html(actions);
+    assert!(output.contains(
+        "href=\"/alice/project/actions?workflow=.github%2Fworkflows%2Fci%20%3Cx%3E.yml\""
+    ));
+    assert!(output.contains("3 succeeded") && output.contains("1 failed"));
+    assert!(output.contains("1m 15s on average"));
+
+    let output = html(forks);
+    assert!(output.contains("href=\"/bob/project\""));
+    assert!(output.contains("href=\"/alice/project/insights/forks?page=1\""));
+    assert!(output.contains("href=\"/alice/project/insights/forks?page=3\""));
+    assert!(!output.contains("<script>"));
+}
+
+#[test]
+fn insights_tab_follows_every_insights_page() {
+    for path in ["/alice/project/insights", "/alice/project/insights/forks"] {
+        assert!(active_tab("/alice/project", path, "/insights"));
+        assert!(!active_tab("/alice/project", path, ""));
+    }
+}
+
+#[test]
+fn a_chart_across_two_years_names_the_years() {
+    use crate::webui::components::charts::{column_chart, lines, Series};
+    let dates = vec!["2025-12-29".to_owned(), "2026-01-05".to_owned()];
+    let series = Series {
+        weekly: true,
+        ..Series::new("additions", "Lines added", lines, vec![4, 0])
+    };
+    let output = dioxus_ssr::render_element(column_chart(series, &dates));
+    assert!(output.contains(">Dec 29, 2025</span>") && output.contains(">Jan 5, 2026</span>"));
+    assert!(output.contains("<title>Week of Dec 29, 2025: 4 lines</title>"));
 }

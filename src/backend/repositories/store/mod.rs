@@ -26,7 +26,7 @@ pub(crate) use crate::backend::git::validate_merge_revision;
 pub use crate::backend::git::{
     BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource, CommitFilter,
     CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame, FileList, LanguageStat,
-    RepoInfo, TagInfo, TreeEntry, MAX_CI_CHANGED_PATHS, MAX_CI_WORKFLOW_BYTES,
+    RepoInfo, TagInfo, TreeEntry, WeekChanges, MAX_CI_CHANGED_PATHS, MAX_CI_WORKFLOW_BYTES,
     MAX_DIFF_FILE_PATCH_BYTES, MAX_REPOSITORY_REFS, MAX_TREE_ENTRIES,
     MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
@@ -885,6 +885,23 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.contributors().await,
             Backend::Remote(remote) => remote.call(Operation::Contributors, b"").await,
+        }
+    }
+
+    /// Lines added and removed on `branch` in each of the last 52 weeks, oldest first.
+    pub async fn code_frequency(&self, branch: &str) -> Result<Vec<WeekChanges>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.code_frequency(branch).await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::CodeFrequency {
+                            branch: branch.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 

@@ -3,10 +3,8 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::{
-    account,
-    admin::{normalize_days, Activity, Admin},
-};
+use crate::webui::components::charts::{normalize_days, DailyActivity};
+use crate::webui::pages::{account, admin::Admin};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -22,11 +20,16 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
         )
     };
     // Reads persisted facts only: repository sizes are recorded after pushes, never by a GET.
-    let activity = db::users::accounts::list_admin_activity_points(pool, days)
+    let points = db::users::accounts::list_admin_activity_points(pool, days)
         .await
-        .map_err(|_| unavailable())?
+        .map_err(|_| unavailable())?;
+    let storage_bytes = points
+        .iter()
+        .map(|point| point.daily_storage_bytes)
+        .collect();
+    let activity = points
         .into_iter()
-        .map(|point| Activity {
+        .map(|point| DailyActivity {
             date: point.day.to_string(),
             commits: point.commits,
             pulls_opened: point.pulls_opened,
@@ -34,7 +37,6 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
             issues_opened: point.issues_opened,
             issues_closed: point.issues_closed,
             runs: point.runs,
-            storage_bytes: point.daily_storage_bytes,
         })
         .collect();
     let private = db::node_config::get_node_configuration(pool)
@@ -52,6 +54,7 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
     Ok(Admin {
         pending_requests,
         activity,
+        storage_bytes,
         days,
         version: env!("CARGO_PKG_VERSION").to_owned(),
     })

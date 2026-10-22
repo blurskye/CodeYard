@@ -256,8 +256,9 @@ pub fn render(page: Page) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::webui::components::charts::DailyActivity;
     use crate::webui::pages::{
-        admin::{Activity, AdminAudit, AdminSettings, AdminUsers, AuditEntry, Signup},
+        admin::{AdminAudit, AdminSettings, AdminUsers, AuditEntry, Signup},
         fields::preserved_values,
         settings::{EmailVerification, Key},
     };
@@ -365,7 +366,7 @@ mod tests {
             Page::Admin {
                 model: Admin {
                     pending_requests: Some(1),
-                    activity: vec![Activity {
+                    activity: vec![DailyActivity {
                         date: "2026-10-02".into(),
                         commits: 6,
                         pulls_opened: 1,
@@ -373,8 +374,8 @@ mod tests {
                         issues_opened: 2,
                         issues_closed: 0,
                         runs: 3,
-                        storage_bytes: 1024,
                     }],
+                    storage_bytes: vec![1024],
                     days: 7,
                     version: "0.1.2".into(),
                 },

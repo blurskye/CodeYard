@@ -13,7 +13,7 @@ mod users;
 
 pub use audit::{admin_audit_page, AdminAudit, AuditEntry, AUDIT_ENTRIES_PER_PAGE};
 pub use nav::{admin_layout, Section};
-pub use page::{admin_page, normalize_days, Activity, Admin};
+pub use page::{admin_page, Admin};
 pub use settings::{admin_settings_page, AdminSettings};
 pub use users::{admin_new_user_page, admin_users_page, AccountMetadata, AdminUsers, Signup};
 

@@ -1,4 +1,6 @@
-use crate::webui::pages::repos::chrome::{chrome, csrf, icon, repository_id, RepoChrome};
+use crate::webui::pages::repos::chrome::{
+    chrome, csrf, icon, repository_id, section_menu, RepoChrome,
+};
 use crate::webui::{
     components::{
         confirm_dialog,
@@ -218,27 +220,12 @@ fn section_link(repo: &RepoChrome, section: &str, current: &str, label: &str) ->
     rsx! { NavLink { href: section_href(repo, section), class: class.to_owned(), aria_current: current, "{label}" } }
 }
 
-/// The sections as one menu, for a phone: the tab row has no room there, and a wrapped row looks broken.
 fn section_picker(repo: &RepoChrome, sections: &[(&str, &str)], current: &str) -> Element {
-    let label = sections
+    let links: Vec<(String, &str, bool)> = sections
         .iter()
-        .find(|(id, _)| *id == current)
-        .map_or("Settings", |(_, label)| *label);
-    rsx! {
-        details { class: "native-menu repo-menu repo-settings-picker",
-            summary { class: "btn btn-secondary", aria_label: "Settings sections", span { "{label}" } {icon("chevron")} }
-            div { class: "repo-menu-panel",
-                for (id, text) in sections {
-                    NavLink {
-                        class: "repo-menu-item".to_owned(),
-                        href: section_href(repo, id),
-                        aria_current: (*id == current).then(|| "page".to_owned()),
-                        "{text}"
-                    }
-                }
-            }
-        }
-    }
+        .map(|(id, text)| (section_href(repo, id), *text, *id == current))
+        .collect();
+    section_menu("Settings sections", &links)
 }
 
 /// The description and visibility form.

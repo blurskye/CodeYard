@@ -99,6 +99,10 @@ pub enum Page {
         repo: RepoChrome,
         page: super::releases::Page,
     },
+    Insights {
+        repo: RepoChrome,
+        page: super::insights::Page,
+    },
 }
 
 impl Page {
@@ -117,7 +121,8 @@ impl Page {
             | Page::Upload { repo, .. }
             | Page::Settings { repo, .. }
             | Page::RejectedForm { repo, .. }
-            | Page::Releases { repo, .. } => repo,
+            | Page::Releases { repo, .. }
+            | Page::Insights { repo, .. } => repo,
         }
     }
 }
@@ -170,6 +175,7 @@ pub fn render(page: Page) -> Element {
             settings: state,
         } => settings(&repo, &state),
         Page::Releases { repo, page } => super::releases::render(&repo, page),
+        Page::Insights { repo, page } => super::insights::render(&repo, page),
         Page::RejectedForm {
             repo,
             action,
