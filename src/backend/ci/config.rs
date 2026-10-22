@@ -154,16 +154,64 @@ fn default_podman_socket() -> String {
     }
 }
 
+/// The `runs-on` labels the runner image serves.
+pub(super) const UBUNTU_LABELS: [&str; 4] = [
+    "ubuntu-latest",
+    "ubuntu-24.04",
+    "ubuntu-22.04",
+    "ubuntu-20.04",
+];
+
 fn default_platform_map(image: &str) -> BTreeMap<String, String> {
-    [
-        "ubuntu-latest",
-        "ubuntu-24.04",
-        "ubuntu-22.04",
-        "ubuntu-20.04",
-    ]
-    .into_iter()
-    .map(|label| (label.to_owned(), image.to_owned()))
-    .collect()
+    UBUNTU_LABELS
+        .into_iter()
+        .map(|label| (label.to_owned(), image.to_owned()))
+        .collect()
+}
+
+/// What the site's and the repository's Actions settings allow one run. An unset field leaves
+/// the worker's own configuration: its run timeout, its runner image, and no container limit.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunLimits {
+    pub timeout_seconds: Option<u32>,
+    pub cpus: Option<u32>,
+    pub memory_gib: Option<u32>,
+    pub image: Option<String>,
+}
+
+impl RunLimits {
+    /// The stricter of the two settings for each limit.
+    pub fn new(
+        site: &crate::backend::db::actions::ActionsSettings,
+        repo: &crate::backend::db::actions::RepoActionsSettings,
+    ) -> Self {
+        let stricter = |a: Option<i32>, b: Option<i32>| {
+            let value = match (a, b) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+            value.and_then(|value| u32::try_from(value).ok())
+        };
+        Self {
+            timeout_seconds: stricter(site.run_timeout_minutes, repo.run_timeout_minutes)
+                .map(|minutes| minutes * 60),
+            cpus: stricter(site.job_cpus, repo.job_cpus),
+            memory_gib: stricter(site.job_memory_gib, repo.job_memory_gib),
+            image: site.runner_image.clone(),
+        }
+    }
+
+    /// The Podman options that cap a job container, empty when nothing is capped.
+    pub(super) fn container_options(&self) -> String {
+        let mut options = Vec::new();
+        if let Some(cpus) = self.cpus {
+            options.push(format!("--cpus={cpus}"));
+        }
+        if let Some(gib) = self.memory_gib {
+            options.push(format!("--memory={gib}g"));
+        }
+        options.join(" ")
+    }
 }
 
 fn parse_platform_map(raw: &str) -> Result<BTreeMap<String, String>> {
@@ -220,5 +268,36 @@ mod tests {
         );
         assert!(podman_socket_path("relative.sock").is_err());
         assert!(podman_socket_path("tcp://localhost:8080").is_err());
+    }
+
+    #[test]
+    fn run_limits_take_the_stricter_setting_and_default_to_none() {
+        use crate::backend::db::actions::{ActionsSettings, RepoActionsSettings};
+        let none = RunLimits::new(&ActionsSettings::default(), &RepoActionsSettings::default());
+        assert_eq!(none, RunLimits::default());
+        assert_eq!(none.container_options(), "");
+        let site = ActionsSettings {
+            run_timeout_minutes: Some(30),
+            job_cpus: Some(8),
+            runner_image: Some("img:1".into()),
+            ..ActionsSettings::default()
+        };
+        let repo = RepoActionsSettings {
+            run_timeout_minutes: Some(60),
+            job_cpus: Some(2),
+            job_memory_gib: Some(16),
+            ..RepoActionsSettings::default()
+        };
+        let limits = RunLimits::new(&site, &repo);
+        assert_eq!(
+            limits,
+            RunLimits {
+                timeout_seconds: Some(1800),
+                cpus: Some(2),
+                memory_gib: Some(16),
+                image: Some("img:1".into()),
+            }
+        );
+        assert_eq!(limits.container_options(), "--cpus=2 --memory=16g");
     }
 }

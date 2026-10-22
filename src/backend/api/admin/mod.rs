@@ -1,5 +1,6 @@
 //! Site administration routes; endpoint operations retain their current authority.
 pub(crate) mod accounts;
+pub(crate) mod actions;
 pub(crate) mod ai_crawlers;
 pub(crate) mod audit;
 pub(crate) mod email;
@@ -72,6 +73,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .layer(DefaultBodyLimit::max(16 * 1024));
     api.merge(pages)
+        .merge(actions::router())
         .merge(email::router())
         .merge(nodes::router())
         .merge(storage::router())

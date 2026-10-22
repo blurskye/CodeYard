@@ -1,5 +1,6 @@
 //! Site administration: the overview, users, site settings, email, the audit log, and the cluster
 //! pages. Every page shares the section list and title from `nav`.
+pub mod actions;
 mod audit;
 pub mod email;
 pub mod nav;

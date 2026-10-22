@@ -1,5 +1,5 @@
 //! One CI queue, reached through the database or a paired core node.
-use super::{CiConfig, CiExecutionMode};
+use super::{config::RunLimits, CiConfig, CiExecutionMode};
 use crate::backend::{
     cluster::{self, rpc, NodeContext},
     crypto::SecretEncryptor,
@@ -38,6 +38,8 @@ pub struct ClaimedRun {
     pub storage_peer: Option<cluster::CorePeer>,
     #[serde(default)]
     pub storage_replicas: Vec<(i64, cluster::CorePeer)>,
+    #[serde(default)]
+    pub limits: RunLimits,
     // Used only by a database worker; never sent to a remote worker.
     #[serde(skip)]
     pub(crate) store: Option<RepoStore>,
@@ -353,6 +355,10 @@ impl RunQueue {
                             ));
                         }
                     }
+                    let limits = RunLimits::new(
+                        &db::actions::get_actions_settings(pool).await?,
+                        &db::actions::get_repo_actions_settings(pool, run.repo_id).await?,
+                    );
                     let worker = run.worker.as_deref().context("the CI run has no worker")?;
                     let store =
                         Some(repo_store(&repository, context.as_ref()).for_ci_run(run.id, worker));
@@ -367,6 +373,7 @@ impl RunQueue {
                         pull_request,
                         storage_peer,
                         storage_replicas,
+                        limits,
                         store,
                     })
                 }

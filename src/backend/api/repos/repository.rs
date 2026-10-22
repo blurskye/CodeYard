@@ -1,3 +1,4 @@
+use crate::backend::api::admin::actions as admin_actions;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::{repository_settings_error, ApiError};
 use crate::backend::api::http::session::get_current_user;
@@ -310,6 +311,29 @@ pub(super) async fn settings_model(
         })
         .collect();
         settings.branch_rules = branch_rules(ctx, loaded).await?;
+    }
+    if tab == "actions" {
+        let pool = &ctx.state.pool;
+        let (site, own) = tokio::try_join!(
+            db::actions::get_actions_settings(pool),
+            db::actions::get_repo_actions_settings(pool, loaded.repository.id),
+        )
+        .map_err(|_| unavailable(ctx))?;
+        let text = |value: Option<i32>| value.map(|value| value.to_string()).unwrap_or_default();
+        let server_minutes = ctx.state.ci_runs.config.run_timeout_seconds.div_ceil(60);
+        settings.actions = Some(view::settings::RepoActions {
+            enabled: own.enabled,
+            run_timeout_minutes: text(own.run_timeout_minutes),
+            job_cpus: text(own.job_cpus),
+            job_memory_gib: text(own.job_memory_gib),
+            site_enabled: site.enabled,
+            site_timeout_minutes: site
+                .run_timeout_minutes
+                .and_then(|minutes| u32::try_from(minutes).ok())
+                .unwrap_or(server_minutes),
+            site_cpus: site.job_cpus,
+            site_memory_gib: site.job_memory_gib,
+        });
     }
     if tab == "collaborators" && loaded.chrome.can_manage_collaborators {
         // Only personal owners manage collaborators, as the JSON listing does.
@@ -696,6 +720,22 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         .map(|name| (name.to_owned(), checkbox(values, name).to_string()))
         .collect();
     }
+    if action == "actions-settings" {
+        let mut fields: HashMap<String, String> =
+            ["run_timeout_minutes", "job_cpus", "job_memory_gib"]
+                .into_iter()
+                .filter_map(|name| {
+                    values
+                        .get(name)
+                        .map(|value| (name.to_owned(), value.clone()))
+                })
+                .collect();
+        fields.insert(
+            "enabled".to_owned(),
+            checkbox(values, "enabled").to_string(),
+        );
+        return fields;
+    }
     let fields: &[&str] = match action {
         "create-branch" => &["name", "sha"],
         "create-tag" => &["name", "sha", "message"],
@@ -783,6 +823,7 @@ const FORM_ACTIONS: &[FormAction] = &[
     form_action("delete-tag", "/tags", GIT | BOUND | WRITE | CONFIRM),
     form_action("settings", "/settings", BOUND | ADMIN),
     form_action("merge-methods", "/settings", BOUND | ADMIN),
+    form_action("actions-settings", "/settings", BOUND | ADMIN),
     form_action("rename", "/settings", BOUND | ADMIN | CONFIRM),
     form_action("transfer", "/settings", BOUND | ADMIN),
     form_action("delete", "/settings", BOUND | ADMIN),
@@ -1237,6 +1278,57 @@ async fn mutate(
             )
             .await
             .map_err(repository_settings_error)?;
+            Ok(settings_section_url(&base, action))
+        }
+        "actions-settings" => {
+            let invalid = |message: String| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiError::new("validation_error", &message)),
+                )
+            };
+            let site = db::actions::get_actions_settings(pool).await.map_err(|_| {
+                ApiError::failure(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "unavailable",
+                    "The Actions settings are unavailable right now",
+                )
+            })?;
+            // A limit may be lower than the site's, not higher.
+            let limit = |name: &str, label: &str, max: i32, site: Option<i32>| {
+                let value =
+                    admin_actions::optional_number(form, name, label, max).map_err(invalid)?;
+                match (value, site) {
+                    (Some(value), Some(site)) if value > site => Err(invalid(format!(
+                        "{label} can be at most {site}, the site's limit."
+                    ))),
+                    _ => Ok(value),
+                }
+            };
+            let settings = db::actions::RepoActionsSettings {
+                enabled: checkbox(form, "enabled"),
+                run_timeout_minutes: limit(
+                    "run_timeout_minutes",
+                    "The timeout",
+                    admin_actions::MAX_TIMEOUT_MINUTES,
+                    site.run_timeout_minutes,
+                )?,
+                job_cpus: limit(
+                    "job_cpus",
+                    "CPUs per job",
+                    admin_actions::MAX_CPUS,
+                    site.job_cpus,
+                )?,
+                job_memory_gib: limit(
+                    "job_memory_gib",
+                    "Memory per job",
+                    admin_actions::MAX_MEMORY_GIB,
+                    site.job_memory_gib,
+                )?,
+            };
+            db::actions::save_repo_actions_settings(pool, actor.id, repository.id, &settings)
+                .await
+                .map_err(repository_settings_error)?;
             Ok(settings_section_url(&base, action))
         }
         "about" => {

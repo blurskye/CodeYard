@@ -1,4 +1,5 @@
 pub(crate) use crate::backend::db::models;
+pub(crate) mod actions;
 pub(crate) mod activity;
 pub(crate) mod assignees;
 pub(crate) mod audit;

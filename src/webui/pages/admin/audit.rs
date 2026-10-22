@@ -117,6 +117,8 @@ fn change(entry: &AuditEntry) -> Element {
             rsx! { "changed the mail server and its password" }
         }
         "node.email_settings" => rsx! { "changed the mail server" },
+        "node.actions_settings" if flag("enabled") => rsx! { "changed the Actions settings" },
+        "node.actions_settings" => rsx! { "turned off Actions" },
         "node.status" => rsx! { "set node " strong { "{entry.target}" } " to " "{status}" },
         "org.governance.recover_owner" => {
             rsx! { "made " {target()} " an owner of " strong { "{entry.org}" } ", which had no owner left" }

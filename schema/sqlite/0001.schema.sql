@@ -688,6 +688,28 @@ CREATE TABLE follows (
     CHECK (follower_id != following_id)
 );
 
+-- Actions settings from the admin page. Absent until saved. An empty limit means none, an
+-- empty timeout or image means the server's own setting.
+CREATE TABLE actions_settings (
+    id INTEGER PRIMARY KEY CHECK (id IS NULL OR typeof(id)='integer') CHECK (id = 1),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+    run_timeout_minutes INTEGER CHECK (run_timeout_minutes BETWEEN 1 AND 10080),
+    job_cpus INTEGER CHECK (job_cpus BETWEEN 1 AND 1024),
+    job_memory_gib INTEGER CHECK (job_memory_gib BETWEEN 1 AND 4096),
+    runner_image TEXT CHECK (length(runner_image) BETWEEN 1 AND 255),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+);
+
+-- A repository's own Actions settings. Its limits apply within the site's.
+CREATE TABLE repo_actions_settings (
+    repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
+    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+    run_timeout_minutes INTEGER CHECK (run_timeout_minutes BETWEEN 1 AND 10080),
+    job_cpus INTEGER CHECK (job_cpus BETWEEN 1 AND 1024),
+    job_memory_gib INTEGER CHECK (job_memory_gib BETWEEN 1 AND 4096),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+);
+
 CREATE TABLE repo_secrets (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),

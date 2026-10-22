@@ -69,6 +69,20 @@ pub struct RuleDraft {
     pub rule: BranchRule,
     pub message: String,
 }
+/// The Actions section: this repository's settings as text, so a refused number comes back as it
+/// was typed, and the site's limits they apply within.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RepoActions {
+    pub enabled: bool,
+    pub run_timeout_minutes: String,
+    pub job_cpus: String,
+    pub job_memory_gib: String,
+    pub site_enabled: bool,
+    /// The site's timeout, or the server's when the site sets none.
+    pub site_timeout_minutes: u32,
+    pub site_cpus: Option<i32>,
+    pub site_memory_gib: Option<i32>,
+}
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Settings {
     /// The section to show, as `settings_tab` names it. Anything else shows General.
@@ -93,6 +107,8 @@ pub struct Settings {
     pub webhooks: Option<Box<WebhookPanel>>,
     /// The deploy keys section, on the deploy-keys tab only.
     pub deploy_keys: Option<Box<DeployKeyPanel>>,
+    /// The Actions section, on the actions tab only.
+    pub actions: Option<RepoActions>,
 }
 
 pub fn settings(repo: &RepoChrome, settings: &Settings) -> Element {
@@ -136,6 +152,10 @@ fn tab_content(repo: &RepoChrome, settings: &Settings, tab: &str) -> Element {
     match tab {
         "merging" => merging_section(repo, settings),
         "branches" => branch_protection(repo, settings),
+        "actions" => match &settings.actions {
+            Some(actions) => actions_section(repo, actions),
+            None => rsx! {},
+        },
         "webhooks" => match &settings.webhooks {
             Some(panel) => rsx! { WebhookSection { panel: panel.as_ref().clone() } },
             None => rsx! {},
@@ -160,6 +180,7 @@ pub fn settings_tab(name: &str, can_manage_collaborators: bool) -> &'static str 
     match name {
         "merging" => "merging",
         "branches" => "branches",
+        "actions" => "actions",
         "webhooks" => "webhooks",
         "deploy-keys" => "deploy-keys",
         "collaborators" if can_manage_collaborators => "collaborators",
@@ -175,6 +196,7 @@ pub fn settings_section(action: &str) -> Option<&'static str> {
         "settings" | "rename" | "default-branch" => "general",
         "merge-methods" => "merging",
         "protection-save" | "protection-delete" => "branches",
+        "actions-settings" => "actions",
         "webhook-save" | "webhook-delete" | "webhook-ping" | "webhook-redeliver" => "webhooks",
         "deploy-key-add" | "deploy-key-delete" => "deploy-keys",
         "collaborator" | "remove-collaborator" => "collaborators",
@@ -190,6 +212,7 @@ fn sections(repo: &RepoChrome) -> Vec<(&'static str, &'static str)> {
         ("general", "General"),
         ("merging", "Merging"),
         ("branches", "Branch protection"),
+        ("actions", "Actions"),
         ("webhooks", "Webhooks"),
         ("deploy-keys", "Deploy keys"),
     ];
@@ -427,6 +450,55 @@ fn merge_method_checks(merge: bool, squash: bool, rebase: bool) -> Element {
         label { class: "repo-check-label", DraftCheckbox { name: "allow_merge_commit", initial_checked: merge } span { "Allow merge commits" } }
         label { class: "repo-check-label", DraftCheckbox { name: "allow_squash_merge", initial_checked: squash } span { "Allow squash merging" } }
         label { class: "repo-check-label", DraftCheckbox { name: "allow_rebase_merge", initial_checked: rebase } span { "Allow rebase merging" } }
+    }
+}
+
+/// The Actions fields, each with the site's limit beside it. The settings page and a rejected save
+/// of them both render these.
+fn actions_fields(enabled: bool, values: [&str; 3], hints: [String; 3]) -> Element {
+    let [timeout, cpus, memory] = values;
+    let [timeout_hint, cpus_hint, memory_hint] = hints;
+    rsx! {
+        label { class: "repo-check-label", DraftCheckbox { name: "enabled", initial_checked: enabled } span { "Run workflows for this repository" } }
+        label { class: "repo-field", span { "Timeout in minutes" } DraftInput { name: "run_timeout_minutes", initial_value: timeout.to_owned(), input_type: "number", inputmode: Some("numeric".to_owned()) } small { "{timeout_hint}" } }
+        label { class: "repo-field", span { "CPUs per job" } DraftInput { name: "job_cpus", initial_value: cpus.to_owned(), input_type: "number", inputmode: Some("numeric".to_owned()) } small { "{cpus_hint}" } }
+        label { class: "repo-field", span { "Memory per job in GiB" } DraftInput { name: "job_memory_gib", initial_value: memory.to_owned(), input_type: "number", inputmode: Some("numeric".to_owned()) } small { "{memory_hint}" } }
+    }
+}
+
+/// What each Actions field allows, from the site's limits.
+fn actions_hints(actions: &RepoActions) -> [String; 3] {
+    let cap = |limit: Option<i32>, unit: &str| match limit {
+        Some(limit) => {
+            format!("Empty uses the site's limit of {limit}{unit}. A lower number applies here.")
+        }
+        None => "Empty means no limit.".to_owned(),
+    };
+    [
+        format!(
+            "Empty uses the site's {} minutes. A lower number applies here.",
+            actions.site_timeout_minutes
+        ),
+        cap(actions.site_cpus, ""),
+        cap(actions.site_memory_gib, " GiB"),
+    ]
+}
+
+/// Whether workflows run for this repository, and the limits on each run.
+fn actions_section(repo: &RepoChrome, actions: &RepoActions) -> Element {
+    rsx! {
+        section { class: "repo-settings-section panel",
+            header { class: "repo-section-heading", div { h3 { "Actions" } p { "Whether workflows run for this repository, and what each run may use." } } }
+            if !actions.site_enabled {
+                div { class: "repo-alert", role: "status", "An administrator has turned off Actions on this site, so no workflows run until it is turned back on." }
+            }
+            form { method: "post", action: repo.action("actions-settings"), class: "repo-form-body",
+                {csrf(&repo.csrf_token)}
+                {repository_id(repo.id)}
+                {actions_fields(actions.enabled, [&actions.run_timeout_minutes, &actions.job_cpus, &actions.job_memory_gib], actions_hints(actions))}
+                div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", "Save changes" } }
+            }
+        }
     }
 }
 
@@ -826,6 +898,8 @@ pub fn rejected_form(
                     div { class: "repo-form-body",
                         if action == "merge-methods" {
                             {merge_method_checks(checked("allow_merge_commit"), checked("allow_squash_merge"), checked("allow_rebase_merge"))}
+                        } else if action == "actions-settings" {
+                            {actions_fields(checked("enabled"), ["run_timeout_minutes", "job_cpus", "job_memory_gib"].map(|name| values.get(name).map_or("", String::as_str)), Default::default())}
                         } else if action == "watch-level" {
                             label { class: "repo-field", span { "Watch level" }
                                 select { name: "level",

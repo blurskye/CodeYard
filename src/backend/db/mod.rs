@@ -16,6 +16,7 @@ macro_rules! native_operation {
 mod postgres;
 mod sqlite;
 
+pub mod actions;
 pub mod activity;
 pub mod assignees;
 pub mod audit;

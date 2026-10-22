@@ -165,6 +165,21 @@ pub(super) async fn resolve(
     )
     .await??;
     check_actor(config, &actor, &repo, access)?;
+    // With Actions turned off for the site or the repository, nothing new is queued.
+    let enabled = tokio::time::timeout(lookup_timeout, async {
+        anyhow::Ok(
+            db::actions::get_actions_settings(pool).await?.enabled
+                && db::actions::get_repo_actions_settings(pool, repo.id)
+                    .await?
+                    .enabled,
+        )
+    })
+    .await??;
+    if !enabled {
+        return Err(AdmissionError::Conflict(
+            "Actions are turned off for this repository",
+        ));
+    }
     // Never trust the caller's repository name.
     request.repo_name = repo.name.clone();
     request.repo_owner =

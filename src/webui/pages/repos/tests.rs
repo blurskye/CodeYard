@@ -261,6 +261,7 @@ fn fixtures() -> Vec<Page> {
             settings: Settings {
                 webhooks: None,
                 deploy_keys: None,
+                actions: None,
                 tab: "general".into(),
                 branches: Vec::new(),
                 default_branch: String::new(),

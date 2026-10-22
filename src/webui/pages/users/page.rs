@@ -366,6 +366,7 @@ pub(crate) enum ProfileIcon {
     Mail,
     Server,
     Database,
+    Play,
 }
 
 /// Preserve the original profile/navbar/Avatar paths and stroke-based icon style.
@@ -503,6 +504,9 @@ pub(crate) fn profile_icon(icon: ProfileIcon) -> Element {
         },
         ProfileIcon::Database => rsx! {
             ellipse { cx: "12", cy: "5", rx: "9", ry: "3" } path { d: "M3 5v14a9 3 0 0 0 18 0V5" } path { d: "M3 12a9 3 0 0 0 18 0" }
+        },
+        ProfileIcon::Play => rsx! {
+            circle { cx: "12", cy: "12", r: "9" } path { d: "m10 8 6 4-6 4z" }
         },
     };
     rsx! { svg { view_box: "0 0 24 24", fill: "none", stroke: "currentColor", stroke_width: "1.75",

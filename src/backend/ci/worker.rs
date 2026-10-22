@@ -419,7 +419,11 @@ async fn run_workflows(
     cleaned: oneshot::Sender<()>,
     names: &mut Vec<WorkflowName>,
 ) -> Result<bool> {
-    let deadline = Instant::now() + Duration::from_secs(service.config.run_timeout_seconds.into());
+    let timeout = claim
+        .limits
+        .timeout_seconds
+        .unwrap_or(service.config.run_timeout_seconds);
+    let deadline = Instant::now() + Duration::from_secs(timeout.into());
     let run = &claim.run;
     // A run still preparing when shutdown starts stops here, not after the checkout, and
     // the checkout counts against the run's time limit.
@@ -602,6 +606,11 @@ fn act_command(
         }
         CiExecutionMode::Podman => {
             for (label, image) in &config.act_platform_map {
+                // The site's runner image replaces the node's for the Ubuntu labels.
+                let image = match &claim.limits.image {
+                    Some(site) if super::config::UBUNTU_LABELS.contains(&label.as_str()) => site,
+                    _ => image,
+                };
                 command.arg("-P").arg(format!("{label}={image}"));
             }
             let socket = podman_socket_path(&config.podman_socket)
@@ -613,10 +622,17 @@ fn act_command(
             // One job at a time, so the limits below bound the whole run.
             command.arg("--concurrent-jobs").arg("1");
             if let Some(label) = podman_label {
-                command.arg("--container-options").arg(format!(
-                    "{JOB_CONTAINER_LIMITS} {}",
-                    run_container_options(label)
-                ));
+                // act applies these only to a job without its own `container.options`, so a
+                // workflow can replace the limits. They stop a runaway job, not a hostile one.
+                let limits = claim.limits.container_options();
+                let options = run_container_options(label);
+                command
+                    .arg("--container-options")
+                    .arg(if limits.is_empty() {
+                        options
+                    } else {
+                        format!("{limits} {options}")
+                    });
             }
         }
     }
@@ -627,10 +643,6 @@ fn act_command(
     }
     command
 }
-
-/// Caps on a job container. act applies them only to a job without its own `container.options`,
-/// so a workflow can replace them; they stop a runaway job, they do not sandbox a hostile one.
-const JOB_CONTAINER_LIMITS: &str = "--cpus=2 --memory=2g --pids-limit=512";
 
 fn run_container_label(run_id: uuid::Uuid) -> String {
     format!("{RUN_LABEL_KEY}={run_id}")
@@ -1387,6 +1399,7 @@ mod tests {
             pull_request: None,
             storage_peer: None,
             storage_replicas: Vec::new(),
+            limits: Default::default(),
             store: None,
         };
         let (stop, receiver) = watch::channel(false);
@@ -2073,6 +2086,7 @@ jobs:
             pull_request: None,
             storage_peer: None,
             storage_replicas: Vec::new(),
+            limits: Default::default(),
             store: Some(store),
         };
         let workspace = Workspace::prepare(
@@ -2149,6 +2163,7 @@ jobs:
             pull_request: None,
             storage_peer: None,
             storage_replicas: Vec::new(),
+            limits: Default::default(),
             store: None,
         };
         let workspace = secret_workspace();
@@ -2205,6 +2220,7 @@ jobs:
             }),
             storage_peer: None,
             storage_replicas: Vec::new(),
+            limits: Default::default(),
             store: None,
         };
         let workspace = secret_workspace();

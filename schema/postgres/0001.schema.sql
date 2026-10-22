@@ -887,6 +887,28 @@ CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id);
 -- PART 17: SECRETS (encrypted)
 --------------------------------------------------------------------------------
 
+-- Actions settings from the admin page. Absent until saved. An empty limit means none, an
+-- empty timeout or image means the server's own setting.
+CREATE TABLE IF NOT EXISTS actions_settings (
+    id SMALLINT PRIMARY KEY CHECK (id = 1),
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    run_timeout_minutes INTEGER CHECK (run_timeout_minutes BETWEEN 1 AND 10080),
+    job_cpus INTEGER CHECK (job_cpus BETWEEN 1 AND 1024),
+    job_memory_gib INTEGER CHECK (job_memory_gib BETWEEN 1 AND 4096),
+    runner_image VARCHAR(255) CHECK (length(runner_image) >= 1),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- A repository's own Actions settings. Its limits apply within the site's.
+CREATE TABLE IF NOT EXISTS repo_actions_settings (
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    run_timeout_minutes INTEGER CHECK (run_timeout_minutes BETWEEN 1 AND 10080),
+    job_cpus INTEGER CHECK (job_cpus BETWEEN 1 AND 1024),
+    job_memory_gib INTEGER CHECK (job_memory_gib BETWEEN 1 AND 4096),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS repo_secrets (
     id BIGSERIAL PRIMARY KEY,
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,

@@ -14,7 +14,7 @@ mod worker;
 pub mod workflows;
 
 pub use admission::is_supported_event;
-pub use config::{CiConfig, CiExecutionMode, CiPipelineKind};
+pub use config::{CiConfig, CiExecutionMode, CiPipelineKind, RunLimits};
 pub use push::branch_name;
 pub use push::RefUpdate;
 pub use runs::{CiRunRequest, CiRuns};
