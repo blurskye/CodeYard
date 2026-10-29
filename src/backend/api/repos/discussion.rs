@@ -584,6 +584,7 @@ pub(crate) async fn item(
                 .await
                 .map_err(|_| unavailable(ctx))?;
             let head_sha = value.head_sha.clone();
+            let diff_base = value.diff_base().to_owned();
             let mut view_item = pull_item(ctx, repo, value, author, head_repository)
                 .map_err(|response| *response)?;
             view_item.labels = labels.into_iter().map(label).collect();
@@ -625,13 +626,16 @@ pub(crate) async fn item(
                 !db::repositories::protection::server_owned_status_context(&status.context)
             })
             .collect::<Vec<_>>();
-            view_item.check_count = runs.len() as i64;
+            let integration = db::checks::summary(&ctx.state.pool, repo.record.id, &head_sha)
+                .await.map_err(|_| unavailable(ctx))?;
+            view_item.check_count = runs.len() as i64 + integration.total
+                + statuses.iter().filter(|status| !runs.iter().any(|run| run.commit_status_context() == status.context)).count() as i64;
             // The Commits tab counts the commits of the pull request, up to one more than it lists so
             // the tab can say "100+". When Git cannot count them the count is left out, so the tab
             // shows no number instead of a wrong one.
             let commit_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .branch_statuses(&compare.base_sha, std::slice::from_ref(&compare.head_sha))
+                    .branch_statuses(&diff_base, std::slice::from_ref(&compare.head_sha))
                     .await
                     .ok()
                     .and_then(|heads| {
@@ -645,7 +649,7 @@ pub(crate) async fn item(
             // Tab counts use metadata only; their full payloads are loaded by the selected tab.
             let file_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .diff_paths(&compare.base_sha, &compare.head_sha)
+                    .diff_paths(&diff_base, &compare.head_sha)
                     .await
                     .ok()
                     .map(|paths| paths.len() as i64),
@@ -656,7 +660,7 @@ pub(crate) async fn item(
                 compare.merge_commit_only = merge_with.len() > 1;
                 compare.merge_target = merge_target;
                 compare.merge_with = merge_with;
-                compare.has_checks = !runs.is_empty() || !statuses.is_empty();
+                compare.has_checks = !runs.is_empty() || !statuses.is_empty() || integration.total > 0;
                 // Each check counts once. A run writes its commit status under its own context, so only
                 // the statuses of other producers are added. Runs are the latest attempt of each workflow.
                 let states: Vec<&str> = runs
@@ -679,8 +683,8 @@ pub(crate) async fn item(
                     .filter(|state| {
                         !matches!(**state, "success" | "queued" | "running" | "pending")
                     })
-                    .count() as i64;
-                compare.checks_running = states
+                    .count() as i64 + integration.failed;
+                compare.checks_running = integration.pending > 0 || states
                     .iter()
                     .any(|state| matches!(*state, "queued" | "running" | "pending"));
             }
@@ -1015,6 +1019,7 @@ pub(crate) async fn render_detail(
     // Every text this page renders as Markdown, including what a form re-renders.
     let mut texts = vec![value.body.as_str(), draft.comment.as_str()];
     texts.extend(draft.body.as_deref());
+    texts.extend(comments.pinned.as_ref().map(|comment| comment.body.as_str()));
     texts.extend(
         comments
             .comments
