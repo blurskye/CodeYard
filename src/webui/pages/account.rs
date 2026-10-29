@@ -108,6 +108,9 @@ pub enum Page {
     RepositoryInvitations {
         page: super::repos::invitations::Page,
     },
+    FineGrainedTokens {
+        model: Box<super::settings::fine_grained::Model>,
+    },
     Admin {
         model: Admin,
     },
@@ -267,6 +270,7 @@ pub fn render(page: Page) -> Element {
             is_error,
         } => settings_page(*model, &csrf_token, message.as_deref(), is_error),
         Page::RepositoryInvitations { page } => super::repos::invitations::render(&page),
+        Page::FineGrainedTokens { model } => super::settings::fine_grained::render(*model),
         Page::Admin { model } => admin_page(model),
         Page::AdminSettings {
             model,

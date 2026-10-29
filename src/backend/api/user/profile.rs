@@ -188,6 +188,8 @@ pub(crate) async fn load_settings(
                     .map(|expiry| expiry.to_rfc3339())
                     .unwrap_or_else(|| "never".to_owned()),
                 created: token.created_at.format("%b %e, %Y").to_string(),
+                last_used: token.last_used_at.map(|at| at.to_rfc3339()),
+                last_ip: token.last_used_ip,
             })
             .collect()
     } else {

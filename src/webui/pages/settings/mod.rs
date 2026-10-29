@@ -1,4 +1,5 @@
 //! Account settings: `/settings`, and the forms that post back to it.
+pub mod fine_grained;
 mod page;
 #[cfg(test)]
 mod tests;

@@ -113,6 +113,9 @@ pub struct Page {
     pub roles: Option<Box<RolePanel>>,
     pub properties: Option<Box<super::PropertyPanel>>,
     pub settings: Option<Box<super::SettingsPanel>>,
+    /// The token policy, requests and approved tokens, built only on that tab for an owner.
+    #[serde(default)]
+    pub tokens: Option<Box<super::TokenPanel>>,
     #[serde(default)]
     pub interactions: Option<Box<crate::webui::components::interactions::InteractionPanel>>,
     pub members: Vec<Member>,
@@ -249,6 +252,7 @@ pub fn render(page: Page) -> Element {
                         if page.is_owner {
                             {section_tab(org, &page.tab, "roles", "Organization roles", ProfileIcon::Layers)}
                             {section_tab(org, &page.tab, "settings", "Settings", ProfileIcon::Building)}
+                            {section_tab(org, &page.tab, "personal-access-tokens", "Personal access tokens", ProfileIcon::Key)}
                             {section_tab(org, &page.tab, "webhooks", "Webhooks", ProfileIcon::Link)}
                         }
                         if page.can_manage { {section_tab(org, &page.tab, "actions", "Actions secrets and variables", ProfileIcon::Lock)} }
@@ -267,6 +271,7 @@ pub fn render(page: Page) -> Element {
                         if page.tab == "roles" { {roles::panel(&page)} }
                         if page.tab == "properties" { {properties::panel(&page)} }
                         if page.tab == "settings" { {organization_settings::panel(&page)} }
+                        if page.tab == "personal-access-tokens" { {super::tokens::panel(&page)} }
                         if page.tab == "webhooks" {
                             section { id: "organization-webhooks", class: "org-section", aria_labelledby: "webhooks-title",
                                 if let Some(panel) = &page.webhooks { WebhookSection { panel: panel.as_ref().clone() } }

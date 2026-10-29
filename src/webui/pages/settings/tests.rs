@@ -145,6 +145,8 @@ fn ssh_key_and_token_deletion_ask_in_a_centred_dialog() {
                 scope: "read".into(),
                 expires: "2027-01-01".into(),
                 created: "2026-10-02".into(),
+                last_used: Some("2026-10-20T08:00:00Z".into()),
+                last_ip: Some("192.0.2.4".into()),
             }],
             sessions: vec![],
             new_token: None,
@@ -176,6 +178,14 @@ fn ssh_key_and_token_deletion_ask_in_a_centred_dialog() {
             "{tokens}"
         );
         assert!(tokens.contains("href=\"/settings?tab=tokens\""), "{tokens}");
+        assert!(
+            tokens.contains("Personal access tokens (classic)"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("Last used Oct 20, 2026 from 192.0.2.4"),
+            "{tokens}"
+        );
         assert!(
             !tokens.contains("class=\"collaboration-checkbox\""),
             "{tokens}"

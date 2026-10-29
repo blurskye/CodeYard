@@ -109,6 +109,10 @@ pub struct Token {
     pub scope: String,
     pub expires: String,
     pub created: String,
+    #[serde(default)]
+    pub last_used: Option<String>,
+    #[serde(default)]
+    pub last_ip: Option<String>,
 }
 
 /// One link in the account settings navigation. The current item carries `aria-current` and the
@@ -191,8 +195,14 @@ pub fn settings_nav(current: &str) -> Element {
                     ProfileIcon::Terminal,
                 ),
                 (
+                    "/settings/personal-access-tokens",
+                    "Fine-grained tokens",
+                    "fine-grained-tokens",
+                    ProfileIcon::Key,
+                ),
+                (
                     "/settings?tab=tokens",
-                    "Access tokens",
+                    "Tokens (classic)",
                     "tokens",
                     ProfileIcon::Key,
                 ),
@@ -463,8 +473,8 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                     } else if model.tab == "tokens" {
                         section { class: "identity-settings-section", aria_labelledby: "settings-tokens-title",
                             header { class: "identity-section-header",
-                                h2 { id: "settings-tokens-title", "Personal access tokens" }
-                                p { "Use a token as your password for Git over HTTPS." }
+                                h2 { id: "settings-tokens-title", "Personal access tokens (classic)" }
+                                p { "Use a token as your password for Git over HTTPS. A classic token acts with all of your access; " NavLink { href: "/settings/personal-access-tokens", "fine-grained tokens" } " limit it to chosen repositories and permissions." }
                                 NavLink { href: "/settings/applications", "OAuth applications" }
                                 NavLink { href: "/settings/apps", "GitHub Apps" }
                             }
@@ -484,6 +494,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                         div { class: "identity-row-main",
                                             h3 { "{access.name}" }
                                             p { "{access.scope} access · Added {compact_date(&access.created)} · Expires {compact_date(&access.expires)}" }
+                                            p { {super::fine_grained::last_used(access.last_used.as_deref(), access.last_ip.as_deref())} }
                                         }
                                         details { class: "collaboration-edit native-menu repo-delete-menu",
                                             summary { class: "btn btn-danger", "Delete" span { class: "site-sr-only", " {access.name}" } }

@@ -4,6 +4,7 @@ mod appearance;
 pub mod avatar;
 mod blocks;
 pub mod email;
+mod fine_grained;
 mod gpg;
 pub(crate) mod interactions;
 pub mod keys;
@@ -156,5 +157,6 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
                 )
                 .layer(DefaultBodyLimit::max(64 * 1024)),
         )
+        .merge(fine_grained::router().layer(DefaultBodyLimit::max(64 * 1024)))
         .merge(avatar::router())
 }

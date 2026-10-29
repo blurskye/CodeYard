@@ -387,7 +387,10 @@ pub(super) async fn respond_with_hook_draft(
             _ => tab,
         };
     }
-    if (matches!(tab.as_str(), "webhooks" | "roles" | "settings") && !is_owner)
+    if (matches!(
+        tab.as_str(),
+        "webhooks" | "roles" | "settings" | "personal-access-tokens"
+    ) && !is_owner)
         || (matches!(
             tab.as_str(),
             "actions" | "dependabot" | "private-registries"
@@ -520,6 +523,7 @@ pub(super) async fn respond_with_hook_draft(
         roles: None,
         properties: None,
         settings: None,
+        tokens: None,
         interactions,
         draft,
         invitations: vec![],
@@ -704,6 +708,12 @@ pub(super) async fn respond_with_hook_draft(
         }
         if model.tab == "settings" {
             model.settings = match super::settings::panel(ctx, actor, org).await {
+                Ok(panel) => Some(Box::new(panel)),
+                Err(response) => return response,
+            };
+        }
+        if model.tab == "personal-access-tokens" {
+            model.tokens = match super::tokens::panel(ctx, org).await {
                 Ok(panel) => Some(Box::new(panel)),
                 Err(response) => return response,
             };
@@ -920,8 +930,16 @@ pub(super) async fn respond_with_hook_draft(
 pub(super) fn requested_tab(ctx: &PageContext) -> String {
     match ctx.query.get("tab").map(String::as_str) {
         Some(
-            tab @ ("members" | "teams" | "webhooks" | "actions" | "roles" | "properties"
-            | "settings" | "dependabot" | "private-registries"),
+            tab @ ("members"
+            | "teams"
+            | "webhooks"
+            | "actions"
+            | "roles"
+            | "properties"
+            | "settings"
+            | "dependabot"
+            | "private-registries"
+            | "personal-access-tokens"),
         ) => tab.to_owned(),
         None if ctx.query.contains_key("team")
             || (ctx.query.contains_key("teams_after")

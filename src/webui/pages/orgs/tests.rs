@@ -82,6 +82,7 @@ fn sample_page(draft: HashMap<String, String>, repositories: Vec<RepositoryChoic
         webhooks: None,
         dependabot: None,
         private_registries: None,
+        tokens: None,
         actions: None,
         roles: None,
         properties: None,

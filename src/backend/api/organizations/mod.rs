@@ -15,6 +15,7 @@ mod properties;
 mod roles;
 mod settings;
 mod teams;
+mod tokens;
 mod webhooks;
 
 const INDEX: &str = "/settings/organizations";
@@ -54,6 +55,7 @@ pub fn router() -> axum::Router<std::sync::Arc<crate::backend::app::AppState>> {
             get(organization::show).post(organization::mutate),
         )
         .merge(settings::router())
+        .merge(tokens::router())
         .layer(DefaultBodyLimit::max(organization::BODY_LIMIT))
         .merge(properties::router())
         .merge(avatar::router())
