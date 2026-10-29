@@ -107,13 +107,17 @@ pub async fn move_open_pull_request_head(
     pull_request_id: i64,
     old_head: &str,
     new_head: &str,
+    head_repo: Option<i64>,
+    head_branch: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let stored: Option<String> = sqlx::query_scalar(
-        "SELECT updated_at FROM pull_requests WHERE id = ?1 AND state = 'open' AND head_sha = ?2",
+        "SELECT updated_at FROM pull_requests WHERE id = ?1 AND state = 'open' AND head_sha = ?2 AND head_repo_id IS ?3 AND head_branch=?4",
     )
     .bind(pull_request_id)
     .bind(old_head)
+    .bind(head_repo)
+    .bind(head_branch)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(stored) = stored else {

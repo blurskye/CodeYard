@@ -111,10 +111,12 @@ async fn move_head(
     pull_id: i64,
     from: &str,
     to: &str,
+    head_repo: Option<i64>,
+    head_branch: &str,
     actor_id: i64,
     ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
-    let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to)
+    let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to, head_repo, head_branch)
         .await
         .map_err(|_| RefreshError::Database)?;
     if !moved {
@@ -200,6 +202,8 @@ async fn record_published_head(
         pull.id,
         &pull.head_sha,
         &published,
+        pull.head_repo_id,
+        &pull.head_branch,
         actor_id,
         ci_access,
     )
@@ -398,6 +402,8 @@ async fn refresh_one(
                 pull.id,
                 &pull.head_sha,
                 &new_head,
+                pull.head_repo_id,
+                &pull.head_branch,
                 actor_id,
                 ci_access,
             )

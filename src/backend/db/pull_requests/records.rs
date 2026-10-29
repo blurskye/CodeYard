@@ -135,6 +135,8 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::move_ope
     pull_request_id: i64,
     old_head: &str,
     new_head: &str,
+    head_repo: Option<i64>,
+    head_branch: &str,
 ) -> Result<bool>);
 
 // Moves base_sha from `old_base` to `new_base`, only while the pull request is open, still has

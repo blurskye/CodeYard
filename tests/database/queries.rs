@@ -1387,6 +1387,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('9'),
         &sha('6'),
+        first.head_repo_id,
+        &first.head_branch,
     )
     .await
     .unwrap());
@@ -1395,6 +1397,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('1'),
         &sha('6'),
+        first.head_repo_id,
+        &first.head_branch,
     )
     .await
     .unwrap());
@@ -1448,6 +1452,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('1'),
         &sha('8'),
+        first.head_repo_id,
+        &first.head_branch,
     )
     .await
     .unwrap());
@@ -1486,6 +1492,8 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             pull.id,
             &pull.head_sha,
             &sha('8'),
+            pull.head_repo_id,
+            &pull.head_branch,
         )
         .await
         .unwrap());
