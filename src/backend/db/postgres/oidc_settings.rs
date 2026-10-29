@@ -1,6 +1,7 @@
 use crate::backend::db::{
     oidc::{Inclusion, Refusal, Scope, Settings, TokenSettings},
     organizations::{self, properties::PropertyValue, OrganizationOutcome},
+    users::accounts::AccountCredential,
 };
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -16,6 +17,12 @@ async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope)
         }
     };
     ensure!(allowed, Refusal::Denied);
+    Ok(())
+}
+
+async fn authorize_write(tx: &mut Transaction<'_, Postgres>, actor: i64, credential: &AccountCredential<'_>, scope: Scope) -> Result<()> {
+    authorize(tx, actor, scope).await?;
+    ensure!(super::users::transitions::retain_write_credential(tx, actor, credential).await?, Refusal::Denied);
     Ok(())
 }
 
@@ -42,10 +49,10 @@ pub async fn get(pool: &PgPool, actor: i64, scope: Scope) -> Result<Settings> {
     Ok(result)
 }
 
-pub async fn save(pool: &PgPool, actor: i64, scope: Scope, settings: &Settings) -> Result<()> {
+pub async fn save(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, scope: Scope, settings: &Settings) -> Result<()> {
     settings.validate()?;
     let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, scope).await?;
+    authorize_write(&mut tx, actor, credential, scope).await?;
     let (table, column, id) = scope.storage();
     let keys = if settings.use_default {
         None
@@ -80,12 +87,13 @@ pub async fn inclusions(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Inclu
 pub async fn change_inclusion(
     pool: &PgPool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     org: i64,
     name: &str,
     remove: bool,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, Scope::Organization(org)).await?;
+    authorize_write(&mut tx, actor, credential, Scope::Organization(org)).await?;
     let id: Option<i64> = sqlx::query_scalar("SELECT id FROM organization_repository_properties WHERE org_id=$1 AND property_name=$2 AND value_type IN ('string','single_select','multi_select','true_false')")
         .bind(org).bind(name).fetch_optional(&mut *tx).await?;
     let id = id.ok_or(if remove {

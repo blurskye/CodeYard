@@ -1,5 +1,5 @@
 //! Instance signing identity and OIDC claims bound to live job credentials.
-use super::DbPool;
+use super::{users::accounts::AccountCredential, DbPool};
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -111,13 +111,13 @@ native_operation!(crate::backend::db::postgres::oidc_settings::get,
     fn settings(pool: &DbPool, actor: i64, scope: Scope) -> Result<Settings>);
 native_operation!(crate::backend::db::postgres::oidc_settings::save,
     crate::backend::db::sqlite::oidc_settings::save,
-    fn save_settings(pool: &DbPool, actor: i64, scope: Scope, settings: &Settings) -> Result<()>);
+    fn save_settings(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, scope: Scope, settings: &Settings) -> Result<()>);
 native_operation!(crate::backend::db::postgres::oidc_settings::inclusions,
     crate::backend::db::sqlite::oidc_settings::inclusions,
     fn inclusions(pool: &DbPool, actor: i64, org: i64) -> Result<Vec<Inclusion>>);
 native_operation!(crate::backend::db::postgres::oidc_settings::change_inclusion,
     crate::backend::db::sqlite::oidc_settings::change_inclusion,
-    fn change_inclusion(pool: &DbPool, actor: i64, org: i64, name: &str, remove: bool) -> Result<()>);
+    fn change_inclusion(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, name: &str, remove: bool) -> Result<()>);
 native_operation!(crate::backend::db::postgres::oidc_settings::token_settings,
     crate::backend::db::sqlite::oidc_settings::token_settings,
     fn token_settings(pool: &DbPool, repo: i64) -> Result<TokenSettings>);

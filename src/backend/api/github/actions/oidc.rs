@@ -36,7 +36,7 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(i64, Scope)> {
+) -> Result<(auth::Authentication, Scope)> {
     if let Some(org) = params.get("org") {
         let authentication = auth::authenticate(state, headers, write)
             .await?
@@ -48,12 +48,12 @@ async fn scope(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        Ok((authentication.user.id, Scope::Organization(org.id)))
+        Ok((authentication, Scope::Organization(org.id)))
     } else {
         let (repo, authentication) =
             repository(state, headers, &params["owner"], &params["repo"], write).await?;
         Ok((
-            authentication.ok_or_else(auth::required)?.user.id,
+            authentication.ok_or_else(auth::required)?,
             Scope::Repository(repo.id),
         ))
     }
@@ -76,7 +76,7 @@ async fn template(
     let read = auth::read_method(request.method());
     let (actor, scope) = scope(&state, &headers, &params, !read).await?;
     if read {
-        let settings = db::oidc::settings(&state.pool, actor, scope)
+        let settings = db::oidc::settings(&state.pool, actor.user.id, scope)
             .await
             .map_err(error)?;
         let document = match scope {
@@ -112,7 +112,8 @@ async fn template(
     };
     db::oidc::save_settings(
         &state.pool,
-        actor,
+        actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id),
         scope,
         &Settings {
             use_default,
@@ -151,7 +152,7 @@ async fn properties(
     };
     if read {
         return Ok(Json(
-            db::oidc::inclusions(&state.pool, actor, org)
+            db::oidc::inclusions(&state.pool, actor.user.id, org)
                 .await
                 .map_err(error)?,
         )
@@ -168,7 +169,7 @@ async fn properties(
             .map_err(|_| Error::invalid("Invalid property inclusion"))?
             .custom_property_name
     };
-    db::oidc::change_inclusion(&state.pool, actor, org, &name, remove)
+    db::oidc::change_inclusion(&state.pool, actor.user.id, &db::users::accounts::AccountCredential::Token(actor.token.id), org, &name, remove)
         .await
         .map_err(error)?;
     if remove {

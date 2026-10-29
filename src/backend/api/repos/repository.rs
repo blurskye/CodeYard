@@ -1766,6 +1766,7 @@ async fn mutate(
             db::oidc::save_settings(
                 pool,
                 actor.id,
+                &db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or("")),
                 db::oidc::Scope::Repository(repository.id),
                 &settings,
             )
