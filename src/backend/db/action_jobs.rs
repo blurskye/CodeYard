@@ -8,6 +8,7 @@ use sqlx::{types::Json, FromRow};
 #[derive(FromRow)]
 pub struct Job {
     pub id: i64,
+    pub check_run_id: i64,
     pub run_id: i64,
     pub generation: String,
     pub workflow_path: String,
@@ -78,6 +79,8 @@ native_operation!(crate::backend::db::postgres::action_jobs::save_state,crate::b
 native_operation!(crate::backend::db::postgres::action_jobs::get,crate::backend::db::sqlite::action_jobs::get,
     /// A job the API shows: one that started, or with `queued` also one still waiting.
     fn get(pool:&DbPool,repo:i64,id:i64,queued:bool)->Result<Option<Job>>);
+native_operation!(crate::backend::db::postgres::action_jobs::by_check_run,crate::backend::db::sqlite::action_jobs::by_check_run,
+    fn by_check_run(pool:&DbPool,repo:i64,id:i64)->Result<Option<Job>>);
 native_operation!(crate::backend::db::postgres::action_jobs::list,crate::backend::db::sqlite::action_jobs::list,
     fn list(pool:&DbPool,repo:i64,run:i64,all:bool,offset:i64,limit:i64)->Result<Page>);
 native_operation!(crate::backend::db::postgres::action_jobs::steps,crate::backend::db::sqlite::action_jobs::steps,

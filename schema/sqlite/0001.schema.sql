@@ -1753,9 +1753,13 @@ CREATE TABLE actions_run_metadata (
     head_owner TEXT
 );
 
+-- External checks and Actions jobs allocate their public check-run identity here.
+CREATE TABLE check_run_identities (id INTEGER PRIMARY KEY AUTOINCREMENT);
+
 -- actions-runs: observed executions, not synthetic workflow plans
 CREATE TABLE actions_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    check_run_id BIGINT NOT NULL UNIQUE REFERENCES check_run_identities(id),
     run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     generation TEXT NOT NULL,
     workflow_path TEXT NOT NULL,
@@ -3212,7 +3216,7 @@ CREATE TABLE check_suites (
 CREATE INDEX check_suites_ref ON check_suites(repo_id,head_sha,id);
 
 CREATE TABLE check_runs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGINT PRIMARY KEY NOT NULL REFERENCES check_run_identities(id),
     repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     suite_id INTEGER NOT NULL REFERENCES check_suites(id) ON DELETE CASCADE,
     name TEXT NOT NULL,

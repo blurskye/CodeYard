@@ -78,7 +78,11 @@ pub async fn apply(
                     .is_ok_and(|bytes| bytes.len() <= 8192)),
             "matrix metadata exceeds the native limit"
         );
-        sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10) ON CONFLICT(run_id,generation,workflow_path,logical_job,variant) DO NOTHING").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).execute(&mut *tx).await?;
+        let existing: Option<i64> = sqlx::query_scalar("SELECT check_run_id FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4 AND variant=$5").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).fetch_optional(&mut *tx).await?;
+        if existing.is_none() {
+            let check = super::checks::allocate_run_id(&mut tx).await?;
+            sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix,check_run_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10,$11)").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).bind(check).execute(&mut *tx).await?;
+        }
     }
     let id:i64=sqlx::query_scalar("SELECT id FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4 AND variant=$5").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).fetch_one(&mut *tx).await?;
     match &event.update {
@@ -265,6 +269,10 @@ pub async fn list(
     tx.commit().await?;
     Ok(Page { total, jobs })
 }
+pub async fn by_check_run(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Job>> {
+    Ok(sqlx::query_as("SELECT j.* FROM actions_jobs j JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.check_run_id=$2 AND j.started_at IS NOT NULL").bind(repo).bind(id).fetch_optional(pool).await?)
+}
+
 pub async fn steps(pool: &PgPool, repo: i64, job: i64) -> Result<Vec<Step>> {
     Ok(sqlx::query_as("SELECT s.* FROM actions_steps s JOIN actions_jobs j ON j.id=s.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY s.number").bind(repo).bind(job).fetch_all(pool).await?)
 }

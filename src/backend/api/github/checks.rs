@@ -293,11 +293,21 @@ async fn get_run(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let run = checks::run(&state.pool, repo.id, id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    Ok(Json(run_document(&state, &repo, &owner, &run).await?))
+    if let Some(run) = checks::run(&state.pool, repo.id, id).await.map_err(Error::unavailable)? {
+        return Ok(Json(run_document(&state, &repo, &owner, &run).await?));
+    }
+    let job = db::action_jobs::by_check_run(&state.pool, repo.id, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+    let run = db::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+    let suite = db::action_runs::metadata(&state.pool, repo.id, &[run.id]).await.map_err(Error::unavailable)?
+        .into_iter().next().and_then(|metadata| metadata.check_suite_id).ok_or_else(Error::missing)?;
+    let (count, _) = db::action_jobs::annotations(&state.pool, repo.id, job.id, 0, 1).await.map_err(Error::unavailable)?;
+    let job_document = payloads::action_job(&job, &[], &run, &owner, &repo.name);
+    let url = format!("{}/check-runs/{id}", repo_url(&owner, &repo.name));
+    Ok(Json(json!({"id":id,"node_id":super::node_id::encode("CR",id),"head_sha":run.head_sha,"name":job.name,"url":url,
+        "html_url":job_document["html_url"],"details_url":job_document["html_url"],"external_id":null,
+        "status":job.status,"conclusion":job.conclusion,"started_at":job.started_at,"completed_at":job.completed_at,
+        "check_suite":{"id":suite},"output":{"title":job.name,"summary":null,"text":null,"annotations_count":count,"annotations_url":format!("{url}/annotations"),"images":[]},
+        "app":actions_app(&state,&repo,&owner).await?,"pull_requests":pulls(&state,&repo,&owner,run.head_sha.as_deref().unwrap_or("")).await?})))
 }
 async fn get_suite(
     State(state): State<Arc<AppState>>,
@@ -454,10 +464,11 @@ async fn annotations(
         .await
         .map_err(Error::unavailable)?
     else {
+        let job = db::action_jobs::by_check_run(&state.pool, repo.id, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
         return super::actions::job_annotations(
             State(state),
             headers,
-            Path((owner, name, id)),
+            Path((owner, name, job.id)),
             Query(page),
             OriginalUri(uri),
         )

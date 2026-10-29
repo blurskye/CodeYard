@@ -230,6 +230,10 @@ async fn save(tx: &mut Transaction<'_, Postgres>, run: &Run, input: &RunPatch) -
         .bind(run.suite_id).bind(status).bind(conclusion).bind(chrono::Utc::now())
         .fetch_one(&mut **tx).await?)
 }
+pub(crate) async fn allocate_run_id(connection: &mut sqlx::PgConnection) -> Result<i64> {
+    Ok(sqlx::query_scalar("INSERT INTO check_run_identities DEFAULT VALUES RETURNING id").fetch_one(connection).await?)
+}
+
 pub async fn create_run(
     pool: &PgPool,
     credential: Credential<'_>,
@@ -242,8 +246,9 @@ pub async fn create_run(
     let mut tx = pool.begin().await?;
     let (publisher, app) = authority(&mut tx, credential, repo, false).await?;
     let (suite, _) = insert_suite(&mut tx, &publisher, app, repo, sha, branch).await?;
-    let mut run: Run = sqlx::query_as("INSERT INTO check_runs(repo_id,suite_id,name,data,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5) RETURNING *")
-        .bind(repo).bind(suite.id).bind(input.name.as_deref().ok_or(Refusal::Invalid)?).bind(Json(RunData::default())).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
+    let id = allocate_run_id(&mut tx).await?;
+    let mut run: Run = sqlx::query_as("INSERT INTO check_runs(repo_id,suite_id,name,data,created_at,updated_at,id) VALUES($1,$2,$3,$4,$5,$5,$6) RETURNING *")
+        .bind(repo).bind(suite.id).bind(input.name.as_deref().ok_or(Refusal::Invalid)?).bind(Json(RunData::default())).bind(chrono::Utc::now()).bind(id).fetch_one(&mut *tx).await?;
     input.apply(&mut run)?;
     let saved_suite = save(&mut tx, &run, input).await?;
     let completed_suite = (suite.status != "completed" && saved_suite.status == "completed").then_some(saved_suite);

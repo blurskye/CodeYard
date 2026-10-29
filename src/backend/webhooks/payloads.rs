@@ -1856,7 +1856,7 @@ pub fn action_job(
         "head_branch":branch,"name":job.name,"url":format!("{api}/actions/jobs/{}",job.id),
         "html_url":format!("{}/{}/{}/actions?job={}",link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),
         "status":job.status,"conclusion":job.conclusion,"started_at":time(job.started_at.unwrap_or(job.created_at)),"completed_at":optional_time(job.completed_at),"created_at":time(job.created_at),
-        "check_run_url":"","labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
+        "check_run_url":format!("{api}/check-runs/{}",job.check_run_id),"labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
         "steps":steps.iter().map(|step|json!({"number":step.number,"name":step.name,"status":step.status,"conclusion":step.conclusion,"started_at":time(step.started_at),"completed_at":optional_time(step.completed_at)})).collect::<Vec<_>>()})
 }
 

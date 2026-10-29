@@ -1067,9 +1067,13 @@ CREATE INDEX IF NOT EXISTS idx_ci_runs_status ON ci_runs(status);
 CREATE INDEX IF NOT EXISTS idx_ci_runs_push_user_created_at ON ci_runs(triggered_by_id, created_at DESC)
     WHERE event = 'push';
 
+-- External checks and Actions jobs allocate their public check-run identity here.
+CREATE TABLE check_run_identities (id BIGSERIAL PRIMARY KEY);
+
 -- actions-runs: observed executions, not synthetic workflow plans
 CREATE TABLE actions_jobs (
     id BIGSERIAL PRIMARY KEY,
+    check_run_id BIGINT NOT NULL UNIQUE REFERENCES check_run_identities(id),
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     generation TEXT NOT NULL,
     workflow_path TEXT NOT NULL,
@@ -3360,7 +3364,7 @@ CREATE TABLE check_suites (
 CREATE INDEX check_suites_ref ON check_suites(repo_id,head_sha,id);
 
 CREATE TABLE check_runs (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGINT PRIMARY KEY REFERENCES check_run_identities(id),
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     suite_id BIGINT NOT NULL REFERENCES check_suites(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
