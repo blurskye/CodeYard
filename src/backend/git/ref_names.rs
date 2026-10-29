@@ -22,11 +22,7 @@ pub(crate) fn is_canonical_ref(reference: &str) -> bool {
         && git2::Reference::is_valid_name(reference)
 }
 
-/// Whether `text` is a full 40-digit commit ID. Either case passes; a caller that stores the
-/// ID lowercases it.
-pub(crate) fn is_full_commit_id(text: &str) -> bool {
-    text.len() == 40 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
+pub(crate) use crate::git_ids::is_full_commit_id;
 
 pub(crate) fn branch_ref(name: &str) -> Option<String> {
     let reference = format!("refs/heads/{name}");

@@ -73,7 +73,7 @@ pub(crate) async fn release_history(
     ensure!(
         commits
             .iter()
-            .all(|sha| sha.len() == 40 && sha.bytes().all(|ch| ch.is_ascii_hexdigit())),
+            .all(crate::git_ids::is_full_commit_id),
         "Git returned invalid commit IDs"
     );
     Ok(ReleaseHistory {

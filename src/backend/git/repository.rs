@@ -758,10 +758,7 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
             continue;
         }
         ensure!(
-            sha.len() == 40
-                && sha.iter().all(|byte| byte.is_ascii_hexdigit())
-                && tree_sha.len() == 40
-                && tree_sha.iter().all(|byte| byte.is_ascii_hexdigit()),
+            crate::git_ids::is_full_commit_id(sha) && crate::git_ids::is_full_commit_id(tree_sha),
             "Malformed git log commit ID"
         );
         let timestamp = std::str::from_utf8(timestamp)?.parse()?;
@@ -1234,7 +1231,7 @@ fn parse_blame(output: &[u8]) -> Result<Vec<BlameHunk>> {
     for line in text.lines() {
         if line.len() > 40
             && line.as_bytes()[40] == b' '
-            && git2::Oid::from_str(&line[..40]).is_ok()
+            && crate::git_ids::is_full_commit_id(&line.as_bytes()[..40])
         {
             let fields: Vec<_> = line.split(' ').collect();
             ensure!(fields.len() == 4, "Invalid Git blame header");
@@ -1437,7 +1434,7 @@ fn check_object_size(repo: &Repository, oid: git2::Oid) -> Result<(usize, Object
 /// or `tag^{commit}` is an unknown revision: libgit2 would load the object it names before
 /// the caller could check that object's size.
 fn resolve_revision(repo: &Repository, revision: &str) -> Result<git2::Oid> {
-    if revision.len() == 40 {
+    if crate::git_ids::is_full_commit_id(revision) {
         if let Ok(oid) = git2::Oid::from_str(revision) {
             if repo.odb()?.exists(oid) {
                 return Ok(oid);

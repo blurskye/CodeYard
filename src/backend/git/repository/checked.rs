@@ -888,10 +888,7 @@ fn is_retained_object_ref(reference: &str) -> bool {
     reference
         .strip_prefix("refs/codeyard/objects/")
         .is_some_and(|id| {
-            id.len() == 40
-                && id
-                    .bytes()
-                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            crate::git_ids::is_full_commit_id(id) && !id.bytes().any(|byte| byte.is_ascii_uppercase())
         })
 }
 

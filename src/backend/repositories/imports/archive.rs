@@ -159,10 +159,7 @@ fn git_object_path(path: &str) -> bool {
     {
         return directory.len() == 2
             && file.len() == 38
-            && directory
-                .bytes()
-                .chain(file.bytes())
-                .all(|byte| byte.is_ascii_hexdigit());
+            && crate::git_ids::is_full_commit_id(format!("{directory}{file}"));
     }
     false
 }

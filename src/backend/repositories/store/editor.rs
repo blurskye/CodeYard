@@ -150,7 +150,7 @@ fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoErro
         return Err(invalid("Invalid branch name."));
     }
     if expected_revision != "unborn"
-        && (expected_revision.len() != 40 || git2::Oid::from_str(expected_revision).is_err())
+        && !crate::git_ids::is_full_commit_id(expected_revision)
     {
         return Err(invalid("A complete expected branch revision is required."));
     }
