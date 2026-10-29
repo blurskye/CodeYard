@@ -1,5 +1,6 @@
 use crate::backend::db::{
-    action_settings::{policy_update, Policy, Refusal, Scope, Setting},
+    action_settings::{policy_update, Policy, PolicyPage, Refusal, Scope, Setting},
+    credentials::Actor,
     organizations::{self, OrganizationOutcome},
 };
 use anyhow::{ensure, Result};
@@ -8,18 +9,19 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 
 async fn authority(
     tx: &mut Transaction<'_, Postgres>,
-    actor: i64,
+    actor: &Actor,
     scope: &Scope,
     write: bool,
+    organization_permission: &str,
 ) -> Result<(&'static str, &'static str, i64)> {
     match scope {
         Scope::Repository(repo) => {
             let allowed = if write {
-                super::discussions::lock_repository_mutation_authority(tx, actor, *repo).await?
+                super::discussions::lock_repository_mutation_authority(tx, actor.user_id, *repo).await?
             } else {
-                super::discussions::lock_policy_authority(tx, actor, *repo, false).await?
+                super::discussions::lock_policy_authority(tx, actor.user_id, *repo, false).await?
             };
-            ensure!(allowed, Refusal::Denied);
+            ensure!(allowed && super::credentials::repository(tx, actor, *repo, "administration", write).await?, Refusal::Denied);
             Ok(("repo_actions_settings", "repo_id", *repo))
         }
         Scope::Organization(name) => {
@@ -29,12 +31,13 @@ async fn authority(
                 .await?
                 .ok_or(Refusal::Missing)?;
             let role = if write {
-                super::organizations::authority::authority(tx, actor, org).await?
+                super::organizations::authority::authority(tx, actor.user_id, org).await?
             } else {
-                super::organizations::authority::read_authority(tx, actor, org).await?
+                super::organizations::authority::read_authority(tx, actor.user_id, org).await?
             };
             ensure!(
-                matches!(role, OrganizationOutcome::Applied(role) if organizations::administers(role)),
+                matches!(role, OrganizationOutcome::Applied(role) if organizations::administers(role))
+                    && super::credentials::organization(tx, actor, org, organization_permission, write).await?,
                 Refusal::Denied
             );
             Ok(("org_actions_settings", "org_id", org))
@@ -66,14 +69,18 @@ pub async fn effective(pool: &PgPool, repo: i64) -> Result<(Value, Value)> {
 
 pub async fn settings(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<Actor>,
     scope: &Scope,
-    update: Option<(Setting, &Value)>,
+    setting: Setting,
+    update: Option<&Value>,
 ) -> Result<Value> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    let (table, column, id) = authority(&mut tx, actor, scope, update.is_some()).await?;
+    if update.is_none() { sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?; }
+    let (table, column, id) = authority(&mut tx, &actor, scope, update.is_some(), setting.organization_permission()).await?;
+    let locking = if update.is_some() { " FOR UPDATE" } else { "" };
     let stored: Option<String> = sqlx::query_scalar(&format!(
-        "SELECT rest_settings FROM {table} WHERE {column}=$1 FOR UPDATE"
+        "SELECT rest_settings FROM {table} WHERE {column}=$1{locking}"
     ))
     .bind(id)
     .fetch_optional(&mut *tx)
@@ -96,7 +103,7 @@ pub async fn settings(
             maximum = maximum.min(days);
         }
     }
-    if let Some((setting, input)) = update {
+    if let Some(input) = update {
         setting.update(&mut stored, input, maximum)?;
         sqlx::query(&format!("INSERT INTO {table}({column},rest_settings) VALUES($1,$2) ON CONFLICT({column}) DO UPDATE SET rest_settings=EXCLUDED.rest_settings,updated_at=NOW()")).bind(id).bind(stored.to_string()).execute(&mut *tx).await?;
     }
@@ -107,21 +114,31 @@ pub async fn settings(
 
 pub async fn policies(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<Actor>,
     scope: &Scope,
     id: Option<i64>,
     change: Option<Option<&Value>>,
-) -> Result<Vec<Policy>> {
+    offset: i64,
+    limit: i64,
+) -> Result<PolicyPage> {
+    ensure!(offset >= 0 && (1..=100).contains(&limit) && (id.is_none() && change.is_none() || offset == 0), Refusal::Invalid);
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    let (_, column, scope_id) = authority(&mut tx, actor, scope, change.is_some()).await?;
-    let mut rows: Vec<Policy> = sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND (CAST($2 AS BIGINT) IS NULL OR id=$2) ORDER BY id FOR UPDATE")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?;
+    if change.is_none() { sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?; }
+    let (_, column, scope_id) = authority(&mut tx, &actor, scope, change.is_some(), "organization_administration").await?;
+    let total: i64 = if change.is_none() {
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM actions_policies WHERE {column}=$1 AND ($2::bigint IS NULL OR id=$2)"))
+            .bind(scope_id).bind(id).fetch_one(&mut *tx).await?
+    } else { 0 };
+    let locking = if change.is_some() { " FOR UPDATE" } else { "" };
+    let mut rows: Vec<Policy> = if change.is_some() && id.is_none() { Vec::new() } else {
+        sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND ($2::bigint IS NULL OR id=$2) ORDER BY id LIMIT $3 OFFSET $4{locking}"))
+            .bind(scope_id).bind(id).bind(limit).bind(offset).fetch_all(&mut *tx).await?
+    };
     ensure!(id.is_none() || !rows.is_empty(), Refusal::Missing);
     if let Some(change) = change {
         if let Some(input) = change {
-            let data = policy_update(
-                id.and_then(|_| rows.first().map(|r| r.data.as_str())),
-                input,
-            )?;
+            let data = policy_update(id.and_then(|_| rows.first().map(|r| r.data.as_str())), input)?;
             let row = if let Some(id) = id {
                 sqlx::query_as("UPDATE actions_policies SET data=$2,updated_at=NOW() WHERE id=$1 RETURNING id,data,created_at,updated_at").bind(id).bind(data.to_string()).fetch_one(&mut *tx).await?
             } else {
@@ -130,13 +147,11 @@ pub async fn policies(
             rows = vec![row];
         } else {
             let id = id.ok_or(Refusal::Missing)?;
-            sqlx::query("DELETE FROM actions_policies WHERE id=$1")
-                .bind(id)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query("DELETE FROM actions_policies WHERE id=$1").bind(id).execute(&mut *tx).await?;
             rows.clear();
         }
     }
+    let total = if change.is_some() { rows.len() as i64 } else { total };
     tx.commit().await?;
-    Ok(rows)
+    Ok(PolicyPage { total, rows })
 }

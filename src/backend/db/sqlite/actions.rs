@@ -149,13 +149,15 @@ pub async fn get_repo_actions_settings(
 
 pub async fn set_repo_enabled(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
         Refusal::Denied
     );
     sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
@@ -169,13 +171,15 @@ pub async fn set_repo_enabled(
 
 pub async fn save_repo_actions_settings(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     settings: &RepoActionsSettings,
 ) -> Result<()> {
+    let actor = actor_id.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor_id, repo_id).await?,
+        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo_id).await?
+            && super::credentials::repository(&mut tx, &actor, repo_id, "administration", true).await?,
         Refusal::Denied
     );
     let result = sqlx::query(

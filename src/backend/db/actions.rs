@@ -187,7 +187,7 @@ native_operation!(crate::backend::db::postgres::actions::get_repo_actions_settin
 native_operation!(crate::backend::db::postgres::actions::set_repo_enabled,
     crate::backend::db::sqlite::actions::set_repo_enabled,
     /// Changes only the execution switch, preserving native limits and engine selection.
-    fn set_repo_enabled(pool: &DbPool, actor: i64, repo: i64, enabled: bool) -> Result<()>);
+    fn set_repo_enabled(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, enabled: bool) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::actions::save_repo_actions_settings,
     crate::backend::db::sqlite::actions::save_repo_actions_settings,
@@ -195,7 +195,7 @@ native_operation!(crate::backend::db::postgres::actions::save_repo_actions_setti
     /// repository and it is not archived.
     fn save_repo_actions_settings(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<super::credentials::Actor>,
     repo_id: i64,
     settings: &RepoActionsSettings,
 ) -> Result<()>);
