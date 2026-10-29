@@ -54,8 +54,10 @@ Call `vm::JobVm::start`, `copy_in`, `run`, `copy_out`, then `stop` directly. The
 Windows guest paths and execute PowerShell scripts using GitHub's Stop/LASTEXITCODE
 conventions. Output streams line by line. Directory copies use SFTP-backed `scp -r`,
 include dotfiles, merge into the destination, and do **not** propagate deletions.
-SCP follows local symbolic links; do not copy a tree containing links to sensitive
-host files. SSH exit status is limited to 0–255; 255 also denotes transport failure,
+Uploads require a Linux host and transfer a private descriptor-opened snapshot;
+symbolic links and special files are rejected without following them. Snapshots are
+limited to 100,000 entries, 128 directory levels, and 16 GiB. SSH exit status is
+limited to 0–255; 255 also denotes transport failure,
 whose diagnostics are sent to stderr.
 
 Every job gets a fresh qcow2 overlay and Ed25519 client key. Its public key is put
