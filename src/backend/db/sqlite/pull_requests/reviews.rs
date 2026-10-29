@@ -710,8 +710,10 @@ pub async fn save_pull_request_review(
             );
         }
     }
-    // Without a summary, the review needs inline comments of its own. The service checked this
-    // earlier; a discard in between would leave an empty review, so the count is read here.
+    let pending_body: Option<Option<String>> = sqlx::query_scalar("SELECT body FROM pr_reviews WHERE pull_request_id=?1 AND author_id=?2 AND state='pending'")
+        .bind(pr_id).bind(author_id).fetch_optional(&mut *tx).await?;
+    let body = body.or_else(|| pending_body.as_ref().and_then(|body| body.as_deref()));
+    // Resolve omitted text and validate the nonempty review under the same lock as submission.
     if state != "approved" && body.is_none_or(|body| body.trim().is_empty()) {
         let inline: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pr_comments c JOIN pr_reviews v ON v.id = c.review_id

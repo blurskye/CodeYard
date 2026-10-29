@@ -183,17 +183,6 @@ pub async fn create_pull_request_review(
             message: "state must be one of: approved, changes_requested, commented".to_owned(),
         });
     }
-    // Approvals may stand alone. Comments and change requests must say why, in the summary or in the
-    // inline comments of the pending review that this review submits.
-    if review_state != "approved"
-        && req.body.as_deref().unwrap_or("").trim().is_empty()
-        && !has_pending_comments(pool, pull_request.id, user.id).await?
-    {
-        return Err(OperationError::Invalid {
-            code: "validation_error",
-            message: "A review body is required unless the review is approved".to_owned(),
-        });
-    }
     check_optional_text(req.body.as_deref())?;
 
     if review_state == "approved" && pull_request.author_id == user.id {
@@ -397,18 +386,6 @@ pub async fn create_pull_request_review(
     }
 
     Ok(review)
-}
-
-/// Whether the author has inline comments waiting in a pending review.
-async fn has_pending_comments(
-    pool: &db::DbPool,
-    pr_id: i64,
-    author_id: i64,
-) -> Result<bool, OperationError> {
-    db::pull_requests::reviews::list_pending_review_comments(pool, pr_id, author_id)
-        .await
-        .map(|comments| !comments.is_empty())
-        .map_err(database_error)
 }
 
 pub async fn dismiss_pull_request_review(
