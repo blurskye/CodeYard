@@ -17,12 +17,16 @@ pub(crate) async fn form(
     let Some(actor) = ctx.user.as_ref() else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to manage variables.");
     };
+    let authority = db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let name = field(form, "name").to_ascii_uppercase();
     let result = if action == "variable-save" {
         let previous = field(form, "previous").to_ascii_uppercase();
         db::variables::save(
             &ctx.state.pool,
-            actor.id,
+            authority,
             loaded.repository.id,
             (!previous.is_empty()).then_some(previous.as_str()),
             &name,
@@ -30,7 +34,7 @@ pub(crate) async fn form(
         )
         .await
     } else {
-        db::variables::delete(&ctx.state.pool, actor.id, loaded.repository.id, &name).await
+        db::variables::delete(&ctx.state.pool, authority, loaded.repository.id, &name).await
     };
     match result {
         Ok(()) => ctx.redirect(&format!("{}/settings?tab=secrets", loaded.chrome.base())),

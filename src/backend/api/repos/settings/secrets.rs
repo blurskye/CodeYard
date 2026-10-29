@@ -110,7 +110,10 @@ pub async fn create_or_update_secret(
         repository.id,
         &name,
         &body.value,
-        Some(user.id),
+        Some(db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        }),
     )
     .await
     .map_err(secret_error)?;
@@ -150,7 +153,10 @@ pub async fn delete_secret(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let deleted = db::secrets::delete_secret(&state.pool, user.id, repository.id, &name)
+    let deleted = db::secrets::delete_secret(&state.pool, db::users::accounts::AccountActor::Session {
+        user_id: user.id,
+        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    }, repository.id, &name)
         .await
         .map_err(secret_error)?;
 
@@ -174,6 +180,10 @@ pub(crate) async fn form(
     let Some(actor) = ctx.user.as_ref() else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to manage secrets.");
     };
+    let authority = db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let (kind, tab) = match field(form, "secret_kind").as_str() {
         "" | "actions" => (db::secrets::SecretKind::Actions, "secrets"),
         "dependabot" => (db::secrets::SecretKind::Dependabot, "dependabot-secrets"),
@@ -190,7 +200,7 @@ pub(crate) async fn form(
                 (loaded.repository.id, kind),
                 &name,
                 &field(form, "value"),
-                Some(actor.id),
+                Some(authority),
             )
             .await
             .map(|_| ())
@@ -198,7 +208,7 @@ pub(crate) async fn form(
             None => Err(secrets_unavailable()),
         }
     } else {
-        db::secrets::delete_secret_for(&ctx.state.pool, kind, actor.id, loaded.repository.id, &name)
+        db::secrets::delete_secret_for(&ctx.state.pool, kind, authority, loaded.repository.id, &name)
             .await
             .map_err(secret_error)
             .and_then(|deleted| {

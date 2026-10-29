@@ -20,6 +20,10 @@ pub(crate) async fn form(
             "Sign in to manage environment values.",
         );
     };
+    let authority = crate::backend::db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let environment = field(form, "environment");
     let name = field(form, "name");
     let previous = field(form, "previous");
@@ -35,7 +39,7 @@ pub(crate) async fn form(
         "environment-create" => {
             values::create(
                 &ctx.state.pool,
-                actor.id,
+                authority,
                 loaded.repository.id,
                 &environment,
             )
@@ -50,7 +54,7 @@ pub(crate) async fn form(
             values::save(
                 &ctx.state.pool,
                 ctx.state.secret_encryptor.as_deref(),
-                actor.id,
+                authority,
                 loaded.repository.id,
                 &environment,
                 &Save {
@@ -71,7 +75,7 @@ pub(crate) async fn form(
             };
             values::delete(
                 &ctx.state.pool,
-                actor.id,
+                authority,
                 loaded.repository.id,
                 &environment,
                 kind,

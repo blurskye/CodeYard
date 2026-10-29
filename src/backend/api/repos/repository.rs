@@ -920,6 +920,10 @@ async fn protection_form(
         Ok(user) => user.id,
         Err(response) => return response,
     };
+    let actor_id = db::users::accounts::AccountActor::Session {
+        user_id: actor_id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let pool = &ctx.state.pool;
     let repository = &loaded.repository;
     let section = view::settings::settings_section(action).unwrap_or("general");

@@ -198,7 +198,10 @@ pub async fn upsert_branch_protection_rule(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    let rule = save_rule(&state.pool, actor.id, &repository, req).await?;
+    let rule = save_rule(&state.pool, db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    }, &repository, req).await?;
     Ok(Json(rule_response(&state.pool, rule).await?))
 }
 
@@ -207,10 +210,12 @@ pub async fn upsert_branch_protection_rule(
 /// the actor administers the repository first.
 pub(in crate::backend::api::repos) async fn save_rule(
     pool: &db::DbPool,
-    actor_id: i64,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
     repository: &db::models::Repository,
     req: UpsertBranchProtectionRuleRequest,
 ) -> Result<db::models::BranchProtectionRule, (StatusCode, Json<ApiError>)> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let pattern = req.pattern.trim();
     db::repositories::protection::validate_branch_pattern(pattern)
         .map_err(|error| protection_write_error(error.into()))?;
@@ -301,6 +306,7 @@ pub(in crate::backend::api::repos) async fn save_rule(
         pool,
         db::repositories::protection::BranchProtectionRuleUpsert {
             actor_id,
+            credential: authority.credential(),
             repo_id: repository.id,
             pattern,
             require_pull_request: req.require_pull_request,
@@ -393,7 +399,10 @@ pub async fn delete_branch_protection_rule(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    delete_rule(&state.pool, actor.id, repository.id, &pattern).await?;
+    delete_rule(&state.pool, db::users::accounts::AccountActor::Session {
+        user_id: actor.id,
+        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    }, repository.id, &pattern).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -401,7 +410,7 @@ pub async fn delete_branch_protection_rule(
 /// this, so a missing rule is the same not-found answer in both.
 pub(in crate::backend::api::repos) async fn delete_rule(
     pool: &db::DbPool,
-    actor_id: i64,
+    actor_id: impl Into<db::users::accounts::AccountActor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
