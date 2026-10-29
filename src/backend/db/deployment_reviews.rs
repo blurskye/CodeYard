@@ -47,12 +47,22 @@ impl Input {
     }
 }
 
+pub(crate) fn execution_state(status: &str) -> Result<&'static str> {
+    Ok(match status {
+        "running" => "in_progress",
+        "success" => "success",
+        "failed" => "failure",
+        "cancelled" => "error",
+        _ => anyhow::bail!(super::action_settings::Refusal::Invalid),
+    })
+}
+
 native_operation!(crate::backend::db::postgres::deployment_reviews::pending,
     crate::backend::db::sqlite::deployment_reviews::pending,
     fn pending(pool: &DbPool, repo: i64, run: i64, actor: Option<i64>) -> Result<Vec<Pending>>);
 native_operation!(crate::backend::db::postgres::deployment_reviews::review,
     crate::backend::db::sqlite::deployment_reviews::review,
-    fn review(pool: &DbPool, actor: i64, repo: i64, run: i64, input: &Input) -> Result<Vec<Deployment>>);
+    fn review(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, run: i64, input: &Input) -> Result<Vec<Deployment>>);
 native_operation!(crate::backend::db::postgres::deployment_reviews::history,
     crate::backend::db::sqlite::deployment_reviews::history,
     fn history(pool: &DbPool, repo: i64, run: i64) -> Result<Vec<Review>>);

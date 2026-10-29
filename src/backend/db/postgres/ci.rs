@@ -688,6 +688,7 @@ async fn claim_queued_run(
                 .execute(&mut *tx)
                 .await?;
         }
+        super::deployment_reviews::sync_execution(&mut tx, run.id, "running").await?;
         ci_commit_status(&mut tx, &run, "pending", "CI run in progress").await?;
         tx.commit().await?;
         return Ok(Some(run));
@@ -763,6 +764,7 @@ async fn finish_in_tx(
             .execute(&mut **tx)
             .await?;
     }
+    super::deployment_reviews::sync_execution(tx, run.id, status).await?;
     let state = if status == "success" {
         "success"
     } else {

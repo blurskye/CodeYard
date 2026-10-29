@@ -8,6 +8,9 @@ pub(crate) async fn live(tx: &mut Transaction<'_, Postgres>, actor: &Actor, writ
         None => Ok(true),
         Some(Credential::Session(session)) => super::users::transitions::live_session(tx, actor.user_id, session).await,
         Some(Credential::Token { id, hash }) => {
+            // Installation revocation takes this row before deleting its personal tokens.
+            let _: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=$1 FOR SHARE OF i")
+                .bind(id).fetch_optional(&mut **tx).await?;
             let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND (NOT $4 OR scope='write') FOR SHARE")
                 .bind(id).bind(actor.user_id).bind(hash).bind(write).fetch_optional(&mut **tx).await?;
             let Some(expiry) = expiry else { return Ok(false); };
@@ -43,10 +46,10 @@ pub(crate) async fn repository(tx: &mut Transaction<'_, Postgres>, actor: &Actor
     let oauth: Option<(String, String)> = sqlx::query_as("SELECT client_id,scopes FROM oauth_app_tokens WHERE token_id=$1 FOR SHARE")
         .bind(id).fetch_optional(&mut **tx).await?;
     if let Some((client, scopes)) = oauth {
-        let active: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF a")
+        let active: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password")
             .bind(&client).fetch_optional(&mut **tx).await?;
         if active.is_none() && client != crate::backend::identity::oauth_apps::CLI_CLIENT { return Ok(false); }
-        let app: Option<(i64, String)> = sqlx::query_as("SELECT id,permissions FROM github_apps WHERE client_id=$1 FOR SHARE")
+        let app: Option<(i64, String)> = sqlx::query_as("SELECT id,permissions FROM github_apps WHERE client_id=$1")
             .bind(&client).fetch_optional(&mut **tx).await?;
         if let Some((app, permissions)) = app {
             return Ok(crate::backend::db::credentials::app_permission(&permissions, "[]", repo, permission, write)?
@@ -76,7 +79,7 @@ pub(crate) async fn organization(tx: &mut Transaction<'_, Postgres>, actor: &Act
     let oauth: Option<(String, String)> = sqlx::query_as("SELECT client_id,scopes FROM oauth_app_tokens WHERE token_id=$1 FOR SHARE")
         .bind(id).fetch_optional(&mut **tx).await?;
     if let Some((client, scopes)) = oauth {
-        let active: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF a")
+        let active: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password")
             .bind(&client).fetch_optional(&mut **tx).await?;
         return Ok((active.is_some() || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
             && crate::backend::identity::oauth_apps::allows(&scopes, &crate::backend::db::credentials::oauth_organization_path(permission), write));

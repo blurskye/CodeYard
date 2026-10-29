@@ -26,7 +26,7 @@ async fn pending(
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let run = super::run(&state, repo.id, id).await?;
     if write {
-        let actor = auth.ok_or_else(auth::required)?.user.id;
+        let actor = auth.ok_or_else(auth::required)?.database_actor(&headers)?;
         let Json(input) = Json::<deployment_reviews::Input>::from_request(request, &state)
             .await
             .map_err(|_| Error::validation("DeploymentReview", "configuration", "invalid"))?;

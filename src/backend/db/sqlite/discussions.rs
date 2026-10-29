@@ -98,6 +98,14 @@ async fn lock_discussion_authority(
     }))
 }
 
+/// An effect by a configured repository reader, without issue interaction restrictions.
+pub(crate) async fn lock_read_authority(
+    tx: &mut Transaction<'_, Sqlite>, actor_id: i64, repo_id: i64,
+) -> Result<bool> {
+    Ok(lock_discussion_authority(tx, actor_id, repo_id, false).await?
+        .is_some_and(|authority| authority.access.can_read() || authority.personal_override))
+}
+
 pub(crate) async fn lock_triage_authority(
     tx: &mut Transaction<'_, Sqlite>,
     actor_id: i64,
