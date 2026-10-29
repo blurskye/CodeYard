@@ -570,7 +570,9 @@ pub async fn put_maven_file(
     .bind(&file.blob.digest)
     .execute(&mut *tx)
     .await?;
-    // Replaced SNAPSHOT files are collectible; deleted versions retain their own files for recovery.
+    // Keep snapshot-referenced bytes available to an online backup after their final reference goes.
+    sqlx::query("UPDATE package_blobs SET expires_at=MAX(expires_at,$2) WHERE digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE p.repo_id=$1 AND p.package_type='maven' AND NOT EXISTS(SELECT 1 FROM package_files f WHERE f.version_id=vb.version_id AND f.digest=vb.digest))")
+        .bind(p.repo_id).bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM package_version_blobs WHERE version_id IN (SELECT v.id FROM package_versions v JOIN packages p ON p.id=v.package_id WHERE p.repo_id=$1 AND p.package_type='maven') AND NOT EXISTS(SELECT 1 FROM package_files f WHERE f.version_id=package_version_blobs.version_id AND f.digest=package_version_blobs.digest)").bind(p.repo_id).execute(&mut *tx).await?;
     // Repository/group index updates do not replace the version's artifact digest.
     sqlx::query("UPDATE package_versions SET digest=CASE WHEN $4 THEN digest ELSE $2 END,updated_at=$3 WHERE id=$1")
@@ -770,16 +772,16 @@ pub async fn reserve_blob(
     super::files::charge_upload_in_transaction(&mut tx, actor.id.ok_or(Refusal::Unauthorized)?, "package", blob.size.max(1)).await?;
     let now = packages::now();
     sqlx::query("INSERT INTO package_blobs(digest,size,expires_at) VALUES($1,$2,$3) ON CONFLICT(digest) DO NOTHING")
-        .bind(&blob.digest).bind(blob.size).bind(now+86400).execute(&mut *tx).await?;
+        .bind(&blob.digest).bind(blob.size).bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     let (size, ready, deleting): (i64, bool, bool) =
         sqlx::query_as("SELECT size,ready,deleting FROM package_blobs WHERE digest=$1")
             .bind(&blob.digest)
             .fetch_one(&mut *tx)
             .await?;
     ensure!(size == blob.size && !deleting, Refusal::Blob);
-    sqlx::query("UPDATE package_blobs SET expires_at=$2 WHERE digest=$1")
+    sqlx::query("UPDATE package_blobs SET expires_at=MAX(expires_at,$2) WHERE digest=$1")
         .bind(&blob.digest)
-        .bind(now + 86400)
+        .bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS)
         .execute(&mut *tx)
         .await?;
     sqlx::query("INSERT INTO package_blob_grants(package_id,digest,expires_at) VALUES($1,$2,$3) ON CONFLICT(package_id,digest) DO UPDATE SET expires_at=excluded.expires_at")
@@ -891,6 +893,8 @@ pub async fn garbage(pool: &SqlitePool) -> Result<Vec<String>> {
         .bind(now)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("UPDATE package_blobs SET expires_at=MAX(expires_at,$2) WHERE digest IN (SELECT vb.digest FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id JOIN packages p ON p.id=v.package_id WHERE v.deleted_at<=$1 OR p.deleted_at<=$1)")
+        .bind(now - 30 * 86400).bind(now + crate::backend::db::files::RESTORE_WINDOW_SECONDS).execute(&mut *tx).await?;
     sqlx::query(
         "DELETE FROM packages WHERE id IN (SELECT id FROM packages WHERE deleted_at<=$1 LIMIT 100)",
     )

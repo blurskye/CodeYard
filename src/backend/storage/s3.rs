@@ -97,6 +97,16 @@ fn public_url_host(value: &str) -> Result<ConfiguredHost> {
 }
 
 impl S3Config {
+    pub fn optional_from_env() -> Result<Option<Self>> {
+        if ["S3_ENDPOINT", "S3_PUBLIC_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_REGION"]
+            .iter().any(|name| std::env::var_os(name).is_some())
+        {
+            Self::from_env().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn from_env() -> Result<Self> {
         let required = |name| {
             std::env::var(name)
