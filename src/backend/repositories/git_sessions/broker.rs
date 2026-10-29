@@ -55,7 +55,7 @@ pub(super) struct Operation {
 pub(super) struct HookState {
     pub(super) proposed: Option<Vec<RefUpdate>>,
     pub(super) previous_refs: Vec<String>,
-    pub(super) secret_bypasses: Vec<String>,
+    pub(super) secret_bypasses: Vec<crate::backend::repositories::secret_scanning::push_protection::ApprovedBypass>,
     pub(super) post_started: bool,
     pub(super) dispatch_failed: bool,
     // Acquired in pre-receive through the description already inherited by the child.
