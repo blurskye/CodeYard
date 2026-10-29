@@ -631,7 +631,7 @@ impl Job {
         let mut env = self.environment(env);
         env.insert("GITHUB_EVENT_PATH".into(), self.restore_event()?.display().to_string());
         let files = self.active_files.clone();
-        let mut command = until_deadline(
+        let (mut command, container) = until_deadline(
             deadline,
             self.podman.docker_action(
                 image,
@@ -660,11 +660,16 @@ impl Job {
             env.get("ACTIONS_ALLOW_UNSECURE_COMMANDS").is_some_and(|value| value.eq_ignore_ascii_case("true")),
         )
         .await;
+        let cleaned = self.podman.cleanup_action(&container).await;
+        if !cleaned {
+            self.options.containment_lost.store(true, std::sync::atomic::Ordering::Release);
+        }
         self.command_stopped = commands.stopped.take();
         self.matchers = commands.matchers;
         commands::update_outputs(outputs, commands.outputs);
         self.saved_env.extend(commands.env);
         self.paths.extend(commands.paths);
+        anyhow::ensure!(cleaned, "Docker action cleanup failed; refusing further execution");
         self.read_files(&files, outputs, None)?;
         result
     }

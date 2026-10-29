@@ -256,7 +256,7 @@ impl Podman {
         entrypoint: Option<&str>,
         args: &[String],
         deadline: std::time::Instant,
-    ) -> Result<Command> {
+    ) -> Result<(Command, String)> {
         anyhow::ensure!(!self.deny_docker, "Docker actions require CI_EXECUTION_MODE=podman");
         let built = directory.join(image).is_file() || image == "Dockerfile"
             || image.ends_with("/Dockerfile")
@@ -322,68 +322,90 @@ impl Podman {
             command.args(["--entrypoint", entrypoint]);
         }
         command.arg(image).args(args);
-        Ok(command)
+        Ok((command, id))
+    }
+
+    pub async fn cleanup_action(&mut self, id: &str) -> bool {
+        let mut pending = Cleanup { url: self.url.clone(), containers: vec![id.into()], network: None, images: vec![] };
+        if !pending.run().await { return false; }
+        self.containers.retain(|container| container != id);
+        true
     }
 
     pub async fn cleanup(&mut self) -> bool {
-        let mut succeeded = true;
-        for id in std::mem::take(&mut self.containers).into_iter().rev() {
-            succeeded &= self
-                .output(&["rm".into(), "--force".into(), "--volumes".into(), id])
-                .await
-                .is_ok();
-        }
-        if let Some(network) = self.network.take() {
-            succeeded &= self
-                .output(&["network".into(), "rm".into(), network])
-                .await
-                .is_ok();
-        }
-        for image in std::mem::take(&mut self.images) {
-            succeeded &= self
-                .output(&["rmi".into(), "--force".into(), image])
-                .await
-                .is_ok();
-        }
+        // Keep the live owner unchanged while awaiting: dropping this future must not forget
+        // identifiers. Removal is idempotent, including after a lost client reply.
+        let mut pending = Cleanup {
+            url: self.url.clone(), containers: self.containers.clone(),
+            network: self.network.clone(), images: self.images.clone(),
+        };
+        let succeeded = pending.run().await;
+        self.containers = pending.containers;
+        self.network = pending.network;
+        self.images = pending.images;
         succeeded
+    }
+}
+
+struct Cleanup {
+    url: Option<String>,
+    containers: Vec<String>,
+    network: Option<String>,
+    images: Vec<String>,
+}
+impl Cleanup {
+    fn empty(&self) -> bool {
+        self.containers.is_empty() && self.network.is_none() && self.images.is_empty()
+    }
+
+    async fn remove(&self, args: &[&str]) -> bool {
+        let mut command = Command::new("podman");
+        if let Some(url) = &self.url { command.args(["--url", url]); }
+        command.args(args);
+        super::process::output(&mut command, Duration::from_secs(5)).await
+            .is_ok_and(|output| output.status.success())
+    }
+
+    async fn run(&mut self) -> bool {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            for attempt in 0..3 {
+                for id in self.containers.clone().into_iter().rev() {
+                    if self.remove(&["rm", "--ignore", "--force", "--volumes", &id]).await {
+                        self.containers.retain(|container| container != &id);
+                    }
+                }
+                // Networks and images cannot be retired until all their consumers are gone.
+                if self.containers.is_empty() {
+                    if let Some(network) = self.network.clone() {
+                        if self.remove(&["network", "rm", "--ignore", &network]).await { self.network = None; }
+                    }
+                    for image in self.images.clone() {
+                        if self.remove(&["rmi", "--ignore", "--force", &image]).await {
+                            self.images.retain(|candidate| candidate != &image);
+                        }
+                    }
+                }
+                if self.empty() { return true; }
+                if attempt < 2 { tokio::time::sleep(Duration::from_secs(1)).await; }
+            }
+            false
+        }).await.unwrap_or(false)
     }
 }
 
 impl Drop for Podman {
     fn drop(&mut self) {
-        // Cancellation may drop setup or an action before the normal job cleanup.
-        for id in self.containers.drain(..) {
-            let mut command = std::process::Command::new("podman");
-            if let Some(url) = &self.url {
-                command.args(["--url", url]);
+        let mut pending = Cleanup {
+            url: self.url.clone(), containers: std::mem::take(&mut self.containers),
+            network: self.network.take(), images: std::mem::take(&mut self.images),
+        };
+        if pending.empty() { return; }
+        // A dropped job may be running inside Tokio. A separate, joined runtime lets the same
+        // ordered cleanup finish even during standalone runtime shutdown; no children detach.
+        let _ = std::thread::spawn(move || {
+            if let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                if !runtime.block_on(pending.run()) { eprintln!("Container cleanup failed"); }
             }
-            let _ = command
-                .args(["rm", "--force", "--volumes", &id])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        }
-        if let Some(network) = self.network.take() {
-            let mut command = std::process::Command::new("podman");
-            if let Some(url) = &self.url {
-                command.args(["--url", url]);
-            }
-            let _ = command
-                .args(["network", "rm", &network])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        }
-        for image in self.images.drain(..) {
-            let mut command = std::process::Command::new("podman");
-            if let Some(url) = &self.url {
-                command.args(["--url", url]);
-            }
-            let _ = command
-                .args(["rmi", "--force", &image])
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .spawn();
-        }
+        }).join();
     }
 }

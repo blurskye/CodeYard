@@ -85,6 +85,8 @@ pub struct Options {
     pub action_offline_mode: bool,
     #[arg(long, hide = true)]
     pub deny_docker: bool,
+    #[arg(skip)]
+    containment_lost: Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn validate_replay_matrix(expected: &BTreeMap<u32, serde_json::Value>, plans: &[PlannedJob]) -> Result<()> {
@@ -674,6 +676,8 @@ impl WorkflowRun {
             let mut ancestors = BTreeMap::<String, Status>::new();
             let mut successful = true;
             for id in workflow::job_order(&workflow)? {
+                anyhow::ensure!(!options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
+                    "Container cleanup failed; refusing further execution");
                 if *cancel.borrow() {
                     successful = false;
                     break;
@@ -1258,6 +1262,7 @@ async fn run_job(
     let continued = plan.continue_on_error;
     let cancelled = cancel.clone();
     let mut interrupted = None;
+    let containment = options.containment_lost.clone();
     let result = async {
         let temp = crate::fs::private_tempdir("codeyard-actions-", None)?;
         let prefix = format!(
@@ -1327,8 +1332,12 @@ async fn run_job(
         let cleanup=Instant::now();
         job.log.start_step(job.public_step,"Complete job");
         let cleaned=job.podman.cleanup().await;
-        if !cleaned {job.log.line("Container cleanup failed");}
+        if !cleaned {
+            containment.store(true, std::sync::atomic::Ordering::Release);
+            job.log.line("Container cleanup failed");
+        }
         job.log.finish_step(job.public_step,if cleaned{Conclusion::Success}else{Conclusion::Failure},cleanup);
+        anyhow::ensure!(cleaned, "Container cleanup failed");
         result
     }
     .await;
@@ -1357,7 +1366,7 @@ async fn run_job(
             .try_into()
             .unwrap_or(u64::MAX),
     });
-    if continued && result.result == "failure" {
+    if continued && result.result == "failure" && !containment.load(std::sync::atomic::Ordering::Acquire) {
         log.line("Job failure ignored (continue-on-error)");
         result.result = "success".into();
     }
@@ -1471,6 +1480,8 @@ impl Job {
         let steps = self.plan.steps.clone();
         let mut outputs = BTreeMap::new();
         for step in &steps {
+            anyhow::ensure!(!self.options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
+                "Container cleanup failed; refusing further execution");
             self.public_step += 1;
             let started = Instant::now();
             if let Err(error) = self.step(step, 0, &mut outputs).await {
