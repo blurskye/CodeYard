@@ -709,12 +709,12 @@ fn event_row(event: &Event, kind: Kind) -> Element {
         "assigned" => (
             glyph(Glyph::Person),
             "Assigned",
-            rsx! { "assigned " NavLink { href: format!("/{}", encode_component(detail)), "{detail}" } },
+            rsx! { "assigned " NavLink { href: crate::webui::profile_path(detail), "{detail}" } },
         ),
         "unassigned" => (
             glyph(Glyph::Person),
             "Unassigned",
-            rsx! { "unassigned " NavLink { href: format!("/{}", encode_component(detail)), "{detail}" } },
+            rsx! { "unassigned " NavLink { href: crate::webui::profile_path(detail), "{detail}" } },
         ),
         "milestoned" => (
             glyph(Glyph::Milestone),

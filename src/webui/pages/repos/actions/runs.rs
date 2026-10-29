@@ -94,15 +94,7 @@ pub fn query_url(base: &str, query: &BTreeMap<String, String>, changes: &[(&str,
 }
 
 pub fn workflow_name(path: &str) -> String {
-    path.split(',')
-        .next()
-        .unwrap_or(path)
-        .rsplit('/')
-        .next()
-        .unwrap_or(path)
-        .trim_end_matches(".yaml")
-        .trim_end_matches(".yml")
-        .to_string()
+    crate::webui::workflow_filename(path.split(',').next().unwrap_or(path))
 }
 
 pub fn matches_filters(run: &Run, query: &BTreeMap<String, String>) -> bool {

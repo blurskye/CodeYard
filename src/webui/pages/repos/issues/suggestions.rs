@@ -175,7 +175,7 @@ pub(super) fn panel(
                         if let Some(actor) = &row.actor {
                             p {
                                 "Proposed by "
-                                NavLink { href: format!("/{}", crate::webui::encode_component(actor)),
+                                NavLink { href: crate::webui::profile_path(actor),
                                     "{actor}"
                                 }
                             }

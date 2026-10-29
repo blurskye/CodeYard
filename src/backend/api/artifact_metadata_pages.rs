@@ -235,7 +235,7 @@ async fn show(
     ctx.page_model(
         "Artifact inventory",
         AppPage::ArtifactMetadata(view::Page {
-            organization_href: format!("/{}", encode_component(&organization.name)),
+            organization_href: crate::webui::profile_path(&organization.name),
             organization: organization.name,
             base,
             digest,

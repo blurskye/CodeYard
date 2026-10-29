@@ -46,6 +46,7 @@ fn fixtures() -> Vec<Page> {
         content: "<script>alert(1)</script>".into(),
         binary: false,
         size: 29,
+        download_limit: Some((32 * 1024 * 1024, "32 MiB".into())),
         offset: 0,
         first_line: Some(1),
         next: Some(256),

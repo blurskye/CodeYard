@@ -131,12 +131,9 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                         }
                         response.json::<RunLogUpdate>().await.map_err(|_| ())
                     };
-                    let timeout = gloo_timers::future::TimeoutFuture::new(10_000);
-                    futures_util::pin_mut!(request, timeout);
-                    let result = match futures_util::future::select(request, timeout).await {
-                        futures_util::future::Either::Left((result, _)) => result,
-                        futures_util::future::Either::Right(_) => {
-                            controller.abort();
+                    let result = match crate::webui::navigation::load::with_abort_timeout(request, &controller, 10_000).await {
+                        Ok(result) => result,
+                        Err(()) => {
                             failure.set(true);
                             break;
                         }

@@ -62,12 +62,7 @@ pub fn ThemeForm(
                         };
                         // A stalled save gives the controls back instead of keeping them disabled.
                         let save = save_theme(token, target, next, notice, controller.signal());
-                        let timeout = gloo_timers::future::TimeoutFuture::new(SAVE_TIMEOUT_MS);
-                        futures_util::pin_mut!(save, timeout);
-                        if let futures_util::future::Either::Right(_) =
-                            futures_util::future::select(save, timeout).await
-                        {
-                            controller.abort();
+                        if crate::webui::navigation::load::with_abort_timeout(save, &controller, SAVE_TIMEOUT_MS).await.is_err() {
                             notice.set("Appearance could not be saved. Please try again.".into());
                         }
                     });

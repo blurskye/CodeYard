@@ -61,7 +61,7 @@ pub(super) fn panel(page: &Page) -> Element {
             for user in &panel.users {
                 li {class:"org-row",key:"{user.id}",
                     div {class:"org-row-main",
-                        h3 {NavLink {class:"org-row-link",href:format!("/{}",crate::webui::encode_component(&user.username)),"{user.username}"}}
+                        h3 {NavLink {class:"org-row-link",href:crate::webui::profile_path(&user.username),"{user.username}"}}
                         if user.direct {p {"Directly assigned"}}
                         for team in &user.teams {p {key:"{team.id}","Inherited from " NavLink {href:format!("/settings/organizations/{}?tab=teams&team={}",org.id,team.id),"{team.name}"}}}
                     }

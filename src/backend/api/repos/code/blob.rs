@@ -435,6 +435,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         content,
         binary,
         size,
+        download_limit: Some(super::raw::download_limit()),
         offset: start,
         first_line: Some(first_line),
         next: if end < size && !binary {

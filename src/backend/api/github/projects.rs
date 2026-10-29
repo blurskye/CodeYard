@@ -90,9 +90,9 @@ pub(super) async fn document(state: &AppState, project: &Project, name: &str) ->
             crate::webui::encode_component(name)
         )));
         owner["html_url"] = serde_json::json!(format!(
-            "{}/orgs/{}",
+            "{}{}",
             crate::backend::api::http::config::link_origin(),
-            crate::webui::encode_component(name)
+            crate::webui::profile_path(name)
         ));
         owner["node_id"] = serde_json::json!(super::node_id::encode("O", project.owner_id));
     }

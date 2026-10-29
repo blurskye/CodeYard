@@ -1,7 +1,7 @@
 //! Recipient-scoped notification presentation and polling.
 use crate::webui::components::{Avatar, DraftInput};
 use crate::webui::encode_component;
-use crate::webui::navigation::{NavLink, RefreshLink};
+use crate::webui::navigation::{safe_page_target as safe_notification_link, NavLink, RefreshLink};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -89,18 +89,6 @@ pub struct NotificationsPage {
     pub before: Option<String>,
     #[serde(default)]
     pub older: Option<String>,
-}
-
-/// Stored notification URLs are not trusted navigation instructions.
-fn safe_notification_link(link: &str) -> bool {
-    let lower = link.to_ascii_lowercase();
-    link.starts_with('/')
-        && !link.starts_with("//")
-        && !link.contains(['\\', '\r', '\n'])
-        && !lower.contains("%5c")
-        && !lower.contains("%0d")
-        && !lower.contains("%0a")
-        && !lower.starts_with("/%2f")
 }
 
 fn notification_date(value: &str) -> String {

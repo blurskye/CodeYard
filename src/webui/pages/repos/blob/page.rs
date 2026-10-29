@@ -22,9 +22,6 @@ pub struct CodeOwnerError {
     pub kind: String,
 }
 
-/// The raw endpoint's full-response limit; larger files support byte ranges or Git clone.
-pub const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
-
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BlobPage {
     pub reference: String,
@@ -32,6 +29,9 @@ pub struct BlobPage {
     pub content: String,
     pub binary: bool,
     pub size: u64,
+    /// Server-owned full-response ceiling and its human-readable label.
+    #[serde(default)]
+    pub download_limit: Option<(u64, String)>,
     pub offset: u64,
     /// Global line number of the first source line in this window.
     #[serde(default)]
@@ -103,7 +103,8 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let language = language_of_path(&page.path);
     let display = display_text(&page.content);
     let line_count = display.lines().count();
-    let downloadable = page.size <= MAX_DOWNLOAD_BYTES;
+    let downloadable = page.download_limit.as_ref().is_none_or(|(limit, _)| page.size <= *limit);
+    let limit_label = page.download_limit.as_ref().map_or("server", |(_, label)| label.as_str());
     let markdown = page.renders_markdown();
     let markdown_html = markdown.then(|| {
         document_html(
@@ -216,7 +217,7 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
             if let Some(notice)=&page.codeowners_notice {p {class:"p-3 text-muted-foreground","{notice}"}}
             {body}
         }
-        if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the 32 MiB download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
+        if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the {limit_label} download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
         if page.truncated { p { class: "text-sm text-muted-foreground", "Showing a bounded preview starting at byte {page.offset}." if downloadable { " Raw contains the complete file." } } }
         if page.previous.is_some() || page.next.is_some() {
             nav { class: "flex gap-4", "aria-label": "File preview",
@@ -621,14 +622,7 @@ fn file_size(bytes: u64) -> String {
 
 /// The image types the raw route serves as images. SVG is served as text, so it is not drawn.
 fn is_inline_image(path: &str) -> bool {
-    let extension = path
-        .rsplit_once('.')
-        .map_or("", |(_, extension)| extension)
-        .to_ascii_lowercase();
-    matches!(
-        extension.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp" | "ico"
-    )
+    crate::webui::raw_content_type(path, true).starts_with("image/")
 }
 
 /// The rows of one folder's listing, folders first. A folder whose listing is loaded is a disclosure

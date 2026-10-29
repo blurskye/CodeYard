@@ -4,7 +4,7 @@ use dioxus::prelude::*;
 use dioxus_router::Routable;
 use std::rc::Rc;
 
-mod load;
+pub(crate) mod load;
 
 /// Schedule a scoped, authorized read refresh. Browser feature lanes can invoke
 /// this after a live event/timer; it never moves domain authority to the client.
@@ -163,14 +163,11 @@ pub fn NavLink(
 }
 
 pub fn safe_page_target(target: &str) -> bool {
-    // Only the path decides where a target goes. A query or fragment is data, so an
-    // encoded `\` there is harmless.
-    let path = target.split(['?', '#']).next().unwrap_or_default();
-    path.starts_with('/')
-        && !path.starts_with("//")
-        && !target.chars().any(|c| c.is_control() || c == '\\')
-        && !path.to_ascii_lowercase().starts_with("/%2f")
-        && !path.to_ascii_lowercase().contains("%5c")
+    if target.len() > 8192 || !target.starts_with('/') || target.starts_with("//")
+        || target.chars().any(|character| character.is_control() || character == '\\') { return false; }
+    // Encoded delimiters in the path affect routing; a query or fragment is data.
+    let lower = target.split(['?', '#']).next().unwrap_or_default().to_ascii_lowercase();
+    !lower.starts_with("/%2f") && !["%5c", "%0d", "%0a", "%00"].iter().any(|bad| lower.contains(bad))
 }
 
 /// Repeated polls of one slow read are coalesced; a new location replaces it.
@@ -271,15 +268,7 @@ fn PageRouteView(target: String) -> Element {
             let request_active = active.clone();
             let task = spawn(async move {
                 let request = load::load_page(&request_target, &signal, navigation);
-                let timeout = gloo_timers::future::TimeoutFuture::new(MODEL_TIMEOUT_MS);
-                futures_util::pin_mut!(request, timeout);
-                let result = match futures_util::future::select(request, timeout).await {
-                    futures_util::future::Either::Left((result, _)) => result,
-                    futures_util::future::Either::Right(_) => {
-                        timeout_controller.abort();
-                        Err(load::LoadError::Timeout)
-                    }
-                };
+                let result = load::with_abort_timeout(request, &timeout_controller, MODEL_TIMEOUT_MS).await.unwrap_or(Err(load::LoadError::Timeout));
                 if *generation.peek() != next {
                     return;
                 }

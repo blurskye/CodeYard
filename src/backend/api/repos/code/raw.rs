@@ -24,35 +24,15 @@ use std::sync::Arc;
 /// user content from this origin, and an SVG opened directly (not through
 /// `<img>`) can run script in that origin. Raw SVG stays a non-executable type,
 /// which is what the previous behaviour was too.
-pub fn raw_content_type(path: &str, is_binary: bool) -> &'static str {
-    let extension = std::path::Path::new(path)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+pub use crate::webui::raw_content_type;
 
-    match extension.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "bmp" => "image/bmp",
-        "ico" => "image/x-icon",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        "mov" => "video/quicktime",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "ogg" => "audio/ogg",
-        "pdf" => "application/pdf",
-        "woff2" => "font/woff2",
-        "woff" => "font/woff",
-        "ttf" => "font/ttf",
-        "otf" => "font/otf",
-        _ if is_binary => "application/octet-stream",
-        _ => "text/plain; charset=utf-8",
-    }
+pub(crate) fn download_limit() -> (u64, String) {
+    let bytes = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES as u64;
+    (bytes, format!("{} MiB", bytes / (1024 * 1024)))
+}
+
+fn limit_message() -> String {
+    format!("Raw responses are limited to {}; request a byte range.", download_limit().1)
 }
 
 pub(crate) fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
@@ -103,7 +83,7 @@ fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(ApiError::new(
                 "payload_too_large",
-                "Raw responses are limited to 32 MiB; request a byte range",
+                &limit_message(),
             )),
         );
     }
@@ -267,7 +247,7 @@ pub async fn raw_page(
         Ok(blob) => ctx.with_cookie(raw_response(&resolved.path, blob, partial, permit)),
         Err(error) if error.is_response_too_large() => ctx.error(
             StatusCode::PAYLOAD_TOO_LARGE,
-            "Raw responses are limited to 32 MiB; request a byte range.",
+            &limit_message(),
         ),
         Err(error) if error.is_range_not_satisfiable() => ctx.error(
             StatusCode::RANGE_NOT_SATISFIABLE,

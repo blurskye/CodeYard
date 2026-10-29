@@ -1,4 +1,14 @@
 //! Authorized page-model transport and decoding.
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) async fn with_abort_timeout<F: std::future::Future>(operation: F, controller: &web_sys::AbortController, milliseconds: u32) -> Result<F::Output, ()> {
+    let timeout = gloo_timers::future::TimeoutFuture::new(milliseconds);
+    futures_util::pin_mut!(operation, timeout);
+    match futures_util::future::select(operation, timeout).await {
+        futures_util::future::Either::Left((result, _)) => Ok(result),
+        futures_util::future::Either::Right(_) => { controller.abort(); Err(()) }
+    }
+}
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum LoadError {
