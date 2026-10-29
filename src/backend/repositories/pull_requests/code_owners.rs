@@ -152,33 +152,6 @@ pub async fn request_code_owner_reviews(
     if wanted.is_empty() {
         return;
     }
-    let decided = match db::pull_requests::reviews::list_pull_request_review_decisions(
-        pool, pull.id,
-    )
-    .await
-    {
-        Ok(decided) => decided,
-        Err(error) => {
-            tracing::warn!(repo_id = repository.id, pull_number = pull.number, %error, "reviews unavailable for code owner requests");
-            return;
-        }
-    };
-    let requested = match db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id)
-        .await
-    {
-        Ok(requested) => requested,
-        Err(error) => {
-            tracing::warn!(pull_request_id = pull.id, %error, "review requests unavailable for code owners");
-            return;
-        }
-    };
-    wanted.retain(|id| {
-        !decided.iter().any(|review| review.author_id == *id)
-            && !requested.iter().any(|reviewer| reviewer.id == *id)
-    });
-    if wanted.is_empty() {
-        return;
-    }
     let owner = match db::ci::ci_repository_owner(pool, repository.id).await {
         Ok(Some(owner)) => owner,
         _ => return,
