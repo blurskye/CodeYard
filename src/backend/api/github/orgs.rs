@@ -125,6 +125,10 @@ pub(super) async fn target(state: &AppState, name: &str) -> Result<Organization>
 }
 
 async fn owner(state: &AppState, headers: &HeaderMap, name: &str) -> Result<Organization> {
+    owner_actor(state, headers, name).await.map(|(org, _)| org)
+}
+
+async fn owner_actor(state: &AppState, headers: &HeaderMap, name: &str) -> Result<(Organization, auth::Authentication)> {
     let actor = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -140,7 +144,7 @@ async fn owner(state: &AppState, headers: &HeaderMap, name: &str) -> Result<Orga
             "Must be an organization owner",
         ));
     }
-    Ok(org)
+    Ok((org, actor))
 }
 
 async fn get_org(
