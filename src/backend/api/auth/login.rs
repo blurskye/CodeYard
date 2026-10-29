@@ -220,10 +220,10 @@ pub(crate) async fn auth_post(
         .map_err(auth::errors::registration_failure),
         AuthMode::Setup => {
             let supplied_secret = optional_field(&form, "admin_secret");
-            let expected_secret = std::env::var("ADMIN_SECRET")
-                .ok()
-                .map(|secret| secret.trim().to_owned())
-                .filter(|secret| !secret.is_empty());
+            let expected_secret = match identity::setup::configured_admin_secret() {
+                Ok(secret) => secret,
+                Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Node setup configuration is invalid."),
+            };
             identity::setup::complete_setup(
                 &ctx.state.pool,
                 SetupInput {
