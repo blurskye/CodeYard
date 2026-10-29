@@ -2,25 +2,30 @@ use crate::backend::db::pages::{Attempt, Build, Deployment, Refusal, Site, Updat
 use anyhow::Result;
 use sqlx::PgPool;
 
-pub async fn site(pool: &PgPool, repo: i64) -> Result<Option<Site>> {
-    Ok(sqlx::query_as("SELECT * FROM pages_sites WHERE repo_id=$1")
-        .bind(repo)
+fn visible(viewer: usize) -> String {
+    format!("EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=${viewer} WHERE r.id=p.repo_id AND {})", super::repositories::access::readable_condition())
+}
+
+pub async fn site(pool: &PgPool, viewer: Option<i64>, repo: i64) -> Result<Option<Site>> {
+    Ok(sqlx::query_as(&format!("SELECT p.* FROM pages_sites p WHERE p.repo_id=$1 AND {}", visible(2)))
+        .bind(repo).bind(viewer)
         .fetch_optional(pool)
         .await?)
 }
 pub async fn save(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     input: &Update,
     create: bool,
 ) -> Result<Site> {
     input.validate(create)?;
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
-        Refusal::Denied
-    );
+    anyhow::ensure!(super::discussions::lock_exclusive_maintain_authority(&mut tx, actor.user_id, repo).await?, Refusal::Denied);
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor.user_id, token, Some(repo), None, "pages").await?, Refusal::Denied);
+    }
     let existing: Option<Site> = sqlx::query_as("SELECT * FROM pages_sites WHERE repo_id=$1")
         .bind(repo)
         .fetch_optional(&mut *tx)
@@ -85,21 +90,16 @@ pub async fn delete(pool: &PgPool, actor: i64, repo: i64) -> Result<()> {
     tx.commit().await?;
     Ok(())
 }
-pub async fn builds(pool: &PgPool, repo: i64, offset: i64, limit: i64) -> Result<Vec<Build>> {
-    Ok(sqlx::query_as(
-        "SELECT * FROM pages_builds WHERE repo_id=$1 ORDER BY id DESC LIMIT $2 OFFSET $3",
-    )
-    .bind(repo)
-    .bind(limit)
-    .bind(offset)
+pub async fn builds(pool: &PgPool, viewer: Option<i64>, repo: i64, offset: i64, limit: i64) -> Result<Vec<Build>> {
+    Ok(sqlx::query_as(&format!("SELECT p.* FROM pages_builds p WHERE p.repo_id=$1 AND {} ORDER BY p.id DESC LIMIT $2 OFFSET $3", visible(4)))
+    .bind(repo).bind(limit).bind(offset).bind(viewer)
     .fetch_all(pool)
     .await?)
 }
-pub async fn build(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Build>> {
+pub async fn build(pool: &PgPool, viewer: Option<i64>, repo: i64, id: i64) -> Result<Option<Build>> {
     Ok(
-        sqlx::query_as("SELECT * FROM pages_builds WHERE repo_id=$1 AND id=$2")
-            .bind(repo)
-            .bind(id)
+        sqlx::query_as(&format!("SELECT p.* FROM pages_builds p WHERE p.repo_id=$1 AND p.id=$2 AND {}", visible(3)))
+            .bind(repo).bind(id).bind(viewer)
             .fetch_optional(pool)
             .await?,
     )
@@ -149,11 +149,10 @@ pub async fn request_deployment(
     tx.commit().await?;
     Ok(row)
 }
-pub async fn deployment(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Deployment>> {
+pub async fn deployment(pool: &PgPool, viewer: Option<i64>, repo: i64, id: i64) -> Result<Option<Deployment>> {
     Ok(
-        sqlx::query_as("SELECT * FROM pages_deployments WHERE repo_id=$1 AND id=$2")
-            .bind(repo)
-            .bind(id)
+        sqlx::query_as(&format!("SELECT p.* FROM pages_deployments p WHERE p.repo_id=$1 AND p.id=$2 AND {}", visible(3)))
+            .bind(repo).bind(id).bind(viewer)
             .fetch_optional(pool)
             .await?,
     )

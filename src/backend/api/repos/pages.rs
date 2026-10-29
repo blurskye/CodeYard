@@ -30,7 +30,7 @@ async fn render(
     error: Option<String>,
     status: StatusCode,
 ) -> Response {
-    let site = match pages::site(&ctx.state.pool, loaded.repository.id).await {
+    let site = match pages::site(&ctx.state.pool, ctx.user.as_ref().map(|user| user.id), loaded.repository.id).await {
         Ok(site) => site,
         Err(_) => return chrome::unavailable(ctx),
     };
@@ -51,7 +51,7 @@ async fn render(
             ..Default::default()
         },
     });
-    let builds = match pages::builds(&ctx.state.pool, loaded.repository.id, 0, 30).await {
+    let builds = match pages::builds(&ctx.state.pool, ctx.user.as_ref().map(|user| user.id), loaded.repository.id, 0, 30).await {
         Ok(rows) => rows
             .into_iter()
             .map(|row| Build {
@@ -136,13 +136,13 @@ async fn submit(
         match forms::field(&form,"op").as_str() {
             "delete"=>pages::delete(&ctx.state.pool,actor,loaded.repository.id).await?,
             "build"=>{
-                let site=pages::site(&ctx.state.pool,loaded.repository.id).await?.ok_or(pages::Refusal::Missing)?;
+                let site=pages::site(&ctx.state.pool,Some(actor),loaded.repository.id).await?.ok_or(pages::Refusal::Missing)?;
                 let branch=site.branch.ok_or(pages::Refusal::Invalid)?;
                 let commit=repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{branch}")).await?;
                 pages::request_build(&ctx.state.pool,actor,loaded.repository.id,&commit.sha).await?;
             }
             "save"=>{
-                let create=pages::site(&ctx.state.pool,loaded.repository.id).await?.is_none();
+                let create=pages::site(&ctx.state.pool,Some(actor),loaded.repository.id).await?.is_none();
                 let mut value=json!({"build_type":settings.build_type,"cname":if settings.cname.is_empty(){None}else{Some(&settings.cname)},"https_enforced":settings.https_enforced,"public":settings.public});
                 if !settings.branch.is_empty() {value["source"]=json!({"branch":settings.branch,"path":settings.path});}
                 let update=pages::Update::parse(&value,create)?;
