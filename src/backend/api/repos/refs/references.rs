@@ -29,33 +29,52 @@ pub(crate) async fn resolve_references(
     texts: &[&str],
     document: bool,
 ) -> Result<References, Response> {
+    resolve_references_with(&ctx.state.pool, repository, owner, name, texts, document, |records| async move {
+        let mut readable = std::collections::HashSet::new();
+        for record in records {
+            if can_read(&ctx.state.pool, ctx.user.as_ref(), &record).await? { readable.insert(record.id); }
+        }
+        Ok(readable)
+    }).await.map_err(|_| unavailable(ctx))
+}
+
+/// The bounded native resolver with a caller-owned, credential-aware repository audience.
+pub(crate) async fn resolve_references_with<F, Fut>(
+    pool: &db::DbPool,
+    repository: &db::models::Repository,
+    owner: &str,
+    name: &str,
+    texts: &[&str],
+    document: bool,
+    authorize: F,
+) -> anyhow::Result<References>
+where
+    F: Fn(Vec<db::models::Repository>) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<std::collections::HashSet<i64>>>,
+{
     let found = references::candidates(texts, document, (owner, name));
-    let pool = &ctx.state.pool;
+    let mut records = vec![repository.clone()];
+    let mut names = Vec::new();
+    for (owner, name) in found.repositories {
+        if let Some(record) = db::repositories::records::get_repository(pool, &owner, &name).await? {
+            names.push((record.id, owner, name));
+            records.push(record);
+        }
+    }
+    let readable = authorize(records.clone()).await?;
+    if !readable.contains(&repository.id) { return Ok(References::default()); }
     // The page's own counter is always read: a preview typed after the page loaded links `#N`
     // from it, even when the text the page started with has no number.
     let mut counted = vec![repository.id];
     let mut others = Vec::new();
-    for (other_owner, other_name) in found.repositories {
-        // A missing repository and one the viewer cannot read are treated alike: both are left
-        // out, so their references render as plain text.
-        let Some(record) =
-            db::repositories::records::get_repository(pool, &other_owner, &other_name)
-                .await
-                .map_err(|_| unavailable(ctx))?
-        else {
-            continue;
-        };
-        if can_read(pool, ctx.user.as_ref(), &record)
-            .await
-            .map_err(|_| unavailable(ctx))?
-        {
-            counted.push(record.id);
-            others.push((record.id, other_owner, other_name));
-        }
+    for (id, owner, name) in names {
+        if readable.contains(&id) { counted.push(id); others.push((id, owner, name)); }
     }
-    let lasts = db::discussions::last_discussion_numbers(pool, &counted)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let lasts = db::discussions::last_discussion_numbers(pool, &counted).await?;
+    let autolinks = db::repositories::autolinks::for_rendering(pool, repository.id).await?;
+    // Do not let reference metadata read after a revocation escape through earlier decisions.
+    let readable = authorize(records).await?;
+    if !readable.contains(&repository.id) { return Ok(References::default()); }
     let last_number = |id: i64| {
         lasts
             .iter()
@@ -67,15 +86,13 @@ pub(crate) async fn resolve_references(
         repo: name.to_owned(),
         last_number: last_number(repository.id),
         users: Vec::new(),
-        autolinks: db::repositories::autolinks::for_rendering(pool, repository.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
+        autolinks: autolinks.into_iter()
             .map(autolink)
             .collect::<Vec<_>>()
             .into(),
         repositories: others
             .into_iter()
+            .filter(|(id, _, _)| readable.contains(id))
             .map(|(id, owner, name)| references::Repository {
                 owner,
                 name,
@@ -87,9 +104,7 @@ pub(crate) async fn resolve_references(
         .repositories
         .sort_by(|a, b| (&a.owner, &a.name).cmp(&(&b.owner, &b.name)));
     if !found.users.is_empty() {
-        let users = db::users::accounts::get_users_by_usernames(pool, &found.users)
-            .await
-            .map_err(|_| unavailable(ctx))?;
+        let users = db::users::accounts::get_users_by_usernames(pool, &found.users).await?;
         resolved.users = users.into_iter().map(|user| user.username).collect();
         resolved.users.sort();
     }
