@@ -300,24 +300,21 @@ async fn statuses(
         }
         return page.response(&uri, values, has_next);
     }
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.user;
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
         .await
         .map_err(|_| Error::validation("DeploymentStatus", "state", "invalid"))?;
-    let (_, statuses) =
-        deployments::create_status(&state.pool, actor.id, repo.id, saved.id, &input)
+    let statuses =
+        deployments::create_status(&state.pool, (actor.id, auth.token.id), repo.id, saved.id, &input)
             .await
             .map_err(write_error)?;
     let mut result = None;
-    for status in statuses {
+    for (deployment, status) in statuses {
         let value = status_document(&state, &status, owner, name).await?;
         if status.deployment_id == saved.id {
             result = Some(value.clone());
         }
-        let deployment = deployments::get(&state.pool, repo.id, status.deployment_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
         let deployment = document(&state, &deployment, owner, name).await?;
         let snapshot = repo.clone();
         let sender = payloads::Person::of(&actor);
