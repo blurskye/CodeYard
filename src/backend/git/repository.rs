@@ -1707,8 +1707,7 @@ pub struct CodeMatch {
 const CODE_SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// A match shows at most this many characters of its line.
 const MAX_CODE_LINE_CHARS: usize = 200;
-/// The bytes kept from one `git grep` record. A record holds a path, a line number and the whole
-/// line, so one very long line keeps only its start.
+/// The maximum retained path, metadata and match window from one `git grep` record.
 const MAX_GREP_RECORD_BYTES: usize = 16 * 1024;
 
 /// Up to `limit` lines of the files at `git_ref` that contain `text`, ignoring case, after the first
@@ -1738,7 +1737,7 @@ pub(crate) async fn search_code(
     };
     let mut command = process::git_command()?;
     command
-        .args(["grep", "-I", "-n", "-i", "-F", "-z", "-e"])
+        .args(["grep", "-I", "-n", "--column", "-i", "-F", "-z", "-e"])
         // Case folding of non-ASCII text depends on the locale, and the git default is C.
         .env("LC_ALL", "C.UTF-8")
         .arg(text)
@@ -1791,18 +1790,18 @@ pub(crate) async fn search_code(
     Ok(matches)
 }
 
-/// The next record of `git grep -z -n` output, which ends at a newline. Only the first
-/// `MAX_GREP_RECORD_BYTES` of a record are kept; the rest of a long line is read and dropped.
+/// Retain a bounded window around Git's byte column, not the start of a long line.
 async fn read_grep_record(reader: &mut BufReader<ChildStdout>) -> Result<Option<Vec<u8>>> {
     let mut record = Vec::new();
-    for delimiter in [0, 0, b'\n'] {
-        let Some((field, _)) =
-            read_delimited(reader, delimiter, MAX_GREP_RECORD_BYTES - record.len()).await?
-        else {
-            return Ok(None);
-        };
+    for _ in 0..2 {
+        let Some((field, _)) = read_delimited(reader, 0, MAX_GREP_RECORD_BYTES - record.len()).await? else { return Ok(None); };
         record.extend(field);
     }
+    let Some((column, _)) = read_delimited(reader, 0, 32).await? else { return Ok(None); };
+    let column: usize = std::str::from_utf8(column.strip_suffix(&[0]).context("Missing grep column")?)?.parse()?;
+    let skip = column.saturating_sub(1).saturating_sub(MAX_CODE_LINE_CHARS);
+    let Some((line, _)) = read_delimited_window(reader, b'\n', skip, MAX_GREP_RECORD_BYTES - record.len()).await? else { return Ok(None); };
+    record.extend(line);
     Ok(Some(record))
 }
 
@@ -1810,6 +1809,15 @@ async fn read_grep_record(reader: &mut BufReader<ChildStdout>) -> Result<Option<
 async fn read_delimited(
     reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
     delimiter: u8,
+    keep: usize,
+) -> Result<Option<(Vec<u8>, usize)>> {
+    read_delimited_window(reader, delimiter, 0, keep).await
+}
+
+async fn read_delimited_window(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+    delimiter: u8,
+    skip: usize,
     keep: usize,
 ) -> Result<Option<(Vec<u8>, usize)>> {
     let mut field = Vec::new();
@@ -1821,7 +1829,9 @@ async fn read_delimited(
         }
         let end = chunk.iter().position(|byte| *byte == delimiter);
         let used = end.map_or(chunk.len(), |at| at + 1);
-        field.extend_from_slice(&chunk[..used.min(keep - field.len())]);
+        let start = skip.saturating_sub(consumed).min(used);
+        let retained = (used - start).min(keep - field.len());
+        field.extend_from_slice(&chunk[start..start + retained]);
         consumed += used;
         reader.consume(used);
         if end.is_some() {
@@ -1840,10 +1850,12 @@ fn parse_code_match(record: &[u8], prefix: &str, needle: &str) -> Option<CodeMat
     let line_number = parts.next()?.parse().ok()?;
     let text = parts.next()?.trim();
     let lower = text.to_lowercase();
-    let skip = lower
-        .find(needle)
-        .map_or(0, |at| lower[..at].chars().count())
-        .saturating_sub(MAX_CODE_LINE_CHARS / 4);
+    let at = lower.find(needle).unwrap_or(0);
+    // Map the folded byte offset back to original characters; e.g. İ expands to i + ◌̇.
+    let skip = text.chars().scan(0usize, |end, ch| {
+        *end += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        Some(*end)
+    }).take_while(|end| *end <= at).count().saturating_sub(MAX_CODE_LINE_CHARS / 4);
     Some(CodeMatch {
         path: path.to_owned(),
         line_number,
@@ -1951,7 +1963,7 @@ pub(crate) async fn list_path_commits(
 pub const MAX_BRANCH_STATUSES: usize = 200;
 
 /// Each head's tip date and, for the first heads, divergence from `base`.
-/// Identical tips share one bounded history walk.
+/// Identical tips share one deadline- and memory-bounded Git comparison.
 pub(crate) async fn branch_statuses(
     repo_path: &Path,
     base: &str,
@@ -1961,79 +1973,41 @@ pub(crate) async fn branch_statuses(
     if Instant::now() >= deadline {
         return Err(anyhow::Error::new(ObjectTooLarge).context("Git branch comparison timed out"));
     }
-    let permit =
-        process::operation_slot(deadline.saturating_duration_since(Instant::now())).await?;
-    let (repo_path, base, heads) = (repo_path.to_owned(), base.to_owned(), heads.to_vec());
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        let repo = Repository::open_bare(&repo_path)?;
-        let base = peel_to_commit_checked(&repo, &base)?.id();
-        // The size limits apply to each walk; the deadline bounds all of them together.
-        let ancestors = |tip| -> Result<HashSet<git2::Oid>> {
-            let (mut visits, mut bytes) = (0, 0);
-            let mut found = HashSet::new();
-            let mut pending = vec![tip];
-            while let Some(id) = pending.pop() {
-                if !found.insert(id) {
-                    continue;
-                }
-                visits += 1;
-                if visits > MAX_COMMIT_WALK_OBJECTS || Instant::now() >= deadline {
-                    return Err(ObjectTooLarge.into());
-                }
-                bytes += commit_object_size(&repo, id)?;
-                if bytes > MAX_COMMIT_WALK_BYTES {
-                    return Err(ObjectTooLarge.into());
-                }
-                pending.extend(find_commit_checked(&repo, id)?.parent_ids());
-            }
-            Ok(found)
-        };
-        let mut base_ancestors: Option<HashSet<git2::Oid>> = None;
-        let mut cached: HashMap<git2::Oid, BranchStatus> = HashMap::new();
-        let mut statuses = Vec::with_capacity(heads.len());
-        for (index, head) in heads.iter().enumerate() {
-            if Instant::now() >= deadline {
-                return Err(ObjectTooLarge.into());
-            }
-            let tip = peel_to_commit_checked(&repo, head)?;
-            let status = if index >= MAX_BRANCH_STATUSES {
-                BranchStatus {
-                    ahead: 0,
-                    behind: 0,
-                    updated: tip.committer().when().seconds(),
-                }
-            } else if let Some(status) = cached.get(&tip.id()) {
-                status.clone()
-            } else {
-                let (ahead, behind) = if tip.id() == base {
-                    (0, 0)
-                } else {
-                    let branch = ancestors(tip.id())?;
-                    // Walked only when a branch differs from the base, so identical tips
-                    // never pay for the base's history.
-                    if base_ancestors.is_none() {
-                        base_ancestors = Some(ancestors(base)?);
-                    }
-                    let known = base_ancestors.as_ref().context("base ancestry")?;
-                    (
-                        branch.difference(known).count(),
-                        known.difference(&branch).count(),
-                    )
-                };
-                let status = BranchStatus {
-                    ahead,
-                    behind,
-                    updated: tip.committer().when().seconds(),
-                };
-                cached.insert(tip.id(), status.clone());
-                status
-            };
-            statuses.push(status);
+    let (path, base, heads) = (repo_path.to_owned(), base.to_owned(), heads.to_vec());
+    let (base, tips) = process::blocking_until(deadline, move || {
+        let repo = Repository::open_bare(&path)?;
+        let base = peel_to_commit_checked(&repo, &base)?.id().to_string();
+        let mut tips = Vec::with_capacity(heads.len());
+        for head in heads {
+            ensure!(Instant::now() < deadline, ObjectTooLarge);
+            let tip = peel_to_commit_checked(&repo, &head)?;
+            tips.push((tip.id().to_string(), tip.committer().when().seconds()));
         }
-        Ok(statuses)
-    })
-    .await?
+        Ok((base, tips))
+    }).await?;
+    let mut cached = HashMap::new();
+    let mut statuses = Vec::with_capacity(tips.len());
+    for (index, (tip, updated)) in tips.into_iter().enumerate() {
+        ensure!(Instant::now() < deadline, ObjectTooLarge);
+        let (ahead, behind) = if index >= MAX_BRANCH_STATUSES || tip == base {
+            (0, 0)
+        } else if let Some(counts) = cached.get(&tip) {
+            *counts
+        } else {
+            // Let Git prune common ancestry instead of materializing both complete histories.
+            let mut command = process::git_command()?;
+            command.args(["rev-list", "--left-right", "--count", &format!("{tip}...{base}")]).arg("--").current_dir(repo_path);
+            let (status, output) = process::buffered(command, b"", 128, deadline.saturating_duration_since(Instant::now())).await?;
+            ensure!(status.success(), "Git branch comparison failed");
+            let counts = std::str::from_utf8(&output)?.split_whitespace().map(str::parse::<usize>).collect::<std::result::Result<Vec<_>, _>>()?;
+            ensure!(counts.len() == 2 && counts[0].saturating_add(counts[1]) <= MAX_COMMIT_WALK_OBJECTS, ObjectTooLarge);
+            let counts = (counts[0], counts[1]);
+            cached.insert(tip, counts);
+            counts
+        };
+        statuses.push(BranchStatus { ahead, behind, updated });
+    }
+    Ok(statuses)
 }
 
 fn commit_message(commit: &git2::Commit<'_>) -> String {
