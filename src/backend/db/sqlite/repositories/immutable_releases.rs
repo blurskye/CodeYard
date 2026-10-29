@@ -91,9 +91,10 @@ pub(crate) async fn freeze(
         return Ok(());
     }
     let publication = publication.ok_or(ReleaseRefusal::Conflict)?;
+    let (owner, name): (String, String) = sqlx::query_as("SELECT COALESCE(u.username,o.name),r.name FROM repositories r LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id WHERE r.id=?1").bind(release.repo_id).fetch_one(&mut **tx).await?;
     let mut assets:Vec<Artifact>=sqlx::query_as("SELECT a.name,a.size,f.sha256_hex AS sha256 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=?1 LIMIT 1001").bind(release.id).fetch_all(&mut **tx).await?;
     assets.sort_by(|a, b| a.name.cmp(&b.name));
-    publication.matches(release.repo_id, &release.tag_name, &assets)?;
+    publication.matches(release.repo_id, &release.tag_name, &assets, &crate::backend::repositories::releases::immutable::namespace_url(&owner, &name))?;
     let inactive:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=?1 AND NOT f.is_active)").bind(release.id).fetch_one(&mut **tx).await?;
     ensure!(!inactive, ReleaseRefusal::Conflict);
     sqlx::query("UPDATE releases SET is_immutable=1,target_commitish=?2 WHERE id=?1")

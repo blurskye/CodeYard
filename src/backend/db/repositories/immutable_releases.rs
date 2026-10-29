@@ -28,10 +28,10 @@ impl Publication {
             signer_key: trusted_key.into(),
         })
     }
-    pub(crate) fn matches(&self, repo: i64, tag: &str, assets: &[Artifact]) -> Result<()> {
+    pub(crate) fn matches(&self, repo: i64, tag: &str, assets: &[Artifact], namespace: &str) -> Result<()> {
         let predicate = &self.statement.predicate;
         ensure!(
-            predicate.repository_id == repo && predicate.tag == tag && predicate.assets == assets,
+            predicate.repository_id == repo && predicate.tag == tag && predicate.assets == assets && predicate.repository == namespace,
             db::releases::ReleaseRefusal::Conflict
         );
         Ok(())
