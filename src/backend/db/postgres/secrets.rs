@@ -4,6 +4,10 @@ use sqlx::PgPool;
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{RepoSecret, RepoSecretMeta};
 
+pub async fn encryption_samples(pool: &PgPool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    Ok(sqlx::query_as(crate::backend::db::secrets::ENCRYPTION_SAMPLES_SQL).fetch_all(pool).await?)
+}
+
 pub async fn create_or_update_secret(
     pool: &PgPool,
     encryptor: &SecretEncryptor,

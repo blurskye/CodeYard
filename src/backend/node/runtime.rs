@@ -22,12 +22,12 @@ fn validate_cluster_encryptor(
         return Ok(());
     }
     let encryptor = encryptor.context(
-        "Cluster core nodes require the same SECRETS_MASTER_KEY for signed webhook delivery",
+        "Cluster core nodes require the same SECRETS_MASTER_KEY for encrypted secrets",
     )?;
     if let Some((ciphertext, nonce)) = sample {
         encryptor
             .decrypt(ciphertext, nonce)
-            .context("SECRETS_MASTER_KEY cannot open existing webhook secrets")?;
+            .context("SECRETS_MASTER_KEY cannot open existing encrypted secrets")?;
     }
     Ok(())
 }
@@ -85,18 +85,12 @@ async fn prepare_application(
 ) -> Result<AppState> {
     crate::backend::api::http::config::public_url()?;
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
-    let sample = if cluster.is_some() {
-        crate::backend::db::webhooks::webhook_secret_sample(&pool).await?
-    } else {
-        None
-    };
-    validate_cluster_encryptor(
-        cluster.is_some(),
-        secret_encryptor.as_deref(),
-        sample
-            .as_ref()
-            .map(|(text, nonce)| (text.as_slice(), nonce.as_slice())),
-    )?;
+    validate_cluster_encryptor(cluster.is_some(), secret_encryptor.as_deref(), None)?;
+    if cluster.is_some() {
+        for (text, nonce) in crate::backend::db::secrets::encryption_samples(&pool).await? {
+            validate_cluster_encryptor(true, secret_encryptor.as_deref(), Some((&text, &nonce)))?;
+        }
+    }
     if secret_encryptor.is_none() {
         tracing::warn!("SECRETS_MASTER_KEY not set, secrets API disabled");
     }

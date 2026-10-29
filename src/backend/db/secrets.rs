@@ -3,6 +3,29 @@ use crate::backend::crypto::{SecretEncryptor, SecretError};
 use crate::backend::db::models::RepoSecretMeta;
 use crate::backend::db::DbPool;
 
+// One bounded sample per encryption domain, from one database snapshot.
+pub(crate) const ENCRYPTION_SAMPLES_SQL: &str = "
+SELECT * FROM (SELECT encrypted_secret,secret_nonce FROM webhooks WHERE encrypted_secret IS NOT NULL LIMIT 1) a
+UNION ALL SELECT * FROM (SELECT encrypted_password,password_nonce FROM webhooks WHERE encrypted_password IS NOT NULL LIMIT 1) b
+UNION ALL SELECT * FROM (SELECT encrypted_secret,secret_nonce FROM github_app_hooks WHERE encrypted_secret IS NOT NULL LIMIT 1) c
+UNION ALL SELECT * FROM (SELECT encrypted_password,password_nonce FROM email_settings WHERE encrypted_password IS NOT NULL LIMIT 1) d
+UNION ALL SELECT * FROM (SELECT totp_secret_encrypted,totp_nonce FROM two_factor_auth LIMIT 1) e
+UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM repo_secrets LIMIT 1) f
+UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM repo_actions_keys LIMIT 1) g
+UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM repo_dependabot_secrets LIMIT 1) h
+UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM repo_dependabot_keys LIMIT 1) i
+UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM org_dependabot_secrets LIMIT 1) j
+UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM org_dependabot_keys LIMIT 1) k
+UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM org_actions_values WHERE kind='secret' LIMIT 1) l
+UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM org_actions_keys LIMIT 1) m
+UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM repo_environment_values WHERE kind='secret' LIMIT 1) n
+UNION ALL SELECT * FROM (SELECT encrypted_secret,nonce FROM secret_scanning_alerts LIMIT 1) o
+UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM org_private_registries WHERE encrypted_value IS NOT NULL LIMIT 1) p";
+
+native_operation!(crate::backend::db::postgres::secrets::encryption_samples,
+    crate::backend::db::sqlite::secrets::encryption_samples,
+    fn encryption_samples(pool: &DbPool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>>);
+
 #[derive(Clone, Copy)]
 pub enum SecretKind {
     Actions,
