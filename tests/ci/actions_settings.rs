@@ -332,7 +332,7 @@ async fn rest_settings(pg: bool) {
         (
             "fork-pr-contributor-approval-permissions",
             "fork-pr-contributor-approval",
-            json!({"approval_policy":"first_time_contributors"}),
+            json!({"approval_policy":"all_external_contributors"}),
         ),
         (
             "github-actions-default-workflow-permissions",

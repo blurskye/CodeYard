@@ -85,8 +85,9 @@ pub async fn settings(
     let site = super::actions::get_actions_settings(&mut *tx).await?;
     let mut maximum = i64::from(site.artifact_retention_days.unwrap_or(365));
     let mut parent = json!({});
+    let mut private = true;
     if let Scope::Repository(repo) = scope {
-        let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=?1")
+        private = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=?1")
             .bind(repo)
             .fetch_one(&mut *tx)
             .await?;
@@ -102,21 +103,7 @@ pub async fn settings(
         setting.update(&mut stored, input, maximum)?;
         sqlx::query(&format!("INSERT INTO {table}({column},rest_settings) VALUES(?1,?2) ON CONFLICT({column}) DO UPDATE SET rest_settings=EXCLUDED.rest_settings,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")).bind(id).bind(stored.to_string()).execute(&mut *tx).await?;
     }
-    let days = stored[Setting::Retention.key()]["days"]
-        .as_i64()
-        .unwrap_or(i64::from(site.artifact_retention_days.unwrap_or(90)))
-        .min(maximum);
-    stored[Setting::Retention.key()] = json!({"days":days,"maximum_allowed_days":maximum});
-    let write = crate::backend::db::action_settings::workflow_write(
-        &stored,
-        &parent,
-        site.default_workflow_permissions == "permissive",
-    );
-    if stored.get(Setting::Workflow.key()).is_none() {
-        stored[Setting::Workflow.key()] = Setting::Workflow.defaults();
-    }
-    stored[Setting::Workflow.key()]["default_workflow_permissions"] =
-        json!(if write { "write" } else { "read" });
+    let stored = crate::backend::db::action_settings::resolved(stored, &parent, &site, private, maximum);
     tx.commit().await?;
     Ok(stored)
 }

@@ -101,11 +101,7 @@ impl Setting {
                     .is_some_and(|days| (1..=maximum).contains(&days)),
                 (Self::ContributorApproval, "approval_policy") => enumeration(
                     value,
-                    &[
-                        "first_time_contributors_new_to_github",
-                        "first_time_contributors",
-                        "all_external_contributors",
-                    ],
+                    &["all_external_contributors"],
                 ),
                 (Self::Workflow, "default_workflow_permissions") => {
                     enumeration(value, &["read", "write"])
@@ -143,7 +139,7 @@ impl Setting {
         let mut value = stored
             .get(self.key())
             .cloned()
-            .unwrap_or_else(|| self.defaults());
+            .unwrap_or_else(|| if matches!(self, Self::Workflow) { json!({}) } else { self.defaults() });
         for (key, field) in fields {
             value[key] = field.clone();
         }
@@ -228,6 +224,23 @@ pub fn retention(repo: &Value, org: &Value, site: Option<i32>, private: bool) ->
         .min(days(org).unwrap_or(365))
         .min(i64::from(site.unwrap_or(365)))
         .min(if private { 365 } else { 90 }) as i32
+}
+
+/// Response defaults must not become persisted overrides of inherited settings.
+pub(crate) fn resolved(mut stored: Value, parent: &Value, site: &super::actions::ActionsSettings, private: bool, maximum: i64) -> Value {
+    let days = retention(&stored, parent, site.artifact_retention_days, private);
+    let write = workflow_write(&stored, parent, site.default_workflow_permissions == "permissive");
+    let approve = can_approve_reviews(&stored, parent);
+    stored[Setting::Retention.key()] = json!({"days":days,"maximum_allowed_days":maximum});
+    if stored.get(Setting::Workflow.key()).is_none() { stored[Setting::Workflow.key()] = json!({}); }
+    stored[Setting::Workflow.key()]["default_workflow_permissions"] = json!(if write { "write" } else { "read" });
+    stored[Setting::Workflow.key()]["can_approve_pull_request_reviews"] = json!(approve);
+    // Older unsupported contributor policies have always executed conservatively. Report
+    // that actual behavior, and reject new attempts to select an unenforced policy.
+    if stored[Setting::ContributorApproval.key()]["approval_policy"].as_str().is_some_and(|policy| policy != "all_external_contributors") {
+        stored[Setting::ContributorApproval.key()] = Setting::ContributorApproval.defaults();
+    }
+    stored
 }
 
 native_operation!(crate::backend::db::postgres::action_settings::settings,
