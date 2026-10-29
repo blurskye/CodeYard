@@ -1,5 +1,7 @@
 mod list;
 mod pulls;
+mod read;
+pub use read::{pull_merge_candidates, pull_snapshot, read_alert_snapshot, security_read_allowed};
 pub use list::{alert_page, analyses, analysis, analysis_sarif};
 pub use pulls::{baseline_analysis, new_findings, pull_analyses, pull_processing};
 
@@ -161,17 +163,27 @@ pub async fn instances(
 
 pub async fn dismiss(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     number: i64,
     input: &Dismissal<'_>,
 ) -> Result<Alert> {
     input.validate()?;
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
-        Refusal::Denied
-    );
+    let mut allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?;
+    if !allowed {
+        let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1 AND NOT is_archived AND owner_kind='org'")
+            .bind(repo).fetch_optional(&mut *tx).await?.flatten();
+        if let Some(org) = org {
+            allowed = super::organizations::roles::manages_security(&mut tx, actor, org).await?;
+        }
+    }
+    ensure!(allowed, Refusal::Denied);
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let dismissed = input.state == "dismissed";
     let now = chrono::Utc::now();
     let alert = sqlx::query_as("UPDATE code_scanning_alerts SET state=CASE WHEN $3 THEN 'dismissed' WHEN EXISTS(SELECT 1 FROM code_scanning_instances i WHERE i.alert_id=code_scanning_alerts.id AND i.state='open') THEN 'open' ELSE 'fixed' END,fixed_at=CASE WHEN $3 THEN fixed_at WHEN EXISTS(SELECT 1 FROM code_scanning_instances i WHERE i.alert_id=code_scanning_alerts.id AND i.state='open') THEN NULL ELSE COALESCE(fixed_at,$8) END,dismissed_by=$4,dismissed_at=$5,dismissed_reason=$6,dismissed_comment=$7,updated_at=$8 WHERE repo_id=$1 AND number=$2 RETURNING *")

@@ -480,14 +480,16 @@ async fn notify(
 
 pub async fn dismiss(
     pool: &DbPool,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     repo: i64,
     number: i64,
     input: &db::code_scanning::Dismissal<'_>,
 ) -> Result<db::code_scanning::Alert> {
     input.validate()?;
-    let alert = db::code_scanning::dismiss(pool, actor, repo, number, input).await?;
-    notify(
+    let authority = actor.into();
+    let actor = authority.user_id();
+    let alert = db::code_scanning::dismiss(pool, authority, repo, number, input).await?;
+    if let Err(error) = notify(
         pool,
         actor,
         &alert,
@@ -497,8 +499,9 @@ pub async fn dismiss(
             "reopened_by_user"
         },
         None,
-    )
-    .await?;
+    ).await {
+        tracing::warn!(repo_id = repo, number, %error, "saved code scanning dismissal notification failed");
+    }
     Ok(alert)
 }
 

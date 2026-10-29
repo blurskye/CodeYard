@@ -54,6 +54,17 @@ pub async fn alert_page(
         offset >= 0 && (1..=101).contains(&limit),
         "Invalid alert page"
     );
+    let mut connection = pool.acquire().await?;
+    alert_page_on(&mut connection, scope, filters, offset, limit).await
+}
+
+pub(super) async fn alert_page_on(
+    connection: &mut sqlx::PgConnection,
+    scope: AlertScope,
+    filters: &AlertFilters<'_>,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Alert>> {
     let (repo, org) = scope.ids();
     let (sort, direction) = filters.sort.sql();
     let rows:Vec<BranchAlert>=sqlx::query_as(&format!(
@@ -71,6 +82,6 @@ pub async fn alert_page(
         ) scoped WHERE (CAST($6 AS TEXT) IS NULL OR ref_state=$6 OR ($6='closed' AND ref_state<>'open'))
         ORDER BY {sort} {direction},id {direction} LIMIT $8 OFFSET $9
         ) page ON page.id=a.id ORDER BY a.{sort} {direction},a.id {direction}"
-    )).bind(repo).bind(org).bind(filters.reference).bind(filters.tool_name).bind(filters.tool_guid).bind(filters.state).bind(filters.severity).bind(limit).bind(offset).fetch_all(pool).await?;
+    )).bind(repo).bind(org).bind(filters.reference).bind(filters.tool_name).bind(filters.tool_guid).bind(filters.state).bind(filters.severity).bind(limit).bind(offset).fetch_all(connection).await?;
     Ok(rows.into_iter().map(BranchAlert::into_alert).collect())
 }

@@ -600,7 +600,9 @@ async fn update_alert(
     input
         .validate()
         .map_err(|e| Error::invalid(e.to_string()))?;
-    let row = code_scanning::dismiss(&state.pool, auth.user.id, repo.id, number, &input)
+    let row = code_scanning::dismiss(&state.pool, db::users::accounts::AccountActor::Token {
+        user_id: auth.user.id, token_id: auth.token.id,
+    }, repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(
