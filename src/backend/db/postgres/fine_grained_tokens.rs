@@ -85,6 +85,20 @@ pub async fn regenerate(
     Ok(changed)
 }
 
+pub async fn repository_choices(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: Option<i64>, query: &str, selected: &[i64]) -> Result<crate::backend::db::fine_grained_tokens::RepositoryChoices> {
+    anyhow::ensure!(selected.len() <= crate::backend::db::fine_grained_tokens::MAX_REPOSITORIES, "Repository selection exceeds its limit");
+    let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let projection = format!("SELECT r.id,r.name FROM repositories r JOIN users u ON u.id=$1 WHERE NOT r.is_gist AND (($2::BIGINT IS NULL AND r.owner_kind='user' AND r.owner_user_id=u.id) OR ($2::BIGINT IS NOT NULL AND r.owner_kind='org' AND r.owner_org_id=$2)) AND ({access})>=1");
+    let kept = sqlx::query_as(&format!("{projection} AND r.id=ANY($3) ORDER BY r.id"))
+        .bind(actor).bind(org).bind(selected).fetch_all(&mut *tx).await?;
+    let matching = sqlx::query_as(&format!("{projection} AND LOWER(r.name) LIKE $3 ESCAPE '\\' ORDER BY r.name,r.id LIMIT 101"))
+        .bind(actor).bind(org).bind(crate::backend::db::discussions::contains_pattern(query)).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(crate::backend::db::fine_grained_tokens::RepositoryChoices { selected: kept, matching })
+}
+
 pub async fn get(pool: &PgPool, token: i64) -> Result<Option<Token>> {
     Ok(sqlx::query_as(&format!("{TOKEN} WHERE f.token_id=$1"))
         .bind(token)

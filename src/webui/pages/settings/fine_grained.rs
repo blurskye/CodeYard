@@ -68,6 +68,7 @@ pub struct Draft {
     pub description: String,
     /// `user`, or an organization id.
     pub owner: String,
+    pub owners_after: i64,
     /// A number of days, `custom` or `never`.
     pub expiry: String,
     pub expires_at: String,
@@ -81,6 +82,7 @@ pub struct Draft {
 pub struct Choices {
     /// Value and label: `user` and the username, then each organization.
     pub owners: Vec<(String, String)>,
+    pub next_owners: Option<i64>,
     /// The owner's repositories that match the search, and the ones already selected.
     pub repositories: Vec<(i64, String)>,
     pub more_repositories: bool,
@@ -224,6 +226,7 @@ fn new(token: &str, draft: &Draft, choices: &Choices) -> Element {
             }
             form { method: "post", action: BASE, class: "identity-form",
                 {csrf(token)}
+                input { r#type: "hidden", name: "owners_after", value: "{draft.owners_after}" }
                 {text_field("name", "Token name", draft.name.clone(), "text", true, 100)}
                 {text_field("description", "Description", draft.description.clone(), "text", false, 1024)}
                 div { class: "space-y-2",
@@ -231,6 +234,12 @@ fn new(token: &str, draft: &Draft, choices: &Choices) -> Element {
                     DraftSelect { id: Some("owner".to_owned()), name: "owner", class: FIELD, initial_value: draft.owner.clone(),
                         options: choices.owners.iter().map(|(value, label)| SelectOption::new(value.clone(), label.clone())).collect::<Vec<_>>() }
                     button { r#type: "submit", name: "action", value: "refresh", formnovalidate: true, class: "identity-button", "Show this owner's repositories and permissions" }
+                    if let Some(after) = choices.next_owners {
+                        button { r#type: "submit", name: "action", value: "owners:{after}", formnovalidate: true, class: "identity-button", "More organizations" }
+                    }
+                    if draft.owners_after > 0 {
+                        button { r#type: "submit", name: "action", value: "owners:0", formnovalidate: true, class: "identity-button", "First organizations" }
+                    }
                 }
                 {expiry_fields(&draft.expiry, &draft.expires_at, choices.never_allowed)}
                 fieldset { class: "identity-fieldset",

@@ -16,7 +16,7 @@ pub const PREFIX: &str = "cy_fgpat_";
 /// The longest lifetime any token may have, and the default organization maximum.
 pub const MAX_DAYS: i64 = 366;
 pub const DEFAULT_DAYS: i64 = 30;
-pub const MAX_REPOSITORIES: usize = 100;
+pub const MAX_REPOSITORIES: usize = db::fine_grained_tokens::MAX_REPOSITORIES;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {

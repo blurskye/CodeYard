@@ -84,6 +84,16 @@ impl Default for Policy {
     }
 }
 
+pub const MAX_REPOSITORIES: usize = 100;
+
+pub struct RepositoryChoices {
+    pub selected: Vec<(i64, String)>,
+    pub matching: Vec<(i64, String)>,
+}
+
+native_operation!(crate::backend::db::postgres::fine_grained_tokens::repository_choices, crate::backend::db::sqlite::fine_grained_tokens::repository_choices,
+    fn repository_choices(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: Option<i64>, query: &str, selected: &[i64]) -> Result<RepositoryChoices>);
+
 pub struct NewToken<'a> {
     pub name: &'a str,
     pub description: &'a str,
