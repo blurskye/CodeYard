@@ -29,6 +29,11 @@ pub(super) fn read_method(method: &Method) -> bool {
 }
 
 impl Authentication {
+    pub fn owner_actor(&self, headers: &HeaderMap) -> Result<db::organizations::OwnerActor> {
+        Ok(db::organizations::OwnerActor::token(self.user.id, self.token.id,
+            token_hash(credential(headers).ok_or_else(required)?)))
+    }
+
     pub fn is_job(&self) -> bool {
         self.user.username == db::ci_tokens::BOT
     }
