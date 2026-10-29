@@ -53,6 +53,7 @@ fn draft(data: &Data) -> Draft {
         vector: data.cvss_vector_string.clone().unwrap_or_default(),
         cve: data.cve_id.clone().unwrap_or_default(),
         ecosystem: "npm".into(),
+        vulnerabilities: serde_json::to_string_pretty(&data.vulnerabilities).unwrap_or_default(),
         ..Default::default()
     }
 }
@@ -241,6 +242,10 @@ async fn submit(
         return ctx.error(StatusCode::FORBIDDEN, "Advisory administration denied.");
     }
     let actor = ctx.user.as_ref().unwrap().id;
+    let authority = db::users::accounts::AccountActor::Session {
+        user_id: actor,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let op = forms::field(&form, "op");
     let ghsa = forms::field(&form, "ghsa");
     let draft = Draft {
@@ -252,20 +257,23 @@ async fn submit(
         package: forms::field(&form, "package"),
         ecosystem: forms::field(&form, "ecosystem"),
         range: forms::field(&form, "range"),
+        vulnerabilities: forms::field(&form, "vulnerabilities"),
     };
     let effect=async {
         let optional=|s:&String|if s.is_empty(){None}else{Some(s.clone())};
         let mut value=json!({"summary":draft.summary,"description":draft.description,"severity":optional(&draft.severity),"cvss_vector_string":optional(&draft.vector),"cve_id":optional(&draft.cve)});
         if op=="create"||(op=="save"&&form.contains_key("package")) {
             value["vulnerabilities"]=if draft.package.is_empty(){json!([])}else{json!([{"package":{"ecosystem":draft.ecosystem,"name":draft.package},"vulnerable_version_range":draft.range}])};
+        } else if op=="save"&&form.contains_key("vulnerabilities") {
+            value["vulnerabilities"]=serde_json::from_str(&draft.vulnerabilities).map_err(|_|advisories::Refusal::Invalid)?;
         }
         match op.as_str() {
             "create"=>{
-                return Ok(advisories::create(&ctx.state.pool,actor,loaded.repository.id,&value,false).await?.ghsa_id);
+                return Ok(advisories::create(&ctx.state.pool,authority.clone(),loaded.repository.id,&value,false).await?.ghsa_id);
             }
-            "save"=>{advisories::update(&ctx.state.pool,actor,loaded.repository.id,&ghsa,&value).await?;}
-            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};advisories::update(&ctx.state.pool,actor,loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
-            "cve"=>advisories::request_cve(&ctx.state.pool,actor,loaded.repository.id,&ghsa).await?,
+            "save"=>{advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&value).await?;}
+            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
+            "cve"=>advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
             "fork"=>{workflow::private_fork(&ctx.state,actor,&loaded.repository,&ghsa).await?;}
             _=>anyhow::bail!(advisories::Refusal::Invalid),
         }
@@ -278,12 +286,14 @@ async fn submit(
         ))
         .into_response(),
         Err(error) => {
-            let status = match error.downcast_ref::<advisories::Refusal>() {
+            let status = if error.is::<db::users::accounts::AccountRestricted>() {
+                StatusCode::FORBIDDEN
+            } else { match error.downcast_ref::<advisories::Refusal>() {
                 Some(advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
                 Some(advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
                 None => StatusCode::SERVICE_UNAVAILABLE,
-            };
+            } };
             render(
                 &ctx,
                 loaded,

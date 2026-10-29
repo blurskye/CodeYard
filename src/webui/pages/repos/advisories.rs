@@ -14,6 +14,7 @@ pub struct Draft {
     pub package: String,
     pub ecosystem: String,
     pub range: String,
+    pub vulnerabilities: String,
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Row {
@@ -72,6 +73,9 @@ fn fields(draft: &Draft, include_package: bool) -> Element {
             label {"Package ecosystem" DraftSelect {name:"ecosystem",initial_value:draft.ecosystem.clone(),options:ecosystem_options}}
             label {"Package name" DraftInput {name:"package",initial_value:draft.package.clone(),maxlength:Some(255)}}
             label {"Vulnerable versions" DraftInput {name:"range",initial_value:draft.range.clone(),maxlength:Some(1024)}}
+        } else {
+            label {"Affected packages (JSON)" DraftTextarea {name:"vulnerabilities",initial_value:draft.vulnerabilities.clone(),required:true}}
+            p {"Complete each package's ecosystem, name and vulnerable_version_range before publishing. Keep patched_versions and vulnerable_functions when editing existing entries."}
         }
     }
 }
