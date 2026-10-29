@@ -70,6 +70,16 @@ pub async fn token_user(pool: &SqlitePool, token_id: i64, write: bool) -> Result
     Ok(user)
 }
 
+pub async fn can_write_repository(pool: &SqlitePool, actor: i64, token: i64, repo: i64, permission: &str) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::super::discussions::lock_write_authority(&mut tx, actor, repo).await? {
+        return Ok(false);
+    }
+    let allowed = permits_write(&mut tx, actor, token, Some(repo), None, permission).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 /// Called inside the resource's BEGIN IMMEDIATE transaction, after account authority.
 pub(crate) async fn permits_write(
     tx: &mut sqlx::SqliteConnection,

@@ -90,6 +90,16 @@ pub async fn token_user(pool: &PgPool, token_id: i64, write: bool) -> Result<Opt
     Ok(user)
 }
 
+pub async fn can_write_repository(pool: &PgPool, actor: i64, token: i64, repo: i64, permission: &str) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    if !super::super::discussions::lock_write_authority(&mut tx, actor, repo).await? {
+        return Ok(false);
+    }
+    let allowed = permits_write(&mut tx, actor, token, Some(repo), None, permission).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 /// Called after resource authority has been locked, in the transaction that writes it.
 /// The token row lock serializes revocation with the effect, not just HTTP authentication.
 pub(crate) async fn permits_write(
