@@ -1,5 +1,5 @@
 //! Organization Actions values and their repository visibility.
-use super::DbPool;
+use super::{users::accounts::AccountCredential, DbPool};
 use crate::backend::crypto::{SecretEncryptor, SecretError};
 use chrono::{DateTime, Utc};
 
@@ -110,16 +110,16 @@ native_operation!(crate::backend::db::postgres::organizations::action_values::se
     fn settings_page(pool: &DbPool, actor: i64, session: &str, org: i64, page: i64) -> Result<SettingsPage, ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::save,
     crate::backend::db::sqlite::organizations::action_values::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, org: i64, input: &Save<'_>) -> Result<bool, ValueError>);
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, credential: &AccountCredential<'_>, org: i64, input: &Save<'_>) -> Result<bool, ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::delete,
     crate::backend::db::sqlite::organizations::action_values::delete,
-    fn delete(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str) -> Result<(), ValueError>);
+    fn delete(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str) -> Result<(), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::repositories,
     crate::backend::db::sqlite::organizations::action_values::repositories,
     fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str) -> Result<Vec<super::models::Repository>, ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::select,
     crate::backend::db::sqlite::organizations::action_values::select,
-    fn select(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, change: Selection<'_>) -> Result<(), ValueError>);
+    fn select(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str, change: Selection<'_>) -> Result<(), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::inherited,
     crate::backend::db::sqlite::organizations::action_values::inherited,
     fn inherited(pool: &DbPool, actor: i64, repo: i64, kind: Kind) -> Result<Vec<OrganizationValue>, ValueError>);

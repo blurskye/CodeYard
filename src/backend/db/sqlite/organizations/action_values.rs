@@ -6,9 +6,10 @@ use crate::backend::{
             ValueError, SETTINGS_PAGE_SIZE,
         },
         organizations::{administers, OrganizationOutcome},
+        users::accounts::AccountCredential,
     },
 };
-use sqlx::{SqliteConnection as Connection, SqlitePool as Pool};
+use sqlx::{Sqlite, SqliteConnection as Connection, SqlitePool as Pool, Transaction};
 
 async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<(), ValueError> {
     match super::authority::authority(connection, actor, org)
@@ -19,6 +20,14 @@ async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<
         OrganizationOutcome::Missing => Err(ValueError::NotFound),
         _ => Err(ValueError::Denied),
     }
+}
+
+async fn authorize_write(tx: &mut Transaction<'_, Sqlite>, actor: i64, credential: &AccountCredential<'_>, org: i64) -> Result<(), ValueError> {
+    authorize(tx, actor, org).await?;
+    if !crate::backend::db::sqlite::users::transitions::retain_write_credential(tx, actor, credential).await.map_err(ValueError::Authority)? {
+        return Err(ValueError::Denied);
+    }
+    Ok(())
 }
 
 pub async fn key(
@@ -128,12 +137,13 @@ pub async fn save(
     pool: &Pool,
     encryptor: Option<&SecretEncryptor>,
     actor: i64,
+    credential: &AccountCredential<'_>,
     org: i64,
     input: &Save<'_>,
 ) -> Result<bool, ValueError> {
     organization_values::validate(input.name, input.value.unwrap_or_default())?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, org).await?;
+    authorize_write(&mut tx, actor, credential, org).await?;
     let kind = input.kind.as_str();
     let previous = input.previous.unwrap_or(input.name);
     let old: Option<StoredValue> = sqlx::query_as("SELECT name,value,visibility,encrypted_value,nonce FROM org_actions_values WHERE org_id=$1 AND kind=$2 AND name=$3").bind(org).bind(kind).bind(previous).fetch_optional(&mut *tx).await?;
@@ -216,12 +226,13 @@ pub async fn save(
 pub async fn delete(
     pool: &Pool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     org: i64,
     kind: Kind,
     name: &str,
 ) -> Result<(), ValueError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, org).await?;
+    authorize_write(&mut tx, actor, credential, org).await?;
     let result =
         sqlx::query("DELETE FROM org_actions_values WHERE org_id=$1 AND kind=$2 AND name=$3")
             .bind(org)
@@ -275,13 +286,14 @@ pub async fn repositories(
 pub async fn select(
     pool: &Pool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     org: i64,
     kind: Kind,
     name: &str,
     change: Selection<'_>,
 ) -> Result<(), ValueError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    authorize(&mut tx, actor, org).await?;
+    authorize_write(&mut tx, actor, credential, org).await?;
     selected(&mut tx, org, kind, name).await?;
     match change {
         Selection::Set(ids) => replace_repositories(&mut tx, org, kind, name, ids).await?,

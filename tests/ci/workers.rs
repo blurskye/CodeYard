@@ -3593,6 +3593,7 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
                 pool,
                 Some(&encryptor),
                 owner.id,
+                &db::users::accounts::AccountCredential::Trusted,
                 org.id,
                 &db::organization_values::Save {
                     kind,

@@ -122,6 +122,7 @@ async fn contract(pg: bool) {
             f.pool(),
             Some(&encryptor),
             actor,
+            &db::users::accounts::AccountCredential::Trusted,
             org.id,
             &db::organization_values::Save {
                 kind,
