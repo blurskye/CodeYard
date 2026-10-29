@@ -83,7 +83,7 @@ pub fn totp_code(secret: &[u8], step: u64) -> u32 {
 /// The time step a code belongs to, when it is valid one step either side of `now`.
 pub fn matching_step(secret: &[u8], code: &str, now: u64) -> Option<i64> {
     let current = (now / STEP_SECONDS) as i64;
-    (current - 1..=current + 1).find(|step| {
+    (current - 1..=current + 1).rev().find(|step| {
         format!(
             "{:0width$}",
             totp_code(secret, *step as u64),
