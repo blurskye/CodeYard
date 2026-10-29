@@ -78,10 +78,9 @@ async fn authority(
     Ok((publisher, app))
 }
 
-/// The GitHub App behind the newest check run named `name` in the repository, if that run
-/// came from an App.
+/// The most recent App producer of this name. A newer account-owned run must not erase its pin.
 pub async fn recent_app(pool: &PgPool, repo: i64, name: &str) -> Result<Option<i64>> {
-    Ok(sqlx::query_scalar::<_, Option<i64>>("SELECT g.id FROM check_runs r JOIN check_suites s ON s.id=r.suite_id LEFT JOIN oauth_applications o ON o.id=s.app_id LEFT JOIN github_apps g ON g.client_id=o.client_id WHERE r.repo_id=$1 AND r.name=$2 ORDER BY r.id DESC LIMIT 1")
+    Ok(sqlx::query_scalar::<_, Option<i64>>("SELECT g.id FROM check_runs r JOIN check_suites s ON s.id=r.suite_id LEFT JOIN oauth_applications o ON o.id=s.app_id LEFT JOIN github_apps g ON g.client_id=o.client_id WHERE r.repo_id=$1 AND r.name=$2 AND g.id IS NOT NULL ORDER BY r.id DESC LIMIT 1")
         .bind(repo)
         .bind(name)
         .fetch_optional(pool)
