@@ -383,7 +383,7 @@ pub(crate) fn matches(
                     // The advisory matched; this entry must match too, or another entry's
                     // range and fixed version would be reported.
                     && vulnerabilities::in_range(
-                        vulnerabilities::ecosystem(&package.ecosystem).unwrap_or(""),
+                        if vulnerability["osv_range_type"] == "SEMVER" { "SEMVER" } else { vulnerabilities::ecosystem(&package.ecosystem).unwrap_or("") },
                         &package.version,
                         range,
                     )
