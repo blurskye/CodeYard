@@ -285,7 +285,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             options,
         });
     }
-    let items = projects::items(pool, viewer, project.id).await?;
+    let items = projects::items(pool, viewer, project.id).await?.into_iter().filter(|item| !item.archived).collect();
     let items =
         crate::backend::projects::filter_items(items, &fields, &page.filter, Some(&config))?;
     // One page of the filtered, sorted items keeps large drafts within the page model.
