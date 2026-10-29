@@ -292,6 +292,8 @@ async fn read(
 
 #[derive(Deserialize)]
 struct Write {
+    #[serde(flatten)]
+    identities: crate::backend::repositories::store::CommitIdentities,
     message: String,
     content: Option<String>,
     sha: Option<String>,
@@ -363,6 +365,7 @@ async fn save(
             repo.id,
             write,
             None,
+            input.identities,
         )
         .await
     } else {
@@ -375,6 +378,7 @@ async fn save(
             repo.id,
             write,
             bytes,
+            input.identities,
         )
         .await
     }
