@@ -157,6 +157,7 @@ async fn index_model(
         match records::list_reports(
             &ctx.state.pool,
             user.id,
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
             loaded.repository.id,
             21,
             ((page - 1) * 20) as i64,
@@ -212,6 +213,7 @@ async fn thread_model(
     let mut thread = match records::report_thread(
         &ctx.state.pool,
         actor,
+        &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         loaded.repository.id,
         id,
         ((page - 1) * 20) as i64,

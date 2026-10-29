@@ -70,9 +70,9 @@ native_operation!(crate::backend::db::postgres::repositories::security::set_enab
 native_operation!(crate::backend::db::postgres::repositories::security::create_report,crate::backend::db::sqlite::repositories::security::create_report,
     fn create_report(pool:&DbPool,actor:i64,repo_id:i64,input:&NewReport<'_>)->Result<i64>);
 native_operation!(crate::backend::db::postgres::repositories::security::list_reports,crate::backend::db::sqlite::repositories::security::list_reports,
-    fn list_reports(pool:&DbPool,actor:i64,repo_id:i64,limit:i64,offset:i64)->Result<Vec<Report>>);
+    fn list_reports(pool:&DbPool,actor:i64,session:&str,repo_id:i64,limit:i64,offset:i64)->Result<Vec<Report>>);
 native_operation!(crate::backend::db::postgres::repositories::security::report_thread,crate::backend::db::sqlite::repositories::security::report_thread,
-    fn report_thread(pool:&DbPool,actor:i64,repo_id:i64,report_id:i64,offset:i64)->Result<Thread>);
+    fn report_thread(pool:&DbPool,actor:i64,session:&str,repo_id:i64,report_id:i64,offset:i64)->Result<Thread>);
 native_operation!(crate::backend::db::postgres::repositories::security::reply,crate::backend::db::sqlite::repositories::security::reply,
     fn reply(pool:&DbPool,actor:i64,repo_id:i64,report_id:i64,body:&str)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::security::set_state,crate::backend::db::sqlite::repositories::security::set_state,
