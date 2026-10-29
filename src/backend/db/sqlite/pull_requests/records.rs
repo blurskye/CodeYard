@@ -132,6 +132,11 @@ pub async fn move_open_pull_request_head(
     .execute(&mut *tx)
     .await?
     .rows_affected();
+    if changed == 1 && old_head != new_head {
+        // Refresh callers do not attest the actual pusher's base write authority.
+        sqlx::query("DELETE FROM pull_request_auto_merges WHERE pull_request_id=?1")
+            .bind(pull_request_id).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(changed == 1)
 }

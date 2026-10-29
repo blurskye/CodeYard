@@ -100,15 +100,22 @@ pub async fn move_open_pull_request_head(
     old_head: &str,
     new_head: &str,
 ) -> Result<bool> {
+    let mut tx = pool.begin().await?;
     let changed = sqlx::query(
         "UPDATE pull_requests SET head_sha = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND head_sha = $3",
     )
     .bind(pull_request_id)
     .bind(new_head)
     .bind(old_head)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    if changed == 1 && old_head != new_head {
+        // Refresh callers do not attest the actual pusher's base write authority.
+        sqlx::query("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1")
+            .bind(pull_request_id).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(changed == 1)
 }
 
