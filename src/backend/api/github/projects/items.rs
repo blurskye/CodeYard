@@ -90,7 +90,7 @@ async fn item_document(
     );
     let mut values = Vec::new();
     for field in fields {
-        if selected.is_some_and(|s| {
+        if selected.map_or(field.data_type != "title", |s| {
             !s.split(',').any(|s| {
                 s.trim() == field.id.to_string() || s.trim().eq_ignore_ascii_case(&field.name)
             })
@@ -235,7 +235,16 @@ async fn draft(
 #[derive(Deserialize)]
 struct ItemQuery {
     q: Option<String>,
-    fields: Option<String>,
+}
+
+fn selected_fields(uri: &axum::http::Uri) -> Result<Option<String>> {
+    let fields: Vec<_> = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
+        .filter(|(key, _)| key == "fields" || key == "fields[]")
+        .map(|(_, value)| value.into_owned()).collect();
+    if fields.len() > 100 || fields.iter().map(String::len).sum::<usize>() > 4096 {
+        return Err(Error::validation("ProjectV2Item", "fields", "invalid"));
+    }
+    Ok((!fields.is_empty()).then(|| fields.join(",")))
 }
 
 async fn list_items(
@@ -274,6 +283,7 @@ async fn list_items(
     )
     .map_err(project_error)?;
     let (offset, limit) = page.window()?;
+    let selected = selected_fields(&uri)?;
     let window: Vec<&Item> = items.iter().skip(offset).take(limit + 1).collect();
     let readable = readable_items(&state, auth.as_ref(), window.iter().copied()).await?;
     let mut documents = Vec::new();
@@ -286,7 +296,7 @@ async fn list_items(
                 &name,
                 item,
                 &fields,
-                query.fields.as_deref(),
+                selected.as_deref(),
                 &readable,
             )
             .await?,
@@ -300,8 +310,9 @@ async fn get_item(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(params): Path<Params>,
-    Query(query): Query<ItemQuery>,
+    OriginalUri(uri): OriginalUri,
 ) -> Result<Json<Value>> {
+    let selected = selected_fields(&uri)?;
     let (project, name, auth) = context(&state, &headers, &params, false, false).await?;
     let viewer = auth.as_ref().map(|a| a.user.id);
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
@@ -323,7 +334,7 @@ async fn get_item(
             &name,
             &item,
             &fields,
-            query.fields.as_deref(),
+            selected.as_deref(),
             &readable,
         )
         .await?,
