@@ -376,7 +376,7 @@ pub(super) async fn resolve(
             }
         }
         if let Some(concurrency) = concurrency {
-            if scheduling.concurrency.is_some() || request.workflow_paths.len() != 1 {
+            if scheduling.concurrency_expression.is_some() || request.workflow_paths.len() != 1 {
                 return Err(AdmissionError::Invalid(
                     "Concurrency requires a run of one workflow",
                 ));
@@ -465,7 +465,7 @@ pub(super) async fn resolve(
                     ),
                 ]),
             };
-            scheduling.concurrency = Some(super::concurrency::resolve(concurrency, contexts).await?);
+            scheduling.concurrency_expression = Some((concurrency, contexts));
         }
         // Pull request filters name the base branch itself, even when it looks like a ref.
         let event_ref = if pr_revision || pr_target {

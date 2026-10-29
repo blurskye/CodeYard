@@ -219,6 +219,8 @@ pub struct Scheduling {
     pub labels: Vec<String>,
     pub group: Option<String>,
     pub concurrency: Option<super::action_concurrency::Configuration>,
+    /// Expression and non-run contexts retained until the enqueue transaction assigns identity.
+    pub concurrency_expression: Option<(serde_yaml::Value, codeyard_actions::expressions::Contexts)>,
 }
 
 #[derive(Clone, Debug)]

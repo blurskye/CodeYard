@@ -1,9 +1,9 @@
-//! Workflow concurrency is resolved before enqueue, using only admission-time contexts.
+//! Workflow concurrency combines immutable admission inputs with transaction-assigned run identity.
 use super::admission::AdmissionError;
 use crate::backend::db::action_concurrency::Configuration;
 use codeyard_actions::expressions::{self, Contexts, Status};
 
-pub(super) async fn resolve(
+pub(crate) async fn resolve(
     value: serde_yaml::Value,
     contexts: Contexts,
 ) -> Result<Configuration, AdmissionError> {
@@ -13,6 +13,43 @@ pub(super) async fn resolve(
         let _permit = permit;
         resolve_group(&value, &contexts)
     }).await.map_err(|_| AdmissionError::Unavailable)?
+}
+
+pub(crate) fn run_contexts(
+    mut contexts: Contexts,
+    run: &crate::backend::db::models::CiRun,
+    original_actor: Option<(i64, String)>,
+) -> Contexts {
+    use expressions::Value;
+    let Some(Value::Object(github)) = contexts.values.get_mut("github") else { return contexts; };
+    github.insert("run_id".into(), Value::String(run.workflow_run_id.unwrap_or(run.id).to_string()));
+    github.insert("run_number".into(), Value::String(run.workflow_run_number.unwrap_or(run.id).to_string()));
+    github.insert("run_attempt".into(), Value::String(run.workflow_run_attempt.unwrap_or(1).to_string()));
+    if let Some((id, actor)) = original_actor {
+        if let Some(triggering) = github.get("actor").cloned() { github.insert("triggering_actor".into(), triggering); }
+        github.insert("actor".into(), Value::String(actor));
+        github.insert("actor_id".into(), Value::String(id.to_string()));
+    }
+    if run.event == "pull_request" {
+        if let Some(pull) = &run.pull_request_event {
+            if let Some(number) = pull["number"].as_i64() {
+                let reference = format!("refs/pull/{number}/merge");
+                github.insert("ref".into(), Value::String(reference.clone()));
+                github.insert("ref_name".into(), Value::String(format!("{number}/merge")));
+                github.insert("head_ref".into(), Value::from_json(&pull["head_ref"]));
+                github.insert("base_ref".into(), Value::String(run.branch.clone()));
+                if let Some(Value::String(workflow_ref)) = github.get_mut("workflow_ref") {
+                    if let Some((path, _)) = workflow_ref.split_once('@') { *workflow_ref = format!("{path}@{reference}"); }
+                }
+                let event = github.entry("event".into()).or_insert_with(|| Value::Object(Default::default()));
+                if let Value::Object(event) = event {
+                    let pull = event.entry("pull_request".into()).or_insert_with(|| Value::Object(Default::default()));
+                    if let Value::Object(pull) = pull { pull.insert("number".into(), Value::Number(number as f64)); }
+                }
+            }
+        }
+    }
+    contexts
 }
 
 fn resolve_group(value: &serde_yaml::Value, contexts: &Contexts) -> Result<Configuration, AdmissionError> {

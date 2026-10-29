@@ -1,6 +1,6 @@
 //! CI/Actions: workflow triggers queue runs; worker nodes run them with `act`.
 pub mod admission;
-mod concurrency;
+pub(crate) mod concurrency;
 mod config;
 pub use codeyard_actions::workflow::dispatch_inputs;
 pub mod environment_values;

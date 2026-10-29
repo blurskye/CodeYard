@@ -458,7 +458,13 @@ async fn schedule_concurrency(
     run: &CiRun,
     scheduling: &crate::backend::db::runners::Scheduling,
 ) -> Result<()> {
-    if let Some(config) = &scheduling.concurrency {
+    let config = if let Some((expression, contexts)) = &scheduling.concurrency_expression {
+        let actor: Option<(i64, String)> = sqlx::query_as("SELECT u.id,u.username FROM ci_runs origin JOIN users u ON u.id=origin.triggered_by_id WHERE origin.id=$1")
+            .bind(run.workflow_run_id.unwrap_or(run.id)).fetch_optional(&mut **tx).await?;
+        let contexts = crate::backend::ci::concurrency::run_contexts(contexts.clone(), run, actor);
+        Some(crate::backend::ci::concurrency::resolve(expression.clone(), contexts).await?)
+    } else { scheduling.concurrency.clone() };
+    if let Some(config) = &config {
         let victims = super::action_concurrency::record(tx, run, config).await?;
         for victim in victims {
             if victim.status == "queued" {

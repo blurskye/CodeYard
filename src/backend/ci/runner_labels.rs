@@ -105,6 +105,7 @@ pub(super) fn scheduling_from_value(
         labels: labels.into_iter().collect(),
         group,
         concurrency: None,
+        concurrency_expression: None,
     })
 }
 
