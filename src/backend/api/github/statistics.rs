@@ -64,11 +64,12 @@ async fn statistics(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let kind = uri.path().rsplit('/').next().unwrap_or("");
+    let mode = if matches!(kind, "contributors" | "code_frequency") { crate::backend::git::StatisticsMode::Full } else { crate::backend::git::StatisticsMode::Counts };
     let stats = repo_store(&repo, state.cluster.as_ref())
-        .commit_statistics(&repo.default_branch)
+        .commit_statistics(&repo.default_branch, mode)
         .await
         .map_err(store_error)?;
-    let kind = uri.path().rsplit('/').next().unwrap_or("");
     if stats.commits == 0 && matches!(kind, "code_frequency" | "contributors" | "commit_activity") {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -197,7 +198,7 @@ async fn contributors(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let stats = repo_store(&repo, state.cluster.as_ref())
-        .commit_statistics(&repo.default_branch)
+        .commit_statistics(&repo.default_branch, crate::backend::git::StatisticsMode::Contributors)
         .await
         .map_err(store_error)?;
     if stats.commits == 0 {

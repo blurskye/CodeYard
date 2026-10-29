@@ -1275,14 +1275,16 @@ impl RepoStore {
     pub async fn commit_statistics(
         &self,
         branch: &str,
+        mode: git::StatisticsMode,
     ) -> Result<git::CommitStatistics, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.commit_statistics(branch).await,
+            Backend::Local(local) => local.commit_statistics(branch, mode).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::CommitStatistics {
                             branch: branch.into(),
+                            mode,
                         },
                         b"",
                     )

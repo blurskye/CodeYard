@@ -373,7 +373,7 @@ async fn files(
     let has_next = diff.files.len().min(3000) > offset + limit;
     let items = diff.files.into_iter().take(3000).skip(offset).take(limit).map(|file| {
         let mut value = json!({
-            "sha": file.blob_sha, "filename": file.filename, "status": file.status, "additions": file.additions, "deletions": file.deletions,
+            "sha": file.blob_sha, "filename": file.filename, "status": super::commits::file_status(&file.status), "additions": file.additions, "deletions": file.deletions,
             "changes": file.additions + file.deletions, "patch": file.patch,
             "blob_url": format!("{}/{owner}/{name}/blob/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
             "raw_url": format!("{}/{owner}/{name}/raw/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),

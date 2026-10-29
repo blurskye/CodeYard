@@ -254,6 +254,8 @@ pub enum Operation {
     Contributors,
     CommitStatistics {
         branch: String,
+        #[serde(default)]
+        mode: crate::backend::git::StatisticsMode,
     },
     CodeFrequency {
         branch: String,

@@ -1204,8 +1204,9 @@ impl LocalStore {
     pub(super) async fn commit_statistics(
         &self,
         branch: &str,
+        mode: git::StatisticsMode,
     ) -> Result<git::CommitStatistics, RepoError> {
-        git::get_commit_statistics(self.path(), branch)
+        git::get_commit_statistics(self.path(), branch, mode)
             .await
             .map_err(RepoError::from)
     }
