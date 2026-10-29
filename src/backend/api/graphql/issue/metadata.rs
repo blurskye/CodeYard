@@ -173,8 +173,9 @@ pub(super) async fn list(
         }
     }
     if let Some(labels) = args.args.get("labels").filter(|v| !v.is_null()) {
-        for value in labels.deserialize::<Vec<String>>()? {
-            add("exact-label", &value)?;
+        let labels: Value = labels.deserialize()?;
+        for value in super::super::metadata_mutations::list(&labels) {
+            add("exact-label", value.as_str().ok_or_else(missing)?)?;
         }
     }
     if let Some(filter) = args.args.get("filterBy").filter(|v| !v.is_null()) {
@@ -227,8 +228,9 @@ pub(super) async fn list(
         }
     }
     if let Some(states) = args.args.get("states").filter(|v| !v.is_null()) {
-        let values = states.deserialize::<Vec<String>>()?;
-        add_states(&mut query, values.iter().map(String::as_str));
+        let values: Value = states.deserialize()?;
+        let values = super::super::metadata_mutations::list(&values).iter().map(|value| value.as_str().ok_or_else(missing)).collect::<Result<Vec<_>>>()?;
+        add_states(&mut query, values.into_iter());
     }
     let (mut sort, mut ascending) = (Sort::Created, false);
     if let Some(order) = args.args.get("orderBy").filter(|v| !v.is_null()) {

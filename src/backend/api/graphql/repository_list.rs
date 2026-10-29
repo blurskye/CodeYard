@@ -47,8 +47,8 @@ fn query<'a>(
         }
     }
     if let Some(value) = ctx.args.get("ownerAffiliations").filter(|v| !v.is_null()) {
-        let values: Vec<Option<String>> = value.deserialize()?;
-        if values.iter().any(|v| v.as_deref() != Some("OWNER")) {
+        let values: Value = value.deserialize()?;
+        if super::metadata_mutations::list(&values).iter().any(|v| v.as_str() != Some("OWNER")) {
             return Err(async_graphql::Error::new(
                 "Codeyard only supports OWNER ownerAffiliations",
             ));
@@ -72,7 +72,7 @@ fn query<'a>(
             "CREATED_AT" => "created",
             "UPDATED_AT" => "updated",
             "PUSHED_AT" => "pushed",
-            "NAME" => "full_name",
+            "NAME" => "name",
             "STARGAZERS" => "stars",
             _ => return Err(async_graphql::Error::new("Unsupported repository order")),
         };
@@ -206,14 +206,12 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
         offset,
         limit,
     };
-    // The catalog's count pages the window; results past the first 1000 are not offered, as before.
-    // The count does not depend on the window, so the smallest valid one is asked for.
+    // Only the retrievable window is capped; repositoryCount reports all native matches.
     let total = db::catalog_search::search(pool, viewer, &search, &options(0, 1))
         .await
         .map_err(unavailable)?
-        .total
-        .min(1000);
-    let page = connection::Page::new(ctx, total)?;
+        .total;
+    let page = connection::Page::new(ctx, total.min(1000))?;
     let hits = if page.limit > 0 {
         db::catalog_search::search(pool, viewer, &search, &options(page.offset, page.limit))
             .await

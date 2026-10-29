@@ -397,7 +397,7 @@ async fn history(
         .map_err(error)?;
     let scans = |kind| {
         history.iter().filter(|job| job.scan_type == kind).map(|job| {
-            let mut scan=serde_json::json!({"type": job.scan_type,"status":if job.status=="queued" {"pending"} else {&job.status},"started_at":job.started_at,"completed_at":job.completed_at});
+            let mut scan=serde_json::json!({"type": job.scan_type,"status":match job.status.as_str() {"queued"=>"pending","running"=>"active","completed"=>"completed",_=>"failed"},"started_at":job.started_at,"completed_at":job.completed_at});
             if let Some(name)=&job.pattern_name {scan["pattern_name"]=serde_json::json!(name);scan["pattern_scope"]=serde_json::json!(job.pattern_scope);}
             scan
         }).collect::<Vec<_>>()
