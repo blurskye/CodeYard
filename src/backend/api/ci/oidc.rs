@@ -27,7 +27,7 @@ async fn discovery() -> Json<Value> {
 }
 
 async fn jwks(State(state): State<Arc<AppState>>) -> Result<Json<Value>, StatusCode> {
-    oidc::jwks(&state.pool)
+    oidc::jwks(&state.oidc_keys)
         .await
         .map(Json)
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)
@@ -58,7 +58,7 @@ async fn token(
     {
         return Err(StatusCode::UNPROCESSABLE_ENTITY);
     }
-    let value = oidc::issue(&state.pool, credential, input.audience.as_deref())
+    let value = oidc::issue(&state.oidc_keys, credential, input.audience.as_deref())
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
         .ok_or(StatusCode::FORBIDDEN)?;
