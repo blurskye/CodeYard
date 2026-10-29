@@ -1,5 +1,5 @@
 //! Immutable release enforcement settings are owned by organization owners.
-use super::super::{api_url, pagination::Pagination, repos};
+use super::super::{api_url, pagination::Pagination};
 use super::{auth, outcome, target, AppState, Error, Result};
 use crate::backend::db::organizations::immutable_releases::{self as data, Change};
 use axum::{
@@ -137,19 +137,12 @@ async fn repositories(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
-    let settings = outcome(
-        data::get(&state.pool, actor.user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?,
-    )?;
     let (offset, limit) = page.window()?;
-    let count = settings.repositories.len();
-    let mut repositories = Vec::new();
-    for repo in settings.repositories.into_iter().skip(offset).take(limit) {
-        repositories.push(repos::document(&state, &repo, Some(&actor)).await?);
-    }
+    let (count, rows) = outcome(data::repositories(&state.pool, actor.user.id, org.id, offset as i64, limit as i64)
+        .await.map_err(Error::unavailable)?)?;
+    let repositories: Vec<_> = rows.iter().map(crate::backend::webhooks::payloads::repository_snapshot).collect();
     Ok((
-        page.headers(&uri, count > offset + limit)?,
+        page.headers(&uri, count > (offset + limit) as i64)?,
         Json(json!({"total_count":count,"repositories":repositories})),
     )
         .into_response())

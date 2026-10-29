@@ -370,23 +370,12 @@ async fn repositories(
     Query(pagination): Query<Pagination>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &params["org"], false).await?;
-    let rows = values::repositories(
-        &state.pool,
-        auth.user.id,
-        org,
-        kind(&route),
-        &name(&params)?,
-    )
-    .await
-    .map_err(error)?;
-    let total = rows.len();
     let (offset, limit) = pagination.window()?;
-    let mut items = Vec::new();
-    for row in rows.into_iter().skip(offset).take(limit) {
-        items.push(super::repos::document(&state, &row, Some(&auth)).await?);
-    }
+    let (total, rows) = values::repositories(&state.pool, auth.user.id, org, kind(&route), &name(&params)?, offset as i64, limit as i64)
+        .await.map_err(error)?;
+    let items: Vec<_> = rows.iter().map(crate::backend::webhooks::payloads::repository_snapshot).collect();
     Ok((
-        pagination.headers(&uri, offset.saturating_add(limit) < total)?,
+        pagination.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,
         Json(json!({"total_count":total,"repositories":items})),
     )
         .into_response())
