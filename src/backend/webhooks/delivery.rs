@@ -33,6 +33,8 @@ pub struct Outgoing {
     pub body: String,
     /// Automatic events obey the active flag and subscription; manual redelivery does not.
     pub automatic: bool,
+    /// Native manual sends recheck this requester's current management access before delivery.
+    pub manual_actor: Option<i64>,
 }
 
 pub(crate) fn json_payload(outgoing: &Outgoing) -> Option<serde_json::Value> {
@@ -115,6 +117,7 @@ pub fn redelivery(recorded: &WebhookDelivery) -> Outgoing {
         content_type,
         body: recorded.request_body.clone(),
         automatic: false,
+        manual_actor: None,
     }
 }
 
@@ -145,7 +148,11 @@ async fn current_hook(
     };
     let mut retries = RETRY_DELAYS.iter();
     let current = loop {
-        match hooks::get_webhook(pool, owner, hook.id).await {
+        let snapshot = match outgoing.manual_actor {
+            Some(actor) => hooks::managed_webhook(pool, owner, actor, hook.id).await,
+            None => hooks::get_webhook(pool, owner, hook.id).await,
+        };
+        match snapshot {
             Ok(Some(current)) => break current,
             Ok(None) => return Ok(false),
             Err(error) => {
@@ -510,6 +517,7 @@ mod tests {
             content_type: "application/x-www-form-urlencoded".into(),
             body: "payload=%7B%7D".into(),
             automatic: true,
+            manual_actor: None,
         };
         let failed = failed_record(&outgoing, 0, "The secret key is not configured");
         assert_eq!(

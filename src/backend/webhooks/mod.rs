@@ -235,6 +235,7 @@ pub fn outgoing(event: &str, action: Option<&str>, hook: &Webhook, json: &str) -
         content_type: hook.content_type.clone(),
         body: encode_body(&hook.content_type, json),
         automatic: event != events::PING,
+        manual_actor: None,
     }
 }
 
