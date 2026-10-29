@@ -148,29 +148,33 @@ pub(super) fn entry(
 
 pub(super) use crate::backend::webhooks::payloads::git_commit as commit_json;
 
-pub(super) fn blob_response(
+pub(super) async fn blob_response(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
     reference: &str,
     path: &str,
     blob: crate::backend::repositories::store::BlobBytes,
-) -> Response {
+) -> Result<Response> {
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("application/vnd.github.raw"))
     {
-        return (
+        return Ok((
             [(header::CONTENT_TYPE, "application/octet-stream")],
             blob.bytes,
-        )
-            .into_response();
+        ).into_response());
+    }
+    if headers.get(header::ACCEPT).and_then(|value| value.to_str().ok()).is_some_and(|value| value.contains("application/vnd.github.html")) {
+        let text = String::from_utf8(blob.bytes).map_err(|_| Error::invalid("HTML representation requires a text file"))?;
+        let references = crate::webui::components::references::References { owner: owner.to_owned(), repo: name.to_owned(), ..Default::default() };
+        return super::meta::render(text, references).await;
     }
     let mut value = entry(owner, name, reference, path, &blob.id, blob.size, "file");
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
-    Json(value).into_response()
+    Ok(Json(value).into_response())
 }
 
 async fn readme(
@@ -202,7 +206,7 @@ async fn readme(
         .blob_bytes(&revision, &path)
         .await
         .map_err(store_error)?;
-    Ok(blob_response(&headers, owner, name, reference, &path, blob))
+    blob_response(&headers, owner, name, reference, &path, blob).await
 }
 
 async fn read(
@@ -227,9 +231,9 @@ async fn read(
                 if let Some(resolved) = link_target(path, &target) {
                     match store.blob_bytes(&revision, &resolved).await {
                         Ok(file) if file.mode != SYMLINK_MODE => {
-                            return Ok(blob_response(
+                            return blob_response(
                                 &headers, owner, name, reference, &resolved, file,
-                            ));
+                            ).await;
                         }
                         Ok(_) => {}
                         Err(error)
@@ -243,7 +247,7 @@ async fn read(
                 return Ok(Json(value).into_response());
             }
             Ok(blob) => {
-                return Ok(blob_response(&headers, owner, name, reference, path, blob));
+                return blob_response(&headers, owner, name, reference, path, blob).await;
             }
             Err(error) if error.reason == Some(RepoErrorReason::NotFile) => {
                 // A submodule is a commit entry, not a directory to list.
@@ -265,6 +269,11 @@ async fn read(
                     };
                     let mut value = entry(owner, name, reference, path, &link.sha, 0, "submodule");
                     value["submodule_git_url"] = json!(url);
+                    value["git_url"] = Value::Null;
+                    value["html_url"] = Value::Null;
+                    value["download_url"] = Value::Null;
+                    value["_links"]["git"] = Value::Null;
+                    value["_links"]["html"] = Value::Null;
                     return Ok(Json(value).into_response());
                 }
             }
@@ -275,8 +284,7 @@ async fn read(
         .tree_metadata(&revision, path)
         .await
         .map_err(store_error)?;
-    Ok(Json(
-        entries
+    let entries = entries
             .into_iter()
             .map(|item| {
                 entry(
@@ -293,9 +301,9 @@ async fn read(
                     },
                 )
             })
-            .collect::<Vec<_>>(),
-    )
-    .into_response())
+            .collect::<Vec<_>>();
+    let value = if headers.get(header::ACCEPT).and_then(|value| value.to_str().ok()).is_some_and(|value| value.contains("application/vnd.github.object")) { json!({"entries": entries}) } else { json!(entries) };
+    Ok(Json(value).into_response())
 }
 
 #[derive(Deserialize)]

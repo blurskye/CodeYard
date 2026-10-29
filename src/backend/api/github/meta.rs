@@ -243,9 +243,9 @@ async fn repository_license(
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("application/vnd.github.raw"))
     {
-        return Ok(contents::blob_response(
+        return contents::blob_response(
             &headers, &owner, &name, reference, &path, blob,
-        ));
+        ).await;
     }
     let mut value = contents::entry(&owner, &name, reference, &path, &blob.id, blob.size, "file");
     value["encoding"] = json!("base64");
@@ -341,7 +341,7 @@ async fn raw_markdown(body: String) -> Result<Response> {
     )
     .await
 }
-async fn render(
+pub(super) async fn render(
     text: String,
     references: crate::webui::components::references::References,
 ) -> Result<Response> {
