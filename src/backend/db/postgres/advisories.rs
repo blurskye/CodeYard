@@ -156,8 +156,11 @@ pub async fn update(
     } else {
         None
     };
-    let updated=sqlx::query_as("UPDATE repository_advisories SET document=$3,state=$4,updated_at=$5,published_at=$6,publisher_id=$7,closed_at=$8,report_accepted=$9 WHERE repo_id=$1 AND ghsa_id=$2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.state=="triage"&&state=="draft")).fetch_one(&mut *tx).await?;
-    if let Some(report) = row.report_id {
+    let updated: Advisory=sqlx::query_as("UPDATE repository_advisories SET document=$3,state=$4,updated_at=$5,published_at=$6,publisher_id=$7,closed_at=$8,report_accepted=$9 WHERE repo_id=$1 AND ghsa_id=$2 RETURNING *").bind(repo).bind(ghsa).bind(serde_json::to_string(&data)?).bind(state).bind(now).bind(published_at).bind(publisher).bind(closed_at).bind(row.report_accepted||(row.report_id.is_some()&&state=="draft")).fetch_one(&mut *tx).await?;
+    if state == "published" {
+        super::super::dependabot_alerts::published(updated.clone())?;
+    }
+    if let Some(report) = row.report_id.filter(|_| state != row.state) {
         sqlx::query("UPDATE repository_security_reports SET state=$2,updated_at=$3 WHERE id=$1 AND repo_id=$4").bind(report).bind(if state=="closed" {"closed"} else {"open"}).bind(now).bind(repo).execute(&mut *tx).await?;
     }
     tx.commit().await?;
@@ -166,6 +169,8 @@ pub async fn update(
 pub async fn request_cve(pool: &PgPool, actor: i64, repo: i64, ghsa: &str) -> Result<()> {
     let mut tx = pool.begin().await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1").bind(repo).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(!private, Refusal::Conflict);
     anyhow::ensure!(
         row.state == "draft"
             && row.cve_requested_at.is_none()

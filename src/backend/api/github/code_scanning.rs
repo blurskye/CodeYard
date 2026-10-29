@@ -154,7 +154,7 @@ async fn upload(
     {
         return Err(Error::validation("Sarif", "commit_sha", "invalid"));
     }
-    if input.ref_name.len() > 4096
+    if input.ref_name.len() > code_scanning::MAX_REFERENCE_BYTES
         || !["refs/heads/", "refs/tags/", "refs/pull/"]
             .iter()
             .any(|p| input.ref_name.starts_with(p))

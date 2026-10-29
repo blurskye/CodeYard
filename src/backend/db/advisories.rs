@@ -70,7 +70,9 @@ impl Data {
         };
         if map.get("severity").is_some_and(|v| !v.is_null()) {
             anyhow::ensure!(
-                map.get("cvss_vector_string").is_none_or(Value::is_null),
+                map.get("cvss_vector_string").is_none_or(Value::is_null)
+                    && (previous.is_none_or(|data| data.cvss_vector_string.is_none())
+                        || map.get("cvss_vector_string").is_some_and(Value::is_null)),
                 Refusal::Invalid
             );
             full.insert("cvss_vector_string".into(), Value::Null);

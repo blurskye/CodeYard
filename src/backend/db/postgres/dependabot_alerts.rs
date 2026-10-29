@@ -23,8 +23,10 @@ async fn global_in(tx: &mut Transaction<'_, Postgres>, keys: Option<&str>) -> Re
     let mut documents = std::collections::BTreeMap::new();
     let published: Vec<Advisory> = sqlx::query_as("SELECT a.* FROM repository_advisories a JOIN repositories r ON r.id=a.repo_id WHERE a.state='published' AND NOT r.is_private AND NOT EXISTS (SELECT 1 FROM global_advisories g WHERE g.ghsa_id=a.ghsa_id) ORDER BY a.ghsa_id").fetch_all(&mut **tx).await?;
     for row in published {
-        let value = dependabot_alerts::published(row)?;
-        documents.insert(value["ghsa_id"].as_str().unwrap().to_owned(), value);
+        match dependabot_alerts::published(row) {
+            Ok(value) => { documents.insert(value["ghsa_id"].as_str().unwrap().to_owned(), value); }
+            Err(_) => tracing::warn!("Invalid published advisory excluded from catalogue"),
+        }
     }
     for body in imported {
         let value: Value = serde_json::from_str(&body)?;
@@ -52,7 +54,10 @@ pub async fn without_osv(pool: &PgPool) -> Result<Vec<Value>> {
     tx.commit().await?;
     let mut rows = Vec::with_capacity(imported.len() + published.len());
     for row in published {
-        rows.push(dependabot_alerts::published(row)?);
+        match dependabot_alerts::published(row) {
+            Ok(value) => rows.push(value),
+            Err(_) => tracing::warn!("Invalid published advisory excluded from catalogue"),
+        }
     }
     for body in imported {
         rows.push(serde_json::from_str(&body)?);

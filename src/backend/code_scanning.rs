@@ -16,6 +16,8 @@ use std::{
     io::Read,
 };
 
+// Together with the 1 KiB category, references must fit PostgreSQL's B-tree key budget.
+pub const MAX_REFERENCE_BYTES: usize = 1024;
 pub const MAX_COMPRESSED: usize = 10 * 1024 * 1024;
 const MAX_EXPANDED: usize = 100 * 1024 * 1024;
 
@@ -129,6 +131,7 @@ fn artifact_path(run: &SarifRun, physical: &Value, checkout: Option<&str>) -> Re
 }
 
 pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
+    ensure!(upload.ref_name.len() <= MAX_REFERENCE_BYTES, "Analysis reference exceeds 1 KiB");
     ensure!(
         upload
             .checkout_uri
@@ -373,6 +376,10 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
             if !fingerprints.insert(fingerprint.clone()) {
                 continue;
             }
+            ensure!(
+                !serde_json::to_vec(&rule)?.windows(6).any(|bytes| bytes == b"\\u0000"),
+                "Rule metadata contains a NUL character"
+            );
             let rule = rule.to_string();
             ensure!(
                 rule.len() <= 1024 * 1024 && message.len() <= 1024 * 1024,
@@ -423,7 +430,14 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
     })
     .await?;
     let changes = match parsed {
-        Ok(runs) => db::code_scanning::finish(pool, &upload, &runs, None).await?,
+        Ok(runs) => match db::code_scanning::finish(pool, &upload, &runs, None).await {
+            Ok(changes) => changes,
+            Err(error) if error.downcast_ref::<sqlx::Error>().and_then(|error| error.as_database_error()).and_then(|error| error.code()).is_some_and(|code| code.starts_with("22") || code.starts_with("54") || code == "23514") => {
+                tracing::warn!(upload = %upload.id, "SARIF processing rejected by storage constraints");
+                db::code_scanning::finish(pool, &upload, &[], Some("Analysis exceeds storage constraints")).await?
+            }
+            Err(error) => return Err(error),
+        },
         Err(error) => {
             let message = format!("Invalid SARIF: {error}")
                 .chars()
