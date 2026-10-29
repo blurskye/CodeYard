@@ -247,7 +247,7 @@ async fn save_secret(
     let created = values::save(
         &state.pool,
         Some(encryptor),
-        auth.user.id,
+        auth.database_actor(&headers)?,
         repo.id,
         &params["environment_name"],
         &Save {
@@ -282,7 +282,7 @@ async fn create_variable(
     values::save(
         &state.pool,
         None,
-        auth.user.id,
+        auth.database_actor(&headers)?,
         repo.id,
         &params["environment_name"],
         &Save {
@@ -320,7 +320,7 @@ async fn update_variable(
     values::save(
         &state.pool,
         None,
-        auth.user.id,
+        auth.database_actor(&headers)?,
         repo.id,
         &params["environment_name"],
         &Save {
@@ -343,7 +343,7 @@ async fn remove(
     let (repo, auth) = target(&state, &headers, &params, true).await?;
     values::delete(
         &state.pool,
-        auth.user.id,
+        auth.database_actor(&headers)?,
         repo.id,
         &params["environment_name"],
         kind(&route),

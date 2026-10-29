@@ -68,7 +68,7 @@ pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
 
 native_operation!(crate::backend::db::postgres::environment_values::create,
     crate::backend::db::sqlite::environment_values::create,
-    fn create(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<(), ValueError>);
+    fn create(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError>);
 native_operation!(crate::backend::db::postgres::environment_values::environments,
     crate::backend::db::sqlite::environment_values::environments,
     fn environments(pool: &DbPool, actor: i64, repo: i64) -> Result<Vec<String>, ValueError>);
@@ -77,10 +77,10 @@ native_operation!(crate::backend::db::postgres::environment_values::list,
     fn list(pool: &DbPool, actor: i64, repo: i64, environment: &str, kind: Kind) -> Result<Vec<EnvironmentValue>, ValueError>);
 native_operation!(crate::backend::db::postgres::environment_values::save,
     crate::backend::db::sqlite::environment_values::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, repo: i64, environment: &str, input: &Save<'_>) -> Result<bool, ValueError>);
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: impl Into<super::credentials::Actor>, repo: i64, environment: &str, input: &Save<'_>) -> Result<bool, ValueError>);
 native_operation!(crate::backend::db::postgres::environment_values::delete,
     crate::backend::db::sqlite::environment_values::delete,
-    fn delete(pool: &DbPool, actor: i64, repo: i64, environment: &str, kind: Kind, name: &str) -> Result<(), ValueError>);
+    fn delete(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: &str, kind: Kind, name: &str) -> Result<(), ValueError>);
 
 #[derive(sqlx::FromRow)]
 pub struct StoredValue {

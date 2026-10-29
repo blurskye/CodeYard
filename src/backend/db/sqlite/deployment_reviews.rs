@@ -82,7 +82,7 @@ pub async fn review(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         super::discussions::lock_read_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &credential, repo, "actions", true).await?,
+            && super::credentials::repository(&mut tx, &credential, repo, "deployments", true).await?,
         Refusal::Denied
     );
     let source: CiRun = sqlx::query_as("SELECT * FROM ci_runs WHERE repo_id=?1 AND id=?2")
