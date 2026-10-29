@@ -71,7 +71,11 @@ fn SecurityView(repo: RepoChrome, page: Page) -> Element {
         rsx! {section {class:"security-page",
             header {class:"repo-page-heading",h2 {"Security"} p {"Private reports are visible only to their reporter and current repository administrators. They never appear in issues or public activity."}}
             NavLink {href:format!("{base}/advisories"),"Security advisories"}
-            if repo.can_admin {NavLink {href:format!("{base}/dependabot"),"Dependabot alerts"}}
+            if repo.can_admin {
+                NavLink {href:format!("{base}/dependabot"),"Dependabot alerts"}
+                NavLink {href:format!("{base}/dependencies"),"Dependency security"}
+                NavLink {href:format!("{base}/secret-scanning"),"Secret-scanning alerts"}
+            }
             NavLink {href:format!("{}/dependency-graph",repo.base()),"Dependency graph"}
             match page {
                 Page::Index {enabled,rows,page,more,error,title,body}=>rsx! {
@@ -93,6 +97,12 @@ fn SecurityView(repo: RepoChrome, page: Page) -> Element {
                             }
                         } else if !repo.signed_in {p {NavLink {href:"/login","Sign in"} " to report a vulnerability privately."}}
                     } else {p {"New private reports are not enabled for this repository. Existing reports remain private."}}
+                    if (!*enabled || repo.is_archived) && (!title.is_empty() || !body.is_empty()) {
+                        section {class:"panel",h3 {"Unsent private report"}
+                            label {"Title" DraftInput {name:"unsent_title",initial_value:title.clone(),readonly:true}}
+                            label {"Details" DraftTextarea {name:"unsent_body",initial_value:body.clone(),readonly:true}}
+                        }
+                    }
                     if repo.signed_in {
                         section {class:"panel",h3 {if repo.can_admin {"Private security reports"}else {"Your private security reports"}}
                             if rows.is_empty() {p {"No reports."}}
@@ -110,6 +120,9 @@ fn SecurityView(repo: RepoChrome, page: Page) -> Element {
                         {message(report,references)}
                         for item in replies {{message(item,references)}}
                         {pagination(&thread,*page,*more)}
+                        if repo.is_archived && !reply.is_empty() {
+                            label {"Unsent private reply" DraftTextarea {name:"unsent_reply",initial_value:reply.clone(),readonly:true}}
+                        }
                         if !repo.is_archived {
                             form {method:"post",action:thread,class:"panel repo-form-body",
                                 {csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"report_id",value:id.to_string()}

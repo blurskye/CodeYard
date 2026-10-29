@@ -843,7 +843,7 @@ body {
    together without script. Long lines scroll inside the field instead of wrapping. */
 .repo-code-editor-body { display: grid; grid-template-columns: auto minmax(0, 1fr); max-height: 75vh; overflow-y: auto; }
 .repo-code-editor-gutter { margin: 0; padding: 8px 10px; border-right: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font: 13px/20px ui-monospace, monospace; text-align: right; user-select: none; }
-.repo-content textarea.repo-editor-textarea { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 0; outline-offset: -2px; background: var(--background); font: 13px/20px ui-monospace, monospace; resize: none; overflow-x: auto; overflow-y: hidden; white-space: pre; overflow-wrap: normal; tab-size: 4; }
+.repo-content textarea.repo-editor-textarea { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 0; outline-offset: -2px; background: var(--background); font: 13px/20px ui-monospace, monospace; resize: none; overflow-x: auto; overflow-y: auto; white-space: pre; overflow-wrap: normal; tab-size: 4; }
 .repo-editor-stack { position: relative; min-width: 0; background: var(--background); }
 /* The highlight exists only after hydration. Its box matches the field's: the field keeps the 1px
    border and 14px text that style.css gives it, with the 8px 12px padding and 20px lines above. */

@@ -143,10 +143,12 @@ fn field_editor(field: &Field, raw: &str, item: i64) -> Element {
     let id = format!("project-item-{item}-{}", field.id);
     rsx! {
         // The shown value goes along, so saving changes only the fields this editor changed.
-        input { r#type: "hidden", name: "was_{field.id}", value: "{raw}" }
+        input { r#type: "hidden", name: "was_{field.id}", value: serde_json::to_string(raw).unwrap_or_default() }
         label { r#for: "{id}", "{field.name}" }
         if matches!(field.data_type.as_str(), "single_select" | "iteration") {
             DraftSelect { class: FIELD, id: Some(id.clone()), name, initial_value: raw.to_owned(), options: std::iter::once(SelectOption::new("", "No value")).chain(field.options.iter().map(|(id,label)|SelectOption::new(id,label))).collect::<Vec<_>>() }
+        } else if field.data_type == "text" {
+            crate::webui::components::DraftTextarea { class: FIELD, id: Some(id.clone()), name, initial_value: raw.to_owned(), rows: 3 }
         } else {
             DraftInput { class: FIELD, id: Some(id.clone()), name, initial_value: raw.to_owned(),
                 input_type: if field.data_type == "date" { "date" } else { "text" }, inputmode: (field.data_type == "number").then(||"decimal".to_owned()) }

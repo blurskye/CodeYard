@@ -41,7 +41,7 @@ pub(in crate::webui::pages::repos) fn latest_commit_bar(
         "{base}/commit/{}",
         crate::webui::encode_component(&commit.sha)
     );
-    let people = commit_people(commit);
+    let (people, omitted_people) = commit_people(commit);
     let body = commit_body(&commit.message);
     rsx! {
         div { class: "repo-latest-commit bg-muted/40 border-b border-border flex items-center justify-between gap-4 text-sm",
@@ -55,6 +55,7 @@ pub(in crate::webui::pages::repos) fn latest_commit_bar(
                         strong { "{name}" }
                     }
                 }
+                if omitted_people > 0 { span { "+{omitted_people} co-authors" } }
                 NavLink { class: "repo-commit-message".to_owned(), href: url.clone(),
                     span { title: commit.message.clone(), "{commit.message.lines().next().unwrap_or(\"\")}" }
                 }
@@ -92,17 +93,20 @@ pub(in crate::webui::pages::repos) fn history_url(
 }
 
 /// The commit's author, then the people its `Co-authored-by:` trailers name, in message order.
-fn commit_people(commit: &Commit) -> Vec<String> {
+fn commit_people(commit: &Commit) -> (Vec<String>, usize) {
     let mut people = vec![commit.author.clone()];
-    people.extend(commit.message.lines().filter_map(|line| {
+    let mut omitted = 0;
+    for name in commit.message.lines().filter_map(|line| {
         let (key, value) = line.split_once(':')?;
         if !key.trim().eq_ignore_ascii_case("co-authored-by") {
             return None;
         }
         let name = value.split('<').next()?.trim();
-        (!name.is_empty()).then(|| name.to_owned())
-    }));
-    people
+        (!name.is_empty()).then_some(name)
+    }) {
+        if people.len() < 4 { people.push(name.to_owned()); } else { omitted += 1; }
+    }
+    (people, omitted)
 }
 
 /// The message below its subject line, without the blank lines around it.

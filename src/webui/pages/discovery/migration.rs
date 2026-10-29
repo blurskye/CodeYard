@@ -34,6 +34,9 @@ pub fn MigrationView(
             .iter()
             .map(|org| SelectOption::new(org.id.to_string(), org.slug.clone())),
     );
+    if !form.owner_org_id.is_empty() && !options.iter().any(|option| option.value == form.owner_org_id) {
+        options.push(SelectOption::new(form.owner_org_id.clone(), "Selected organization (unavailable)"));
+    }
     rsx! {
         section { class: "container mx-auto max-w-2xl p-4 py-8",
             h1 { class: "mb-2 text-2xl font-bold", if retry { "Repository migration" } else { "New migration" } }
