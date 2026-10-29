@@ -11,9 +11,7 @@ pub struct Configuration {
 impl Configuration {
     pub(crate) fn validate(&self) -> Result<()> {
         anyhow::ensure!(
-            !self.group.is_empty()
-                && self.group.len() <= 256
-                && !self.group.chars().any(char::is_control),
+            codeyard_actions::workflow::valid_concurrency_group(&self.group),
             super::ci::CiAdmissionRefusal::Invalid("Invalid concurrency group")
         );
         Ok(())

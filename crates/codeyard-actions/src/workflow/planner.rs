@@ -515,7 +515,7 @@ fn job_concurrency(value: &Yaml, path: &str) -> Result<Concurrency> {
     };
     let group = text(group, path)?;
     ensure!(
-        !group.is_empty() && group.len() <= 256 && !group.chars().any(char::is_control),
+        super::valid_concurrency_group(&group),
         "{path}: Invalid concurrency group"
     );
     Ok(Concurrency {

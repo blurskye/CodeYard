@@ -21,7 +21,7 @@ fn resolve_group(value: &serde_yaml::Value, contexts: &Contexts) -> Result<Confi
         .as_str()
         .or_else(|| value.get("group").and_then(serde_yaml::Value::as_str))
         .ok_or_else(invalid)?;
-    let group = expressions::interpolate_bounded(group, contexts, Status::default(), 256)
+    let group = expressions::interpolate_bounded(group, contexts, Status::default(), codeyard_actions::workflow::MAX_CONCURRENCY_GROUP_BYTES)
         .map_err(|_| invalid())?
         .to_text();
     let cancel_in_progress = match value.get("cancel-in-progress") {
