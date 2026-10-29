@@ -15,16 +15,6 @@ pub(crate) fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
-/// A new temporary directory only this user can enter. `tempfile` applies the
-/// process umask, which normally leaves directories readable by everyone, and
-/// `bind` refuses a socket directory that is not private.
-pub(crate) fn private_tempdir(prefix: &str) -> Result<tempfile::TempDir> {
-    Ok(tempfile::Builder::new()
-        .prefix(prefix)
-        .permissions(std::fs::Permissions::from_mode(0o700))
-        .tempdir()?)
-}
-
 fn same_inode(left: &Metadata, right: &Metadata) -> bool {
     left.dev() == right.dev() && left.ino() == right.ino()
 }
@@ -193,14 +183,14 @@ mod tests {
 
     #[test]
     fn private_tempdir_is_closed_to_other_users() {
-        let directory = private_tempdir("openssh-private-").unwrap();
+        let directory = codeyard_actions::fs::private_tempdir("openssh-private-", None).unwrap();
         let mode = std::fs::metadata(directory.path()).unwrap().mode();
         assert_eq!(mode & 0o777, 0o700);
     }
 
     #[tokio::test]
     async fn socket_binding_refuses_unsafe_paths_and_preserves_active_socket() {
-        let directory = private_tempdir("openssh-socket-").unwrap();
+        let directory = codeyard_actions::fs::private_tempdir("openssh-socket-", None).unwrap();
         let uid = effective_uid();
         let socket = directory.path().join("broker.sock");
         let (listener, guard) = bind(&socket, uid).await.unwrap();
@@ -224,7 +214,7 @@ mod tests {
 
     #[tokio::test]
     async fn owned_cleanup_never_removes_a_replacement_path() {
-        let directory = private_tempdir("openssh-replacement-").unwrap();
+        let directory = codeyard_actions::fs::private_tempdir("openssh-replacement-", None).unwrap();
         let socket = directory.path().join("broker.sock");
         let (listener, guard) = bind(&socket, effective_uid()).await.unwrap();
         std::fs::remove_file(&socket).unwrap();
@@ -236,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn owned_stale_socket_can_be_reclaimed_without_chmodding_parent() {
-        let directory = private_tempdir("openssh-stale-").unwrap();
+        let directory = codeyard_actions::fs::private_tempdir("openssh-stale-", None).unwrap();
         let socket = directory.path().join("broker.sock");
         let stale = UnixListener::bind(&socket).unwrap();
         std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();

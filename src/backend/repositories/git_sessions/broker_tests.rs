@@ -151,7 +151,7 @@ impl Broker {
         let helper =
             private_files::trusted_executable(&std::fs::canonicalize(helper).unwrap(), uid)
                 .unwrap();
-        let directory = private_files::private_tempdir("openssh-broker-").unwrap();
+        let directory = codeyard_actions::fs::private_tempdir("openssh-broker-", None).unwrap();
         let root = directory.path().join("repos");
         std::fs::create_dir(&root).unwrap();
         let socket = directory.path().join("broker.sock");

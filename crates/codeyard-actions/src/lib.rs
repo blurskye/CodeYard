@@ -6,6 +6,7 @@
 //!   its matrix makes.
 //! - [`runner`]: running those jobs and their steps, on the host or in Podman containers.
 pub mod expressions;
+pub mod fs;
 pub mod progress;
 pub mod runner;
 pub mod vm;

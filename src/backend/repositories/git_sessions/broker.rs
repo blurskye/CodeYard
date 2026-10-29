@@ -125,7 +125,7 @@ pub(super) async fn receive_session(
     receive: super::ReceiveSession<'_>,
     streams: GitStreams<'_>,
 ) -> Result<std::process::ExitStatus> {
-    let directory = private_files::private_tempdir("git-receive-")?;
+    let directory = codeyard_actions::fs::private_tempdir("git-receive-", None)?;
     let socket = directory.path().join("broker.sock");
     let uid = private_files::effective_uid();
     let executable =
