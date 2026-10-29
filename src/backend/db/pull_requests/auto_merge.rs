@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 pub struct AutoMerge {
     pub pull_request_id: i64,
     pub enabled_by: i64,
+    pub token_id: Option<i64>,
     pub merge_method: String,
     pub commit_title: Option<String>,
     pub commit_message: Option<String>,

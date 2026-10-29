@@ -4,7 +4,7 @@ use sqlx::PgPool;
 
 pub async fn enable(pool: &PgPool, request: &AutoMerge) -> Result<()> {
     sqlx::query(
-        "INSERT INTO pull_request_auto_merges(pull_request_id,enabled_by,merge_method,commit_title,commit_message,author_email,enabled_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(pull_request_id) DO UPDATE SET enabled_by=excluded.enabled_by,merge_method=excluded.merge_method,commit_title=excluded.commit_title,commit_message=excluded.commit_message,author_email=excluded.author_email,enabled_at=excluded.enabled_at",
+        "INSERT INTO pull_request_auto_merges(pull_request_id,enabled_by,merge_method,commit_title,commit_message,author_email,enabled_at,token_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(pull_request_id) DO UPDATE SET enabled_by=excluded.enabled_by,token_id=excluded.token_id,merge_method=excluded.merge_method,commit_title=excluded.commit_title,commit_message=excluded.commit_message,author_email=excluded.author_email,enabled_at=excluded.enabled_at",
     )
     .bind(request.pull_request_id)
     .bind(request.enabled_by)
@@ -13,6 +13,7 @@ pub async fn enable(pool: &PgPool, request: &AutoMerge) -> Result<()> {
     .bind(&request.commit_message)
     .bind(&request.author_email)
     .bind(request.enabled_at)
+    .bind(request.token_id)
     .execute(pool)
     .await?;
     Ok(())

@@ -3656,6 +3656,7 @@ CREATE TABLE branch_redirects (
 CREATE TABLE pull_request_auto_merges (
     pull_request_id INTEGER PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE,
     enabled_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_id INTEGER REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
     merge_method TEXT NOT NULL CHECK(merge_method IN ('merge','squash','rebase')),
     commit_title TEXT,
     commit_message TEXT,
