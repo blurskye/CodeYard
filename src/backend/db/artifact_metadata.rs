@@ -196,7 +196,7 @@ impl StorageInput {
             self.artifact.digest,
             self.registry_url,
             self.repository.as_deref().unwrap_or(""),
-            self.path.as_deref().unwrap_or("")
+            self.path.as_deref().or(self.artifact_url.as_deref()).unwrap_or("")
         ]);
         hex::encode(Sha256::digest(value.to_string().as_bytes()))
     }
@@ -235,6 +235,10 @@ impl StorageInput {
         Ok(())
     }
 }
+
+pub(crate) const JOB_HISTORY_LIMIT: i64 = 100;
+pub(crate) const JOB_HISTORY_SECONDS: i64 = 7 * 24 * 60 * 60;
+pub(crate) const JOB_GC_BATCH: i64 = 100;
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct JobInput {

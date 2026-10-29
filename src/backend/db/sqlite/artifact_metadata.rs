@@ -63,7 +63,7 @@ async fn targets(
             .github_repository
             .as_deref()
             .ok_or(Refusal::Missing)?;
-        let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 AND LOWER(name)=LOWER(?2)").bind(org).bind(name).fetch_optional(&mut **tx).await?;
+        let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 AND name=?2").bind(org).bind(name).fetch_optional(&mut **tx).await?;
         rows.push((repo.ok_or(Refusal::Missing)?, None));
     }
     let mut authorized = Vec::new();
@@ -363,6 +363,18 @@ pub async fn list(
     Ok(rows)
 }
 
+async fn prune_jobs(tx: &mut Tx<'_>, scope: Option<(i64, i64, Option<i64>)>) -> Result<()> {
+    use crate::backend::db::artifact_metadata::{JOB_GC_BATCH, JOB_HISTORY_LIMIT, JOB_HISTORY_SECONDS};
+    let cutoff = super::time::encode(super::time::now() - chrono::Duration::seconds(JOB_HISTORY_SECONDS));
+    sqlx::query("DELETE FROM artifact_metadata_jobs WHERE id IN (SELECT id FROM artifact_metadata_jobs WHERE status IN ('completed','failed') AND completed_at<?1 ORDER BY completed_at,id LIMIT ?2)")
+        .bind(cutoff).bind(JOB_GC_BATCH).execute(&mut **tx).await?;
+    if let Some((actor, org, repo)) = scope {
+        sqlx::query("DELETE FROM artifact_metadata_jobs WHERE id IN (SELECT id FROM artifact_metadata_jobs WHERE actor_id=?1 AND org_id=?2 AND scoped_repo IS ?3 AND status IN ('completed','failed') ORDER BY id DESC LIMIT ?4 OFFSET ?5)")
+            .bind(actor).bind(org).bind(repo).bind(JOB_GC_BATCH).bind(JOB_HISTORY_LIMIT).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
 pub async fn enqueue(
     pool: &SqlitePool,
     actor: Actor,
@@ -377,6 +389,7 @@ pub async fn enqueue(
     credential(&mut tx, actor).await?;
     let (accepted, errors) = prepare(&mut tx, actor, org, cluster, &input).await?;
     let noop = accepted.is_empty();
+    anyhow::ensure!(!noop || input.deployments.is_empty(), Refusal::Denied);
     if !noop {
         let busy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artifact_metadata_jobs WHERE org_id=?1 AND cluster=?2 AND status IN ('pending','processing'))").bind(org).bind(cluster).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!busy, Refusal::Busy);
@@ -386,8 +399,8 @@ pub async fn enqueue(
         .map(|(deployment, _, _)| deployment)
         .collect();
     let saved = JobInput { input };
-    let id = sqlx::query_scalar("INSERT INTO artifact_metadata_jobs(org_id,cluster,actor_id,token_id,scoped_repo,input,status,errors) VALUES(?1,?2,?3,?4,?5,?6,?8,?7) RETURNING id")
-        .bind(org).bind(cluster).bind(actor.user).bind(actor.token).bind(actor.repo).bind(serde_json::to_string(&saved)?).bind(serde_json::to_string(&errors)?).bind(if noop {"completed"} else {"pending"}).fetch_one(&mut *tx).await?;
+    let id = sqlx::query_scalar("INSERT INTO artifact_metadata_jobs(org_id,cluster,actor_id,token_id,scoped_repo,input,status,errors,completed_at) VALUES(?1,?2,?3,?4,?5,?6,?8,?7,CASE WHEN ?8='completed' THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now') ELSE NULL END) RETURNING id")
+        .bind(org).bind(cluster).bind(actor.user).bind(actor.token).bind(actor.repo).bind(if noop { String::new() } else { serde_json::to_string(&saved)? }).bind(serde_json::to_string(&errors)?).bind(if noop {"completed"} else {"pending"}).fetch_one(&mut *tx).await?;
     if noop {
         sqlx::query("UPDATE artifact_metadata_jobs SET started_at=?2,total_count=0 WHERE id=?1")
             .bind(id)
@@ -395,6 +408,7 @@ pub async fn enqueue(
             .execute(&mut *tx)
             .await?;
     }
+    prune_jobs(&mut tx, Some((actor.user, org, actor.repo))).await?;
     tx.commit().await?;
     Ok((id, errors))
 }
@@ -414,6 +428,8 @@ pub async fn process_job(pool: &SqlitePool, id: Option<i64>) -> Result<bool> {
     let mut tx = begin(pool).await?;
     let job: Option<Job> = sqlx::query_as("SELECT * FROM artifact_metadata_jobs WHERE status='pending' AND (?1 IS NULL OR id=?1) ORDER BY id LIMIT 1").bind(id).fetch_optional(&mut *tx).await?;
     let Some(job) = job else {
+        prune_jobs(&mut tx, None).await?;
+        tx.commit().await?;
         return Ok(false);
     };
     let actor = Actor {
@@ -432,7 +448,9 @@ pub async fn process_job(pool: &SqlitePool, id: Option<i64>) -> Result<bool> {
         Ok(mutation) => {
             let mut errors: Vec<Value> = serde_json::from_str(&job.errors)?;
             errors.extend(mutation.errors);
-            sqlx::query("UPDATE artifact_metadata_jobs SET status='completed',started_at=?2,total_count=?3,errors=?4 WHERE id=?1").bind(job.id).bind(started).bind(mutation.records.len() as i64).bind(serde_json::to_string(&errors)?).execute(&mut *tx).await?;
+            let scope = Some((job.actor_id, job.org_id, job.scoped_repo));
+            sqlx::query("UPDATE artifact_metadata_jobs SET status='completed',started_at=?2,total_count=?3,errors=?4,input='',completed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1").bind(job.id).bind(started).bind(mutation.records.len() as i64).bind(serde_json::to_string(&errors)?).execute(&mut *tx).await?;
+            prune_jobs(&mut tx, scope).await?;
             tx.commit().await?;
         }
         Err(error) => {
@@ -442,7 +460,11 @@ pub async fn process_job(pool: &SqlitePool, id: Option<i64>) -> Result<bool> {
             } else {
                 "Artifact metadata processing failed".to_owned()
             };
-            sqlx::query("UPDATE artifact_metadata_jobs SET status='failed',started_at=?2,errors=?3 WHERE id=?1 AND status='pending'").bind(job.id).bind(started).bind(json!([{"cause":message}]).to_string()).execute(pool).await?;
+            let mut tx = begin(pool).await?;
+            let scope = Some((job.actor_id, job.org_id, job.scoped_repo));
+            sqlx::query("UPDATE artifact_metadata_jobs SET status='failed',started_at=?2,errors=?3,input='',completed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND status='pending'").bind(job.id).bind(started).bind(json!([{"cause":message}]).to_string()).execute(&mut *tx).await?;
+            prune_jobs(&mut tx, scope).await?;
+            tx.commit().await?;
         }
     }
     Ok(true)

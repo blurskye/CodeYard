@@ -2656,11 +2656,16 @@ CREATE TABLE artifact_metadata_jobs (
     input TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending','processing','completed','failed')),
     started_at TEXT,
+    completed_at TEXT,
     total_count INTEGER,
-    errors TEXT NOT NULL DEFAULT '[]'
+    errors TEXT NOT NULL DEFAULT '[]',
+    CHECK ((status IN ('completed','failed')) = (completed_at IS NOT NULL)),
+    CHECK (status NOT IN ('completed','failed') OR input='')
 );
 CREATE UNIQUE INDEX artifact_metadata_active_job ON artifact_metadata_jobs(org_id,cluster) WHERE status IN ('pending','processing');
 CREATE INDEX artifact_metadata_pending_jobs ON artifact_metadata_jobs(id) WHERE status='pending';
+CREATE INDEX artifact_metadata_job_expiry ON artifact_metadata_jobs(completed_at,id) WHERE status IN ('completed','failed');
+CREATE INDEX artifact_metadata_job_history ON artifact_metadata_jobs(actor_id,org_id,scoped_repo,id) WHERE status IN ('completed','failed');
 
 -- code-scanning
 CREATE TABLE code_scanning_uploads (
