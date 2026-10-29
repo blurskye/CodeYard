@@ -13,6 +13,19 @@ use crate::backend::{
 };
 use serde_json::{json, Value};
 
+fn accepts(subscription: &db::github_app_hooks::Subscription, event: &str) -> anyhow::Result<bool> {
+    let permissions: Value = serde_json::from_str(&subscription.permissions)?;
+    Ok(subscription.hook.active && events::subscribes(&subscription.hook.events, event)
+        && apps::event_permission(&permissions, event))
+}
+
+pub(super) async fn has_subscription(pool: &DbPool, repo: i64, event: &str) -> anyhow::Result<bool> {
+    for subscription in db::github_app_hooks::for_repository(pool, repo).await? {
+        if accepts(&subscription, event)? { return Ok(true); }
+    }
+    Ok(false)
+}
+
 pub async fn emit_repository(
     pool: &DbPool,
     repo: &Repository,
@@ -22,10 +35,7 @@ pub async fn emit_repository(
     payload: &Value,
 ) -> anyhow::Result<()> {
     for subscription in db::github_app_hooks::for_repository(pool, repo.id).await? {
-        let permissions: Value = serde_json::from_str(&subscription.permissions)?;
-        if !events::subscribes(&subscription.hook.events, event)
-            || !apps::event_permission(&permissions, event)
-        {
+        if !accepts(&subscription, event)? {
             continue;
         }
         let mut payload = payload.clone();

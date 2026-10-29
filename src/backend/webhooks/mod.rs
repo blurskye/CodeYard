@@ -265,9 +265,6 @@ pub async fn emit<F>(
 where
     F: FnOnce(&str, &People) -> Value + Send + 'static,
 {
-    let Ok(build_slot) = BUILD_SLOTS.clone().acquire_owned().await else {
-        return Value::Null;
-    };
     let Ok(Some(current)) = db::repositories::records::get_repository_by_id(pool, repo.id).await
     else {
         return Value::Null;
@@ -276,6 +273,31 @@ where
     if !same_owner(&current, repo) {
         return Value::Null;
     }
+    // Job transitions have no activity record and their caller does not use a document.
+    // Include App subscriptions before deciding there is no work to project.
+    let early_hooks = if event == "workflow_job" {
+        let hooks = match hooks_for(pool, &current).await {
+            Ok(hooks) => hooks,
+            Err(error) => {
+                tracing::warn!(repo_id=repo.id, %error, "could not load job webhook subscriptions");
+                return Value::Null;
+            }
+        };
+        if !hooks.iter().any(|hook| hook.active && events::subscribes(&hook.events, event)) {
+            match github_apps::has_subscription(pool, repo.id, event).await {
+                Ok(true) => {},
+                Ok(false) => return Value::Null,
+                Err(error) => {
+                    tracing::warn!(repo_id=repo.id, %error, "could not load App job webhook subscriptions");
+                    return Value::Null;
+                }
+            }
+        }
+        Some(hooks)
+    } else { None };
+    let Ok(build_slot) = BUILD_SLOTS.clone().acquire_owned().await else {
+        return Value::Null;
+    };
     let owner = db::repositories::records::repository_owner_names(pool, &[repo.id])
         .await
         .ok()
@@ -333,12 +355,15 @@ where
     if TASKS.is_closed() {
         return payload;
     }
-    let hooks = match hooks_for(pool, repo).await {
-        Ok(hooks) => hooks,
-        Err(error) => {
-            tracing::warn!(repo_id=repo.id,%error,"could not load webhooks");
-            return payload;
-        }
+    let hooks = match early_hooks {
+        Some(hooks) => hooks,
+        None => match hooks_for(pool, repo).await {
+            Ok(hooks) => hooks,
+            Err(error) => {
+                tracing::warn!(repo_id=repo.id,%error,"could not load webhooks");
+                return payload;
+            }
+        },
     };
     let action = payload.get("action").and_then(Value::as_str);
     // One event has one delivery GUID, shared by every hook that receives it.
