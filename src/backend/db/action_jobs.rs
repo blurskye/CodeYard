@@ -52,7 +52,11 @@ pub struct Page {
     pub jobs: Vec<Job>,
 }
 
-pub(crate) fn validate_annotation(annotation: &Annotation) -> Result<()> {
+pub(crate) fn prepare_annotation(annotation: &Annotation) -> Result<Annotation> {
+    let mut annotation = annotation.clone();
+    annotation.path = annotation.path.replace('\0', "\\0");
+    annotation.message = annotation.message.replace('\0', "\\0");
+    annotation.title = annotation.title.map(|title| title.replace('\0', "\\0"));
     anyhow::ensure!(
         annotation.start_line > 0
             && annotation.end_line >= annotation.start_line
@@ -60,10 +64,10 @@ pub(crate) fn validate_annotation(annotation: &Annotation) -> Result<()> {
                 annotation.annotation_level.as_str(),
                 "failure" | "warning" | "notice"
             )
-            && serde_json::to_vec(annotation)?.len() <= 64 * 1024,
+            && serde_json::to_vec(&annotation)?.len() <= 64 * 1024,
         "invalid job annotation"
     );
-    Ok(())
+    Ok(annotation)
 }
 
 pub(crate) fn validate_observed_state(state: &State, known: &[(String, i32, String)]) -> Result<()> {

@@ -115,7 +115,7 @@ pub async fn apply(
             sqlx::query("UPDATE actions_jobs SET status='completed',conclusion=$2,completed_at=$3,duration_ms=$4 WHERE id=$1 AND status<>'completed'").bind(id).bind(conclusion.as_str()).bind(at).bind(milliseconds(*duration_ms)?).execute(&mut *tx).await?;
         }
         Update::Annotation { annotation } => {
-            crate::backend::db::action_jobs::validate_annotation(annotation)?;
+            let annotation = crate::backend::db::action_jobs::prepare_annotation(annotation)?;
             sqlx::query("INSERT INTO actions_job_annotations(job_id,annotation) SELECT $1,$2 WHERE (SELECT COUNT(*) FROM actions_job_annotations WHERE job_id=$1)<1000 AND EXISTS(SELECT 1 FROM actions_jobs WHERE id=$1 AND status='in_progress') AND NOT EXISTS(SELECT 1 FROM actions_job_annotations WHERE job_id=$1 AND annotation=$2)")
                 .bind(id).bind(Json(annotation)).execute(&mut *tx).await?;
         }
