@@ -3058,8 +3058,8 @@ CREATE TABLE discussions (
     answer_id BIGINT REFERENCES discussion_comments(id) ON DELETE SET NULL,
     answer_chosen_at TEXT,
     answer_chosen_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     FOREIGN KEY(category_id,repo_id) REFERENCES discussion_categories(id,repo_id),
     UNIQUE(repo_id,number)
 );
@@ -3071,8 +3071,8 @@ CREATE TABLE discussion_comments (
     body TEXT NOT NULL,
     reply_to_id BIGINT REFERENCES discussion_comments(id) ON DELETE CASCADE,
     is_answer BOOLEAN NOT NULL DEFAULT false,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 CREATE INDEX discussion_comments_thread ON discussion_comments(discussion_id,reply_to_id,id);
 CREATE UNIQUE INDEX discussion_one_answer ON discussion_comments(discussion_id) WHERE is_answer;
