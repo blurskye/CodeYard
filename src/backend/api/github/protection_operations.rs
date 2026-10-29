@@ -86,7 +86,7 @@ struct Protection {
 }
 
 fn valid_names(names: &[String]) -> Result<()> {
-    if names.len() > 100
+    if names.len() > protection::MAX_ALLOWANCE_ACTORS
         || names
             .iter()
             .any(|name| name.is_empty() || name.len() > 255 || name.chars().any(char::is_control))
@@ -148,7 +148,7 @@ pub(super) async fn app_documents(state: &AppState, ids: &[i64]) -> Result<Vec<V
 }
 
 async fn actor_document(state: &AppState, repo: i64, actors: Actors) -> Result<Value> {
-    if actors.users.len() + actors.teams.len() + actors.apps.len() > 100 {
+    if actors.users.len() + actors.teams.len() + actors.apps.len() > protection::MAX_ALLOWANCE_ACTORS {
         return Err(Error::invalid("Supply at most 100 actors"));
     }
     let ids = user_ids(state, &actors.users).await?;

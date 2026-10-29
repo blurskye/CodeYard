@@ -42,9 +42,6 @@ fn yes() -> bool {
     true
 }
 
-/// Bound each allowance list before resolving their combined usernames.
-const MAX_ALLOWANCE_NAMES: usize = 100;
-
 /// An omitted `require_pull_request`, `dismiss_stale_reviews` or `enforce_admins` means
 /// true, the strict default. The settings form builds the same request, so both paths refuse
 /// and store the same things.
@@ -336,12 +333,12 @@ async fn write_user_ids(
 ) -> Result<[Vec<i64>; 2], (StatusCode, Json<ApiError>)> {
     let fields = ["push_allowances", "force_push_allowances"];
     for (names, field) in lists.iter().zip(fields) {
-        if names.len() > MAX_ALLOWANCE_NAMES {
+        if names.len() > db::repositories::protection::MAX_ALLOWANCE_ACTORS {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiError::new(
                     "validation_error",
-                    &format!("{field} can list at most {MAX_ALLOWANCE_NAMES} entries"),
+                    &format!("{field} can list at most {} entries", db::repositories::protection::MAX_ALLOWANCE_ACTORS),
                 )),
             ));
         }

@@ -30,6 +30,9 @@ pub enum ProtectionWriteRefusal {
     RuleLimit,
 }
 
+/// Maximum actors in a protection allowance list, including combined user, team and app lists.
+pub const MAX_ALLOWANCE_ACTORS: usize = 100;
+
 /// Room for the longest server-owned context, `gitserv/workflow/` and a workflow path.
 const MAX_CHECK_BYTES: usize = 512;
 
@@ -166,7 +169,7 @@ impl ProtectionUpdate {
             return Ok(None);
         };
         anyhow::ensure!(
-            ids.len() <= 100,
+            ids.len() <= MAX_ALLOWANCE_ACTORS,
             ProtectionWriteRefusal::InvalidPushAllowances
         );
         Ok(Some(ids.clone()))
@@ -176,7 +179,7 @@ impl ProtectionUpdate {
         let Self::PushTeams(ActorListUpdate::Add(ids) | ActorListUpdate::Set(ids)) = self else {
             return Ok(None);
         };
-        anyhow::ensure!(ids.len() <= 100, ProtectionWriteRefusal::InvalidPushTeams);
+        anyhow::ensure!(ids.len() <= MAX_ALLOWANCE_ACTORS, ProtectionWriteRefusal::InvalidPushTeams);
         let mut ids = ids.clone();
         ids.sort_unstable();
         ids.dedup();
@@ -189,7 +192,7 @@ impl ProtectionUpdate {
             return Ok(None);
         };
         anyhow::ensure!(
-            ids.len() <= 100,
+            ids.len() <= MAX_ALLOWANCE_ACTORS,
             ProtectionWriteRefusal::InvalidPushAllowances
         );
         let mut ids = ids.clone();
@@ -275,7 +278,7 @@ pub(crate) fn apply_protection_update(
                 rule.push_allowances
                     .len()
                     .saturating_add(rule.push_team_allowances.len())
-                    <= 100
+                    <= MAX_ALLOWANCE_ACTORS
                     && rule.push_allowances.iter().all(|id| *id > 0),
                 ProtectionWriteRefusal::InvalidPushAllowances
             );
@@ -295,7 +298,7 @@ pub(crate) fn apply_protection_update(
                 rule.push_team_allowances
                     .len()
                     .saturating_add(rule.push_allowances.len())
-                    <= 100
+                    <= MAX_ALLOWANCE_ACTORS
                     && rule.push_team_allowances.iter().all(|id| *id > 0),
                 ProtectionWriteRefusal::InvalidPushTeams
             );
@@ -358,7 +361,7 @@ pub(crate) fn apply_protection_update(
         rule.push_allowances.len()
             + rule.push_team_allowances.len()
             + rule.github_settings.push_apps.len()
-            <= 100,
+            <= MAX_ALLOWANCE_ACTORS,
         ProtectionWriteRefusal::InvalidPushAllowances
     );
     rule.required_status_checks.sort();

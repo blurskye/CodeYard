@@ -233,7 +233,7 @@ async fn validate_push_apps_on(
     ids: &[i64],
 ) -> Result<()> {
     anyhow::ensure!(
-        ids.len() <= 100,
+        ids.len() <= crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS,
         ProtectionWriteRefusal::InvalidPushAllowances
     );
     for id in ids {

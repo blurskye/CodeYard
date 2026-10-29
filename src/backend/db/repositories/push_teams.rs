@@ -5,7 +5,7 @@ use crate::backend::db::{models::Team, DbPool};
 use anyhow::Result;
 
 pub(crate) fn validate_count(len: usize) -> Result<()> {
-    anyhow::ensure!(len <= 100, ProtectionWriteRefusal::InvalidPushTeams);
+    anyhow::ensure!(len <= super::protection::MAX_ALLOWANCE_ACTORS, ProtectionWriteRefusal::InvalidPushTeams);
     Ok(())
 }
 
