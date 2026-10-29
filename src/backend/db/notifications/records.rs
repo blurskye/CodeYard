@@ -84,6 +84,7 @@ pub struct NotificationCursor {
 /// when a query first reaches it, under row locks, and SQLite decides every scope of the
 /// recipient in its first statement.
 pub(crate) struct NotificationScopes {
+    pub classic_token: bool,
     pub high_water: i64,
     pub readable: std::collections::BTreeMap<i64, bool>,
 }
