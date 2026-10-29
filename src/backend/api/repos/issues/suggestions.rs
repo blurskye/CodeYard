@@ -384,29 +384,21 @@ pub async fn agent_propose(
         )
             .into_response()
     };
-    let scoped = if let Some(bounds) =
-        crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
-            .await
-            .map_err(unavailable)?
-    {
-        Some(
-            bounds
-                .allows(&state.pool, auth.user.id, repo.id, "issues", true)
-                .await
-                .map_err(unavailable)?,
-        )
-    } else {
-        db::oauth_apps::token(&state.pool, auth.token.id)
-            .await
-            .map_err(unavailable)?
-            .map(|token| {
-                crate::backend::identity::oauth_apps::allows(
-                    &token.scopes,
-                    &format!("/repos/{owner}/{name}/issues/{number}/comments"),
-                    true,
-                )
-            })
-    };
+    auth.repository_scope(&state.pool, repo.id, "issues", true).await.map_err(|error| {
+        use crate::backend::api::github::auth::ScopeError;
+        let status = match error {
+            ScopeError::Missing => StatusCode::NOT_FOUND,
+            ScopeError::Denied => StatusCode::FORBIDDEN,
+            ScopeError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+        };
+        (status, Json(ApiError::new("token_scope", "Resource not accessible by token"))).into_response()
+    })?;
+    let scoped = db::oauth_apps::token(&state.pool, auth.token.id)
+        .await.map_err(unavailable)?.map(|token| {
+            crate::backend::identity::oauth_apps::allows(
+                &token.scopes, &format!("/repos/{owner}/{name}/issues/{number}/comments"), true,
+            )
+        });
     if scoped == Some(false) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -416,49 +408,6 @@ pub async fn agent_propose(
             )),
         )
             .into_response());
-    }
-    if auth.user.username == db::ci_tokens::BOT {
-        let token = db::ci_tokens::get(&state.pool, auth.token.id)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ApiError::new("unavailable", "Token policy unavailable")),
-                )
-                    .into_response()
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(ApiError::new("unauthorized", "Run token inactive")),
-                )
-                    .into_response()
-            })?;
-        if token.repo_id != repo.id {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-                .into_response());
-        }
-        let permissions: crate::backend::ci::tokens::Permissions =
-            serde_json::from_str(&token.permissions).map_err(|_| {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ApiError::new("unavailable", "Token policy unavailable")),
-                )
-                    .into_response()
-            })?;
-        if !permissions.allows("issues", true) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ApiError::new(
-                    "forbidden",
-                    "Resource not accessible by token",
-                )),
-            )
-                .into_response());
-        }
     }
     let issue = db::issues::get_issue(&state.pool, repo.id, number)
         .await
@@ -486,10 +435,26 @@ pub async fn agent_propose(
         )
             .into_response()
     })?;
-    let row = db::suggestions::propose(
+    let target_repository = if action == Action::CloseIssue {
+        if let Some(id) = input.target_id {
+            let missing = || (StatusCode::NOT_FOUND, Json(ApiError::new("not_found", "Issue not found"))).into_response();
+            let target = db::issues::get_issue_by_id(&state.pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
+            auth.repository_scope(&state.pool, target.repo_id, "issues", false).await.map_err(|error| {
+                match error {
+                    crate::backend::api::github::auth::ScopeError::Unavailable => unavailable(anyhow::anyhow!("Token policy unavailable")),
+                    _ => missing(),
+                }
+            })?;
+            let readable = db::repositories::access::readable_repository_ids(&state.pool, Some(auth.user.id), &[target.repo_id])
+                .await.map_err(unavailable)?;
+            if !readable.contains(&target.repo_id) { return Err(missing()); }
+            Some(target.repo_id)
+        } else { None }
+    } else { None };
+    let row = db::suggestions::propose_scoped(
         &state.pool,
         repo.id,
-        auth.user.id,
+        db::users::accounts::AccountActor::Token { user_id: auth.user.id, token_id: auth.token.id },
         issue.id,
         &Proposal {
             action,
@@ -498,6 +463,7 @@ pub async fn agent_propose(
             rationale: input.rationale,
             confidence: input.confidence,
         },
+        target_repository,
     )
     .await
     .map_err(|error| {
