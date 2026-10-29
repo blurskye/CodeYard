@@ -3,20 +3,20 @@ use anyhow::Result;
 use sqlx::PgPool;
 
 pub async fn issue_token(pool: &PgPool, run_id: i64, hash: &str, backend_id: &str) -> Result<()> {
-    let changed = sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) SELECT id,$2,$3 FROM ci_runs WHERE id=$1 AND status='running' ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
+    let changed = sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) SELECT id,$2,$3 FROM ci_runs WHERE id=$1 AND status='running' AND NOT cancel_requested ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
         .bind(run_id).bind(hash).bind(backend_id).execute(pool).await?;
     anyhow::ensure!(changed.rows_affected() == 1, "run is not active");
     Ok(())
 }
 
 pub async fn authenticate(pool: &PgPool, hash: &str) -> Result<Option<RuntimeRun>> {
-    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN pr.base_branch END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
+    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN COALESCE(r.pull_request_event->>'base_ref',pr.base_branch) END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
         .bind(hash).fetch_optional(pool).await?)
 }
 
 pub async fn create_object(pool: &PgPool, new: NewObject<'_>) -> Result<Option<ActionObject>> {
-    // A fork may restore the base repository's caches but cannot publish into its branch scope.
-    if new.kind == "cache" && new.run.is_fork {
+    // Fork writes belong only to their derived pull-request merge-ref scope.
+    if new.kind == "cache" && new.run.is_fork && !(new.run.branch.starts_with("refs/pull/") && new.run.branch.ends_with("/merge")) {
         return Ok(None);
     }
     let now = chrono::Utc::now().timestamp();
@@ -32,7 +32,7 @@ pub async fn create_object(pool: &PgPool, new: NewObject<'_>) -> Result<Option<A
         new.expires_at
     };
     // An expired key can be reserved again without waiting for the background sweep.
-    sqlx::query("DELETE FROM actions_objects WHERE repo_id=$1 AND kind=$2 AND name=$3 AND version=$4 AND (run_id=$5 OR (kind='cache' AND scope=$6)) AND expires_at<=$7")
+    sqlx::query("DELETE FROM actions_objects WHERE repo_id=$1 AND kind=$2 AND name=$3 AND version=$4 AND (run_id=$5 OR (kind='cache' AND scope=$6)) AND (expires_at<=$7 OR (NOT finalized AND EXISTS(SELECT 1 FROM ci_runs c WHERE c.id=actions_objects.run_id AND c.status NOT IN ('queued','running') AND c.completed_at<clock_timestamp()-INTERVAL '5 minutes')))")
         .bind(new.run.repo_id).bind(new.kind).bind(new.name).bind(new.version).bind(new.run.id).bind(&new.run.branch).bind(now).execute(&mut *tx).await?;
     let object = sqlx::query_as("INSERT INTO actions_objects(repo_id,run_id,kind,scope,name,version,created_at,accessed_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8) ON CONFLICT DO NOTHING RETURNING *")
         .bind(new.run.repo_id).bind(new.run.id).bind(new.kind).bind(&new.run.branch)
@@ -330,18 +330,17 @@ pub(crate) async fn enforce_cache_limit(
     repo: i64,
     cache_limit: i64,
 ) -> Result<()> {
-    let entries: Vec<ActionObject> = sqlx::query_as("SELECT * FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized ORDER BY accessed_at,id")
-        .bind(repo).fetch_all(&mut *connection).await?;
-    let mut total: i64 = entries.iter().map(|entry| entry.size).sum();
-    for entry in entries {
-        if total <= cache_limit {
-            break;
-        }
+    let mut total: i64 = sqlx::query_scalar("SELECT CAST(COALESCE(SUM(size),0) AS BIGINT) FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized")
+        .bind(repo).fetch_one(&mut *connection).await?;
+    while total > cache_limit {
+        let entry: Option<(i64, i64)> = sqlx::query_as("SELECT id,size FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized ORDER BY accessed_at,id LIMIT 1")
+            .bind(repo).fetch_optional(&mut *connection).await?;
+        let Some((id, size)) = entry else { break; };
         sqlx::query("DELETE FROM actions_objects WHERE id=$1")
-            .bind(entry.id)
+            .bind(id)
             .execute(&mut *connection)
             .await?;
-        total -= entry.size;
+        total -= size;
     }
     Ok(())
 }

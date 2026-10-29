@@ -97,15 +97,10 @@ pub(super) fn matching_cache<'a>(
         Some(&run.default_branch),
     ];
     for branch in scopes.into_iter().flatten() {
-        if let Some(primary) = keys.first() {
-            if let Some(exact) = entries
-                .iter()
-                .find(|entry| entry.scope == *branch && entry.name == *primary)
-            {
+        for key in keys {
+            if let Some(exact) = entries.iter().find(|entry| entry.scope == *branch && entry.name == *key) {
                 return Some(exact);
             }
-        }
-        for key in keys {
             if let Some(entry) = entries
                 .iter()
                 .find(|entry| entry.scope == *branch && entry.name.starts_with(key))
