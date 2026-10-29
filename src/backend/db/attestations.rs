@@ -101,7 +101,7 @@ native_operation!(crate::backend::db::postgres::attestations::summaries, crate::
 native_operation!(crate::backend::db::postgres::attestations::repositories, crate::backend::db::sqlite::attestations::repositories,
     fn repositories(pool: &DbPool, filter: &Filter<'_>) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::backend::db::postgres::attestations::delete, crate::backend::db::sqlite::attestations::delete,
-    fn delete(pool: &DbPool, actor: i64, owner: Owner, ids: &[i64], digests: &[String]) -> Result<u64>);
+    fn delete(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, owner: Owner, ids: &[i64], digests: &[String]) -> Result<u64>);
 
 #[cfg(test)]
 mod tests {
