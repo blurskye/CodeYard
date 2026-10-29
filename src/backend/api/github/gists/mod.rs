@@ -373,9 +373,15 @@ async fn revision(
     documents::response(&headers, documents::detail(&state, &loaded).await?)
 }
 #[derive(Deserialize)]
+struct EditedFile {
+    filename: Option<String>,
+    content: Option<String>,
+    truncated: Option<bool>,
+}
+#[derive(Deserialize)]
 struct Edit {
     description: Option<String>,
-    files: Option<BTreeMap<String, Option<GistFileChange>>>,
+    files: Option<BTreeMap<String, Option<EditedFile>>>,
     updated_at: Option<String>,
 }
 async fn update(
@@ -401,6 +407,30 @@ async fn update(
             }
         }
     }
+    let mut files = input.files.unwrap_or_default();
+    let mut expected = None;
+    if method == axum::http::Method::POST && input.updated_at.as_deref() == Some("0001-01-01T00:00:00Z") {
+        let original = domain::load(&state, &id, None).await.map_err(failure)?;
+        let existing: std::collections::HashSet<_> = original.snapshot.files.iter().map(|file| file.path.as_str()).collect();
+        let removed: Vec<_> = files.iter().filter(|(name, file)| file.is_none() && existing.contains(name.as_str())).map(|(name, _)| name.clone()).collect();
+        let added: Vec<_> = files.iter().filter(|(name, file)| file.is_some() && !existing.contains(name.as_str())).map(|(name, _)| name.clone()).collect();
+        if removed.len() == 1 && added.len() == 1 {
+            files.remove(&added[0]);
+            files.insert(removed[0].clone(), Some(EditedFile { filename: Some(added[0].clone()), content: None, truncated: None }));
+            for (name, file) in &mut files {
+                if let Some(file) = file {
+                    if file.truncated == Some(true) && existing.contains(name.as_str()) && file.filename.as_deref().is_none_or(|filename| filename == name.as_str()) {
+                        file.content = None;
+                    }
+                }
+            }
+            expected = Some(original.snapshot.sha);
+        }
+    }
+    if files.values().flatten().any(|file| file.truncated == Some(true) && file.content.is_some()) {
+        return Err(Error::validation("Gist", "content", "truncated"));
+    }
+    let files = files.into_iter().map(|(name, file)| (name, file.map(|file| GistFileChange { filename: file.filename, content: file.content }))).collect();
     let loaded = domain::update(
         state.clone(),
         actor.user.id,
@@ -408,8 +438,8 @@ async fn update(
         id,
         GistEdit {
             description: input.description,
-            files: input.files.unwrap_or_default(),
-            expected: None,
+            files,
+            expected,
         },
     )
     .await
@@ -509,9 +539,9 @@ async fn check(
     let actor = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
-    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
+    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
     Ok(
-        if db::gists::starred(&state.pool, actor.user.id, loaded.repository.id)
+        if db::gists::starred(&state.pool, actor.user.id, gist.repo_id)
             .await
             .map_err(Error::unavailable)?
         {
@@ -529,12 +559,12 @@ async fn change_star(
     adding: bool,
 ) -> Result<StatusCode> {
     let actor = writer(&state, &headers).await?;
-    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
+    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
     db::gists::star(
         &state.pool,
         actor.user.id,
         &db::users::accounts::AccountCredential::Token(actor.token.id),
-        loaded.repository.id,
+        gist.repo_id,
         adding,
     )
     .await

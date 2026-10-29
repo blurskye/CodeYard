@@ -96,7 +96,7 @@ fn filters(uri: &Uri) -> Result<Filters> {
     let mut filters = Filters::default();
     for (key, value) in url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes()) {
         match key.as_ref() {
-            "owner" | "owner[]" => filters.owners.push(value.to_lowercase()),
+            "owner" | "owner[]" => filters.owners.push(value.into_owned()),
             "repository" => filters.repository = Some(value.into_owned()),
             "permission" => {
                 // Either a permission name or `name_level`, such as `issues_write`.
@@ -183,7 +183,7 @@ async fn tokens(
         let Some(user) = users.get(&token.user_id) else {
             continue;
         };
-        if !filters.owners.is_empty() && !filters.owners.contains(&user.username.to_lowercase()) {
+        if !filters.owners.is_empty() && !filters.owners.contains(&user.username) {
             continue;
         }
         if !filters.token_ids.is_empty() && !filters.token_ids.contains(&token.token_id) {
