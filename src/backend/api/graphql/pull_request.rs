@@ -15,6 +15,33 @@ use super::{
 use crate::backend::repositories::{access, pull_requests::merge, store::repo_store};
 use serde_json::json;
 
+async fn mergeable(repo: &db::models::Repository, pull: &db::models::PullRequest, request: &RequestContext) -> Result<Option<(bool, String)>> {
+    use crate::backend::repositories::store::{ErrorKind, MergeMethod, MergeRequest};
+    let store = repo_store(repo, request.state.cluster.as_ref());
+    let base = match store.commit_from_primary(&format!("refs/heads/{}", pull.base_branch)).await {
+        Ok(base) => base,
+        Err(error) if error.kind == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unavailable(error)),
+    };
+    git::charge_commit(&base, request)?;
+    let key = (repo.id, base.sha.clone(), pull.head_sha.clone());
+    let mut cache = request.mergeability.lock().await;
+    if let Some(value) = cache.get(&key) { return Ok(Some((*value, base.sha))); }
+    let value = match store.prepare_merge(&MergeRequest {
+        head_branch: pull.head_branch.clone(), base_branch: pull.base_branch.clone(), head: pull.head_sha.clone(), base: base.sha.clone(),
+        message: "Check pull request mergeability".into(), squash_body: None, name: "Codeyard".into(), email: "noreply@localhost".into(),
+        method: MergeMethod::Merge, author_name: None, author_email: None,
+    }).await {
+        Ok(_) => true,
+        Err(error) if error.is_response_too_large() => return Err(unavailable(error)),
+        Err(error) if matches!(error.kind, ErrorKind::Conflict | ErrorKind::Invalid) => false,
+        Err(error) if error.kind == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unavailable(error)),
+    };
+    cache.insert(key, value);
+    Ok(Some((value, base.sha)))
+}
+
 pub(super) async fn resolve(
     field: &str,
     args: &Arguments,
@@ -22,7 +49,7 @@ pub(super) async fn resolve(
     parent: &Value,
     repo: &db::models::Repository,
 ) -> Result<Value> {
-    let pull = db::pull_requests::records::get_pull_request_by_id(
+    let mut pull = db::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,
         parent["databaseId"].as_i64().ok_or_else(missing)?,
     )
@@ -30,6 +57,12 @@ pub(super) async fn resolve(
     .map_err(unavailable)?
     .ok_or_else(missing)?;
     let store = repo_store(repo, request.state.cluster.as_ref());
+    if matches!(field, "mergeable" | "mergeStateStatus") && pull.state == "open" && (field == "mergeable" || !pull.is_draft) {
+        if let Some((value, base)) = mergeable(repo, &pull, request).await? {
+            pull.mergeable = Some(value);
+            pull.base_sha = base;
+        }
+    }
     match field {
         "viewerMergeHeadlineText" | "viewerMergeBodyText" => {
             let method = args

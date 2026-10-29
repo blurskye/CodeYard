@@ -58,6 +58,7 @@ struct RequestContext {
     /// Bytes of text the request has loaded or returned, bounded by `MAX_RESPONSE_BYTES`.
     bytes: AtomicUsize,
     diffs: tokio::sync::Mutex<std::collections::HashMap<(i64, String, String), Arc<crate::backend::git::DiffInfo>>>,
+    mergeability: tokio::sync::Mutex<std::collections::HashMap<(i64, String, String), bool>>,
     rate: db::graphql::RateLimit,
 }
 
@@ -474,6 +475,7 @@ async fn execute(
         nodes: AtomicUsize::new(0),
         bytes: AtomicUsize::new(0),
         diffs: Default::default(),
+        mergeability: Default::default(),
         rate,
     });
     let result = match tokio::time::timeout(
