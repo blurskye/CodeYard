@@ -19,6 +19,20 @@ pub struct LocalStore {
     root: PathBuf,
 }
 
+pub(crate) struct StagedUpload {
+    temporary: tempfile::NamedTempFile,
+    target: PathBuf,
+}
+impl StagedUpload {
+    pub(crate) async fn publish(self) -> Result<(), StorageError> {
+        let parent = self.target.parent().ok_or(StorageError::Invalid)?.to_owned();
+        tokio::task::spawn_blocking(move || self.temporary.persist(self.target).map(drop).map_err(drop))
+            .await.map_err(|_| StorageError::Unavailable)?.map_err(|_| StorageError::Unavailable)?;
+        sync_directory(&parent).await?;
+        Ok(())
+    }
+}
+
 impl LocalStore {
     pub async fn open(root: &Path) -> Result<Self> {
         create_directories(root)
@@ -40,8 +54,16 @@ impl LocalStore {
     pub async fn put(
         &self,
         upload: &Upload<'_>,
-        mut reader: impl AsyncRead + Unpin,
+        reader: impl AsyncRead + Unpin,
     ) -> Result<(), StorageError> {
+        self.stage(upload, reader).await?.publish().await
+    }
+
+    pub(crate) async fn stage(
+        &self,
+        upload: &Upload<'_>,
+        mut reader: impl AsyncRead + Unpin,
+    ) -> Result<StagedUpload, StorageError> {
         if !(0..=MAX_OBJECT_BYTES).contains(&upload.bytes) {
             return Err(StorageError::Invalid);
         }
@@ -93,13 +115,7 @@ impl LocalStore {
         }
         output.flush().await?;
         output.sync_all().await?;
-        let target = path.clone();
-        tokio::task::spawn_blocking(move || temporary.persist(target).map(drop).map_err(drop))
-            .await
-            .map_err(|_| StorageError::Unavailable)?
-            .map_err(|_| StorageError::Unavailable)?;
-        sync_directory(parent).await?;
-        Ok(())
+        Ok(StagedUpload { temporary, target: path })
     }
 
     /// Bytes are checked on the way in, so existence and size are enough here.

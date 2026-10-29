@@ -1,7 +1,7 @@
 //! Uploaded file records. A file is pending until its bytes are confirmed,
 //! then active; pending uploads expire.
 use crate::backend::db::files::{
-    AdmissionError, DeleteFileOutcome, DeleteUnreferencedOutcome, ReserveUpload,
+    AdmissionError, DeleteFileOutcome, DeleteUnreferencedOutcome, FileAuthority, ReserveUpload,
     DOWNLOAD_CHARGE_DAYS, IN_FLIGHT_PUT_GRACE_SECONDS, PUT_LIFETIME_SECONDS, SWEEP_BATCH,
     SWEEP_BATCHES, UPLOAD_CHARGE_DAYS,
 };
@@ -127,20 +127,34 @@ pub async fn charge_upload(
     Ok(())
 }
 
+async fn require_file_actor(tx: &mut Transaction<'_, Sqlite>, actor: &FileAuthority) -> Result<bool, sqlx::Error> {
+    let Some(user) = actor.user_id else { return Ok(false); };
+    if let Some(session) = &actor.session {
+        match super::users::transitions::require_account(tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(session)).await {
+            Ok(()) => return Ok(true),
+            Err(error) if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => return Ok(false),
+            Err(error) => return Err(error.downcast::<sqlx::Error>().unwrap_or_else(|_| sqlx::Error::Protocol("File authority unavailable".into()))),
+        }
+    }
+    Ok(sqlx::query_scalar::<_, bool>("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1").bind(user).fetch_optional(&mut **tx).await?.unwrap_or(false))
+}
+
 /// Files anyone may download: the owner's own, public ones, and avatars.
 pub async fn get_downloadable_file(
     pool: &SqlitePool,
     file_id: Uuid,
-    actor: Option<i64>,
+    actor: impl Into<FileAuthority>,
 ) -> Result<Option<File>, sqlx::Error> {
+    let actor = actor.into();
     sqlx::query_as(
         r#"SELECT f.* FROM files f WHERE f.id = ?1 AND f.is_active AND (
-            f.user_id = ?2 OR f.visibility = 'public'
+            (f.user_id = ?2 AND EXISTS(SELECT 1 FROM users a WHERE a.id=?2 AND NOT a.is_banned AND NOT a.must_change_password AND (?3 IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=?3 AND s.user_id=a.id AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))))) OR f.visibility = 'public'
             OR (f.reason = 'avatar' AND EXISTS (SELECT 1 FROM users u WHERE u.avatar_file_id = f.id))
             OR (f.reason = 'org_avatar' AND EXISTS (SELECT 1 FROM organizations o WHERE o.avatar_file_id = f.id)))"#,
     )
     .bind(file_id)
-    .bind(actor)
+    .bind(actor.user_id)
+    .bind(actor.session)
     .fetch_optional(pool)
     .await
 }
@@ -162,20 +176,33 @@ pub async fn verify_pending_upload(
     Ok(changed.rows_affected() == 1)
 }
 
+pub async fn can_publish_upload(pool: &SqlitePool, file_id: Uuid, actor: FileAuthority) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if !require_file_actor(&mut tx, &actor).await? { return Ok(false); }
+    let allowed = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM files WHERE id=?1 AND user_id=?2 AND NOT is_active AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))").bind(file_id).bind(actor.user_id).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 /// Marks the owner's pending, unexpired upload active.
 pub async fn activate_upload(
     pool: &SqlitePool,
     file_id: Uuid,
-    user_id: i64,
+    actor: impl Into<FileAuthority>,
 ) -> Result<bool, sqlx::Error> {
+    let actor = actor.into();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !require_file_actor(&mut tx, &actor).await? { return Ok(false); }
+    let user_id = actor.user_id;
     let changed = sqlx::query(
         "UPDATE files SET is_active = 1, confirmed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), upload_expires_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
          WHERE id = ?1 AND user_id = ?2 AND NOT is_active AND upload_expires_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
     )
     .bind(file_id)
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(changed.rows_affected() == 1)
 }
 
@@ -270,9 +297,12 @@ pub async fn extend_direct_upload(
 pub async fn delete_file(
     pool: &SqlitePool,
     file_id: Uuid,
-    user_id: i64,
+    actor: impl Into<FileAuthority>,
 ) -> Result<DeleteFileOutcome, sqlx::Error> {
+    let actor = actor.into();
+    let user_id = actor.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let allowed = require_file_actor(&mut tx, &actor).await?;
     if sqlx::query_scalar::<_, i64>(
         "SELECT id FROM organizations WHERE avatar_file_id=?1 ORDER BY id LIMIT 1",
     )
@@ -283,13 +313,6 @@ pub async fn delete_file(
     {
         return Ok(DeleteFileOutcome::ReferencedOrganizationAvatar);
     }
-    let allowed = sqlx::query_scalar::<_, bool>(
-        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1",
-    )
-    .bind(user_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .unwrap_or(false);
     let Some(file) = sqlx::query_as::<_, File>("SELECT * FROM files WHERE id=?1 AND user_id=?2")
         .bind(file_id)
         .bind(user_id)

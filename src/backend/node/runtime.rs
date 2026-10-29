@@ -204,6 +204,20 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
         Ok(Err(error)) => warn!(%error, "could not remove expired uploads"),
         Err(_) => warn!("upload cleanup budget exhausted; remaining work stays queued"),
     }
+    // Object families have independent budgets; a slow package delete cannot cancel uploads.
+    match tokio::time::timeout(std::time::Duration::from_secs(30), crate::backend::packages::collect(pool, storage)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => warn!(%error, "package objects were not collected"),
+        Err(_) => warn!("package object collection timed out"),
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        crate::backend::db::attestations::collect(pool).await?;
+        crate::backend::db::action_objects::expire_objects(pool).await?;
+        Ok::<_, anyhow::Error>(())
+    }).await {
+        Ok(Ok(())) => {}
+        _ => warn!("attestation or Actions object collection was deferred"),
+    }
     match crate::backend::db::files::remove_expired_transfer_rows(pool).await {
         Ok(0) => {}
         Ok(removed) => info!(removed, "removed expired transfer accounting"),

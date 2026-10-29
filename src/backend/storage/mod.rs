@@ -183,13 +183,13 @@ impl ObjectStore {
 
     /// Stores bytes sent to this server (local storage only), checking size,
     /// checksum and file signature on the way in.
-    pub async fn put_local(
+    pub(crate) async fn stage_local(
         &self,
         upload: &Upload<'_>,
         reader: impl AsyncRead + Unpin,
-    ) -> Result<(), StorageError> {
+    ) -> Result<local::StagedUpload, StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put(upload, reader).await,
+            Backend::Local(store) => store.stage(upload, reader).await,
             Backend::S3(_) => Err(StorageError::Rejected),
         }
     }
