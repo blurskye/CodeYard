@@ -652,6 +652,7 @@ pub(super) async fn resolve(
                     pool,
                     broadcaster,
                     actor,
+                    &db::users::accounts::AccountCredential::Token(request.auth.token.id),
                     &current.username,
                     field == "followUser",
                 )

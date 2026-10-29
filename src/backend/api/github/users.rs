@@ -443,6 +443,7 @@ async fn change_follow(
         &state.pool,
         &state.notification_broadcaster,
         actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id),
         username,
         follow,
     )
