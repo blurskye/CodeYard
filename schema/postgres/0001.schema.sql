@@ -845,6 +845,7 @@ CREATE TABLE IF NOT EXISTS upload_rate_limit (
     file_size BIGINT NOT NULL,
     reason VARCHAR(50),
     ip_address INET,
+    confirmed_at TIMESTAMPTZ,
     uploaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -853,6 +854,18 @@ CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_uploaded_at ON upload_rate_limi
 CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_reason ON upload_rate_limit(reason);
 CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_ip ON upload_rate_limit(ip_address);
 CREATE INDEX IF NOT EXISTS idx_upload_rate_limit_file_id ON upload_rate_limit(file_id);
+CREATE INDEX idx_upload_rate_limit_confirmed ON upload_rate_limit(confirmed_at) WHERE confirmed_at IS NOT NULL;
+
+-- Quota reservations remain charges; only verified stored bytes become chart additions.
+CREATE FUNCTION record_upload_confirmation() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE upload_rate_limit SET confirmed_at=NEW.confirmed_at WHERE file_id=NEW.id AND confirmed_at IS NULL;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER record_upload_confirmation AFTER UPDATE OF confirmed_at ON files
+FOR EACH ROW WHEN (OLD.confirmed_at IS NULL AND NEW.confirmed_at IS NOT NULL)
+EXECUTE FUNCTION record_upload_confirmation();
 
 CREATE TABLE IF NOT EXISTS download_rate_limit (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

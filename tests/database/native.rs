@@ -3404,11 +3404,16 @@ async fn insert_transfer_rows(
             "upload_rate_limit",
             "uploaded_at",
             uploaded_at,
-            ", file_size",
+            ", file_size, confirmed_at",
         ),
         ("download_rate_limit", "downloaded_at", downloaded_at, ""),
     ] {
-        let bytes = if size.is_empty() { "" } else { ", 10" };
+        let bytes = if size.is_empty() { "" } else {
+            match pool {
+                db::DbPool::Postgres(_) => ", 10, $3::timestamptz",
+                db::DbPool::Sqlite(_) => ", 10, ?3",
+            }
+        };
         match pool {
             db::DbPool::Postgres(raw) => {
                 sqlx::query(&format!(

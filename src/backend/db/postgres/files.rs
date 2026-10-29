@@ -42,7 +42,7 @@ async fn charge(
     size: i64,
     file: Option<Uuid>,
     limits: &FileReasonLimit,
-) -> Result<(), AdmissionError> {
+) -> Result<Uuid, AdmissionError> {
     let allowed: bool = sqlx::query_scalar(
         r#"SELECT COUNT(*) FILTER (WHERE uploaded_at > NOW() - INTERVAL '1 hour') < $3
            AND COALESCE(SUM(file_size) FILTER (WHERE uploaded_at > NOW() - INTERVAL '1 hour'), 0) <= $5 - $4
@@ -63,16 +63,16 @@ async fn charge(
     if !allowed {
         return Err(AdmissionError::Quota);
     }
-    sqlx::query(
-        "INSERT INTO upload_rate_limit (user_id, file_id, file_size, reason) VALUES ($1,$2,$3,$4)",
+    let id = sqlx::query_scalar(
+        "INSERT INTO upload_rate_limit (user_id, file_id, file_size, reason) VALUES ($1,$2,$3,$4) RETURNING id",
     )
     .bind(user)
     .bind(file)
     .bind(size)
     .bind(reason)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
-    Ok(())
+    Ok(id)
 }
 
 /// Checks the declaration and the per-reason quotas, then records a pending
@@ -116,15 +116,15 @@ pub async fn charge_upload(
     user: i64,
     reason: &str,
     size: i64,
-) -> Result<(), AdmissionError> {
+) -> Result<Uuid, AdmissionError> {
     let mut tx = pool.begin().await?;
     let limits = admit(&mut tx, user, reason).await?;
     if !(1..=limits.max_file_size_bytes).contains(&size) {
         return Err(AdmissionError::Invalid);
     }
-    charge(&mut tx, user, reason, size, None, &limits).await?;
+    let id = charge(&mut tx, user, reason, size, None, &limits).await?;
     tx.commit().await?;
-    Ok(())
+    Ok(id)
 }
 
 /// Files anyone may download: the owner's own, public ones, and avatars.

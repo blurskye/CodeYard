@@ -50,6 +50,9 @@ pub async fn publish(pool: &SqlitePool, input: &NewDatabase<'_>) -> Result<Datab
             .execute(&mut *tx)
             .await?;
     ensure!(pending.rows_affected() == 1, Refusal::Missing);
+    let confirmed = sqlx::query("UPDATE upload_rate_limit SET confirmed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND file_size=?3 AND reason=?4 AND file_id IS NULL AND confirmed_at IS NULL")
+        .bind(input.charge).bind(input.actor).bind(input.size).bind(UPLOAD_QUOTA).execute(&mut *tx).await?;
+    ensure!(confirmed.rows_affected() == 1, Refusal::Missing);
     let row = sqlx::query_as("INSERT INTO codeql_databases(repo_id,language,name,uploader_id,object_key,size,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$7) ON CONFLICT(repo_id,language) DO UPDATE SET name=excluded.name,uploader_id=excluded.uploader_id,object_key=excluded.object_key,size=excluded.size,updated_at=excluded.updated_at RETURNING *")
         .bind(input.repo).bind(input.language).bind(input.name).bind(input.actor).bind(input.key).bind(input.size).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     tx.commit().await?;

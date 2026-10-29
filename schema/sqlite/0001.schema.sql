@@ -720,8 +720,16 @@ CREATE TABLE upload_rate_limit (
     file_size INTEGER NOT NULL CHECK (file_size IS NULL OR typeof(file_size)='integer'),
     reason TEXT CHECK (length(reason)<=50),
     ip_address TEXT,
+    confirmed_at TEXT,
     uploaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
+
+CREATE INDEX idx_upload_rate_limit_confirmed ON upload_rate_limit(confirmed_at) WHERE confirmed_at IS NOT NULL;
+CREATE TRIGGER record_upload_confirmation AFTER UPDATE OF confirmed_at ON files
+WHEN OLD.confirmed_at IS NULL AND NEW.confirmed_at IS NOT NULL
+BEGIN
+    UPDATE upload_rate_limit SET confirmed_at=NEW.confirmed_at WHERE file_id=NEW.id AND confirmed_at IS NULL;
+END;
 
 CREATE TABLE download_rate_limit (
     id BLOB NOT NULL PRIMARY KEY DEFAULT (randomblob(16)) CHECK (id IS NULL OR (typeof(id)='blob' AND length(id)=16)),
