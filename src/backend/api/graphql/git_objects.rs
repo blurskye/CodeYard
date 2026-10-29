@@ -87,17 +87,21 @@ pub(super) async fn blob_text(parent: &Value, request: &RequestContext) -> Resul
     Ok(std::str::from_utf8(&bytes).ok().map_or(Value::Null, |text| json!(text)))
 }
 
+// Callers authorize before I/O; recheck after it and charge the map plus cloned names.
+async fn loaded_refs(repo: &db::models::Repository, request: &RequestContext) -> Result<std::collections::HashMap<String, String>> {
+    let refs = repo_store(repo, request.state.cluster.as_ref()).refs().await.map_err(unavailable)?;
+    request.authorize(repo.id, "contents", false).await?;
+    request.charge(refs.iter().map(|(name, oid)| name.len() * 2 + oid.len() + 96).sum())?;
+    Ok(refs)
+}
+
 pub(super) async fn reference(
     repo: &db::models::Repository,
     name: &str,
     request: &RequestContext,
 ) -> Result<Value> {
     request.authorize(repo.id, "contents", false).await?;
-    let refs = repo_store(repo, request.state.cluster.as_ref())
-        .refs()
-        .await
-        .map_err(unavailable)?;
-    request.charge(refs.iter().map(|(name, oid)| name.len() + oid.len() + 64).sum())?;
+    let refs = loaded_refs(repo, request).await?;
     let Some(oid) = refs.get(name) else {
         return Ok(Value::Null);
     };
@@ -298,7 +302,14 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
                         ("C", "commit") | ("B", "blob") | ("TAG", "tag") | ("T", "tree")
                     ) =>
                 {
-                    return load(&repo, oid, request).await
+                    match load(&repo, oid, request).await {
+                        Ok(value) => return Ok(value),
+                        Err(error) => match error.extensions.as_ref().and_then(|extensions| extensions.get("type")) {
+                            Some(async_graphql::Value::String(kind)) if kind == "INTERNAL" => storage_error = Some(error),
+                            Some(async_graphql::Value::String(kind)) if kind == "NOT_FOUND" || kind == "FORBIDDEN" => {},
+                            _ => return Err(error), // Resource limits are query-wide, not candidate failures.
+                        },
+                    }
                 }
                 Ok(_) => {}
                 Err(error) if error.kind == ErrorKind::NotFound => {}
@@ -354,7 +365,7 @@ pub(super) async fn resolve(
             } else if crate::backend::git::is_full_commit_id(expression) {
                 expression.to_owned()
             } else {
-                let refs = store.refs().await.map_err(unavailable)?;
+                let refs = loaded_refs(repo, request).await?;
                 if let Some(oid) = refs
                     .get(expression)
                     .or_else(|| refs.get(&format!("refs/heads/{expression}")))
@@ -392,7 +403,7 @@ pub(super) async fn resolve(
                     "Codeyard does not support this ref ordering yet",
                 ));
             }
-            let refs = store.refs().await.map_err(unavailable)?;
+            let refs = loaded_refs(repo, request).await?;
             let mut names = refs.keys().cloned()
                 .filter(|name| name.starts_with(&prefix) && name[prefix.len()..].contains(query))
                 .collect::<Vec<_>>();
