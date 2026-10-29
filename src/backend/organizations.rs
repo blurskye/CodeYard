@@ -64,10 +64,11 @@ pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
 pub async fn delete(
     state: &AppState,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let repositories =
-        match organizations::list_organization_deletion_repositories(&state.pool, actor, org)
+        match organizations::list_organization_deletion_repositories(&state.pool, actor, credential, org)
             .await?
         {
             Applied(repositories) => repositories,
@@ -77,6 +78,7 @@ pub async fn delete(
         let deleted = match organizations::delete_organization_repository(
             &state.pool,
             actor,
+            credential,
             org,
             repository,
         )
@@ -87,5 +89,5 @@ pub async fn delete(
         };
         lifecycle::remove_deleted_repository(state.cluster.as_ref(), &deleted).await?;
     }
-    organizations::delete_organization(&state.pool, actor, org).await
+    organizations::delete_organization(&state.pool, actor, credential, org).await
 }

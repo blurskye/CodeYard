@@ -8,9 +8,11 @@ use super::authority::*;
 pub async fn delete_organization(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
 ) -> Result<OrganizationOutcome<()>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential).await?;
     let role = require_org!(tx, actor, org);
     if role != OrgRole::Owner {
         return Ok(Denied);
@@ -54,10 +56,12 @@ pub async fn count_organization_repositories(
 pub async fn list_organization_deletion_repositories(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
 ) -> Result<OrganizationOutcome<Vec<i64>>> {
-    let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential).await?;
+    if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
     let repository = sqlx::query_scalar(
@@ -74,10 +78,12 @@ pub async fn list_organization_deletion_repositories(
 pub async fn delete_organization_repository(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<crate::backend::db::models::Repository>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor, credential).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
