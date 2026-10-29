@@ -186,21 +186,21 @@ native_operation!(crate::backend::db::postgres::pages::site,crate::backend::db::
 native_operation!(crate::backend::db::postgres::pages::save,crate::backend::db::sqlite::pages::save,
     fn save(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64,update:&Update,create:bool)->Result<Site>);
 native_operation!(crate::backend::db::postgres::pages::delete,crate::backend::db::sqlite::pages::delete,
-    fn delete(pool:&DbPool,actor:i64,repo:i64)->Result<()>);
+    fn delete(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::pages::builds,crate::backend::db::sqlite::pages::builds,
     fn builds(pool:&DbPool,viewer:Option<i64>,repo:i64,offset:i64,limit:i64)->Result<Vec<Build>>);
 native_operation!(crate::backend::db::postgres::pages::build,crate::backend::db::sqlite::pages::build,
     fn build(pool:&DbPool,viewer:Option<i64>,repo:i64,id:i64)->Result<Option<Build>>);
 native_operation!(crate::backend::db::postgres::pages::request_build,crate::backend::db::sqlite::pages::request_build,
-    fn request_build(pool:&DbPool,actor:i64,repo:i64,sha:&str)->Result<Build>);
+    fn request_build(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64,sha:&str)->Result<Build>);
 pub struct Attempt<'a> {
     pub sha: &'a str,
     pub environment: &'a str,
     pub artifact_id: Option<i64>,
 }
 native_operation!(crate::backend::db::postgres::pages::request_deployment,crate::backend::db::sqlite::pages::request_deployment,
-    fn request_deployment(pool:&DbPool,actor:i64,repo:i64,input:Attempt<'_>)->Result<Deployment>);
+    fn request_deployment(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64,input:Attempt<'_>)->Result<Deployment>);
 native_operation!(crate::backend::db::postgres::pages::deployment,crate::backend::db::sqlite::pages::deployment,
     fn deployment(pool:&DbPool,viewer:Option<i64>,repo:i64,id:i64)->Result<Option<Deployment>>);
 native_operation!(crate::backend::db::postgres::pages::cancel,crate::backend::db::sqlite::pages::cancel,
-    fn cancel(pool:&DbPool,actor:i64,repo:i64,id:i64)->Result<()>);
+    fn cancel(pool:&DbPool,actor:impl Into<crate::backend::db::users::tokens::Actor>,repo:i64,id:i64)->Result<()>);

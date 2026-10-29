@@ -1,6 +1,14 @@
 use crate::backend::db::pages::{Attempt, Build, Deployment, Refusal, Site, Update, NO_PUBLISHER};
 use anyhow::Result;
-use sqlx::PgPool;
+use crate::backend::db::users::tokens::Actor;
+use sqlx::{PgConnection, PgPool};
+
+async fn credential(connection: &mut PgConnection, actor: Actor, repo: i64) -> Result<()> {
+    if let Some(token) = actor.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(connection, actor.user_id, token, Some(repo), None, "pages").await?, Refusal::Denied);
+    }
+    Ok(())
+}
 
 fn visible(viewer: usize) -> String {
     format!("EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=${viewer} WHERE r.id=p.repo_id AND {})", super::repositories::access::readable_condition())
@@ -23,9 +31,7 @@ pub async fn save(
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(super::discussions::lock_exclusive_maintain_authority(&mut tx, actor.user_id, repo).await?, Refusal::Denied);
-    if let Some(token) = actor.token_id {
-        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor.user_id, token, Some(repo), None, "pages").await?, Refusal::Denied);
-    }
+    credential(&mut tx, actor, repo).await?;
     let existing: Option<Site> = sqlx::query_as("SELECT * FROM pages_sites WHERE repo_id=$1")
         .bind(repo)
         .fetch_optional(&mut *tx)
@@ -72,12 +78,14 @@ pub async fn save(
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &PgPool, actor: i64, repo: i64) -> Result<()> {
+pub async fn delete(pool: &PgPool, actor: impl Into<Actor>, repo: i64) -> Result<()> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo).await?,
         Refusal::Denied
     );
+    credential(&mut tx, actor, repo).await?;
     anyhow::ensure!(
         sqlx::query("DELETE FROM pages_sites WHERE repo_id=$1")
             .bind(repo)
@@ -104,12 +112,14 @@ pub async fn build(pool: &PgPool, viewer: Option<i64>, repo: i64, id: i64) -> Re
             .await?,
     )
 }
-pub async fn request_build(pool: &PgPool, actor: i64, repo: i64, sha: &str) -> Result<Build> {
+pub async fn request_build(pool: &PgPool, actor: impl Into<Actor>, repo: i64, sha: &str) -> Result<Build> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor.user_id, repo).await?,
         Refusal::Denied
     );
+    credential(&mut tx, actor, repo).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pages_sites WHERE repo_id=$1 AND build_type='legacy')",
     )
@@ -117,21 +127,23 @@ pub async fn request_build(pool: &PgPool, actor: i64, repo: i64, sha: &str) -> R
     .fetch_one(&mut *tx)
     .await?;
     anyhow::ensure!(exists, Refusal::Missing);
-    let row=sqlx::query_as("INSERT INTO pages_builds(repo_id,actor_id,commit_sha,status,error) VALUES($1,$2,$3,'errored',$4) RETURNING *").bind(repo).bind(actor).bind(sha).bind(NO_PUBLISHER).fetch_one(&mut *tx).await?;
+    let row=sqlx::query_as("INSERT INTO pages_builds(repo_id,actor_id,commit_sha,status,error) VALUES($1,$2,$3,'errored',$4) RETURNING *").bind(repo).bind(actor.user_id).bind(sha).bind(NO_PUBLISHER).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(row)
 }
 pub async fn request_deployment(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<Actor>,
     repo: i64,
     input: Attempt<'_>,
 ) -> Result<Deployment> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor.user_id, repo).await?,
         Refusal::Denied
     );
+    credential(&mut tx, actor, repo).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pages_sites WHERE repo_id=$1 AND build_type='workflow')",
     )
@@ -157,12 +169,14 @@ pub async fn deployment(pool: &PgPool, viewer: Option<i64>, repo: i64, id: i64) 
             .await?,
     )
 }
-pub async fn cancel(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<()> {
+pub async fn cancel(pool: &PgPool, actor: impl Into<Actor>, repo: i64, id: i64) -> Result<()> {
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor.user_id, repo).await?,
         Refusal::Denied
     );
+    credential(&mut tx, actor, repo).await?;
     let row: Deployment =
         sqlx::query_as("SELECT * FROM pages_deployments WHERE repo_id=$1 AND id=$2")
             .bind(repo)
