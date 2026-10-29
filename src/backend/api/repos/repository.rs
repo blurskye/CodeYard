@@ -370,6 +370,7 @@ pub(super) async fn settings_model(
     let mut settings = view::settings::Settings {
         tab: tab.to_owned(),
         branches,
+        git_unavailable: loaded.git_unavailable,
         default_branch: loaded.chrome.default_branch.clone(),
         allow_merge_commit: loaded.repository.allow_merge_commit,
         allow_squash_merge: loaded.repository.allow_squash_merge,
@@ -495,10 +496,13 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "secrets" {
-        settings.environments =
-            db::environment_values::environments(&ctx.state.pool, viewer.id, loaded.repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+        let per_page = db::environment_values::ENVIRONMENTS_PER_PAGE;
+        settings.environment_page = super::paging::number(ctx, "environment_page", 1, 1..=usize::MAX.min(i64::MAX as usize) / per_page)?;
+        settings.environments = db::environment_values::environments(
+            &ctx.state.pool, viewer.id, loaded.repository.id, ((settings.environment_page - 1) * per_page) as i64,
+        ).await.map_err(|_| unavailable(ctx))?;
+        settings.environments_more = settings.environments.len() > per_page;
+        settings.environments.truncate(per_page);
         if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
             let key = db::environment_values::environment_key(name).map_err(|_| {
                 ctx.repo_error(
@@ -507,14 +511,8 @@ pub(super) async fn settings_model(
                     "Invalid environment name.",
                 )
             })?;
-            let name = settings
-                .environments
-                .iter()
-                .find(|name| {
-                    db::environment_values::environment_key(name).ok().as_ref() == Some(&key)
-                })
-                .cloned()
-                .ok_or_else(|| {
+            let name = db::environment_values::environment(&ctx.state.pool, viewer.id, loaded.repository.id, &key)
+                .await.map_err(|_| unavailable(ctx))?.ok_or_else(|| {
                     ctx.repo_error(
                         &loaded.chrome,
                         StatusCode::NOT_FOUND,
@@ -557,17 +555,17 @@ pub(super) async fn settings_model(
             }));
         }
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
-        settings.variables = db::variables::list(&ctx.state.pool, viewer.id, loaded.repository.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .map(|variable| view::settings::secrets::Variable {
-                name: variable.name,
-                value: variable.value,
-            })
-            .collect();
-        settings.secrets =
-            db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
+        if settings.environment.is_none() {
+            settings.variables = db::variables::list(&ctx.state.pool, viewer.id, loaded.repository.id)
+                .await
+                .map_err(|_| unavailable(ctx))?
+                .into_iter()
+                .map(|variable| view::settings::secrets::Variable {
+                    name: variable.name,
+                    value: variable.value,
+                })
+                .collect();
+            settings.secrets = db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .into_iter()
@@ -576,6 +574,7 @@ pub(super) async fn settings_model(
                     updated_at: secret.updated_at.to_rfc3339(),
                 })
                 .collect();
+        }
     }
     if tab == "dependabot-secrets" {
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();

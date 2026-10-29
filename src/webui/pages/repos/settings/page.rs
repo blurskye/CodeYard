@@ -144,6 +144,12 @@ pub struct Settings {
     pub variables: Vec<super::secrets::Variable>,
     #[serde(default)]
     pub environments: Vec<String>,
+    #[serde(default)]
+    pub environment_page: usize,
+    #[serde(default)]
+    pub environments_more: bool,
+    #[serde(default)]
+    pub git_unavailable: bool,
     pub environment: Option<Box<super::environments::Environment>>,
     pub properties: Option<Box<super::properties::Properties>>,
     #[serde(default)]
@@ -441,7 +447,9 @@ fn default_branch_section(repo: &RepoChrome, settings: &Settings) -> Element {
     rsx! {
         section { class: "repo-settings-section panel",
             header { class: "repo-section-heading", div { h3 { "Default branch" } p { "Repository pages and new clones open on this branch." } } }
-            if settings.branches.is_empty() {
+            if settings.git_unavailable {
+                p { class: "repo-list-empty", "Branch choices are temporarily unavailable. Retry when repository storage is available." }
+            } else if settings.branches.is_empty() {
                 p { class: "repo-list-empty", "The repository has no branches yet. Push one to choose a default." }
             } else {
                 form { method: "post", action: repo.action("default-branch"), class: "repo-form-body",
