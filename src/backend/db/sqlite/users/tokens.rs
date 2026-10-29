@@ -146,8 +146,9 @@ pub(crate) async fn permits_write(
     if let Some((client, scopes, _)) = oauth {
         let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_applications c JOIN users owner ON owner.id=c.owner_id WHERE c.client_id=?1 AND NOT owner.is_banned AND NOT owner.must_change_password)")
             .bind(&client).fetch_one(&mut *tx).await?;
-        return Ok((active || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
-            && crate::backend::identity::oauth_apps::has_scope(&scopes, if repo.is_some() { "repo" } else { "admin:org" }));
+        let allowed = crate::backend::identity::oauth_apps::has_scope(&scopes, if repo.is_some() { "repo" } else { "write:org" })
+            || permission == "security_events" && crate::backend::identity::oauth_apps::has_scope(&scopes, "security_events");
+        return Ok((active || client == crate::backend::identity::oauth_apps::CLI_CLIENT) && allowed);
     }
     let refused: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=?1 AND NOT classic_allowed)")
         .bind(org).fetch_one(&mut *tx).await?;
