@@ -1,9 +1,9 @@
 //! Push protection reads the receive quarantine without publishing its objects.
-use super::repository::{peel_revision, process, quarantined_command};
+use super::repository::{peel_revision, process, quarantined_command, walk_commits};
 use crate::backend::{
     db::secret_scanning::Location,
     repositories::secret_scanning::{
-        patterns::Pattern, scan_with_patterns, Detection, MAX_BLOB_BYTES,
+        patterns::Pattern, scan_with_patterns_until, Detection, MAX_BLOB_BYTES,
     },
 };
 use anyhow::{ensure, Context, Result};
@@ -37,42 +37,32 @@ fn open(path: &Path, quarantine: Option<&Path>) -> Result<Repository> {
 }
 
 /// The commits that `heads` bring and no ref has yet.
-fn new_commits(
-    path: &Path,
-    quarantine: Option<&Path>,
-    heads: &[String],
+async fn new_commits(
+    path: PathBuf,
+    quarantine: Option<PathBuf>,
+    heads: Vec<String>,
     deadline: Instant,
 ) -> Result<Vec<Oid>> {
-    let repo = open(path, quarantine)?;
-    let mut walk = repo.revwalk()?;
-    // Tags are peeled with the size checks of `peel_revision`, so a large blob is never loaded
-    // just to learn that it is not a commit.
-    for head in heads {
-        let (oid, kind) = peel_revision(&repo, head)?;
-        if kind == ObjectType::Commit {
-            walk.push(oid)?;
-        }
-    }
-    // Already reachable history cannot have been added by this push, including a new branch
-    // starting at a known commit. Do not hide the quarantine's proposed tips, nor the objects
-    // that the Git-data API keeps for replicas, which no scan has checked.
-    for reference in repo.references()? {
-        let reference = reference?;
-        if let Some(name) = reference
-            .name()
-            .filter(|name| !name.starts_with("refs/codeyard/objects/"))
-        {
-            if let Ok((oid, ObjectType::Commit)) = peel_revision(&repo, name) {
-                walk.hide(oid)?;
+    let (read_path, read_quarantine) = (path.clone(), quarantine.clone());
+    let tips = tokio::task::spawn_blocking(move || -> Result<Vec<String>> {
+        let repo = open(&read_path, read_quarantine.as_deref())?;
+        let mut tips = Vec::new();
+        for head in heads {
+            ensure!(Instant::now() < deadline, BUDGET);
+            let (oid, kind) = peel_revision(&repo, &head)?;
+            if kind == ObjectType::Commit {
+                tips.push(oid.to_string());
             }
         }
+        Ok(tips)
+    }).await??;
+    if tips.is_empty() {
+        return Ok(Vec::new());
     }
-    let mut commits = Vec::new();
-    for oid in walk {
-        ensure!(Instant::now() < deadline, BUDGET);
-        commits.push(oid?);
-    }
-    Ok(commits)
+    // Pull heads and retention refs have not passed push protection. Only published
+    // branches and tags can establish the boundary of previously accepted history.
+    walk_commits(&path, quarantine.as_deref(), &tips, &[], true, 10_000,
+        deadline.saturating_duration_since(Instant::now())).await
 }
 
 /// The secrets that the commits `heads` bring add, each compared with the file it replaces.
@@ -84,13 +74,7 @@ pub(crate) async fn added_secrets(
     disabled: Vec<String>,
 ) -> Result<Vec<Finding>> {
     let deadline = Instant::now() + SCAN_TIME;
-    let commits = {
-        let (path, quarantine) = (path.clone(), quarantine.clone());
-        tokio::task::spawn_blocking(move || {
-            new_commits(&path, quarantine.as_deref(), &heads, deadline)
-        })
-        .await??
-    };
+    let commits = new_commits(path.clone(), quarantine.clone(), heads, deadline).await?;
     if commits.is_empty() {
         return Ok(Vec::new());
     }
@@ -145,8 +129,7 @@ fn scan(
     // Object headers give blob sizes without reading a large blob into memory.
     let odb = repo.odb()?;
     let small = |id: Oid| {
-        odb.read_header(id)
-            .is_ok_and(|(size, _)| size <= MAX_BLOB_BYTES)
+        odb.read_header(id).map(|(size, _)| size <= MAX_BLOB_BYTES)
     };
     let mut found = Vec::new();
     let mut bytes = 0usize;
@@ -172,7 +155,7 @@ fn scan(
             Oid::from_str(change[3])?,
         );
         // A deletion adds nothing, and a gitlink names a commit, never a blob.
-        if new.is_zero() || mode == "160000" || !small(new) {
+        if new.is_zero() || mode == "160000" || !small(new)? {
             continue;
         }
         let blob = repo.find_blob(new)?;
@@ -181,7 +164,7 @@ fn scan(
             bytes <= 64 * MAX_BLOB_BYTES && Instant::now() < deadline,
             BUDGET
         );
-        let previous = if !old.is_zero() && small(old) {
+        let previous = if !old.is_zero() && small(old)? {
             repo.find_blob(old).ok()
         } else {
             None
@@ -190,15 +173,23 @@ fn scan(
         let path = String::from_utf8_lossy(file).into_owned();
         // Only a secret the same rules found in the replaced file already existed; bytes the
         // scanner skipped, such as a binary file's, were never checked.
-        let existing: Vec<String> = match previous {
-            Some(old) => scan_with_patterns(&path, &commit, old.content(), patterns, true)?
+        let replacement = scan_with_patterns_until(&path, &commit, blob.content(), patterns, true, deadline)?;
+        let replacement: Vec<_> = replacement.into_iter().filter(|detection| !disabled.contains(&detection.secret_type)).collect();
+        if replacement.is_empty() {
+            continue;
+        }
+        let existing: Vec<(String, String)> = match previous {
+            Some(old) => scan_with_patterns_until(&path, &commit, old.content(), patterns, true, deadline)?
                 .into_iter()
-                .map(|detection| detection.secret)
+                .filter(|detection| !disabled.contains(&detection.secret_type))
+                .map(|detection| (detection.secret_type, detection.secret))
                 .collect(),
             None => Vec::new(),
         };
-        for detection in scan_with_patterns(&path, &commit, blob.content(), patterns, true)? {
-            if disabled.contains(&detection.secret_type) || existing.contains(&detection.secret) {
+        for detection in replacement {
+            if existing.iter().any(|(kind, value)| kind == &detection.secret_type && value == &detection.secret)
+                || found.iter().any(|finding: &Finding| finding.detection.secret_type == detection.secret_type && finding.detection.secret == detection.secret)
+            {
                 continue;
             }
             found.push(Finding {

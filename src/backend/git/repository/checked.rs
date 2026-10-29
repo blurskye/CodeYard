@@ -209,12 +209,14 @@ pub(crate) async fn introduced_signatures(
     if let Some(old) = old {
         validate_merge_revision("main", old)?;
     }
-    // The scan takes a Git slot like other object reads, so pushes cannot run unbounded scans.
+    let commits = walk_commits(
+        path, quarantine, &[new.to_owned()], &old.into_iter().map(str::to_owned).collect::<Vec<_>>(),
+        false, MAX_SIGNATURE_CHECKS, COMMIT_WALK_TIMEOUT,
+    )
+    .await?;
     let permit = process::operation_slot(COMMIT_WALK_TIMEOUT).await?;
     let path = path.to_owned();
     let quarantine = quarantine.map(Path::to_owned);
-    let old = old.map(str::to_owned);
-    let new = new.to_owned();
     tokio::task::spawn_blocking(move || -> Result<Vec<CommitSignature>> {
         let _permit = permit;
         let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
@@ -226,20 +228,10 @@ pub(crate) async fn introduced_signatures(
                     .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
             )?;
         }
-        let mut walk = repo.revwalk()?;
-        walk.push(git2::Oid::from_str(&new)?)?;
-        if let Some(old) = old {
-            walk.hide(git2::Oid::from_str(&old)?)?;
-        }
-        let mut commits = Vec::new();
+        let mut signatures = Vec::new();
         // The payloads are kept until every signature is checked, so their total is bounded.
         let mut bytes = 0usize;
-        for oid in walk {
-            let oid = oid?;
-            ensure!(
-                commits.len() < MAX_SIGNATURE_CHECKS,
-                "Too many commits to check their signatures"
-            );
+        for oid in commits {
             ensure!(
                 Instant::now() < deadline,
                 "Checking the commit signatures took too long"
@@ -251,7 +243,7 @@ pub(crate) async fn introduced_signatures(
             );
             // Refuses an oversized commit before its payload is copied.
             let commit = find_commit_checked(&repo, oid)?;
-            let (signature, payload) = match repo.extract_signature(&oid, None) {
+            let (signature, payload) = match super::extract_commit_signature(&repo, &commit) {
                 Ok((signature, payload)) => (
                     Some(String::from_utf8_lossy(&signature).into_owned()),
                     Some(payload.to_vec()),
@@ -259,16 +251,45 @@ pub(crate) async fn introduced_signatures(
                 Err(error) if error.code() == git2::ErrorCode::NotFound => (None, None),
                 Err(error) => return Err(error.into()),
             };
-            commits.push(CommitSignature {
+            signatures.push(CommitSignature {
                 signature,
                 payload,
                 committer_email: String::from_utf8_lossy(commit.committer().email_bytes())
                     .into_owned(),
             });
         }
-        Ok(commits)
+        Ok(signatures)
     })
     .await?
+}
+
+/// Enumerate IDs in a memory-limited child; libgit2 revwalk materializes unchecked ancestors.
+pub(crate) async fn walk_commits(
+    path: &Path,
+    quarantine: Option<&Path>,
+    tips: &[String],
+    hidden: &[String],
+    hide_published: bool,
+    limit: usize,
+    timeout: Duration,
+) -> Result<Vec<git2::Oid>> {
+    for id in tips.iter().chain(hidden) {
+        validate_merge_revision("main", id)?;
+    }
+    let mut command = quarantined_command(path, quarantine)?;
+    command.args(["rev-list", &format!("--max-count={}", limit + 1)]).args(tips);
+    if !hidden.is_empty() || hide_published {
+        command.arg("--not").args(hidden);
+        if hide_published {
+            command.args(["--branches", "--tags"]);
+        }
+    }
+    command.arg("--");
+    let (status, bytes) = process::buffered(command, b"", (limit + 1) * 41, timeout).await?;
+    ensure!(status.success(), "Git could not enumerate commits");
+    let ids = std::str::from_utf8(&bytes)?.lines().map(git2::Oid::from_str).collect::<std::result::Result<Vec<_>, _>>()?;
+    ensure!(ids.len() <= limit, "Too many commits to scan");
+    Ok(ids)
 }
 
 /// Builds a two-parent merge commit of `base` and `head` without touching refs, even when `head`
@@ -284,6 +305,9 @@ pub(crate) async fn prepare_merge(
     validate_merge_revision("main", head)?;
     validate_merge_revision("main", base)?;
     check_commit_text(message, &[author, committer])?;
+    if commit_is_ancestor(path, head, base).await? {
+        return Err(UnsupportedMerge(NO_CHANGES.to_owned()).into());
+    }
     let tree = merge_tree(path, base, head).await?;
     commit_tree(
         path,
@@ -586,7 +610,8 @@ pub(crate) async fn rewrite_template_history(
                 repo.find_reference(&name)?.delete()?;
                 continue;
             }
-            let tree = super::peel_to_commit_checked(&repo, &name)?.tree()?;
+            let commit = super::peel_to_commit_checked(&repo, &name)?;
+            let tree = super::directory_tree(&repo, &commit, "")?;
             let message = format!(
                 "Initial commit from {}",
                 name.trim_start_matches("refs/heads/")

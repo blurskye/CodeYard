@@ -67,7 +67,7 @@ fn secret_scanning_own_tokens_and_entropy() {
             .iter()
             .any(|alert| alert.secret == value
                 && alert.secret_type == kind
-                && alert.start_column == 2));
+                && alert.start_column == 3));
     }
     let found = scan(
         "config.env",

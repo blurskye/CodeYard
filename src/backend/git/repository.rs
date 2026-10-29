@@ -26,7 +26,7 @@ pub(crate) use checked::{
     publish_ref, publish_ref_create, publish_ref_delete, publish_restack, quarantined_command,
     quarantined_is_fast_forward, rewrite_template_history, validate_merge_revision, MergeConflict,
     Person, PreparedPullHead, PullHeadConflict, RefConflict, UnsupportedMerge,
-    MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
+    walk_commits, MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
 };
 pub(crate) use release_notes::release_history;
 pub use release_notes::ReleaseHistory;
@@ -2014,7 +2014,16 @@ fn commit_message(commit: &git2::Commit<'_>) -> String {
         .message_encoding()
         .and_then(|label| encoding_rs::Encoding::for_label(label.as_bytes()))
         .unwrap_or(encoding_rs::UTF_8);
-    encoding.decode(commit.message_bytes()).0.into_owned()
+    encoding.decode(commit.message_raw_bytes()).0.into_owned()
+}
+
+/// A signature must be a header, not a similarly named line in the message body.
+pub(crate) fn extract_commit_signature(
+    repo: &Repository,
+    commit: &git2::Commit<'_>,
+) -> std::result::Result<(git2::Buf, git2::Buf), git2::Error> {
+    commit.header_field_bytes("gpgsig")?;
+    repo.extract_signature(&commit.id(), None)
 }
 
 /// Decode an already opened commit without resolving a mutable repository path.
@@ -2022,7 +2031,7 @@ pub(crate) fn commit_info(repo: &Repository, commit: &git2::Commit<'_>) -> Resul
     let author = commit.author();
     let committer = commit.committer();
     let parents: Vec<String> = commit.parent_ids().map(|id| format!("{}", id)).collect();
-    let (signature, signature_payload) = match repo.extract_signature(&commit.id(), None) {
+    let (signature, signature_payload) = match extract_commit_signature(repo, commit) {
         Ok((signature, payload)) => (
             Some(String::from_utf8_lossy(&signature).into_owned()),
             Some(payload.to_vec()),
