@@ -107,8 +107,9 @@ pub async fn build(pool: &SqlitePool, repo: i64, id: i64) -> Result<Option<Build
             .await?,
     )
 }
-pub async fn request_build(pool: &SqlitePool, actor: i64, repo: i64, sha: &str) -> Result<Build> {
+pub async fn request_build(pool: &SqlitePool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, sha: &str) -> Result<Build> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
@@ -127,10 +128,12 @@ pub async fn request_build(pool: &SqlitePool, actor: i64, repo: i64, sha: &str) 
 pub async fn request_deployment(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: Attempt<'_>,
 ) -> Result<Deployment> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
@@ -161,8 +164,9 @@ pub async fn deployment(pool: &SqlitePool, repo: i64, id: i64) -> Result<Option<
             .await?,
     )
 }
-pub async fn cancel(pool: &SqlitePool, actor: i64, repo: i64, id: i64) -> Result<()> {
+pub async fn cancel(pool: &SqlitePool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, id: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied

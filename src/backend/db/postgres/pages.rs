@@ -109,8 +109,9 @@ pub async fn build(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Build>> {
             .await?,
     )
 }
-pub async fn request_build(pool: &PgPool, actor: i64, repo: i64, sha: &str) -> Result<Build> {
+pub async fn request_build(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, sha: &str) -> Result<Build> {
     let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
@@ -129,10 +130,12 @@ pub async fn request_build(pool: &PgPool, actor: i64, repo: i64, sha: &str) -> R
 pub async fn request_deployment(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: Attempt<'_>,
 ) -> Result<Deployment> {
     let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
@@ -163,8 +166,9 @@ pub async fn deployment(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Depl
             .await?,
     )
 }
-pub async fn cancel(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<()> {
+pub async fn cancel(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, id: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied

@@ -141,7 +141,7 @@ async fn submit(
                 let site=pages::site(&ctx.state.pool,loaded.repository.id).await?.ok_or(pages::Refusal::Missing)?;
                 let branch=site.branch.ok_or(pages::Refusal::Invalid)?;
                 let commit=repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{branch}")).await?;
-                pages::request_build(&ctx.state.pool,actor,loaded.repository.id,&commit.sha).await?;
+                pages::request_build(&ctx.state.pool,actor,&credential,loaded.repository.id,&commit.sha).await?;
             }
             "save"=>{
                 let create=pages::site(&ctx.state.pool,loaded.repository.id).await?.is_none();

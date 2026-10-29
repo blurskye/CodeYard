@@ -223,7 +223,7 @@ async fn request_build(
         .commit(&format!("refs/heads/{branch}"))
         .await
         .map_err(store_error)?;
-    let build = pages::request_build(&state.pool, actor.user.id, repo.id, &commit.sha)
+    let build = pages::request_build(&state.pool, actor.user.id, &actor.credential(), repo.id, &commit.sha)
         .await
         .map_err(failure)?;
     Ok((StatusCode::CREATED,Json(json!({"url":format!("{}/pages/builds/{}",repo_url(&params["owner"],&params["repo"]),build.id),"status":build.status}))).into_response())
@@ -284,6 +284,7 @@ async fn create_deployment(
     let deployment = pages::request_deployment(
         &state.pool,
         actor.user.id,
+        &actor.credential(),
         repo.id,
         pages::Attempt {
             sha: &sha,
@@ -334,9 +335,11 @@ async fn cancel(
     let id = params["pages_deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
+    let actor = actor.ok_or_else(auth::required)?;
     pages::cancel(
         &state.pool,
-        actor.ok_or_else(auth::required)?.user.id,
+        actor.user.id,
+        &actor.credential(),
         repo.id,
         id,
     )
