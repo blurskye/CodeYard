@@ -418,7 +418,12 @@ async fn release_records(
                             .map_err(Error::unavailable)?;
                         bytes.extend_from_slice(&chunk);
                     }
-                    archive.append(&path, &bytes).map_err(Error::unavailable)?;
+                    let mut pending = std::mem::take(archive);
+                    let archive_path = path.clone();
+                    *archive = tokio::task::spawn_blocking(move || {
+                        pending.append(&archive_path, &bytes)?;
+                        anyhow::Ok(pending)
+                    }).await.map_err(Error::unavailable)?.map_err(Error::unavailable)?;
                     let mut asset_value = releases::asset_document(
                         state,
                         owner,
