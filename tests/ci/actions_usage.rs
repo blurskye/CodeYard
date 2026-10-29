@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
                     },
                 )
                 .await
-                .unwrap();
+                .unwrap().id;
             }
             if variant == 0 {
                 expected_jobs.push(json!({"job_id":job_id,"duration_ms":1234}));

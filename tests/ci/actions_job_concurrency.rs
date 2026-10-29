@@ -71,7 +71,7 @@ async fn start(
     });
     let id = db::action_jobs::apply(f.pool(), worker, run.id, &generation, WORKFLOW, &queued)
         .await
-        .unwrap();
+        .unwrap().id;
     db::action_jobs::apply(
         f.pool(),
         worker,

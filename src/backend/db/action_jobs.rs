@@ -71,8 +71,14 @@ pub(crate) fn validate_annotation(annotation: &Annotation) -> Result<()> {
     Ok(())
 }
 
+/// The job identity and whether this transaction owns a new lifecycle transition.
+#[derive(Debug)]
+pub struct Applied {
+    pub id: i64,
+    pub transitioned: bool,
+}
 native_operation!(crate::backend::db::postgres::action_jobs::apply,crate::backend::db::sqlite::action_jobs::apply,
-    fn apply(pool:&DbPool,worker:&str,run:i64,generation:&str,workflow:&str,event:&Event)->Result<i64>);
+    fn apply(pool:&DbPool,worker:&str,run:i64,generation:&str,workflow:&str,event:&Event)->Result<Applied>);
 native_operation!(crate::backend::db::postgres::action_jobs::admit,crate::backend::db::sqlite::action_jobs::admit,
     fn admit(pool:&DbPool,worker:&str,run:i64,generation:&str,workflow:&str,job:i64)->Result<Option<bool>>);
 native_operation!(crate::backend::db::postgres::action_jobs::save_state,crate::backend::db::sqlite::action_jobs::save_state,

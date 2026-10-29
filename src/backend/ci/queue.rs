@@ -665,10 +665,12 @@ impl RunQueue {
                     Update::Finished { .. } => Some("completed"),
                     _ => None,
                 };
-                if let (Some(action), Some(ci)) = (action, self.events()) {
-                    ci.emit_workflow_job(id, job, action).await;
+                if job.transitioned {
+                    if let (Some(action), Some(ci)) = (action, self.events()) {
+                        ci.emit_workflow_job(id, job.id, action).await;
+                    }
                 }
-                Ok(job)
+                Ok(job.id)
             }
             Self::Remote { .. } => {
                 self.call(

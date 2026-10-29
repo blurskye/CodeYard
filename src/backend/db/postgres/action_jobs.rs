@@ -46,7 +46,7 @@ pub async fn apply(
     generation: &str,
     workflow: &str,
     event: &Event,
-) -> Result<i64> {
+) -> Result<crate::backend::db::action_jobs::Applied> {
     ensure!(
         !event.job.is_empty()
             && event.job.len() <= 128
@@ -58,6 +58,7 @@ pub async fn apply(
         .ok_or_else(|| anyhow::anyhow!("invalid runner clock"))?;
     let mut tx = pool.begin().await?;
     let leased = lease(&mut tx, worker, run, generation, workflow).await?;
+    let mut transitioned = false;
     if let Update::Queued {
         name: display,
         labels,
@@ -78,13 +79,13 @@ pub async fn apply(
                     .is_ok_and(|bytes| bytes.len() <= 8192)),
             "matrix metadata exceeds the native limit"
         );
-        sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10) ON CONFLICT(run_id,generation,workflow_path,logical_job,variant) DO NOTHING").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).execute(&mut *tx).await?;
+        transitioned = sqlx::query("INSERT INTO actions_jobs(run_id,generation,workflow_path,logical_job,variant,name,labels,workflow_name,status,created_at,matrix) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9,$10) ON CONFLICT(run_id,generation,workflow_path,logical_job,variant) DO NOTHING").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).bind(display).bind(Json(labels)).bind(workflow_name).bind(at).bind(matrix.as_ref().map(|matrix|Json(&matrix.values))).execute(&mut *tx).await?.rows_affected() == 1;
     }
     let id:i64=sqlx::query_scalar("SELECT id FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4 AND variant=$5").bind(run).bind(generation).bind(workflow).bind(&event.job).bind(event.variant as i32).fetch_one(&mut *tx).await?;
     match &event.update {
         Update::Queued { .. } => {}
         Update::Started => {
-            sqlx::query("UPDATE actions_jobs SET status='in_progress',started_at=$2 WHERE id=$1 AND status='queued'").bind(id).bind(at).execute(&mut *tx).await?;
+            transitioned = sqlx::query("UPDATE actions_jobs SET status='in_progress',started_at=$2 WHERE id=$1 AND status='queued'").bind(id).bind(at).execute(&mut *tx).await?.rows_affected() == 1;
         }
         Update::StepStarted {
             number,
@@ -112,7 +113,7 @@ pub async fn apply(
             duration_ms,
         } => {
             sqlx::query("UPDATE actions_steps SET status='completed',completed_at=$2 WHERE job_id=$1 AND status='in_progress'").bind(id).bind(at).execute(&mut *tx).await?;
-            sqlx::query("UPDATE actions_jobs SET status='completed',conclusion=$2,completed_at=$3,duration_ms=$4 WHERE id=$1 AND status<>'completed'").bind(id).bind(conclusion.as_str()).bind(at).bind(milliseconds(*duration_ms)?).execute(&mut *tx).await?;
+            transitioned = sqlx::query("UPDATE actions_jobs SET status='completed',conclusion=$2,completed_at=$3,duration_ms=$4 WHERE id=$1 AND status<>'completed'").bind(id).bind(conclusion.as_str()).bind(at).bind(milliseconds(*duration_ms)?).execute(&mut *tx).await?.rows_affected() == 1;
         }
         Update::Annotation { annotation } => {
             crate::backend::db::action_jobs::validate_annotation(annotation)?;
@@ -138,7 +139,7 @@ pub async fn apply(
         Update::Log { .. } => anyhow::bail!("runner output uses bounded native log storage"),
     }
     tx.commit().await?;
-    Ok(id)
+    Ok(crate::backend::db::action_jobs::Applied { id, transitioned })
 }
 
 /// Answers a job's concurrency request: `Some(true)` once it holds its group,
