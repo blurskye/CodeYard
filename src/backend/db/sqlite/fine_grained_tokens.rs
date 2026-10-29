@@ -169,6 +169,24 @@ pub async fn review(
     Ok(changed)
 }
 
+pub(crate) async fn repository_permission(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    token: i64,
+    actor: i64,
+    repo: i64,
+    permission: &str,
+) -> Result<bool> {
+    let bounds: Option<Bounds> = sqlx::query_as(BOUNDS).bind(token).fetch_optional(&mut **tx).await?;
+    let Some(bounds) = bounds else {
+        return Ok(!sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE r.id=$2 AND NOT p.classic_allowed) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
+            .bind(token).bind(repo).fetch_one(&mut **tx).await?);
+    };
+    let permissions: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&bounds.permissions)?;
+    let scoped: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$1 AND NOT r.is_gist AND (($2 IS NULL AND r.owner_kind='user' AND r.owner_user_id=$3) OR (r.owner_kind='org' AND r.owner_org_id=$2)) AND ($4='all' OR EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=$5 AND s.repo_id=r.id)))")
+        .bind(repo).bind(bounds.owner_org_id).bind(actor).bind(&bounds.repository_access).bind(token).fetch_one(&mut **tx).await?;
+    Ok(bounds.user_id == actor && bounds.active() && scoped && permissions.get(permission).and_then(serde_json::Value::as_str) == Some("write"))
+}
+
 pub async fn classic_refused(pool: &SqlitePool, token: i64, org: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=$2 AND NOT p.classic_allowed) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
         .bind(token).bind(org).fetch_one(pool).await?)
