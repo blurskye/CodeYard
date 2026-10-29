@@ -652,10 +652,14 @@ pub async fn save_pull_request_review(
     } else {
         discussions::lock_pull_request_review_authority(&mut tx, author_id, pr_id).await?
     };
+    let pinned: bool = if let Some(id) = expected_pending {
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE id=$1 AND pull_request_id=$2 AND author_id=$3 AND state='pending' AND commit_sha=$4)")
+            .bind(id).bind(pr_id).bind(author_id).bind(commit_sha.as_deref()).fetch_one(&mut *tx).await?
+    } else { false };
     anyhow::ensure!(
         current_state == "open"
             && matches!(state, "approved" | "changes_requested" | "commented")
-            && commit_sha.as_deref() == Some(current_head.as_str())
+            && (pinned || (expected_pending.is_none() && commit_sha.as_deref() == Some(current_head.as_str())))
             && (state == "commented" || author != author_id),
         crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
     );
@@ -693,14 +697,6 @@ pub async fn save_pull_request_review(
         .await?;
         anyhow::ensure!(
             inline > 0,
-            crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
-        );
-    }
-    if let Some(expected) = expected_pending {
-        let actual: Option<i64> = sqlx::query_scalar("SELECT id FROM pr_reviews WHERE pull_request_id=$1 AND author_id=$2 AND state='pending'")
-            .bind(pr_id).bind(author_id).fetch_optional(&mut *tx).await?;
-        anyhow::ensure!(
-            actual == Some(expected),
             crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
         );
     }
