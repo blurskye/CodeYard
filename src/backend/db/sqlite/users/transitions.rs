@@ -40,21 +40,31 @@ pub(crate) async fn live_session(
         .bind(session).bind(actor).fetch_one(&mut **tx).await?)
 }
 
+/// The caller must already retain its current unrestricted account/tenant authority.
+pub(crate) async fn retain_write_credential(
+    tx: &mut Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<bool> {
+    use crate::backend::db::users::accounts::AccountCredential;
+    Ok(match credential {
+        AccountCredential::Trusted => true,
+        AccountCredential::Session(session) => live_session(tx, actor, session).await?,
+        AccountCredential::Token(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
+            .bind(id).bind(actor).fetch_one(&mut **tx).await?,
+    })
+}
+
 pub(crate) async fn require_account(
     tx: &mut Transaction<'_, sqlx::Sqlite>,
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
-    use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
+    use crate::backend::db::users::accounts::AccountRestricted;
     let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
         .bind(actor).fetch_one(&mut **tx).await?;
     anyhow::ensure!(active, AccountRestricted);
-    let live = match credential {
-        AccountCredential::Session(session) => live_session(tx, actor, session).await?,
-        AccountCredential::Token(id) => sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
-            .bind(id).bind(actor).fetch_one(&mut **tx).await?,
-    };
-    anyhow::ensure!(live, AccountRestricted);
+    anyhow::ensure!(retain_write_credential(tx, actor, credential).await?, AccountRestricted);
     Ok(())
 }
 

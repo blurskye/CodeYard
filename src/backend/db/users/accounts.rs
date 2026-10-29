@@ -5,6 +5,8 @@ use anyhow::Result;
 
 /// A settings mutation retains the live credential while it changes account data.
 pub enum AccountCredential<'a> {
+    /// Trusted server-side work and fixtures; never derive this from request input.
+    Trusted,
     Session(&'a str),
     Token(i64),
 }

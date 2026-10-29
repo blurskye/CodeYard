@@ -79,17 +79,16 @@ pub(crate) async fn live_session(
     )
 }
 
-pub(crate) async fn require_account(
+/// The caller must already retain its current unrestricted account/tenant authority.
+/// Retain the originating write credential without upgrading that account's row lock.
+pub(crate) async fn retain_write_credential(
     tx: &mut Transaction<'_, Postgres>,
     actor: i64,
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
-) -> Result<()> {
-    use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
-    lock_membership_shared(tx).await?;
-    let active: bool = sqlx::query_scalar("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR NO KEY UPDATE")
-        .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false);
-    anyhow::ensure!(active, AccountRestricted);
-    let live = match credential {
+) -> Result<bool> {
+    use crate::backend::db::users::accounts::AccountCredential;
+    Ok(match credential {
+        AccountCredential::Trusted => true,
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
         AccountCredential::Token(id) => {
             let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' FOR SHARE")
@@ -105,8 +104,20 @@ pub(crate) async fn require_account(
                 None => false,
             }
         }
-    };
-    anyhow::ensure!(live, AccountRestricted);
+    })
+}
+
+pub(crate) async fn require_account(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    use crate::backend::db::users::accounts::AccountRestricted;
+    lock_membership_shared(tx).await?;
+    let active: bool = sqlx::query_scalar("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR NO KEY UPDATE")
+        .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false);
+    anyhow::ensure!(active, AccountRestricted);
+    anyhow::ensure!(retain_write_credential(tx, actor, credential).await?, AccountRestricted);
     Ok(())
 }
 
