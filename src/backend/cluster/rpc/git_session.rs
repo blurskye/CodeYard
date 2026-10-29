@@ -62,7 +62,7 @@ impl NodeContext {
                     else {
                         continue;
                     };
-                    let _permit = permit?;
+                    let Ok(_permit) = permit else { continue; };
                     if let Ok(Ok((store, checkout))) =
                         tokio::time::timeout_at(attempt_deadline(deadline), self.own_copy(&request))
                             .await

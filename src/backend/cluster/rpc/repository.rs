@@ -457,6 +457,7 @@ impl RpcHandler {
     ) -> Result<(Value, Vec<u8>), Failure> {
         let received = std::time::Instant::now();
         let (store, repo_id) = self.authorize_request(&request, caller).await?;
+        let read_authority = request.operation.is_read_only().then(|| request.clone());
         let pool = self.context.database()?;
         let actor = request.actor;
         let mut output = Vec::new();
@@ -1166,6 +1167,9 @@ impl RpcHandler {
         };
         if output.len() > MAX_BYTES {
             return Err(invalid("RPC frame exceeds its limit").into());
+        }
+        if let Some(request) = read_authority {
+            self.authorize_request(&request, caller).await?;
         }
         Ok((value, output))
     }

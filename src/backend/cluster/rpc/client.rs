@@ -240,7 +240,7 @@ pub(super) fn cannot_serve(reply: Option<&Reply>, moved_primary: bool) -> bool {
         None => true,
         Some(reply) => match &reply.result {
             Err(Failure::Repository(error)) if moved_primary => error.is_storage_node_unavailable(),
-            Err(Failure::Repository(error)) => error.kind == ErrorKind::Unavailable,
+            Err(Failure::Repository(error)) => matches!(error.kind, ErrorKind::Unavailable | ErrorKind::NotFound),
             _ => false,
         },
     }

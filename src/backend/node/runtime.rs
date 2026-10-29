@@ -268,7 +268,16 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
         true,
         state_dir,
     );
-    workers.startup().await?;
+    let started = tokio::select! {
+        biased;
+        result = &mut signal => { let stopped = workers.shutdown().await; context.iroh.close().await; return result.and(stopped); },
+        result = workers.startup() => result,
+    };
+    if let Err(error) = started {
+        let _ = workers.shutdown().await;
+        context.iroh.close().await;
+        return Err(error);
+    }
     info!("database-free runner ready; no web, SSH or cluster listener");
     let result = signal.await;
     info!("shutting down");

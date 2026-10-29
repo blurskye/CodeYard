@@ -512,7 +512,7 @@ pub struct CiRunAccess {
     pub worker: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
     pub repository: Uuid,
     pub operation: Operation,
