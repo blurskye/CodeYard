@@ -178,7 +178,7 @@ fn fields_of(draft: &ReleaseDraft) -> ReleaseFields {
         body: (!draft.body.trim().is_empty()).then(|| draft.body.clone()),
         is_draft: draft.draft,
         is_prerelease: draft.prerelease,
-        make_latest: draft.latest,
+        make_latest: draft.latest.into(),
     }
 }
 

@@ -253,7 +253,7 @@ pub(super) async fn create(
                 .filter(|body| !body.is_empty()),
             is_draft: request.draft.unwrap_or(false),
             is_prerelease: request.prerelease.unwrap_or(false),
-            make_latest: request.make_latest.unwrap_or(true),
+            make_latest: request.make_latest.unwrap_or(true).into(),
         },
         new_tag_denied: false,
     };
@@ -315,6 +315,8 @@ pub(super) async fn update(
     }
     let fields = ReleaseChanges {
         expected_revision: None,
+        tag: None,
+        target: None,
         name: request
             .name
             .map(|name| name.filter(|name| !name.is_empty())),
@@ -323,7 +325,7 @@ pub(super) async fn update(
             .map(|body| body.filter(|body| !body.is_empty())),
         is_draft: request.draft,
         is_prerelease: request.prerelease,
-        make_latest: request.make_latest,
+        make_latest: request.make_latest.map(Into::into),
         new_tag_denied: false,
     };
     let release = releases::update(

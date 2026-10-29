@@ -52,7 +52,17 @@ async fn set_latest_flag(
     release_id: i64,
     fields: &ReleaseFields,
 ) -> Result<()> {
-    let wants = fields.make_latest && !fields.is_draft && !fields.is_prerelease;
+    if matches!(fields.make_latest, crate::backend::db::releases::LatestSelection::Legacy) {
+        let rows = sqlx::query_as("SELECT id,tag_name,created_at FROM releases WHERE repo_id=?1 AND NOT is_draft AND NOT is_prerelease")
+            .bind(repo_id).fetch_all(&mut **tx).await?;
+        let candidate = crate::backend::db::releases::legacy_latest(&rows);
+        sqlx::query("UPDATE releases SET is_latest=0 WHERE repo_id=?1 AND is_latest")
+            .bind(repo_id).execute(&mut **tx).await?;
+        sqlx::query("UPDATE releases SET is_latest=1 WHERE id=?1")
+            .bind(candidate).execute(&mut **tx).await?;
+        return Ok(());
+    }
+    let wants = matches!(fields.make_latest, crate::backend::db::releases::LatestSelection::Promote) && !fields.is_draft && !fields.is_prerelease;
     if wants {
         sqlx::query(
             "UPDATE releases SET is_latest = 0 WHERE repo_id = ?1 AND is_latest = 1 AND id <> ?2",
@@ -173,6 +183,17 @@ pub async fn update_release_with_publication(
         !current.is_immutable || fields.is_draft != Some(true),
         ReleaseRefusal::Immutable
     );
+    if let Some(tag) = &fields.tag {
+        anyhow::ensure!(!current.is_immutable || tag == &current.tag_name, ReleaseRefusal::Immutable);
+        let taken: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM releases WHERE repo_id=?1 AND tag_name=?2 AND id<>?3)")
+            .bind(repo_id).bind(tag).bind(release_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(!taken, ReleaseRefusal::TagTaken);
+        if tag != &current.tag_name {
+            super::repositories::immutable_releases::assert_available(&mut tx, repo_id, tag).await?;
+        }
+    }
+    let tag = fields.tag.clone().unwrap_or_else(|| current.tag_name.clone());
+    let target = fields.target.clone().unwrap_or_else(|| current.target_commitish.clone());
     let fields = fields.apply_to(&current);
     // A release first published keeps its date. A draft gets one when it is published.
     sqlx::query(
@@ -180,13 +201,15 @@ pub async fn update_release_with_publication(
              published_at = CASE WHEN ?3 = 1 THEN NULL
                                  WHEN published_at IS NULL THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now')
                                  ELSE published_at END
-         WHERE id = ?5",
+         , tag_name = ?6, target_commitish = ?7 WHERE id = ?5",
     )
     .bind(&fields.name)
     .bind(&fields.body)
     .bind(fields.is_draft)
     .bind(fields.is_prerelease)
     .bind(release_id)
+    .bind(tag)
+    .bind(target)
     .execute(&mut *tx)
     .await?;
     set_latest_flag(&mut tx, repo_id, release_id, &fields).await?;

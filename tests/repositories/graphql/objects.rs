@@ -26,7 +26,7 @@ pub(super) async fn exercise(
         "main",
         &db::releases::ReleaseFields {
             name: Some("GraphQL release".into()),
-            make_latest: true,
+            make_latest: true.into(),
             ..Default::default()
         },
     )

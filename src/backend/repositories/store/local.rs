@@ -2933,13 +2933,13 @@ impl LocalStore {
             .await?;
             let tag = match &mutation {
                 Mutation::Create { tag, .. } => tag.clone(),
-                Mutation::Update { id, .. } => {
-                    db::releases::get_release(&pool, repo_id, *id)
+                Mutation::Update { id, changes } => {
+                    let current = db::releases::get_release(&pool, repo_id, *id)
                         .await
                         .map_err(|_| unavailable("Release storage unavailable"))?
                         .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Release not found"))?
-                        .release
-                        .tag_name
+                        .release;
+                    changes.tag.clone().unwrap_or(current.tag_name)
                 }
             };
             let mut target = String::new();

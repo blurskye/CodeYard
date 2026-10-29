@@ -29,7 +29,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub use crate::backend::db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
+pub use crate::backend::db::releases::{LatestSelection, ReleaseChanges, ReleaseFields, ReleaseRefusal};
 
 pub const MAX_ASSET_BYTES: usize = crate::backend::storage::MAX_OBJECT_BYTES as usize;
 
@@ -158,10 +158,12 @@ async fn can_write(
     repo_id: i64,
 ) -> Result<bool, ReleaseError> {
     match viewer {
-        Some(actor) => match access::check_write(pool, repo_id, actor).await {
-            Ok(_) => Ok(true),
-            Err(error @ AccessError::Unavailable) => Err(error.into()),
-            Err(_) => Ok(false),
+        Some(actor) => {
+            let repo = access::current_repository(pool, repo_id).await?;
+            let Some(user) = db::users::accounts::get_user_by_id(pool, actor).await.map_err(unavailable)? else {
+                return Ok(false);
+            };
+            Ok(access::user_access(pool, &user, &repo).await.map_err(unavailable)?.can_write())
         },
         None => Ok(false),
     }
@@ -581,22 +583,34 @@ pub async fn update(
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?
         .release;
+    let mut fields = fields.clone();
+    let tag = fields.tag.as_deref().unwrap_or(&current.tag_name).to_owned();
+    validate_tag(&tag)?;
+    if current.is_immutable && tag != current.tag_name {
+        return Err(write_error(ReleaseRefusal::Immutable.into()));
+    }
     let publishing = current.is_draft && fields.is_draft == Some(false);
     let store = repo_store(&repository, cluster);
-    if publishing {
-        // A draft that was saved without its tag, or whose tag was deleted, gets it now.
+    if publishing || fields.tag.is_some() || fields.target.is_some() {
+        // Pin the row revision across Git work; a concurrent edit must not change which tag
+        // and target this publication was prepared for.
+        fields.expected_revision.get_or_insert_with(|| db::releases::release_revision(&current));
         let refs = store.refs_from_primary().await.map_err(ReleaseError::Git)?;
-        let reference = format!("refs/tags/{}", current.tag_name);
+        let reference = format!("refs/tags/{tag}");
         if !refs.contains_key(&reference) {
+            let target = fields.target.as_deref().unwrap_or(&current.target_commitish);
+            if target.trim().is_empty() || target.len() > 255 {
+                return Err(ReleaseError::TargetRequired);
+            }
+            let commit = store.commit_from_primary(&target_revision(&refs, target))
+                .await.map_err(ReleaseError::Git)?;
+            fields.target = Some(commit.sha.clone());
+            if !fields.is_draft.unwrap_or(current.is_draft) {
             if fields.new_tag_denied {
                 return Err(ReleaseError::Ref(RefError::Access(
                     AccessError::WriteDenied,
                 )));
             }
-            let commit = store
-                .commit_from_primary(&target_revision(&refs, &current.target_commitish))
-                .await
-                .map_err(ReleaseError::Git)?;
             refs::create_tag(
                 pool,
                 cluster,
@@ -604,19 +618,23 @@ pub async fn update(
                 actor,
                 owner,
                 repository.id,
-                &current.tag_name,
+                &tag,
                 &commit.sha,
                 None,
             )
             .await
             .map_err(ReleaseError::from)?;
+            }
+        } else {
+            // An existing tag, not target_commitish, determines the release revision.
+            fields.target = None;
         }
     }
     let attestation = immutable::candidate(
         pool,
         cluster,
         &repository,
-        &current.tag_name,
+        &tag,
         Some(release_id),
         publishing,
     )
