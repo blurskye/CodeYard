@@ -168,6 +168,9 @@ native_operation!(crate::backend::db::postgres::action_objects::list_artifacts,
     fn list_artifacts(pool: &DbPool, run_id: i64, name: Option<&str>, id: Option<i64>) -> Result<Vec<ArtifactSummary>>);
 native_operation!(crate::backend::db::postgres::action_objects::artifact_for_run, crate::backend::db::sqlite::action_objects::artifact_for_run,
     fn artifact_for_run(pool: &DbPool, run_id: i64, name: &str) -> Result<Option<ActionObject>>);
+native_operation!(crate::backend::db::postgres::action_objects::artifact_for_reader,
+    crate::backend::db::sqlite::action_objects::artifact_for_reader,
+    fn artifact_for_reader(pool: &DbPool, actor: i64, session: &str, repo: i64, run: i64, id: i64) -> Result<Option<ActionObject>>);
 native_operation!(crate::backend::db::postgres::action_objects::artifact_by_id,
     crate::backend::db::sqlite::action_objects::artifact_by_id,
     fn artifact_by_id(pool: &DbPool, id: i64) -> Result<Option<ActionObject>>);

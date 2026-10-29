@@ -359,6 +359,12 @@ pub async fn artifact_for_run(pool: &SqlitePool, run_id: i64, name: &str) -> Res
         .bind(run_id).bind(chrono::Utc::now().timestamp()).bind(name).fetch_optional(pool).await?)
 }
 
+pub async fn artifact_for_reader(pool: &SqlitePool, actor: i64, session: &str, repo: i64, run: i64, id: i64) -> Result<Option<ActionObject>> {
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    Ok(sqlx::query_as(&format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=?1 JOIN sessions s ON s.user_id=u.id AND s.id=?2 WHERE r.id=?3 AND c.id=?4 AND o.id=?5 AND o.kind='artifact' AND o.finalized AND o.expires_at>?6 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)"))
+        .bind(actor).bind(session).bind(repo).bind(run).bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
+}
+
 pub async fn artifact_by_id(pool: &SqlitePool, id: i64) -> Result<Option<ActionObject>> {
     Ok(sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1 AND kind='artifact' AND finalized AND expires_at>$2")
         .bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)

@@ -59,8 +59,12 @@ pub(crate) async fn download_artifact(
         Ok(run) => run,
         Err(response) => return response,
     };
-    let object = match db::action_objects::artifact_by_id(&state.pool, artifact).await {
-        Ok(Some(object)) if object.run_id == Some(run.id) => object,
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
+        return ctx.error(StatusCode::UNAUTHORIZED, "A live session is required.");
+    };
+    let actor = ctx.user.as_ref().expect("readable run").id;
+    let object = match db::action_objects::artifact_for_reader(&state.pool, actor, &session, run.repo_id, run.id, artifact).await {
+        Ok(Some(object)) => object,
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Artifact not found."),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Artifacts unavailable."),
     };
