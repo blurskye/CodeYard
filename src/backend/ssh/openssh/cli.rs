@@ -99,7 +99,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
     let status = if streaming {
         let input = pump_input(stdin()?, &mut writer);
         tokio::pin!(input);
-        timeout(protocol::SESSION_TIMEOUT, async {
+        timeout(protocol::SESSION_TIMEOUT + Duration::from_secs(5), async {
             tokio::select! {
                 result = &mut receive => result,
                 result = &mut input => {
@@ -123,7 +123,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         })
         .await??
     } else {
-        timeout(protocol::CONTROL_TIMEOUT, receive).await??
+        timeout(protocol::CONTROL_TIMEOUT + Duration::from_secs(5), receive).await??
     };
     Ok(status)
 }

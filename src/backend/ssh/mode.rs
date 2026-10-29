@@ -117,7 +117,14 @@ fn parse_installation(bytes: &[u8], socket: &Path, git_user: &str) -> Result<()>
 }
 
 fn installed(manifest: &Path, socket: &Path, git_user: &str) -> Result<bool> {
-    let file = match fs::File::open(manifest) {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
+    }
+    let file = match options.open(manifest) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error).context("Read OpenSSH installation manifest"),
@@ -251,7 +258,13 @@ pub fn detect() -> Detection {
             continue;
         }
         match fs::read_to_string(entry.path().join("comm")) {
-            Ok(name) if name.trim() == "sshd" => return Detection::Active,
+            Ok(name) if name.trim() == "sshd" => {
+                use std::os::unix::fs::MetadataExt;
+                let trusted = fs::metadata(entry.path()).is_ok_and(|metadata| metadata.uid() == 0)
+                    && fs::read_link(entry.path().join("exe")).is_ok_and(|path| path.file_name().is_some_and(|name| name == "sshd"))
+                    && fs::metadata(entry.path().join("exe")).is_ok_and(|metadata| metadata.uid() == 0 && metadata.mode() & 0o022 == 0);
+                if trusted { return Detection::Active; }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => denied = true,
             _ => {}
         }

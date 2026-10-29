@@ -372,7 +372,6 @@ async fn serve_connection(
     }
     let (signal, authenticated) = oneshot::channel();
     handler.set_authenticated_signal(signal);
-    let rate_limiter = handler.rate_limiter.clone();
     let session =
         match tokio::time::timeout_at(deadline, russh::server::run_stream(config, stream, handler))
             .await
@@ -400,18 +399,9 @@ async fn serve_connection(
         // Authentication frees the global budget, not the source's connection budget.
         let mut slot = slot;
         slot.release_global();
-        (slot, !matches!(
-            outcome,
-            Ok(Ok(AuthOutcome::Accepted | AuthOutcome::Unavailable))
-        ))
+        slot
     };
-    let ((_source_slot, rejected), result) = tokio::join!(login, session);
-    if rejected && rate_limiter.record_failure(source.ip()).await {
-        warn!(
-            "IP {} banned after too many failed connections",
-            source.ip()
-        );
-    }
+    let (_source_slot, result) = tokio::join!(login, session);
     if let Err(error) = result {
         warn!("SSH session failed: {}", error);
     }

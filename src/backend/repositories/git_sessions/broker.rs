@@ -624,10 +624,14 @@ impl Gateway {
             ReceiveCredential::DeployKey(id) => traffic::Identity::deploy_key(id),
             _ => traffic::Identity::account(actor.id),
         };
-        if let ReceiveCredential::DeployKey(id) = credential {
-            crate::backend::repositories::deploy_keys::record_use(&self.pool, id).await;
+        match credential {
+            ReceiveCredential::DeployKey(id) => { let _ = timeout(Duration::from_secs(1), crate::backend::repositories::deploy_keys::record_use(&self.pool, id)).await; }
+            ReceiveCredential::SshKey(id) => { let _ = timeout(Duration::from_secs(1), db::users::ssh_keys::touch_ssh_key(&self.pool, id)).await; }
+            _ => {}
         }
         let path = self.bare_path(&repo).await?;
+        let (current, _) = timeout(Duration::from_secs(5), credential.authorize(&self.pool, &repo, command.write)).await??;
+        ensure!(current.id == actor.id, "identity changed");
         let _slot = slot;
         let (input, child_input) = tokio::io::duplex(CHUNK);
         let (child_output, output) = tokio::io::duplex(CHUNK);
