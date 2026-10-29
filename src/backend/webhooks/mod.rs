@@ -28,10 +28,10 @@ const QUEUE_LIMIT: usize = 256;
 /// Sends running at once.
 const SENDS_AT_ONCE: usize = 4;
 
-/// Maximum encoded body retained per queued delivery (at most 64 MiB for the queue).
-pub const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
+/// Includes a maximum-size Unicode comment, JSON escaping and form-encoding expansion.
+pub const MAX_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 static TASKS: LazyLock<TaskTracker> = LazyLock::new(TaskTracker::new);
-static BUILD_SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
+static BUILD_SLOTS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
 pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
     TASKS.close();
@@ -70,8 +70,12 @@ struct OwnerQueue {
     // Keep the pool identity alive while a manual-send rate window remains.
     _pool: DbPool,
     pending: usize,
-    hooks: HashMap<i64, usize>,
+    hooks: HashMap<Option<i64>, HookQueue>,
     manual: Vec<Instant>,
+}
+
+struct HookQueue {
+    pending: usize,
     slot: Arc<Semaphore>,
 }
 
@@ -102,35 +106,34 @@ impl Queue {
                 pending: 0,
                 hooks: HashMap::new(),
                 manual: Vec::new(),
-                slot: Arc::new(Semaphore::new(1)),
             });
         if queue.pending >= OWNER_QUEUE_LIMIT
-            || hook.is_some_and(|id| queue.hooks.get(&id).copied().unwrap_or(0) >= HOOK_QUEUE_LIMIT)
+            || queue.hooks.get(&hook).is_some_and(|hook| hook.pending >= HOOK_QUEUE_LIMIT)
             || (manual && queue.manual.len() >= MANUAL_PER_MINUTE)
         {
             return None;
         }
         queue.pending += 1;
-        if let Some(id) = hook {
-            *queue.hooks.entry(id).or_default() += 1;
-        }
+        let hook = queue.hooks.entry(hook).or_insert_with(|| HookQueue {
+            pending: 0,
+            slot: Arc::new(Semaphore::new(1)),
+        });
+        hook.pending += 1;
         if manual {
             queue.manual.push(now);
         }
         self.total += 1;
-        Some(queue.slot.clone())
+        Some(hook.slot.clone())
     }
 
     fn release(&mut self, owner: (usize, impl Into<Owner>), hook: Option<i64>) {
         let owner = (owner.0, owner.1.into());
         let queue = self.owners.get_mut(&owner).expect("queued owner");
         queue.pending -= 1;
-        if let Some(id) = hook {
-            let count = queue.hooks.get_mut(&id).expect("queued hook");
-            *count -= 1;
-            if *count == 0 {
-                queue.hooks.remove(&id);
-            }
+        let held = queue.hooks.get_mut(&hook).expect("queued hook");
+        held.pending -= 1;
+        if held.pending == 0 {
+            queue.hooks.remove(&hook);
         }
         self.total -= 1;
         if queue.pending == 0 && queue.manual.is_empty() {
@@ -139,7 +142,7 @@ impl Queue {
     }
 }
 
-/// A place in the queue, freed when dropped. Each owner runs only one delivery at once.
+/// A place in the queue, freed when dropped. Each hook runs only one delivery at once.
 struct Ticket {
     owner: (usize, Owner),
     hook: Option<i64>,
@@ -262,7 +265,7 @@ pub async fn emit<F>(
 where
     F: FnOnce(&str, &People) -> Value + Send + 'static,
 {
-    let Ok(_build_slot) = BUILD_SLOTS.acquire().await else {
+    let Ok(build_slot) = BUILD_SLOTS.clone().acquire_owned().await else {
         return Value::Null;
     };
     let Ok(Some(current)) = db::repositories::records::get_repository_by_id(pool, repo.id).await
@@ -282,14 +285,21 @@ where
     };
     let people = people(pool, user_ids).await;
     let builder_owner = owner.clone();
-    let mut payload =
-        match tokio::task::spawn_blocking(move || build(&builder_owner, &people)).await {
+    let (mut payload, _build_slot) =
+        match tokio::task::spawn_blocking(move || (build(&builder_owner, &people), build_slot)).await {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(repo_id=repo.id,%error,"could not build activity payload");
                 return Value::Null;
             }
         };
+    if let Some(org) = current.owner_org_id {
+        match db::organizations::profiles::get_public_organization_by_id(pool, org).await {
+            Ok(Some(org)) => payload["organization"] = payloads::organization(&org),
+            Ok(None) => {}
+            Err(error) => tracing::warn!(repo_id=repo.id, %error, "could not load webhook organization"),
+        }
+    }
     set_open_issues(pool, repo.id, &mut payload).await;
     documents::complete(pool, &current, &owner, &mut payload).await;
     // Enrichment reads the stored issue or pull request as it is now. If the repository changed
@@ -383,7 +393,8 @@ async fn record_event(
         events::DELETE => "DeleteEvent",
         events::FORK => "ForkEvent",
         events::STAR if payload["action"] == "created" => "WatchEvent",
-        events::RELEASE if payload["release"]["draft"] == false => "ReleaseEvent",
+        events::RELEASE if payload["release"]["draft"] == false && payload["action"] == "published" => "ReleaseEvent",
+        events::COMMIT_COMMENT => "CommitCommentEvent",
         events::ISSUES => "IssuesEvent",
         events::ISSUE_COMMENT => "IssueCommentEvent",
         events::PULL_REQUEST => "PullRequestEvent",
@@ -404,10 +415,18 @@ pub(crate) async fn set_open_issues(pool: &DbPool, repo_id: i64, payload: &mut V
     let Some(repository) = payload.get_mut("repository").and_then(Value::as_object_mut) else {
         return;
     };
+    if let Ok(enabled) = db::repositories::records::repository_wiki(pool, repo_id).await {
+        repository.insert("has_wiki".into(), enabled.into());
+    }
+    if let Ok(enabled) = db::repository_discussions::enabled(pool, repo_id).await {
+        repository.insert("has_discussions".into(), enabled.into());
+    }
     match db::repository_stats::repository_document_facts(pool, repo_id).await {
         Ok(facts) => {
             repository.insert("open_issues_count".into(), facts.open_items.into());
             repository.insert("open_issues".into(), facts.open_items.into());
+            repository.insert("language".into(), serde_json::json!(facts.language));
+            repository.insert("pushed_at".into(), serde_json::json!(facts.pushed_at));
         }
         Err(error) => tracing::warn!(repo_id, %error, "could not count open issues for a webhook"),
     }
@@ -491,7 +510,7 @@ mod tests {
         let slot = queue.take(&pool, other, Some(3), false).unwrap();
         assert_eq!(slot.available_permits(), 1);
         assert!(queue.owners[&(pool_id(&pool), owner.into())]
-            .slot
+            .hooks[&Some(1)].slot
             .try_acquire()
             .is_ok());
         assert!(slot.try_acquire().is_ok());

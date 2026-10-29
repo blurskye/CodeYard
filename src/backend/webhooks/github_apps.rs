@@ -59,14 +59,10 @@ pub async fn current(
         || current.encrypted_secret != hook.encrypted_secret
         || current.secret_nonce != hook.secret_nonce
         || current.ssl_verify != hook.ssl_verify
-        || current.updated_at != hook.updated_at
     {
         return Ok(false);
     }
-    if !outgoing.automatic {
-        return Ok(true);
-    }
-    if !current.active || !events::subscribes(&current.events, &outgoing.event) {
+    if outgoing.automatic && (!current.active || !events::subscribes(&current.events, &outgoing.event)) {
         return Ok(false);
     }
     let Some(payload) = delivery::json_payload(outgoing) else {
@@ -76,7 +72,7 @@ pub async fn current(
         payload["repository"]["id"].as_i64(),
         payload["installation"]["id"].as_i64(),
     ) else {
-        return Ok(false);
+        return Ok(outgoing.event == events::PING && payload.get("installation").is_none());
     };
     if outgoing.event == events::DEPLOYMENT_PROTECTION_RULE {
         let Some(run) = payload["run_id"].as_i64() else {
@@ -90,16 +86,8 @@ pub async fn current(
             return Ok(false);
         }
     }
-    for subscription in db::github_app_hooks::for_repository(pool, repo).await? {
-        if subscription.hook.app_id == Some(app)
-            && subscription.installation_id == installation
-            && apps::event_permission(
-                &serde_json::from_str(&subscription.permissions)?,
-                &outgoing.event,
-            )
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let Some(subscription) = db::github_app_hooks::subscription(pool, repo, app, installation, outgoing.automatic).await? else {
+        return Ok(false);
+    };
+    Ok(apps::event_permission(&serde_json::from_str(&subscription.permissions)?, &outgoing.event))
 }
