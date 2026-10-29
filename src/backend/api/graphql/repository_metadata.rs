@@ -179,7 +179,7 @@ pub(super) async fn resolve(
             )
             .await?;
             let owner = repository::owner(repo, request).await?;
-            Ok(files.first().map(|(path, text)| json!({"key":if text.contains("Contributor Covenant") { "contributor_covenant" } else { "other" },"name":if text.contains("Contributor Covenant") { "Contributor Covenant" } else { "Other" },"url":url(&format!("/{}/{}/blob/{}/{path}",owner,repo.name,repo.default_branch))})).unwrap_or(Value::Null))
+            Ok(files.first().map(|(path, text)| json!({"key":if text.contains("Contributor Covenant") { "contributor_covenant" } else { "other" },"name":if text.contains("Contributor Covenant") { "Contributor Covenant" } else { "Other" },"url":crate::webui::pages::repos::ref_path::branch_url(&url(&format!("/{}/{}",owner,repo.name)),"blob",&repo.default_branch,path)})).unwrap_or(Value::Null))
         }
         "licenseInfo" => {
             let files = texts(

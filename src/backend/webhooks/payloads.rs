@@ -237,12 +237,7 @@ pub fn community_file(file: Option<&crate::backend::repositories::community::Fil
         return Value::Null;
     };
     let encode = crate::webui::encode_component;
-    let path = file
-        .path
-        .split('/')
-        .map(encode)
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = crate::webui::pages::repos::ref_path::encode_path(&file.path);
     let base = format!(
         "/repos/{}/{}",
         encode(&file.owner),

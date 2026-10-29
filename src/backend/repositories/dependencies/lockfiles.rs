@@ -47,12 +47,7 @@ fn add(
             .any(|c| c.is_control() || c.is_whitespace()),
         "Invalid locked dependency"
     );
-    let encode = |s: &str| {
-        s.split('/')
-            .map(crate::webui::encode_component)
-            .collect::<Vec<_>>()
-            .join("/")
-    };
+    let encode = crate::webui::pages::repos::ref_path::encode_path;
     out.push(Package {
         manifest: path.into(),
         ecosystem: ecosystem.into(),

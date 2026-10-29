@@ -9,11 +9,7 @@ use syntect::{
     util::LinesWithEndings,
 };
 
-pub fn escape_code(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
+pub use super::escape_html as escape_code;
 
 /// The language a file is highlighted as, from the extension of its name. A name without an
 /// extension gives "text", which is shown plain.
