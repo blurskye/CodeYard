@@ -301,7 +301,8 @@ async fn activity_scan_exposes_exhaustion_even_without_visible_rows() {
             .unwrap();
         let (rows, exhausted) = (batch.rows, batch.scanned < 2);
         assert!(rows.is_empty() && exhausted);
-        let session = db::users::accounts::get_user_by_id(f.pool(), owner).await.unwrap().unwrap().session;
+        let session = uuid::Uuid::new_v4().to_string();
+        db::users::sessions::create_session(f.pool(), &session, owner, None, None, chrono::Utc::now() + chrono::Duration::days(1)).await.unwrap();
         let batch = db::activity::list_user_activity(f.pool(), owner, Some(db::activity::ActivityViewer { user: owner, session: &session }), 10, 0)
             .await
             .unwrap();
