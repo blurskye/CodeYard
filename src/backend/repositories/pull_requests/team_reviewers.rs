@@ -17,9 +17,7 @@ pub async fn change(
             .await
             .map_err(error)?;
     if action != db::pull_requests::team_reviewers::ReviewTeamAction::Remove {
-        for team in &changed {
-            notify(pool, broadcaster, actor, repo, pull, team).await;
-        }
+        notify(pool, broadcaster, actor, repo, pull, &changed).await;
     }
     Ok(changed)
 }
@@ -41,36 +39,30 @@ pub(super) async fn notify(
     actor: &User,
     repo: &Repository,
     pull: &PullRequest,
-    team: &Team,
+    teams: &[Team],
 ) {
-    if !team.notifications_enabled {
-        return;
-    }
+    let ids: Vec<_> = teams.iter().map(|team| team.id).collect();
+    if ids.is_empty() { return; }
     let Ok(Some(owner)) = db::ci::ci_repository_owner(pool, repo.id).await else {
         return;
     };
-    let members = match db::pull_requests::team_reviewers::members(pool, repo.id, team.id).await {
-        Ok(members) => members,
-        Err(error) => {
-            tracing::warn!(%error, "Review team notification recipients unavailable");
-            return;
-        }
-    };
-    let mut sent = std::collections::HashSet::new();
-    for id in members {
-        if id == pull.author_id || !sent.insert(id) {
-            continue;
-        }
-        let Ok(Some(user)) = db::users::accounts::get_user_by_id(pool, id).await else {
-            continue;
+    let mut after = 0;
+    loop {
+        let members = match db::pull_requests::team_reviewers::members(pool, repo.id, &ids, after).await {
+            Ok(members) => members,
+            Err(error) => {
+                tracing::warn!(%error, "Review team notification recipients unavailable");
+                return;
+            }
         };
-        if !matches!(
-            crate::backend::repositories::access::can_write(pool, &user, repo).await,
-            Ok(true)
-        ) {
-            continue;
+        let Some(last) = members.last() else { return };
+        after = last.id;
+        let short = members.len() < 100;
+        for user in members {
+            if user.id != pull.author_id {
+                super::reviews::notify_review_request(pool, broadcaster, actor, &owner, repo, pull, &user).await;
+            }
         }
-        super::reviews::notify_review_request(pool, broadcaster, actor, &owner, repo, pull, &user)
-            .await;
+        if short { return; }
     }
 }

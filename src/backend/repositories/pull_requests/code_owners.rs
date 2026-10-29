@@ -123,6 +123,7 @@ pub async fn request_code_owner_reviews(
         .collect();
     teams.sort();
     teams.dedup();
+    let mut requested = Vec::new();
     for slugs in teams.chunks(100) {
         match db::pull_requests::team_reviewers::change(
             pool,
@@ -134,24 +135,13 @@ pub async fn request_code_owner_reviews(
         )
         .await
         {
-            Ok(added) => {
-                for team in added {
-                    super::team_reviewers::notify(
-                        pool,
-                        ci.notifications(),
-                        &requester,
-                        repository,
-                        pull,
-                        &team,
-                    )
-                    .await;
-                }
-            }
+            Ok(added) => requested.extend(added),
             Err(error) => {
                 tracing::warn!(pull_request_id=pull.id, %error, "Could not request code owner teams")
             }
         }
     }
+    super::team_reviewers::notify(pool, ci.notifications(), &requester, repository, pull, &requested).await;
     let mut wanted: Vec<i64> = files
         .iter()
         .flat_map(|file| file.individual_writers.iter().copied())
