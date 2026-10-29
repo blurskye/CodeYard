@@ -2877,6 +2877,8 @@ CREATE TABLE code_security_configurations (
     UNIQUE(org_id,name)
 );
 
+CREATE INDEX code_security_configurations_page ON code_security_configurations(org_id,id DESC);
+
 CREATE TABLE repository_security_settings (
     repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
     configuration_id BIGINT REFERENCES code_security_configurations(id) ON DELETE SET NULL,

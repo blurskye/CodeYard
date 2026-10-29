@@ -99,6 +99,27 @@ pub async fn list(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Configurati
     tx.commit().await?;
     Ok(rows)
 }
+pub async fn settings_page(pool: &PgPool, actor: i64, session: &str, org: i64, before: Option<i64>) -> Result<SettingsPage> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    readable(&mut tx, actor, org).await?;
+    ensure!(before.is_none_or(|id| id > 0), Refusal::Invalid);
+    let (name, writable) = sqlx::query_as::<_, (String, bool)>(
+        "SELECT o.name,EXISTS(SELECT 1 FROM org_memberships owner JOIN users active ON active.id=owner.user_id
+         WHERE owner.org_id=o.id AND owner.role='owner' AND NOT active.is_banned AND NOT active.must_change_password)
+         FROM organizations o JOIN sessions s ON s.user_id=$1 AND s.id=$2 JOIN users u ON u.id=s.user_id
+         WHERE o.id=$3 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(actor).bind(session).bind(org).fetch_optional(&mut *tx).await?.ok_or(Refusal::Denied)?;
+    let rows = sqlx::query_as(
+        "WITH page AS MATERIALIZED (
+             SELECT id FROM code_security_configurations WHERE org_id=$1 AND id<=$2 ORDER BY id DESC LIMIT $3
+         ) SELECT c.* FROM page p JOIN code_security_configurations c ON c.id=p.id ORDER BY c.id DESC")
+        .bind(org).bind(before.map(|id| id - 1).unwrap_or(i64::MAX)).bind((SETTINGS_PAGE_SIZE + 1) as i64)
+        .fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(SettingsPage::from_rows(name, writable, rows))
+}
+
 pub async fn save(
     pool: &PgPool,
     actor: i64,

@@ -25,6 +25,23 @@ pub struct Configuration {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+pub(crate) const SETTINGS_PAGE_SIZE: usize = 30;
+
+pub struct SettingsPage {
+    pub organization_name: String,
+    pub writable: bool,
+    pub configurations: Vec<Configuration>,
+    pub next_before: Option<i64>,
+}
+impl SettingsPage {
+    pub(crate) fn from_rows(organization_name: String, writable: bool, mut configurations: Vec<Configuration>) -> Self {
+        let more = configurations.len() > SETTINGS_PAGE_SIZE;
+        configurations.truncate(SETTINGS_PAGE_SIZE);
+        let next_before = more.then(|| configurations.last().map(|row| row.id)).flatten();
+        Self { organization_name, writable, configurations, next_before }
+    }
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct RepositorySettings {
     pub repo_id: i64,
@@ -214,6 +231,8 @@ pub(crate) fn scanning_settings(
 
 native_operation!(super::postgres::code_security::list,super::sqlite::code_security::list,
     fn list(pool:&DbPool,actor:i64,org:i64) -> Result<Vec<Configuration>>);
+native_operation!(super::postgres::code_security::settings_page,super::sqlite::code_security::settings_page,
+    fn settings_page(pool:&DbPool,actor:i64,session:&str,org:i64,before:Option<i64>) -> Result<SettingsPage>);
 native_operation!(super::postgres::code_security::save,super::sqlite::code_security::save,
     fn save(pool:&DbPool,actor:i64,org:i64,id:Option<i64>,patch:&Value) -> Result<Configuration>);
 native_operation!(super::postgres::code_security::delete,super::sqlite::code_security::delete,
