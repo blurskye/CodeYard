@@ -82,10 +82,26 @@ where
     let stderr = child.stderr.take();
     // Output is read until the group is gone, also while a cancelled or timed-out command shuts
     // down: closing the pipes first would hand its handlers SIGPIPE before they could run.
+    let (error_tx, mut error_rx) = tokio::sync::mpsc::channel(1);
+    let failed = std::sync::atomic::AtomicBool::new(false);
+    let callback = |line, stderr| {
+        let error_tx = &error_tx;
+        let failed = &failed;
+        let on_line = &on_line;
+        async move {
+            if !failed.load(std::sync::atomic::Ordering::Relaxed) {
+                if let Err(error) = on_line(line, stderr).await {
+                    failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    let _ = error_tx.try_send(error);
+                }
+            }
+            Ok(())
+        }
+    };
     let forwarding = async {
         tokio::try_join!(
-            forward(stdout, false, &on_line),
-            forward(stderr, true, &on_line)
+            forward(stdout, false, &callback),
+            forward(stderr, true, &callback)
         )
     }
     .fuse();
@@ -106,6 +122,7 @@ where
             Err(_) => Err(Stopped::TimedOut.into()),
         },
         _ = cancelled(cancel) => Err(Stopped::Cancelled.into()),
+        Some(error) = error_rx.recv() => Err(error),
     };
     let stopping = stop_process_group(&mut child, group.pid());
     tokio::pin!(stopping);
@@ -119,6 +136,9 @@ where
         }
     }
     group.disarm();
+    if result.is_ok() {
+        if let Ok(error) = error_rx.try_recv() { return Err(error); }
+    }
     result
 }
 
@@ -260,8 +280,13 @@ where
         if read == 0 {
             return Ok(());
         }
-        // An over-long line has more input after this read, which is dropped below.
-        let cut = line.len() > MAX_LINE && !line.ends_with(b"\n");
+        // JSON escaping can expand an authenticated native progress frame well beyond a
+        // normal log line. Keep its separate, still bounded transport envelope intact.
+        let limit = if line.starts_with(b"::codeyard-progress::") { 1024 * 1024 } else { MAX_LINE };
+        if line.len() > MAX_LINE && limit > MAX_LINE && !line.ends_with(b"\n") {
+            (&mut reader).take((limit + 1 - line.len()) as u64).read_until(b'\n', &mut line).await?;
+        }
+        let cut = line.len() > limit && !line.ends_with(b"\n");
         if cut {
             skip_line(&mut reader).await?;
         }
@@ -269,7 +294,7 @@ where
             .trim_end_matches(['\r', '\n'])
             .to_owned();
         // Never retain a secret prefix which whole-value masking cannot recognize.
-        let text = if cut || text.len() > MAX_LINE { OMITTED_LINE.to_owned() } else { text };
+        let text = if cut || text.len() > limit { OMITTED_LINE.to_owned() } else { text };
         on_line(text, stderr).await?;
     }
 }
