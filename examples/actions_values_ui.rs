@@ -140,6 +140,9 @@ async fn main() {
     )
     .await
     .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    std::env::set_var("PUBLIC_URL", &base);
     let router = create_router(AppState::new(
         pool.clone(),
         root.path().to_owned(),
@@ -148,8 +151,6 @@ async fn main() {
         CiConfig::default(),
         None,
     ));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move {
         axum::serve(listener, router).await.unwrap();
     });

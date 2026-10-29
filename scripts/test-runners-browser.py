@@ -18,7 +18,7 @@ def hydrated(page):
         raise
 
 with sync_playwright() as pw:
-    browser = pw.chromium.launch(executable_path=os.environ["CHROMIUM_BIN"], args=["--no-sandbox"])
+    browser = pw.chromium.launch(executable_path=os.environ["CODEYARD_BROWSER_CHROMIUM"], args=["--no-sandbox"])
     for javascript in (True, False):
         context = browser.new_context(java_script_enabled=javascript, viewport={"width": 390, "height": 844})
         context.add_cookies([{"name": "session_id", "value": os.environ["CODEYARD_TEST_SESSION"], "url": base}])
