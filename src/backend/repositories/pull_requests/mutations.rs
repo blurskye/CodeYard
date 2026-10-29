@@ -52,7 +52,7 @@ pub struct CreatePullRequestRequest {
     pub maintainer_can_modify: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct UpdatePullRequestRequest {
     pub expected_state: String,
     pub expected_updated: String,
@@ -866,6 +866,51 @@ pub async fn update_pull_request(
     .await;
 
     Ok(pull_request)
+}
+
+/// Saves an edit from the GitHub API, which carries no form revision: the caller passes the
+/// state and time it just read. A concurrent change, such as gh adding labels while it saves the
+/// title, moves that time, so read the pull request again and retry instead of refusing.
+pub async fn update_pull_request_latest(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    target: (String, String, i32),
+    mut req: UpdatePullRequestRequest,
+) -> Result<db::models::PullRequest, OperationError> {
+    for _ in 0..3 {
+        let refused =
+            match update_pull_request(pool, ci, broadcaster, actor_id, target.clone(), req.clone())
+                .await
+            {
+                Err(error @ OperationError::Conflict { .. }) => error,
+                result => return result,
+            };
+        let (owner, repo, number) = &target;
+        let latest = match db::repositories::records::get_repository(pool, owner, repo)
+            .await
+            .map_err(database_error)?
+        {
+            Some(repository) => {
+                db::pull_requests::records::get_pull_request(pool, repository.id, *number)
+                    .await
+                    .map_err(database_error)?
+            }
+            None => None,
+        };
+        match latest {
+            Some(latest)
+                if latest.state != req.expected_state
+                    || latest.updated_at.to_rfc3339() != req.expected_updated =>
+            {
+                req.expected_state = latest.state;
+                req.expected_updated = latest.updated_at.to_rfc3339();
+            }
+            _ => return Err(refused),
+        }
+    }
+    update_pull_request(pool, ci, broadcaster, actor_id, target, req).await
 }
 
 /// The commit that a new base branch of an open pull request points at. Only an open pull request

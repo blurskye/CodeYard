@@ -209,16 +209,44 @@ async fn contract(pg: bool) {
             cli!("pr-review"),
             json!({"input":{"pullRequestId":pull_id,"body":"Reviewed","event":"COMMENT"}}),
         ),
-        (
-            cli!("pr-edit"),
-            json!({"input":{"pullRequestId":pull_id,"title":"Edited through gh"}}),
-        ),
     ] {
         exact(&router, token, text, vars).await;
     }
     db::labels::create_label(f.pool(), alice, repo.id, "bug", "ff0000", Some("A bug"))
         .await
         .unwrap();
+    let labels = exact(&router, token, "query RepositoryLabelList($endCursor:String,$name:String!,$owner:String!){repository(owner: $owner, name: $name){labels(first: 100, orderBy: {field: NAME, direction: ASC}, after: $endCursor){nodes{id,name},pageInfo{hasNextPage,endCursor}}}}", json!({"owner":"graphql-alice","name":"proj"})).await;
+    let bug = labels["repository"]["labels"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|label| label["name"] == "bug")
+        .unwrap()["id"]
+        .clone();
+    // gh pr edit --title --add-label sends both mutations at once, and a label change moves the
+    // pull request's update time while the title edit is saving.
+    for (label_text, title) in [
+        ("mutation LabelAdd($input:AddLabelsToLabelableInput!){addLabelsToLabelable(input: $input){__typename}}", "Edited with a label"),
+        ("mutation LabelRemove($input:RemoveLabelsFromLabelableInput!){removeLabelsFromLabelable(input: $input){__typename}}", "Edited without a label"),
+        ("mutation LabelAdd($input:AddLabelsToLabelableInput!){addLabelsToLabelable(input: $input){__typename}}", "Edited through gh"),
+    ] {
+        tokio::join!(
+            exact(&router, token, cli!("pr-edit"), json!({"input":{"pullRequestId":pull_id,"title":title}})),
+            exact(&router, token, label_text, json!({"input":{"labelableId":pull_id,"labelIds":[bug]}})),
+        );
+    }
+    let labeled = db::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(labeled.title, "Edited through gh");
+    assert_eq!(
+        db::labels::get_pull_request_labels(f.pool(), labeled.id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     let pull = db::pull_requests::records::get_pull_request(f.pool(), repo.id, 1)
         .await
         .unwrap()

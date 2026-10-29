@@ -496,7 +496,7 @@ pub(super) async fn mutation(
                     .map_err(management::error)?,
             );
         } else {
-            let saved = issues::mutations::update_issue(
+            let saved = issues::mutations::update_issue_latest(
                 pool,
                 broadcaster,
                 actor,

@@ -258,7 +258,7 @@ pub(super) async fn resolve(
                 let saved = if metadata_only {
                     current
                 } else {
-                    issues::mutations::update_issue(
+                    issues::mutations::update_issue_latest(
                         pool,
                         broadcaster,
                         actor,
@@ -522,7 +522,7 @@ pub(super) async fn resolve(
                         "reopenPullRequest" => Some("open".into()),
                         _ => optional_text(&input, "state").map(|s| s.to_ascii_lowercase()),
                     };
-                    pull_requests::mutations::update_pull_request(
+                    pull_requests::mutations::update_pull_request_latest(
                         pool,
                         &request.state.ci_runs,
                         broadcaster,

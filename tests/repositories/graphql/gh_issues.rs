@@ -742,6 +742,38 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_empty());
+    // gh issue edit --title --add-label sends both mutations at once, and a label change moves
+    // the issue's update time while the title edit is saving.
+    let edit =
+        "mutation IssueUpdate($input:UpdateIssueInput!){updateIssue(input: $input){__typename}}";
+    for (label_text, title) in [(add_label, "Renamed with a label"), (text, "Renamed by gh")] {
+        tokio::join!(
+            query(
+                &router,
+                token,
+                edit,
+                json!({"input":{"id":parent,"title":title}})
+            ),
+            query(
+                &router,
+                token,
+                label_text,
+                json!({"input":{"labelableId":parent,"labelIds":[label_id]}})
+            ),
+        );
+    }
+    assert_eq!(
+        db::issues::get_issue_by_id(f.pool(), parent_record.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .title,
+        "Renamed by gh"
+    );
+    assert!(db::labels::get_issue_labels(f.pool(), parent_record.id)
+        .await
+        .unwrap()
+        .is_empty());
     let text = "mutation CommentDelete($input:DeleteIssueCommentInput!){deleteIssueComment(input: $input){clientMutationId}}";
     assert_eq!(
         query(&router, token, text, json!({"input":{"id":comment_id}})).await,

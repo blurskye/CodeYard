@@ -200,7 +200,7 @@ async fn update_value(
     } else {
         serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid pull request"))?
     };
-    let pull = mutations::update_pull_request(
+    let pull = mutations::update_pull_request_latest(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,

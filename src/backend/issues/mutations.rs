@@ -15,7 +15,7 @@ pub struct CreateIssueRequest {
     pub parent_issue_id: Option<i64>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct UpdateIssueRequest {
     pub expected_state: String,
     pub expected_updated: String,
@@ -333,4 +333,54 @@ pub async fn update_issue(
     )
     .await;
     Ok(issue)
+}
+
+/// Saves an edit from the GitHub API, which carries no form revision: the caller passes the
+/// state and time it just read. A concurrent change, such as gh adding labels while it saves the
+/// title, moves that time, so read the issue again and retry instead of refusing.
+pub async fn update_issue_latest(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    owner: String,
+    repo: String,
+    number: i32,
+    mut req: UpdateIssueRequest,
+) -> Result<db::models::Issue, OperationError> {
+    for _ in 0..3 {
+        let refused = match update_issue(
+            pool,
+            broadcaster,
+            actor_id,
+            owner.clone(),
+            repo.clone(),
+            number,
+            req.clone(),
+        )
+        .await
+        {
+            Err(error @ OperationError::Conflict { .. }) => error,
+            result => return result,
+        };
+        let latest = match db::repositories::records::get_repository(pool, &owner, &repo)
+            .await
+            .map_err(database_error)?
+        {
+            Some(repository) => db::issues::get_issue(pool, repository.id, number)
+                .await
+                .map_err(database_error)?,
+            None => None,
+        };
+        match latest {
+            Some(latest)
+                if latest.state != req.expected_state
+                    || latest.updated_at.to_rfc3339() != req.expected_updated =>
+            {
+                req.expected_state = latest.state;
+                req.expected_updated = latest.updated_at.to_rfc3339();
+            }
+            _ => return Err(refused),
+        }
+    }
+    update_issue(pool, broadcaster, actor_id, owner, repo, number, req).await
 }
