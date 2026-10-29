@@ -53,7 +53,7 @@ async fn save(
     fields: &Fields,
 ) -> Result<(), (StatusCode, String)> {
     let server = parse_fields(fields).map_err(|message| (StatusCode::BAD_REQUEST, message))?;
-    let mut password = field(fields, "password").to_owned();
+    let mut password = if server.username.is_empty() { String::new() } else { field(fields, "password").to_owned() };
     if password.len() > 255 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -61,7 +61,7 @@ async fn save(
         ));
     }
     // The first save from the environment's settings keeps the environment's password.
-    if password.is_empty() {
+    if password.is_empty() && !server.username.is_empty() {
         let source = config::describe(&state.pool).await.map_err(|_| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,

@@ -25,6 +25,7 @@ pub async fn save_email_settings(
     {
         return Ok(false);
     }
+    let password = settings.password.filter(|_| !settings.username.is_empty());
     sqlx::query(
         r#"
         INSERT INTO email_settings
@@ -35,8 +36,8 @@ pub async fn save_email_settings(
             port = EXCLUDED.port,
             security = EXCLUDED.security,
             username = EXCLUDED.username,
-            encrypted_password = COALESCE(EXCLUDED.encrypted_password, email_settings.encrypted_password),
-            password_nonce = COALESCE(EXCLUDED.password_nonce, email_settings.password_nonce),
+            encrypted_password = CASE WHEN EXCLUDED.username='' THEN NULL ELSE COALESCE(EXCLUDED.encrypted_password, email_settings.encrypted_password) END,
+            password_nonce = CASE WHEN EXCLUDED.username='' THEN NULL ELSE COALESCE(EXCLUDED.password_nonce, email_settings.password_nonce) END,
             from_name = EXCLUDED.from_name,
             from_address = EXCLUDED.from_address,
             reply_to = EXCLUDED.reply_to,
@@ -47,8 +48,8 @@ pub async fn save_email_settings(
     .bind(settings.port)
     .bind(settings.security)
     .bind(settings.username)
-    .bind(settings.password.map(|(ciphertext, _)| ciphertext))
-    .bind(settings.password.map(|(_, nonce)| nonce))
+    .bind(password.map(|(ciphertext, _)| ciphertext))
+    .bind(password.map(|(_, nonce)| nonce))
     .bind(settings.from_name)
     .bind(settings.from_address)
     .bind(settings.reply_to)
@@ -56,7 +57,7 @@ pub async fn save_email_settings(
     .await?;
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'node.email_settings','email_settings',1,$2)")
         .bind(actor)
-        .bind(serde_json::json!({"host": settings.host, "password_changed": settings.password.is_some()}))
+        .bind(serde_json::json!({"host": settings.host, "password_changed": password.is_some() || settings.username.is_empty(), "authentication": !settings.username.is_empty()}))
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
