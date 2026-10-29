@@ -85,6 +85,7 @@ pub(super) async fn document(
         .map_err(Error::unavailable)?;
     value["language"] = json!(facts.language);
     value["open_issues_count"] = json!(facts.open_items);
+    value["open_issues"] = json!(facts.open_items);
     value["pushed_at"] = json!(db::repositories::github::repository_pushed_at(
         &state.pool,
         repo.id
@@ -480,6 +481,7 @@ async fn remove(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Transfer {
     new_owner: String,
 }
@@ -560,11 +562,12 @@ async fn languages(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let store = repo_store(&repo, state.cluster.as_ref());
-    if store.refs().await.map_err(store_error)?.is_empty() {
+    let branch = format!("refs/heads/{}", repo.default_branch);
+    if !store.refs().await.map_err(store_error)?.contains_key(&branch) {
         return Ok(Json(json!({})));
     }
     let languages = store
-        .languages(&repo.default_branch)
+        .languages(&branch)
         .await
         .map_err(store_error)?;
     let mut value = json!({});

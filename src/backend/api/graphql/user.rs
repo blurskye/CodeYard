@@ -77,15 +77,8 @@ pub(super) async fn resolve(
             super::team::by_slug(id, &super::arg(ctx, "slug")?, request).await
         }
         "email" if ty == "User" => {
-            // The profile's public email, as REST shows it, never the primary address.
-            let user = db::users::accounts::get_user_by_id(&request.state.pool, id)
-                .await
-                .map_err(unavailable)?
-                .ok_or_else(missing)?;
-            let settings = db::users::profiles::get_profile_settings(&request.state.pool, id)
-                .await
-                .map_err(unavailable)?;
-            Ok(json!(settings.public_email(&user).unwrap_or("")))
+            Ok(json!(db::users::profiles::public_email(&request.state.pool, id)
+                .await.map_err(unavailable)?.unwrap_or_default()))
         }
         "company" if ty == "User" => Ok(json!(db::users::profiles::get_profile_settings(&request.state.pool, id)
             .await.map_err(unavailable)?.company)),

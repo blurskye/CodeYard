@@ -70,7 +70,7 @@ pub(super) async fn target(state: &AppState, username: &str) -> Result<User> {
         .ok_or_else(Error::missing)
 }
 
-pub(super) async fn document(state: &AppState, user: &User, own: bool) -> Result<Value> {
+pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) -> Result<Value> {
     let repos = db::repositories::count_user_repositories(&state.pool, user.id, false)
         .await
         .map_err(Error::unavailable)?;
@@ -80,18 +80,16 @@ pub(super) async fn document(state: &AppState, user: &User, own: bool) -> Result
     let profile = db::users::profiles::get_profile_settings(&state.pool, user.id)
         .await
         .map_err(Error::unavailable)?;
-    // The private statistics scan every readable private repository, so only the owner's own
-    // document pays for them.
-    let (public_gists, statistics) = if own {
-        let statistics = db::users::profiles::account_statistics(&state.pool, user.id)
-            .await
-            .map_err(Error::unavailable)?;
-        (statistics.public_gists, Some(statistics))
-    } else {
-        let public = db::gists::count_owned(&state.pool, user.id, false, None)
-            .await
-            .map_err(Error::unavailable)?;
-        (public, None)
+    // Eligibility and the private aggregates are one statement snapshot, shared by GET and PATCH.
+    let statistics = match token {
+        Some(token) => db::users::profiles::account_statistics(&state.pool, user.id, token)
+            .await.map_err(Error::unavailable)?,
+        None => None,
+    };
+    let public_gists = match &statistics {
+        Some(statistics) => statistics.public_gists,
+        None => db::gists::count_owned(&state.pool, user.id, false, None)
+            .await.map_err(Error::unavailable)?,
     };
     Ok(payloads::public_user(
         user,
@@ -111,22 +109,7 @@ async fn authenticated(
     let actor = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
-    // As on GitHub, an OAuth token needs the user scope for the private fields. An App
-    // credential acts with its installation's permissions, which do not include them.
-    let own = match db::oauth_apps::token(&state.pool, actor.token.id)
-        .await
-        .map_err(Error::unavailable)?
-    {
-        Some(token) => {
-            crate::backend::identity::oauth_apps::has_scope(&token.scopes, "user")
-                || crate::backend::identity::oauth_apps::has_scope(&token.scopes, "read:user")
-        }
-        None => crate::backend::identity::github_apps::authority(&state.pool, actor.token.id)
-            .await
-            .map_err(Error::unavailable)?
-            .is_none(),
-    };
-    Ok(Json(document(&state, &actor.user, own).await?))
+    Ok(Json(document(&state, &actor.user, Some(actor.token.id)).await?))
 }
 
 async fn update(
@@ -186,7 +169,7 @@ async fn update(
         }
         _ => Error::validation("User", "profile", "invalid"),
     })?;
-    Ok(Json(document(&state, &user, true).await?))
+    Ok(Json(document(&state, &user, Some(actor.token.id)).await?))
 }
 
 async fn by_username(
@@ -199,7 +182,7 @@ async fn by_username(
         .await
         .map_err(Error::unavailable)?
     {
-        return Ok(Json(document(&state, &user, false).await?));
+        return Ok(Json(document(&state, &user, None).await?));
     }
     // GitHub's user lookup also resolves organization accounts for clients such as gh.
     let org = super::orgs::target(&state, &username).await?;
@@ -252,7 +235,7 @@ async fn by_id(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    Ok(Json(document(&state, &user, false).await?))
+    Ok(Json(document(&state, &user, None).await?))
 }
 
 #[derive(Deserialize)]

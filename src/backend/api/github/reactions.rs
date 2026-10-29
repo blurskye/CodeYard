@@ -193,7 +193,7 @@ async fn list(
         validate(target.subject, content)?;
     }
     let (offset, limit) = page.window()?;
-    let rows = db::reactions::list_reactions(
+    let mut rows = db::reactions::list_reactions(
         &state.pool,
         target,
         query.content.as_deref(),
@@ -203,10 +203,13 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
-    let mut items = Vec::new();
-    for row in rows {
-        items.push(document(&state.pool, &row).await?);
-    }
+    rows.truncate(limit);
+    let mut ids: Vec<_> = rows.iter().map(|row| row.user_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let users: std::collections::HashMap<_, _> = db::users::accounts::get_users_by_ids(&state.pool, &ids)
+        .await.map_err(Error::unavailable)?.into_iter().map(|user| (user.id, user)).collect();
+    let items = rows.iter().map(|row| payloads::reaction(row, users.get(&row.user_id))).collect();
     page.response(&uri, items, next)
 }
 
