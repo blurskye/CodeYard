@@ -316,6 +316,15 @@ pub async fn set_node_status(
     })
 }
 
+pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+    let mut connection = pool.acquire().await?;
+    connection.close_on_drop();
+    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(723947121,hashtext($1))")
+        .bind(identity).fetch_one(&mut *connection).await?;
+    ensure!(locked, "another server is using this installation or node identity");
+    Ok(connection)
+}
+
 pub async fn record_node_heartbeat(
     pool: &PgPool,
     public_key: &str,
@@ -336,7 +345,7 @@ pub async fn record_node_heartbeat(
 }
 
 pub async fn touch_node(pool: &PgPool, public_key: &str) -> Result<()> {
-    sqlx::query("UPDATE nodes SET last_seen = NOW() WHERE public_key = $1 AND status = 'active'")
+    sqlx::query("UPDATE nodes SET last_seen = NOW() WHERE public_key = $1 AND status = 'active' AND roles=ARRAY['runner']::text[]")
         .bind(public_key)
         .execute(pool)
         .await?;

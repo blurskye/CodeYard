@@ -323,7 +323,7 @@ pub async fn record_node_heartbeat(
 
 pub async fn touch_node(pool: &SqlitePool, public_key: &str) -> Result<()> {
     sqlx::query(&format!(
-        "UPDATE nodes SET last_seen = {NOW} WHERE public_key = ?1 AND status = 'active'"
+        "UPDATE nodes SET last_seen = {NOW} WHERE public_key = ?1 AND status = 'active' AND json_array_length(roles)=1 AND json_extract(roles,'$[0]')='runner'"
     ))
     .bind(public_key)
     .execute(pool)

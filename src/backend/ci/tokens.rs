@@ -156,7 +156,7 @@ pub async fn issue(
 }
 
 /// Reusable calls multiply job identities, so credentials and environment bindings share one budget.
-pub(super) const MAX_EXPANDED_JOBS: usize = 1000;
+pub(crate) const MAX_EXPANDED_JOBS: usize = 1000;
 
 pub(crate) async fn issue_selected(
     pool: &DbPool,

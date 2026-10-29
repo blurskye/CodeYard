@@ -660,7 +660,7 @@ impl RunQueue {
                     }
                 };
                 let loaded = tokio::select! {
-                    loaded = loaded => loaded,
+                    loaded = tokio::time::timeout(std::time::Duration::from_secs(60), loaded) => loaded.unwrap_or_else(|_| Err(anyhow::anyhow!("CI claim preparation timed out"))),
                     () = renew => Err(anyhow::anyhow!("the CI run was taken back while it was prepared")),
                 };
                 if loaded.is_err() {
@@ -915,8 +915,8 @@ impl RunQueue {
             let Ok(mut link) = dialed else {
                 continue;
             };
-            let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-                rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON).await?;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
+                rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON + 64 * 1024).await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
                     &rpc::read_frame(&mut link.reader, rpc::MAX_JSON).await?,

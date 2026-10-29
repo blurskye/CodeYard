@@ -6,6 +6,34 @@ use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+/// Retains a serving lease on a dedicated connection; closing it releases the advisory lock.
+pub struct ServingLock {
+    postgres: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+    _file: Option<std::fs::File>,
+}
+
+impl Drop for ServingLock {
+    fn drop(&mut self) {
+        if let Some(connection) = self.postgres.take() {
+            drop(connection.detach());
+        }
+    }
+}
+
+pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> {
+    match pool {
+        DbPool::Postgres(pool) => Ok(ServingLock {
+            postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
+            _file: None,
+        }),
+        DbPool::Sqlite(pool) => {
+            let mut path = pool.connect_options().get_filename().as_os_str().to_owned();
+            path.push(".serve.lock");
+            Ok(ServingLock { postgres: None, _file: Some(crate::backend::locks::exclusive_file(std::path::Path::new(&path))?) })
+        }
+    }
+}
+
 /// Who asks for a membership change. The operator's command line already has database
 /// access; a web request acts as an account, which must still be an active administrator
 /// when the change commits.

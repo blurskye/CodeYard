@@ -52,6 +52,13 @@ pub async fn apply(
         .ok_or_else(|| anyhow::anyhow!("invalid runner clock"))?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let leased = lease(&mut tx, worker, run, generation, workflow).await?;
+    let issued: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_github_tokens WHERE run_id=$1 AND (job=$2 OR job='act'))")
+        .bind(run).bind(format!("{workflow}:{}", event.job)).fetch_one(&mut *tx).await?;
+    ensure!(issued, "job is outside the issued credentials");
+    let admitted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_jobs WHERE run_id=$1 AND generation=$2 AND workflow_path=$3 AND logical_job=$4) OR (SELECT COUNT(*) FROM (SELECT DISTINCT workflow_path,logical_job FROM actions_jobs WHERE run_id=$1 AND generation=$2) jobs)<$5")
+        .bind(run).bind(generation).bind(workflow).bind(&event.job)
+        .bind(crate::backend::ci::tokens::MAX_EXPANDED_JOBS as i64).fetch_one(&mut *tx).await?;
+    ensure!(admitted, "run job budget exceeded");
     if let Update::Queued {
         name: display,
         labels,
