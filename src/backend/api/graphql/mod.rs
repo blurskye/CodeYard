@@ -182,7 +182,11 @@ impl RequestContext {
                 .await.map_err(unavailable)?.ok_or_else(token_denied)?;
             let row = db::repositories::records::get_repository_by_id(&self.state.pool, repo)
                 .await.map_err(unavailable)?.ok_or_else(missing)?;
-            if !grant.reaches(&self.state.pool, &row).await.map_err(unavailable)? {
+            if !grant.reaches(&self.state.pool, &row).await.map_err(unavailable)?
+                || !crate::backend::identity::github_apps::allows(
+                    &Value::Object(grant.group(crate::backend::identity::fine_grained::Group::Repository)),
+                    scope, false,
+                ) {
                 return Ok(None);
             }
         }
