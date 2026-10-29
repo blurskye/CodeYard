@@ -431,12 +431,14 @@ const MAX_ANONYMOUS_SESSIONS: i64 = 100_000;
 /// rows and commits on its own, so no transaction spans the sweep.
 pub async fn remove_expired_identity_rows(pool: &PgPool) -> Result<u64> {
     const BATCH: i64 = 500;
-    const STATEMENTS: [&str; 5] = [
+    const STATEMENTS: [&str; 6] = [
         "DELETE FROM anonymous_sessions WHERE id IN (SELECT id FROM anonymous_sessions WHERE expires_at <= statement_timestamp() LIMIT $1)",
         "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at <= statement_timestamp() LIMIT $1)",
         "DELETE FROM oauth_states WHERE state IN (SELECT state FROM oauth_states WHERE expires_at <= statement_timestamp() LIMIT $1)",
         // An App token lives an hour; its App and OAuth rows go with it by cascade.
         "DELETE FROM personal_access_tokens WHERE id IN (SELECT t.id FROM personal_access_tokens t JOIN github_app_tokens g ON g.token_id=t.id WHERE t.expires_at <= statement_timestamp() LIMIT $1)",
+        // Job credentials retain only the one-minute completion grace, never the run's history.
+        "DELETE FROM personal_access_tokens WHERE id IN (SELECT g.token_id FROM actions_github_tokens g JOIN ci_runs r ON r.id=g.run_id WHERE g.revoked_at<statement_timestamp()-INTERVAL '1 minute' OR r.completed_at<statement_timestamp()-INTERVAL '1 minute' LIMIT $1)",
         "UPDATE signup_requests SET password_hash = '' WHERE id IN (SELECT id FROM signup_requests WHERE status <> 'pending' AND password_hash <> '' LIMIT $1)",
     ];
     let mut changed = 0;
