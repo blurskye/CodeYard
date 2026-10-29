@@ -175,7 +175,9 @@ pub fn event_permission(permissions: &Value, event: &str) -> bool {
         "push" | "create" | "delete" | "release" | "commit_comment" => "contents",
         "issues" | "issue_comment" => "issues",
         "pull_request" | "pull_request_review" | "pull_request_review_comment" => "pull_requests",
-        "fork" | "star" => "metadata",
+        "fork" | "star" | "repository" => "metadata",
+        "workflow_run" | "workflow_job" => "actions",
+        "repository_dispatch" => "contents",
         "check_run" | "check_suite" => "checks",
         "deployment" | "deployment_status" => "deployments",
         "deployment_protection_rule" => return allows(permissions, "deployments", true),
@@ -463,6 +465,7 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         }
         Some("actions") => match parts.get(4).copied() {
             Some("permissions") => Some("administration"),
+            Some("cache") if matches!(parts.get(5).copied(), Some("storage-limit" | "retention-limit")) => Some("administration"),
             Some("runs" | "workflows" | "jobs" | "artifacts" | "caches" | "cache") => {
                 Some("actions")
             }
@@ -472,7 +475,9 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         Some("check-runs" | "check-suites") => Some("checks"),
         Some("deployments") => Some("deployments"),
         Some("pages") => Some("pages"),
-        Some("collaborators" | "teams") => Some("administration"),
+        Some("collaborators") if !write => Some("metadata"),
+        Some("collaborators" | "teams" | "invitations") => Some("administration"),
+        Some("comments" | "codeowners" | "license" | "dispatches") => Some("contents"),
         // Repository hooks need repository_hooks, not administration.
         _ => None,
     }

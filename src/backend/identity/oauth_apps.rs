@@ -107,6 +107,9 @@ pub fn scopes(value: &str) -> Option<String> {
                 | "read:ssh_signing_key"
                 | "write:ssh_signing_key"
                 | "admin:ssh_signing_key"
+                | "read:gpg_key"
+                | "write:gpg_key"
+                | "admin:gpg_key"
         )
     }) {
         return None;
@@ -130,6 +133,8 @@ pub fn write_scope(scopes: &str) -> bool {
         || has_scope(scopes, "admin:public_key")
         || has_scope(scopes, "write:ssh_signing_key")
         || has_scope(scopes, "admin:ssh_signing_key")
+        || has_scope(scopes, "write:gpg_key")
+        || has_scope(scopes, "admin:gpg_key")
 }
 
 /// GitHub's key scopes: an admin scope includes write, and write includes read.
@@ -160,7 +165,10 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
     match parts.as_slice() {
         [""] | ["user"] => !write,
         ["repos", _, _, "code-scanning", "default-setup", ..] => has_scope(scopes, "repo"),
-        ["repos", _, _, "code-scanning", ..] | ["orgs", _, "code-scanning", ..] => {
+        ["repos", _, _, "code-scanning" | "secret-scanning", ..]
+        | ["orgs", _, "code-scanning" | "secret-scanning", ..]
+        | ["repos", _, _, "dependabot", "alerts", ..]
+        | ["orgs", _, "dependabot", "alerts", ..] => {
             has_scope(scopes, "repo") || has_scope(scopes, "security_events")
         }
         ["orgs", _, "code-security", ..] => {
@@ -176,9 +184,16 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
         | ["orgs", _, "attestations" | "artifacts", ..]
         | ["users", _, "attestations", ..]
         | ["notifications", ..] => has_scope(scopes, "repo"),
-        ["user", "orgs"] | ["orgs", _] | ["orgs", _, "public_members", ..] => {
+        ["orgs", _] if write => has_scope(scopes, "repo"),
+        ["user", "teams"] => !write && (has_scope(scopes, "repo") || has_scope(scopes, "read:org") || has_scope(scopes, "write:org")),
+        ["orgs", _, "public_members", ..] => has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org")),
+        ["user", "orgs"] | ["orgs", _] | ["orgs", _, "issue-types", ..] => {
             !write && (has_scope(scopes, "read:org") || has_scope(scopes, "write:org"))
         }
+        ["orgs", _, "rulesets", ..] => has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org")),
+        ["issues"] | ["user", "issues"] | ["orgs", _, "issues"] => !write && has_scope(scopes, "repo"),
+        ["users", _, "events" | "received_events", ..] | ["orgs", _, "events", ..] => !write && has_scope(scopes, "repo"),
+        ["users"] | ["organizations", ..] | ["users", _, "orgs" | "gists" | "social_accounts"] | ["feeds"] => !write,
         ["orgs", _, "members" | "memberships" | "teams", ..]
         | ["user", "memberships", "orgs", ..] => {
             has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
@@ -197,6 +212,8 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
         // The only write to one key is its deletion, which GitHub keeps for the admin scope.
         ["user", "keys", _] if write => has_scope(scopes, "admin:public_key"),
         ["user", "ssh_signing_keys", _] if write => has_scope(scopes, "admin:ssh_signing_key"),
+        ["user", "gpg_keys", _] if write => has_scope(scopes, "admin:gpg_key"),
+        ["user", "gpg_keys"] | ["user", "gpg_keys", _] => key_scope(scopes, "gpg_key", write),
         ["user", "keys"] | ["user", "keys", _] => key_scope(scopes, "public_key", write),
         ["user", "ssh_signing_keys"] | ["user", "ssh_signing_keys", _] => {
             key_scope(scopes, "ssh_signing_key", write)
