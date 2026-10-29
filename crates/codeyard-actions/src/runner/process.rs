@@ -158,11 +158,11 @@ pub(super) async fn execute(
                 stdout.abort(); stderr.abort();
                 return Ok(false);
             }
+            result = child.wait(), if status.is_none() => { status = Some(result?); group.terminate(); }
             line = rx.recv(), if !closed => {
                 if let Some(line) = line { commands.line(log, &line, allow_unsafe); }
                 else { closed = true; }
             }
-            result = child.wait(), if status.is_none() => { status = Some(result?); group.terminate(); }
         }
         if closed {
             if let Some(status) = status {

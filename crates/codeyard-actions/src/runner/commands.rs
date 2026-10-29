@@ -252,8 +252,9 @@ impl Log {
                 let number = progress.step.load(Ordering::Relaxed);
                 let step = (number > 0).then_some(number);
                 let mut rest = line;
+                let chunk = if line.starts_with("Step started: ") || line.starts_with("Step completed: ") { 2048 } else { 512 };
                 loop {
-                    let mut end = rest.len().min(512);
+                    let mut end = rest.len().min(chunk);
                     while !rest.is_char_boundary(end) {
                         end -= 1;
                     }
@@ -275,7 +276,8 @@ impl Log {
 
 #[derive(Default)]
 pub(super) struct Commands {
-    stopped: Option<String>,
+    pub stopped: Option<String>,
+    pub debug: bool,
     retained_bytes: usize,
     retained_commands: usize,
     storage_full: bool,
@@ -441,7 +443,7 @@ impl Commands {
             "set-output" => {
                 log.line("Warning: The `set-output` command is deprecated. Please upgrade to using Environment Files.");
                 if let Some(key) = properties.get("name") {
-                    self.outputs.insert(key.clone(), data);
+                    update_outputs(&mut self.outputs, [(key.clone(), data)]);
                 }
             }
             "add-matcher" | "remove-matcher" => {
@@ -469,7 +471,8 @@ impl Commands {
                     .and_then(|line| line.parse::<u32>().ok())
                     .filter(|line| *line >= start_line)
                     .unwrap_or(start_line);
-                // The core reads each progress line at most 16 KiB, and JSON escaping can grow a field six-fold.
+                let start_column = (start_line == end_line).then(|| properties.get("col").and_then(|column| column.parse::<u32>().ok()).filter(|column| *column > 0)).flatten();
+                let end_column = start_column.map(|start| properties.get("endcolumn").and_then(|column| column.parse::<u32>().ok()).filter(|column| *column >= start).unwrap_or(start));
                 log.emit(Update::Annotation {
                     annotation: crate::progress::Annotation {
                         path: bounded(
@@ -479,6 +482,8 @@ impl Commands {
                         ),
                         start_line,
                         end_line,
+                        start_column,
+                        end_column,
                         annotation_level: match name.as_str() {
                             "error" => "failure",
                             "warning" => "warning",
@@ -512,7 +517,8 @@ impl Commands {
                     ));
                 }
             }
-            "debug" => log.line(&format!("debug: {data}")),
+            "debug" if self.debug => log.line(&format!("debug: {data}")),
+            "debug" => {},
             "group" => log.line(&format!(
                 "::group::{}",
                 super::matchers::escape_data(&log.masker.mask(&data))
@@ -529,8 +535,19 @@ impl Commands {
     }
 }
 
+pub(super) fn update_outputs(target: &mut BTreeMap<String, String>, values: impl IntoIterator<Item = (String, String)>) {
+    for (key, value) in values {
+        target.retain(|name, _| !name.eq_ignore_ascii_case(&key));
+        target.insert(key, value);
+    }
+}
+
 pub(super) fn pairs(text: &str) -> Result<BTreeMap<String, String>> {
-    let mut result = BTreeMap::new();
+    Ok(entries(text)?.into_iter().collect())
+}
+
+pub(super) fn entries(text: &str) -> Result<Vec<(String, String)>> {
+    let mut result = Vec::new();
     let mut lines = text.split_inclusive('\n');
     while let Some(raw) = lines.next() {
         let line = raw.strip_suffix('\n').unwrap_or(raw).trim_end_matches('\r');
@@ -543,7 +560,7 @@ pub(super) fn pairs(text: &str) -> Result<BTreeMap<String, String>> {
             if index == 0 {
                 bail!("Invalid format. Name must not be empty");
             }
-            result.insert(line[..index].into(), line[index + 1..].into());
+            result.push((line[..index].into(), line[index + 1..].into()));
         } else if let Some(index) = heredoc {
             let key = &line[..index];
             let delimiter = &line[index + 2..];
@@ -569,7 +586,7 @@ pub(super) fn pairs(text: &str) -> Result<BTreeMap<String, String>> {
                     value.pop();
                 }
             }
-            result.insert(key.into(), value);
+            result.push((key.into(), value));
         } else {
             bail!("Invalid environment file format");
         }
@@ -586,7 +603,8 @@ pub(super) fn words(text: &str) -> Result<Vec<String>> {
     let mut started = false;
     for ch in text.chars() {
         if escaped {
-            word.push(ch);
+            if quote == Some('"') && !matches!(ch, '$' | '`' | '"' | '\\' | '\n') { word.push('\\'); }
+            if ch != '\n' { word.push(ch); }
             escaped = false;
         } else if ch == '\\' && quote != Some('\'') {
             escaped = true;

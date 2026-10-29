@@ -56,6 +56,11 @@ pub(crate) fn validate_annotation(annotation: &Annotation) -> Result<()> {
     anyhow::ensure!(
         annotation.start_line > 0
             && annotation.end_line >= annotation.start_line
+            && match (annotation.start_column, annotation.end_column) {
+                (None, None) => true,
+                (Some(start), Some(end)) => annotation.start_line == annotation.end_line && start > 0 && end >= start,
+                _ => false,
+            }
             && matches!(
                 annotation.annotation_level.as_str(),
                 "failure" | "warning" | "notice"

@@ -1223,6 +1223,7 @@ struct Job {
     explicit_container: bool,
     sequence: usize,
     anonymous_action: usize,
+    command_stopped: Option<String>,
     public_step: u32,
     active_files: PathBuf,
     posts: Vec<actions::Post>,
@@ -1282,6 +1283,7 @@ async fn run_job(
             explicit_container: false,
             sequence: 0,
             anonymous_action: 0,
+            command_stopped: None,
             public_step:1,
             active_files: PathBuf::new(),
             posts: Vec::new(),
@@ -1897,6 +1899,8 @@ impl Job {
             self.options.directory.clone(),
             std::mem::take(&mut self.matchers),
         );
+        commands.stopped = self.command_stopped.take();
+        commands.debug = self.options.debug || env.get("ACTIONS_STEP_DEBUG").is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let result = process::execute(
             &mut command,
             &self.log,
@@ -1906,10 +1910,11 @@ impl Job {
             allow_unsafe,
         )
         .await;
+        self.command_stopped = commands.stopped.take();
         self.matchers = commands.matchers;
         self.saved_env.extend(commands.env);
         self.paths.extend(commands.paths);
-        outputs.extend(commands.outputs);
+        commands::update_outputs(outputs, commands.outputs);
         // The deprecated ::save-state command feeds the same STATE_ values as GITHUB_STATE.
         if let Some(state) = state.as_mut() {
             state.extend(commands.state);
@@ -1932,7 +1937,7 @@ impl Job {
                 self.saved_env.insert(key, value);
             }
         }
-        outputs.extend(commands::pairs(&read_command_file(&files.join("OUTPUT"))?)?);
+        commands::update_outputs(outputs, commands::entries(&read_command_file(&files.join("OUTPUT"))?)?);
         if let Some(state) = state {
             state.extend(commands::pairs(&read_command_file(&files.join("STATE"))?)?);
         }

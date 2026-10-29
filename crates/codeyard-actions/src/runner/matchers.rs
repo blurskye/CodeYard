@@ -77,7 +77,7 @@ impl Matcher {
         let count = definition.pattern.len();
         let mut fields = BTreeSet::new();
         let mut patterns = Vec::new();
-        for (index, pattern) in definition.pattern.into_iter().enumerate() {
+        for (index, mut pattern) in definition.pattern.into_iter().enumerate() {
             ensure!(
                 !pattern.repeat
                     || (index > 0 && index + 1 == count && pattern.groups.contains_key("message")),
@@ -99,6 +99,11 @@ impl Matcher {
                     "Matcher group is out of range"
                 );
             }
+            // .NET numbers unnamed captures first, followed by named captures.
+            let order: Vec<_> = std::iter::once(0)
+                .chain(regex.capture_names().enumerate().skip(1).filter_map(|(index, name)| name.is_none().then_some(index)))
+                .chain(regex.capture_names().enumerate().skip(1).filter_map(|(index, name)| name.is_some().then_some(index))).collect();
+            for group in pattern.groups.values_mut() { *group = order[*group]; }
             patterns.push((regex, pattern));
         }
         ensure!(fields.contains("message"), "Matcher must set message");
@@ -230,17 +235,23 @@ impl Matchers {
         // The runner ignores ANSI formatting when matching tool output.
         static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
         let ansi = ANSI
-            .get_or_init(|| regex::Regex::new(r"\x1b\[[0-?]*[ -/]*[@-~]").expect("ANSI regexp"));
+            .get_or_init(|| regex::Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))").expect("ANSI regexp"));
         let line = ansi.replace_all(line, "");
-        for index in 0..self.0.len() {
+        let mut index = 0;
+        let mut failed = None;
+        while index < self.0.len() {
             let matched = match self.0[index].matches(&line) {
                 Ok(matched) => matched,
                 Err(error) => {
                     self.0.remove(index);
-                    return Err(error);
+                    failed = Some(error);
+                    continue;
                 }
             };
-            if let Some(issue) = matched {
+            if let Some(issue) = matched.filter(|issue| {
+                severity(issue.0.get("severity").map_or("", String::as_str)).is_some()
+                    && issue.0.get("message").is_some_and(|message| !message.trim().is_empty())
+            }) {
                 for (other, matcher) in self.0.iter_mut().enumerate() {
                     if index != other {
                         matcher.state.fill(None);
@@ -248,8 +259,9 @@ impl Matchers {
                 }
                 return Ok(Some(issue));
             }
+            index += 1;
         }
-        Ok(None)
+        if let Some(error) = failed { Err(error) } else { Ok(None) }
     }
 }
 

@@ -678,6 +678,8 @@ impl Job {
             self.options.directory.clone(),
             std::mem::take(&mut self.matchers),
         );
+        commands.stopped = self.command_stopped.take();
+        commands.debug = self.options.debug || env.get("ACTIONS_STEP_DEBUG").is_some_and(|value| value.eq_ignore_ascii_case("true"));
         let result = process::execute(
             &mut command,
             &self.log,
@@ -687,8 +689,9 @@ impl Job {
             env.get("ACTIONS_ALLOW_UNSECURE_COMMANDS").is_some_and(|value| value.eq_ignore_ascii_case("true")),
         )
         .await;
+        self.command_stopped = commands.stopped.take();
         self.matchers = commands.matchers;
-        outputs.extend(commands.outputs);
+        commands::update_outputs(outputs, commands.outputs);
         self.saved_env.extend(commands.env);
         self.paths.extend(commands.paths);
         self.read_files(&files, outputs, None)?;

@@ -566,6 +566,8 @@ async fn annotations(
         path: "src/main.rs".into(),
         start_line: 7,
         end_line: 9,
+        start_column: None,
+        end_column: None,
         annotation_level: "failure".into(),
         message: "Compiler diagnostic\nsecond line".into(),
         title: Some("Build".into()),

@@ -62,6 +62,10 @@ pub struct Annotation {
     pub path: String,
     pub start_line: u32,
     pub end_line: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_column: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<u32>,
     pub annotation_level: String,
     pub message: String,
     pub title: Option<String>,
