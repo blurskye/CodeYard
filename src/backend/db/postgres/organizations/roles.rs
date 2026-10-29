@@ -53,9 +53,12 @@ pub async fn users(
         return Ok(Missing);
     }
     let mut users:Vec<UserAssignment>=sqlx::query_as("SELECT u.*,EXISTS(SELECT 1 FROM organization_role_assignments a WHERE a.org_id=$1 AND a.role_id=$2 AND a.user_id=u.id) AS direct FROM users u JOIN org_memberships m ON m.user_id=u.id AND m.org_id=$1 AND m.role IN ('owner','admin','member') WHERE u.id>$3 AND (EXISTS(SELECT 1 FROM organization_role_assignments a WHERE a.org_id=$1 AND a.role_id=$2 AND a.user_id=u.id) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN teams t ON t.id=a.team_id AND t.org_id=a.org_id JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE a.org_id=$1 AND a.role_id=$2 AND t.privacy IN ('visible','secret'))) ORDER BY u.id LIMIT $4 OFFSET $5").bind(org).bind(role).bind(after).bind(window.1).bind(window.0).fetch_all(&mut *tx).await?;
-    for user in &mut users {
-        user.inherited_from=sqlx::query_as("SELECT t.* FROM teams t JOIN organization_role_assignments a ON a.team_id=t.id AND a.org_id=t.org_id AND a.role_id=$2 JOIN effective_team_memberships m ON m.team_id=t.id AND m.user_id=$3 AND m.role IN ('member','maintainer') WHERE t.org_id=$1 AND t.privacy IN ('visible','secret') ORDER BY t.id").bind(org).bind(role).bind(user.user.id).fetch_all(&mut *tx).await?;
-    }
+    let ids: Vec<i64> = users.iter().map(|user| user.user.id).collect();
+    let inherited: Vec<crate::backend::db::organizations::roles::InheritedTeam> = sqlx::query_as("SELECT m.user_id,t.* FROM teams t JOIN organization_role_assignments a ON a.team_id=t.id AND a.org_id=t.org_id AND a.role_id=$2 JOIN effective_team_memberships m ON m.team_id=t.id AND m.user_id=ANY($3) AND m.role IN ('member','maintainer') WHERE t.org_id=$1 AND t.privacy IN ('visible','secret') ORDER BY m.user_id,t.id")
+        .bind(org).bind(role).bind(&ids).fetch_all(&mut *tx).await?;
+    let mut teams: std::collections::HashMap<i64, Vec<Team>> = std::collections::HashMap::new();
+    for row in inherited { teams.entry(row.user_id).or_default().push(row.team); }
+    for user in &mut users { user.inherited_from = teams.remove(&user.user.id).unwrap_or_default(); }
     tx.commit().await?;
     Ok(Applied(users))
 }
