@@ -35,7 +35,7 @@ async fn set(
         json!({})
     } else {
         serde_json::from_slice(&body)
-            .map_err(|_| Error::validation("Membership", "role", "invalid"))?
+            .map_err(super::super::json_parse_error)?
     };
     let object = input
         .as_object()

@@ -59,7 +59,7 @@ async fn create(
     let (repo, auth) = super::repository(&state, &headers, &owner, &name, false).await?;
     let auth = auth.ok_or_else(auth::required)?;
     auth.require_write()?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid attestation input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let bundle = PreparedBundle::new(&body.bundle).map_err(error)?;
     let id = store::create(&state.pool, auth.user.id, repo.id, &bundle)
         .await

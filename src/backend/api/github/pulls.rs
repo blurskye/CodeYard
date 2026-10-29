@@ -3,6 +3,7 @@ mod async_merge;
 mod comments;
 mod merge;
 mod mutations;
+pub(super) use mutations::operation_error;
 mod reviews;
 mod stacks;
 mod team_reviewers;

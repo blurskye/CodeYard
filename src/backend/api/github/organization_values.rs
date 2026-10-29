@@ -236,7 +236,7 @@ async fn save_secret(
     body: std::result::Result<Json<SecretInput>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid secret input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let encryptor = state
         .secret_encryptor
         .as_deref()
@@ -282,7 +282,7 @@ async fn create_variable(
     body: std::result::Result<Json<CreateVariable>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid variable input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     values::save(
         &state.pool,
         None,
@@ -318,7 +318,7 @@ async fn update_variable(
     body: std::result::Result<Json<UpdateVariable>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid variable input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let previous = previous.to_ascii_uppercase();
     let value = body
         .value
@@ -407,7 +407,7 @@ async fn set_repositories(
     body: std::result::Result<Json<Repositories>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid repository selection"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     values::select(
         &state.pool,
         auth.user.id,

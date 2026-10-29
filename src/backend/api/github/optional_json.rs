@@ -1,10 +1,9 @@
 //! A JSON request body that may be left out, for endpoints whose fields are all optional.
-use super::Error;
+use super::json_parse_error;
 use axum::{
     async_trait,
     body::Bytes,
     extract::{FromRequest, Request},
-    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
@@ -30,8 +29,6 @@ where
         }
         serde_json::from_slice::<Option<T>>(&bytes)
             .map(Self)
-            .map_err(|_| {
-                Error::new(StatusCode::BAD_REQUEST, "Problems parsing JSON").into_response()
-            })
+            .map_err(|error| json_parse_error(error).into_response())
     }
 }

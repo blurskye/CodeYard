@@ -133,7 +133,7 @@ struct Input {
     after_id: Option<i64>,
 }
 fn input(body: &[u8]) -> Result<Input> {
-    serde_json::from_slice(body).map_err(|_| Error::validation("Issue", "relationship", "invalid"))
+    serde_json::from_slice(body).map_err(super::json_parse_error)
 }
 async fn apply(
     state: &AppState,

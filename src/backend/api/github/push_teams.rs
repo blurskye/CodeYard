@@ -68,7 +68,7 @@ async fn teams(
     if !read_method(&method) {
         let Json(input) = Json::<Input>::from_request(request, &state)
             .await
-            .map_err(|_| Error::invalid("Expected an array of team slugs"))?;
+            .map_err(super::json_error)?;
         let (Input::Array(names) | Input::Object { teams: names }) = input;
         let ids = db::repositories::push_teams::resolve_names(&state.pool, rule.repo_id, &names)
             .await

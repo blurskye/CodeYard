@@ -26,10 +26,12 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 fn hook_error(error: HookError) -> Error {
+    owner_error(error, "Repository administration required")
+}
+
+pub(super) fn owner_error(error: HookError, denied: &'static str) -> Error {
     match error {
-        HookError::Denied => {
-            Error::new(StatusCode::FORBIDDEN, "Repository administration required")
-        }
+        HookError::Denied => Error::new(StatusCode::FORBIDDEN, denied),
         HookError::NotFound => Error::missing(),
         HookError::Invalid(message) => Error::invalid(message),
         HookError::Unavailable => Error::unavailable(()),

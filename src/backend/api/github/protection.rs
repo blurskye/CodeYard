@@ -237,7 +237,7 @@ async fn status_checks(
     if method == Method::PATCH {
         let Json(input) = Json::<StatusChecks>::from_request(request, &state)
             .await
-            .map_err(|error| Error::new(error.status(), "Invalid status check policy"))?;
+            .map_err(super::json_error)?;
         let mut contexts = input.contexts;
         let checks = input.checks.unwrap_or_default();
         let bindings = super::protection_operations::check_bindings(
@@ -310,7 +310,7 @@ async fn contexts(
     if !read_method(&method) {
         let Json(input) = Json::<Contexts>::from_request(request, &state)
             .await
-            .map_err(|error| Error::new(error.status(), "Invalid status check contexts"))?;
+            .map_err(super::json_error)?;
         let values = match input {
             Contexts::Array(values) | Contexts::Object { contexts: values } => values,
         };
@@ -445,7 +445,7 @@ async fn users(
     if !read_method(&method) {
         let Json(input) = Json::<Users>::from_request(request, &state)
             .await
-            .map_err(|error| Error::new(error.status(), "Invalid user restrictions"))?;
+            .map_err(super::json_error)?;
         let names = match input {
             Users::Array(names) | Users::Object { users: names } => names,
         };

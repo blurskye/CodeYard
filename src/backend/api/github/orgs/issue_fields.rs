@@ -111,7 +111,7 @@ async fn create(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) =
-        input.map_err(|_| Error::invalid_simple("Invalid issue field configuration"))?;
+        input.map_err(super::super::json_error)?;
     if matches!(input.data_type.as_str(), "single_select" | "multi_select")
         && input.options.is_none()
     {
@@ -159,7 +159,7 @@ async fn update(
         .parse()
         .map_err(|_| Error::missing())?;
     let Json(input) =
-        input.map_err(|_| Error::invalid_simple("Invalid issue field configuration"))?;
+        input.map_err(super::super::json_error)?;
     let field = issue_attributes::patch_organization_field(
         &state.pool,
         org.id,

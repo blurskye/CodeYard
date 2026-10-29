@@ -51,7 +51,7 @@ async fn merge(
     let auth = auth.ok_or_else(super::auth::required)?;
     let Json(input) = Json::<Input>::from_request(request, &state)
         .await
-        .map_err(|error| Error::new(error.status(), "Invalid merge request"))?;
+        .map_err(super::json_error)?;
     let result = merges::merge_branch(
         &state.pool,
         state.cluster.as_ref(),

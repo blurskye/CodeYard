@@ -1,4 +1,4 @@
-use super::super::super::{auth, repository, Error, Result};
+use super::super::super::{auth, json_parse_error, repository, Error, Result};
 use super::super::{comments, document as pull_document, target};
 use super::document;
 use crate::backend::{
@@ -59,7 +59,7 @@ async fn create(
     let input: Create = if body.is_empty() {
         Create::default()
     } else {
-        serde_json::from_slice(&body).map_err(|_| Error::invalid_simple("Invalid review"))?
+        serde_json::from_slice(&body).map_err(json_parse_error)?
     };
     let review_state = state_for(input.event.as_deref())?;
     crate::backend::issues::validate_body(input.body.as_deref().unwrap_or(""), false)
@@ -132,7 +132,7 @@ async fn update(
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Body =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid_simple("body is required"))?;
+        serde_json::from_slice(&body).map_err(json_parse_error)?;
     let review = domain::edit_review(&state.pool, actor.id, &repo, &pull, id, &input.body)
         .await
         .map_err(failure)?;
@@ -179,7 +179,7 @@ async fn submit(
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Submit =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid_simple("event is required"))?;
+        serde_json::from_slice(&body).map_err(json_parse_error)?;
     let draft = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -231,7 +231,7 @@ async fn change_reviewers(
         return Err(Error::new(StatusCode::FORBIDDEN, "Repository write denied"));
     }
     let input: Reviewers =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid reviewers"))?;
+        serde_json::from_slice(&body).map_err(json_parse_error)?;
     if input.reviewers.is_none() && input.team_reviewers.is_none() {
         return Err(Error::invalid("reviewers or team_reviewers is required"));
     }

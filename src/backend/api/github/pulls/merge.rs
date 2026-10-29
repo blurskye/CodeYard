@@ -26,8 +26,6 @@ struct Merge {
 fn operation_error(error: pull_requests::OperationError) -> Error {
     use pull_requests::OperationError;
     match error {
-        OperationError::Missing { .. } => Error::missing(),
-        OperationError::Unauthenticated { .. } => super::super::auth::required(),
         OperationError::Conflict {
             code: "revision_conflict",
             message,
@@ -41,9 +39,7 @@ fn operation_error(error: pull_requests::OperationError) -> Error {
             code: "branch_protection",
             message,
         } => Error::new(StatusCode::METHOD_NOT_ALLOWED, message),
-        OperationError::Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
-        OperationError::Invalid { message, .. } => Error::invalid(message),
-        _ => Error::unavailable(()),
+        error => super::mutations::operation_error(error),
     }
 }
 
@@ -71,7 +67,7 @@ async fn merge_pull(
     let input: Merge = if body.is_empty() {
         Merge::default()
     } else {
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid merge request"))?
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
     };
     let method = MergeMethod::parse(input.merge_method.as_deref().unwrap_or("merge"))
         .ok_or_else(|| Error::invalid("Invalid merge method"))?;
@@ -168,7 +164,7 @@ async fn update_branch(
         None
     } else {
         serde_json::from_slice(&body)
-            .map_err(|_| Error::invalid("Invalid branch update request"))?
+            .map_err(super::super::json_parse_error)?
     };
     let input = input.unwrap_or_default();
     pull_requests::update_branch::update_branch(

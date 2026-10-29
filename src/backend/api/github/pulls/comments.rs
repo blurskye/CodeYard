@@ -309,7 +309,7 @@ async fn create(
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let input = serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid comment"))?;
+    let input = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let request = prepare(&state, &headers, &repo, &pull, input, false).await?;
     let comment = domain::create_pull_request_comment(
         &state.pool,
@@ -341,7 +341,7 @@ async fn reply(
     body: Bytes,
 ) -> Result<Response> {
     let input: Body =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("body is required"))?;
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     create(
         State(state),
         headers,
@@ -372,7 +372,7 @@ async fn update(
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     let input: Body =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("body is required"))?;
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let comment = domain::edit_pull_request_comment(
         &state.pool,
         &state.notification_broadcaster,

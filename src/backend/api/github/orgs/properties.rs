@@ -152,7 +152,7 @@ async fn define_one(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) =
-        input.map_err(|_| Error::invalid("Invalid repository property definition"))?;
+        input.map_err(super::super::json_error)?;
     let input = definition(input, Some(&property))?;
     let definitions = outcome(
         properties::define(&state.pool, actor.user.id, org.id, &[input])
@@ -178,7 +178,7 @@ async fn define_many(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) =
-        input.map_err(|_| Error::invalid("Invalid repository property definitions"))?;
+        input.map_err(super::super::json_error)?;
     let inputs = input
         .properties
         .into_iter()
@@ -265,7 +265,7 @@ async fn set_values(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid repository property values"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     outcome(
         properties::set_values(
             &state.pool,

@@ -79,7 +79,7 @@ async fn product(
         Value::Null
     } else {
         serde_json::from_slice(&body)
-            .map_err(|_| Error::invalid("Invalid security product request"))?
+            .map_err(super::super::json_parse_error)?
     };
     if !input.is_null() {
         let fields = input

@@ -342,7 +342,7 @@ async fn create_group(
     input: std::result::Result<Json<GroupInput>, JsonRejection>,
 ) -> Result<Response> {
     let (actor, scope) = scope(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid runner group"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     let row = native::save_group(&s.pool, actor, org(scope)?, None, &input)
         .await
         .map_err(error)?;
@@ -355,7 +355,7 @@ async fn update_group(
     input: std::result::Result<Json<GroupInput>, JsonRejection>,
 ) -> Result<Json<Value>> {
     let (actor, scope) = scope(&s, &headers, &p, true).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid runner group"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     let row = native::save_group(
         &s.pool,
         actor,
@@ -454,7 +454,7 @@ async fn set_repositories(
     Path(p): Path<Params>,
     input: std::result::Result<Json<Repositories>, JsonRejection>,
 ) -> Result<StatusCode> {
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid repository IDs"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     selection(
         &s,
         &headers,
@@ -498,7 +498,7 @@ async fn set_runners(
     Path(p): Path<Params>,
     input: std::result::Result<Json<Runners>, JsonRejection>,
 ) -> Result<StatusCode> {
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid runner IDs"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     selection(&s, &headers, &p, Selection::Replace(input.runners), false).await
 }
 async fn add_runner(
@@ -612,7 +612,7 @@ async fn add_labels(
     Path(p): Path<Params>,
     input: std::result::Result<Json<LabelInput>, JsonRejection>,
 ) -> Result<Json<Value>> {
-    let Json(input) = input.map_err(|_| Error::invalid_simple("Invalid labels"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     change_labels(&s, &headers, &p, Labels::Add(input.labels)).await
 }
 async fn set_labels(
@@ -621,7 +621,7 @@ async fn set_labels(
     Path(p): Path<Params>,
     input: std::result::Result<Json<LabelInput>, JsonRejection>,
 ) -> Result<Json<Value>> {
-    let Json(input) = input.map_err(|_| Error::invalid_simple("Invalid labels"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     change_labels(&s, &headers, &p, Labels::Replace(input.labels)).await
 }
 async fn clear_labels(
@@ -757,7 +757,7 @@ async fn jit(
     native::list_runners(&s.pool, actor, scope)
         .await
         .map_err(error)?;
-    let Json(input) = input.map_err(|_| Error::invalid_simple("Invalid runner configuration"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     if input.labels.is_empty() {
         return Err(Error::invalid_simple("Invalid runner labels"));
     }

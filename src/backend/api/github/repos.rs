@@ -751,7 +751,7 @@ async fn dispatch(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = auth.workflow_actor(&state, repo.id).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid repository dispatch"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     if !crate::backend::ci::events::valid_dispatch(&input.event_type, &input.client_payload) {
         return Err(Error::invalid("Invalid repository dispatch"));
     }
@@ -838,7 +838,7 @@ async fn set_property_values(
     input: std::result::Result<Json<PropertyValues>, axum::extract::rejection::JsonRejection>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid repository property values"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     db::organizations::properties::set_repository_values(
         &state.pool,
         auth.ok_or_else(auth::required)?.user.id,

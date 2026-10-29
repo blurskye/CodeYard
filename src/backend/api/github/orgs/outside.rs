@@ -83,7 +83,7 @@ async fn convert(
         Default::default()
     } else {
         serde_json::from_slice(&body)
-            .map_err(|_| Error::validation("Organization", "async", "invalid"))?
+            .map_err(super::super::json_parse_error)?
     };
     let org = target(&state, &name).await?;
     let user = db::users::accounts::get_user_by_username(&state.pool, &username)

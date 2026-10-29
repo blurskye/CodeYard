@@ -149,12 +149,12 @@ async fn map(
     actor.require_write()?;
     let bytes = to_bytes(request.into_body(), 16 * 1024)
         .await
-        .map_err(|_| Error::invalid("Invalid author mapping"))?;
+        .map_err(super::super::json_bytes_error)?;
     let input = if bytes.is_empty() {
         Mapping::default()
     } else {
         serde_json::from_slice::<Option<Mapping>>(&bytes)
-            .map_err(|_| Error::invalid("Invalid author mapping"))?
+            .map_err(super::super::json_parse_error)?
             .unwrap_or_default()
     };
     if input.name.as_ref().is_some_and(|value| {

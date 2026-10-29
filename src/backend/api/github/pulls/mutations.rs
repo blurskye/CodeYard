@@ -20,13 +20,15 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn operation_error(error: pull_requests::OperationError) -> Error {
+pub(in crate::backend::api::github) fn operation_error(error: pull_requests::OperationError) -> Error {
     use pull_requests::OperationError::*;
     match error {
         Missing { .. } => Error::missing(),
         Unauthenticated { .. } => auth::required(),
         Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
-        Invalid { message, .. } | Conflict { message, .. } => Error::invalid(message),
+        Invalid { message, .. } => Error::invalid(message),
+        Conflict { message, .. } => Error::new(StatusCode::CONFLICT, message),
+        TooLarge { message, .. } => Error::new(StatusCode::PAYLOAD_TOO_LARGE, message),
         _ => Error::unavailable(()),
     }
 }
@@ -65,7 +67,7 @@ async fn create_value(
     let viewer = viewer.ok_or_else(auth::required)?;
     let actor = viewer.user.clone();
     let input: Create =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid pull request"))?;
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let source = match input.issue {
         Some(number) => mutations::PullRequestSource::Issue {
             issue: i32::try_from(number)
@@ -176,7 +178,7 @@ async fn update_value(
     let input: Update = if body.is_empty() {
         Update::default()
     } else {
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid pull request"))?
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
     };
     let pull = mutations::update_pull_request_latest(
         &state.pool,

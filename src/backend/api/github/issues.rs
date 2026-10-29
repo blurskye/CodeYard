@@ -640,18 +640,7 @@ pub(super) fn operation_error(error: crate::backend::issues::OperationError) -> 
 pub(super) fn pull_error(
     error: crate::backend::repositories::pull_requests::OperationError,
 ) -> Error {
-    use crate::backend::repositories::pull_requests::OperationError;
-    match error {
-        OperationError::Invalid { message, .. } => Error::invalid(message),
-        OperationError::Missing { .. } => Error::missing(),
-        OperationError::Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
-        OperationError::Unauthenticated { .. } => auth::required(),
-        OperationError::Conflict { message, .. } => Error::new(StatusCode::CONFLICT, message),
-        OperationError::TooLarge { message, .. } => {
-            Error::new(StatusCode::PAYLOAD_TOO_LARGE, message)
-        }
-        _ => Error::unavailable(()),
-    }
+    super::pulls::operation_error(error)
 }
 
 fn title(value: Option<&Value>) -> Result<Option<String>> {

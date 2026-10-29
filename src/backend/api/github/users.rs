@@ -122,7 +122,7 @@ async fn update(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(|_| Error::validation("User", "body", "invalid"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     let object = input
         .as_object()
         .ok_or_else(|| Error::validation("User", "body", "invalid"))?;
@@ -609,7 +609,7 @@ async fn create_key(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(|_| Error::validation("Key", "key", "invalid"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     let title = input
         .title
         .as_deref()

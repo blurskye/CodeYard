@@ -611,7 +611,7 @@ async fn accept(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(|_| Error::validation("Membership", "state", "invalid"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     if input.state != "active" {
         return Err(Error::validation("Membership", "state", "invalid"));
     }

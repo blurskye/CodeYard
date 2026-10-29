@@ -127,7 +127,7 @@ async fn add_item(
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
     let Json(input) =
-        input.map_err(|_| Error::validation("ProjectV2Item", "content", "invalid"))?;
+        input.map_err(super::super::json_error)?;
     if !matches!(input.kind.as_str(), "Issue" | "PullRequest") {
         return Err(Error::validation("ProjectV2Item", "type", "invalid"));
     }
@@ -208,7 +208,7 @@ async fn draft(
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
     let Json(input) =
-        input.map_err(|_| Error::validation("DraftIssue", "title", "missing_field"))?;
+        input.map_err(super::super::json_error)?;
     let actor = auth.ok_or_else(auth::required)?.user.id;
     let item = projects::add_item(
         &state.pool,
@@ -343,7 +343,7 @@ async fn update_item(
     input: std::result::Result<Json<Update>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) = input.map_err(|_| Error::validation("ProjectV2Item", "fields", "invalid"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
     let item = projects::update_item(&state.pool, actor, project.id, id, &input.fields)
@@ -380,7 +380,7 @@ async fn create_view(
 ) -> Result<Response> {
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
-    let Json(input) = input.map_err(|_| Error::validation("ProjectV2View", "layout", "invalid"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let actor = auth.ok_or_else(auth::required)?.user;
     let view = projects::create_view(&state.pool, actor.id, project.id, &input)
         .await
