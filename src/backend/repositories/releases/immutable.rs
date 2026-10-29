@@ -162,27 +162,33 @@ pub(crate) async fn check_namespace(
     Ok(())
 }
 
-static LOCAL_SIGNER: std::sync::OnceLock<crate::backend::cluster::NodeKey> = std::sync::OnceLock::new();
+static LOCAL_IDENTITIES: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<std::path::PathBuf, std::path::PathBuf>>> = std::sync::LazyLock::new(Default::default);
 
-/// Configured once before serving; repository paths never select a forge signing identity.
+/// The application, not a repository row or remote request, selects the backed-up key directory.
+pub(crate) fn register_local_identity(state_dir: &std::path::Path, repos: &std::path::Path) {
+    let root = std::path::absolute(repos).unwrap_or_else(|_| repos.to_owned());
+    LOCAL_IDENTITIES.write().unwrap_or_else(|e| e.into_inner()).insert(root, state_dir.to_owned());
+}
+
 pub(crate) fn configure_local_identity(state_dir: &std::path::Path, repos: &std::path::Path) -> anyhow::Result<()> {
-    let key = crate::backend::cluster::identity::release_key(state_dir, repos)?;
-    if let Some(current) = LOCAL_SIGNER.get() {
-        anyhow::ensure!(current.public_hex() == key.public_hex(), "Release identity already configured");
-    } else {
-        LOCAL_SIGNER.set(key).map_err(|_| anyhow::anyhow!("Release identity already configured"))?;
-    }
+    crate::backend::cluster::identity::release_key(state_dir, repos)?;
+    register_local_identity(state_dir, repos);
     Ok(())
 }
 
-fn local_key() -> anyhow::Result<crate::backend::cluster::NodeKey> {
-    LOCAL_SIGNER.get().cloned().ok_or_else(|| anyhow::anyhow!("Release identity not configured"))
+async fn local_key(path: &std::path::Path) -> anyhow::Result<crate::backend::cluster::NodeKey> {
+    let path = std::path::absolute(path)?;
+    let (root, state) = LOCAL_IDENTITIES.read().unwrap_or_else(|e| e.into_inner()).iter()
+        .filter(|(root, _)| path.starts_with(root)).max_by_key(|(root, _)| root.components().count())
+        .map(|(root, state)| (root.clone(), state.clone())).ok_or_else(|| anyhow::anyhow!("Release identity not configured"))?;
+    tokio::task::spawn_blocking(move || crate::backend::cluster::identity::release_key(&state, &root)).await?
 }
 
 pub(crate) async fn verify_local(
     attestation: &Attestation,
+    path: &std::path::Path,
 ) -> Result<records::Publication, RepoError> {
-    let key = local_key().map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
+    let key = local_key(path).await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
     verify_with_key(attestation, &key)
 }
 
@@ -245,7 +251,7 @@ pub(crate) async fn candidate(
         .map_err(super::unavailable)?;
     let key = match cluster {
         Some(context) => context.key.clone(),
-        None => local_key().map_err(super::unavailable)?,
+        None => local_key(std::path::Path::new(&repository.disk_path)).await.map_err(super::unavailable)?,
     };
     Attestation::sign(&statement, &key)
         .map(Some)

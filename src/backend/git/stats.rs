@@ -407,13 +407,14 @@ pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<Contributor
             Ok((tips, mailmap))
         }).await?;
         if tips.is_empty() { return Ok(Vec::new()); }
+        let input = tips.into_iter().map(|tip| format!("{tip}\n")).collect::<String>();
         let mut command = process::git_command()?;
         command.args(["-c", "mailmap.file=/dev/null", "-c", &format!("mailmap.blob={mailmap}")])
-            .args(["shortlog", "-sne"]).args(tips).arg("--")
+            .args(["shortlog", "-sne", "--stdin"])
             .current_dir(repo_path);
         let (status, output) = process::buffered(
             command,
-            b"",
+            input.as_bytes(),
             MAX_CONTRIBUTOR_OUTPUT_BYTES,
             process::RPC_TIMEOUT,
         )
