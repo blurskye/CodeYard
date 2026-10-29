@@ -21,6 +21,7 @@ struct Actor {
     repo: Option<i64>,
     /// A fine-grained token acts only on its resource owner's packages, as `(kind, id)`.
     owner: Option<(&'static str, i64)>,
+    classic: bool,
 }
 
 impl Actor {
@@ -28,6 +29,7 @@ impl Actor {
         id: None,
         repo: None,
         owner: None,
+        classic: false,
     };
     /// A fine-grained token reads another owner's packages as an anonymous request would.
     fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
@@ -59,6 +61,7 @@ async fn actor<'a>(
                 id: Some(id.ok_or(Refusal::Unauthorized)?),
                 repo: None,
                 owner: None,
+                classic: false,
             });
         }
     };
@@ -106,14 +109,20 @@ async fn actor<'a>(
         id: Some(id),
         repo,
         owner,
+        classic: owner.is_none() && repo.is_none(),
     })
 }
 
-fn read_condition() -> String {
+fn read_condition(classic: bool) -> String {
     // Public repository access alone does not make a private package public.
     let access = super::repositories::access::USER_REPO_ACCESS_SQL
         .replace("CASE WHEN NOT r.is_private THEN 1 ELSE 0 END", "0");
-    format!("((p.visibility='public' AND (p.repo_id IS NULL OR NOT r.is_private)) OR p.owner_user_id=u.id OR (p.owner_kind='user' AND u.is_admin) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin')) OR (p.repo_id IS NOT NULL AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id) AND ({access})>=1))")
+    let policy = if classic {
+        "NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=p.owner_org_id AND NOT policy.classic_allowed)"
+    } else {
+        "true"
+    };
+    format!("({policy}) AND ((p.visibility='public' AND (p.repo_id IS NULL OR NOT r.is_private)) OR p.owner_user_id=u.id OR (p.owner_kind='user' AND u.is_admin) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin')) OR (p.repo_id IS NOT NULL AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id) AND ({access})>=1))")
 }
 
 async fn owner_level(tx: &mut Tx<'_>, package: &Package, user: i64) -> Result<i64> {
@@ -164,7 +173,7 @@ async fn authorize<'a>(
             .bind(repo).bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).fetch_one(&mut **tx).await?;
         ensure!(same_owner, Refusal::Missing);
     }
-    let readable: bool = sqlx::query_scalar(&format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition()))
+    let readable: bool = sqlx::query_scalar(&format!("SELECT COALESCE({},false) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.id=$1", read_condition(actor.classic)))
         .bind(id).bind(actor.id).fetch_one(&mut **tx).await?;
     ensure!(readable, Refusal::Missing);
     if !matches!(permission, Permission::Read) {
@@ -240,7 +249,7 @@ pub async fn list(
         None if actor.owner.is_some() => Actor::ANONYMOUS,
         None => actor,
     };
-    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1::text IS NULL OR p.owner_kind=$1) AND ($2::bigint IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3::text IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4::text IS NULL OR p.visibility=$4) AND ($6::bigint IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9::bigint IS NULL OR p.repo_id=$9) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition()))
+    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1::text IS NULL OR p.owner_kind=$1) AND ($2::bigint IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3::text IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4::text IS NULL OR p.visibility=$4) AND ($6::bigint IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9::bigint IS NULL OR p.repo_id=$9) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition(actor.classic)))
         .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
@@ -255,7 +264,7 @@ pub async fn count_linked(pool: &PgPool, token: Option<Credential<'_>>, repo: i6
     } else {
         actor
     };
-    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3::bigint IS NULL OR p.repo_id=$3) AND {}",read_condition()))
+    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$2 WHERE p.repo_id=$1 AND p.deleted_at IS NULL AND ($3::bigint IS NULL OR p.repo_id=$3) AND {}",read_condition(actor.classic)))
         .bind(repo).bind(actor.id).bind(actor.repo).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(count)
@@ -277,6 +286,11 @@ pub async fn create(
         let package = authorize(&mut tx, id, Some(token), Permission::Write, false).await?;
         tx.commit().await?;
         return Ok(package);
+    }
+    if actor.classic && owner.kind == "org" {
+        let allowed: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)")
+            .bind(owner.id).fetch_one(&mut *tx).await?;
+        ensure!(allowed, Refusal::Forbidden);
     }
     let now = packages::now();
     let candidate = Package {
@@ -378,8 +392,30 @@ pub async fn versions(
         false,
     )
     .await?;
-    let rows = sqlx::query_as("SELECT * FROM package_versions WHERE package_id=$1 AND ((deleted_at IS NOT NULL)=$2) ORDER BY id DESC LIMIT $3 OFFSET $4")
+    let rows = sqlx::query_as("SELECT id,package_id,name,digest,media_type,jsonb_build_object('version',manifest::jsonb->'version')::text AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND ((deleted_at IS NOT NULL)=$2) ORDER BY id DESC LIMIT $3 OFFSET $4")
         .bind(package).bind(deleted).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
+pub async fn version_page(
+    pool: &PgPool,
+    package: i64,
+    token: Option<Credential<'_>>,
+    before: i64,
+    names_only: bool,
+) -> Result<Vec<Version>> {
+    let mut tx = begin(pool).await?;
+    let p = authorize(&mut tx, package, token, Permission::Read, false).await?;
+    let metadata = if names_only {
+        "'{}'"
+    } else if p.package_type == "nuget" {
+        "(manifest::jsonb-'nuspec')::text"
+    } else {
+        "manifest"
+    };
+    let rows = sqlx::query_as(&format!("SELECT id,package_id,name,digest,media_type,CASE WHEN octet_length({metadata})<=65536 THEN {metadata} ELSE NULL END AS manifest,downloads,created_at,updated_at,deleted_at FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL AND id<$2 ORDER BY id DESC LIMIT 100"))
+        .bind(package).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -392,7 +428,7 @@ pub async fn version(
 ) -> Result<Version> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
-    let result = sqlx::query_as("SELECT v.* FROM package_versions v WHERE v.package_id=$1 AND v.deleted_at IS NULL AND (v.name=$2 OR EXISTS(SELECT 1 FROM package_tags t WHERE t.package_id=v.package_id AND t.version_id=v.id AND t.tag=$2)) ORDER BY v.id DESC LIMIT 1")
+    let result = sqlx::query_as("SELECT v.* FROM package_versions v WHERE v.package_id=$1 AND v.deleted_at IS NULL AND (v.name=$2 OR EXISTS(SELECT 1 FROM package_tags t WHERE t.package_id=v.package_id AND t.version_id=v.id AND t.tag=$2)) ORDER BY (v.name=$2) DESC,v.id DESC LIMIT 1")
         .bind(package).bind(reference).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     tx.commit().await?;
     Ok(result)
@@ -565,6 +601,7 @@ pub async fn publish(pool: &PgPool, token: i64, new: Publish<'_>) -> Result<Vers
         false,
     )
     .await?;
+    ensure!(package.package_type != "npm" || new.manifest.len() <= packages::MAX_NPM_METADATA_BYTES, Refusal::Conflict);
     let now = packages::now();
     check_blobs(&mut tx, package.id, new.blobs, now).await?;
     let existing: Option<Version> =
@@ -732,6 +769,8 @@ pub async fn settings(
 pub async fn reserve_blob(pool: &PgPool, package: i64, token: i64, blob: &Blob) -> Result<bool> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
+    let actor = actor(&mut tx, Some(token), Permission::Write).await?;
+    super::files::charge_upload_in_transaction(&mut tx, actor.id.ok_or(Refusal::Unauthorized)?, "package", blob.size.max(1)).await?;
     let now = packages::now();
     sqlx::query("INSERT INTO package_blobs(digest,size,expires_at) VALUES($1,$2,$3) ON CONFLICT(digest) DO NOTHING")
         .bind(&blob.digest).bind(blob.size).bind(now+86400).execute(&mut *tx).await?;
@@ -810,7 +849,7 @@ pub async fn append_upload(
     let mut upload = get_upload(&mut tx, package, token, id).await?;
     ensure!(upload.offset == offset, Refusal::Offset);
     let mut chunks: Vec<Blob> = serde_json::from_str(&upload.chunks)?;
-    ensure!(chunks.len() < 10000, Refusal::Offset);
+    ensure!(chunks.len() < 101, Refusal::Offset);
     chunks.push(chunk.clone());
     upload.offset += chunk.size;
     upload.chunks = serde_json::to_string(&chunks)?;
@@ -831,6 +870,15 @@ pub async fn cancel_upload(pool: &PgPool, package: i64, token: i64, id: &str) ->
         .bind(id)
         .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn finish_upload(pool: &PgPool, package: i64, token: i64, id: &str, offset: i64) -> Result<()> {
+    let mut tx = begin(pool).await?;
+    let upload = get_upload(&mut tx, package, token, id).await?;
+    ensure!(upload.offset == offset, Refusal::Offset);
+    sqlx::query("DELETE FROM package_uploads WHERE id=$1").bind(id).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }

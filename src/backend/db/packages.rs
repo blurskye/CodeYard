@@ -112,6 +112,16 @@ native_operation!(crate::backend::db::postgres::packages::maven_file,
     crate::backend::db::sqlite::packages::maven_file,
     fn maven_file(pool: &DbPool, repo: i64, token: Option<Credential<'_>>, path: &str) -> Result<(Package, Blob)>);
 
+pub const MAX_NPM_METADATA_BYTES: usize = 64 * 1024;
+pub const MAX_METADATA_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+native_operation!(crate::backend::db::postgres::packages::version_page,
+    crate::backend::db::sqlite::packages::version_page,
+    fn version_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, before: i64, names_only: bool) -> Result<Vec<Version>>);
+native_operation!(crate::backend::db::postgres::packages::finish_upload,
+    crate::backend::db::sqlite::packages::finish_upload,
+    fn finish_upload(pool: &DbPool, package: i64, token: i64, id: &str, offset: i64) -> Result<()>);
+
 #[derive(Clone, Copy)]
 pub enum Permission {
     Read,

@@ -118,13 +118,22 @@ pub async fn charge_upload(
     size: i64,
 ) -> Result<(), AdmissionError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let limits = admit(&mut tx, user, reason).await?;
+    charge_upload_in_transaction(&mut tx, user, reason, size).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub(super) async fn charge_upload_in_transaction(
+    tx: &mut SqliteConnection,
+    user: i64,
+    reason: &str,
+    size: i64,
+) -> Result<(), AdmissionError> {
+    let limits = admit(tx, user, reason).await?;
     if !(1..=limits.max_file_size_bytes).contains(&size) {
         return Err(AdmissionError::Invalid);
     }
-    charge(&mut tx, user, reason, size, None, &limits).await?;
-    tx.commit().await?;
-    Ok(())
+    charge(tx, user, reason, size, None, &limits).await
 }
 
 /// Files anyone may download: the owner's own, public ones, and avatars.
