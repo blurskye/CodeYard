@@ -4,6 +4,13 @@ use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+/// The supported fan-out of one owner's isolated event must fit its delivery queue.
+pub const MAX_HOOKS_PER_OWNER: usize = 16;
+
+#[derive(Debug, thiserror::Error)]
+#[error("The owner's webhook limit has been reached")]
+pub struct HookLimit;
+
 /// The repository or organization a webhook belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookOwner {

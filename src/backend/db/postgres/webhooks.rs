@@ -155,6 +155,12 @@ pub async fn insert_webhook(
     if !may_manage_hooks(&mut tx, owner, actor_id).await? {
         return Ok(None);
     }
+    // Serialize only hook creation for this owner; authorization's shared locks stay held.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!("webhooks:{}:{}", owner.column(), owner.id())).execute(&mut *tx).await?;
+    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM webhooks WHERE {}=$1", owner.column()))
+        .bind(owner.id()).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(count < crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER as i64, crate::backend::db::webhooks::HookLimit);
     let sql = format!(
         "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, username, encrypted_password, password_nonce) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
         owner.column()
