@@ -370,6 +370,16 @@ impl RunQueue {
         mode: CiExecutionMode,
         stop: Option<&mut watch::Receiver<bool>>,
     ) -> Result<Option<ClaimedRun>> {
+        let prepare = self.claim_prepared(worker, mode, stop);
+        match self {
+            Self::Database { pool, .. } => db::ci::prepare_claim(pool, worker, prepare).await,
+            Self::Remote { .. } => prepare.await,
+        }
+    }
+
+    async fn claim_prepared(
+        &self, worker: &str, mode: CiExecutionMode, stop: Option<&mut watch::Receiver<bool>>,
+    ) -> Result<Option<ClaimedRun>> {
         match self {
             Self::Remote { .. } => self.call(worker, Operation::Claim { mode }, stop).await,
             Self::Database {
