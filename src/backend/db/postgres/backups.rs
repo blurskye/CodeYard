@@ -2,6 +2,14 @@ use crate::backend::db::{backups::PullRequestHead, models::Repository};
 use anyhow::Result;
 use sqlx::PgPool;
 
+pub async fn export_snapshot(pool: &PgPool) -> Result<(sqlx::Transaction<'static, sqlx::Postgres>, String, Vec<Repository>)> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    let snapshot = sqlx::query_scalar("SELECT pg_export_snapshot()").fetch_one(&mut *tx).await?;
+    let repositories = sqlx::query_as("SELECT * FROM repositories ORDER BY id").fetch_all(&mut *tx).await?;
+    Ok((tx, snapshot, repositories))
+}
+
 pub async fn list_repositories(pool: &PgPool) -> Result<Vec<Repository>> {
     Ok(sqlx::query_as("SELECT * FROM repositories ORDER BY id")
         .fetch_all(pool)

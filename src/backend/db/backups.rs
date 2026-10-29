@@ -39,6 +39,18 @@ native_operation!(crate::backend::db::postgres::backups::is_empty,
     /// Whether the database has no tables yet, so a restore cannot overwrite anything.
     fn is_empty(pool: &DbPool) -> Result<bool>);
 
+pub async fn sqlite_snapshot_repositories(path: &std::path::Path) -> Result<Vec<Repository>> {
+    super::sqlite::backups::snapshot_repositories(path).await
+}
+
+/// Keep the exporting transaction alive until pg_dump has imported and read its snapshot.
+pub async fn postgres_snapshot(pool: &DbPool) -> Result<(sqlx::Transaction<'static, sqlx::Postgres>, String, Vec<Repository>)> {
+    match pool {
+        DbPool::Postgres(pool) => super::postgres::backups::export_snapshot(pool).await,
+        DbPool::Sqlite(_) => bail!("only PostgreSQL exports snapshots"),
+    }
+}
+
 /// Writes a consistent copy of a SQLite database to `path` while the server runs.
 pub async fn copy_sqlite(pool: &DbPool, path: &str) -> Result<()> {
     match pool {
