@@ -113,17 +113,9 @@ fn unavailable() -> StorageError {
 }
 
 async fn prepare_local_repository_root(path: &Path) -> Result<(), StorageError> {
-    tokio::fs::create_dir_all(path)
-        .await
-        .map_err(|_| unavailable())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-            .await
-            .map_err(|_| unavailable())?;
-    }
-    Ok(())
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || crate::backend::fs::private_dir(&path))
+        .await.map_err(|_| unavailable())?.map_err(|_| unavailable())
 }
 
 fn git_storage_error(error: RepoError) -> StorageError {

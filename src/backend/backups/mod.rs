@@ -12,7 +12,7 @@ mod repair;
 
 pub use repair::{rebuild, verify};
 
-use crate::backend::{db, git::mirror};
+use crate::backend::{db, git::mirror, fs::private_dir};
 use anyhow::{bail, ensure, Context, Result};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -34,16 +34,6 @@ fn uploads_in_s3() -> bool {
     ["S3_ENDPOINT", "S3_BUCKET"]
         .iter()
         .any(|name| std::env::var_os(name).is_some())
-}
-
-fn private_dir(path: &Path) -> Result<()> {
-    std::fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
 }
 
 fn private_file(path: &Path) -> Result<()> {

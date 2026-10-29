@@ -93,11 +93,7 @@ impl CiWorkers {
         // finish, each worker recovers again before its first claim.
         let mut recovered = true;
         if recover {
-            use std::os::unix::fs::DirBuilderExt;
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(&self.cleanup_dir)?;
+            crate::backend::fs::private_dir(&self.cleanup_dir)?;
             // A Podman socket that accepts connections but never answers must not hold up the
             // listeners. Records the pass does not reach stay on disk for the background pass.
             match tokio::time::timeout(
@@ -119,17 +115,11 @@ impl CiWorkers {
         }
         // The node name, as the rest of the node setup reads it. An empty value counts
         // as unset, because compose passes an unset variable on as an empty one.
-        let node = std::env::var("NODE_NAME")
-            .ok()
-            .map(|name| name.trim().to_owned())
-            .filter(|name| !name.is_empty())
-            .or_else(|| {
-                std::fs::read_to_string("/etc/hostname")
-                    .ok()
-                    .map(|name| name.trim().to_owned())
-                    .filter(|name| !name.is_empty())
-            })
-            .unwrap_or_else(|| "node".into());
+        let node = match std::env::var("NODE_NAME").ok().filter(|name| !name.trim().is_empty()) {
+            Some(name) => name,
+            None => crate::backend::cluster::hostname()?,
+        };
+        let node = crate::backend::cluster::normalize_name(&node)?;
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let RunQueue::Database { .. } = &self.queue {
             tasks.spawn(worker::fail_stale_runs(

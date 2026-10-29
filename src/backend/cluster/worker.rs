@@ -34,12 +34,7 @@ async fn resolve(host: &str) -> Result<Vec<SocketAddr>> {
 }
 
 pub fn save_core(state_dir: &Path, ticket: &super::JoinTicket) -> Result<()> {
-    std::fs::create_dir_all(state_dir)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(state_dir, std::fs::Permissions::from_mode(0o700))?;
-    }
+    crate::backend::fs::private_dir(state_dir)?;
     let peer = CorePeer {
         public_key: ticket.node.to_string(),
         address: ticket.address.clone(),

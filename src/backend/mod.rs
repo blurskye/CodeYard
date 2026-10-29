@@ -28,6 +28,7 @@ pub mod projects;
 pub mod repositories;
 pub mod ssh;
 pub mod storage;
+pub(crate) mod fs;
 pub mod vulnerabilities;
 pub mod webhooks;
 pub mod zip_archives;
