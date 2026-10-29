@@ -94,7 +94,7 @@ impl NodeContext {
             Failure::Repository(error) => error,
             Failure::Merge(_) => unavailable(),
         })?;
-        let (activity, receiver) = tokio::sync::watch::channel(tokio::time::Instant::now());
+        let (activity, _receiver) = tokio::sync::watch::channel(tokio::time::Instant::now());
         let writer = &mut link.writer;
         let reader = &mut link.reader;
         let work = async {
@@ -139,7 +139,10 @@ impl NodeContext {
                 }
             }
         };
-        let result = git_process::session_timeout(work, receiver, git_process::IDLE_TIMEOUT).await;
+        // Only storage observes Git stderr progress. Its idle timer is authoritative;
+        // forwarding retains a total deadline without mistaking stderr-only work for idle.
+        let result = tokio::time::timeout(git_process::SESSION_TIMEOUT, work).await
+            .map_err(|_| anyhow::anyhow!("Git session timed out")).and_then(|result| result);
         link.close(0, b"Git session complete");
         result.map(|status| (value, status))
     }
@@ -150,9 +153,11 @@ impl NodeContext {
         let handler = RpcHandler::new(self.clone());
         let admitted = handler.read_admission(request, self.key.public_key()).await?;
         readable(&admitted.store).await?;
+        handler.authorize_request(request, self.key.public_key()).await?;
         let checkout = handler
             .checkout_access(request, admitted.repo_id, self.key.public_key())
             .await?;
+        if request.ci_run.is_some() && !checkout { return Err(unavailable()); }
         Ok((admitted.store, checkout, admitted.guard))
     }
 
@@ -227,14 +232,19 @@ impl RpcHandler {
                 (store, repo_id, None)
             };
             readable(&store).await?;
+            self.authorize_request(&request, caller).await?;
             let checkout = self.checkout_access(&request, repo_id, caller).await?;
+            if request.ci_run.is_some() && !checkout { return Err(unavailable()); }
             let (admission, targets) = match &request.operation {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.
                 Operation::ReplicaPack { .. } => {
                     let (refs, head) = store.replica_listing().await?;
                     let mut targets: Vec<String> = refs.values().cloned().collect();
-                    targets.extend(crate::backend::db::ci::retained_ci_commits(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?);
+                    let retained = crate::backend::db::ci::retained_ci_commits(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?;
+                    let present = store.existing_commits(&retained).await?;
+                    targets.extend(retained.into_iter().filter(|commit| present.contains(commit)));
+                    targets.extend(crate::backend::db::pull_requests::records::retained_revisions(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?);
                     targets.sort();
                     targets.dedup();
                     (serde_json::json!({ "head": head, "refs": refs }), targets)

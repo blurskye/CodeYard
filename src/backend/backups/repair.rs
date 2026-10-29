@@ -69,9 +69,6 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                 }
             }
         }
-        if let Some(fsck) = mirror::check(path).await? {
-            report(format!("{label}: git fsck: {fsck}"));
-        }
         // A default branch changed after the backup moved HEAD in Git, which is newer.
         if let Some(head) = mirror::head_branch(path).await? {
             if head != repository.default_branch {
@@ -101,14 +98,27 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
             .collect();
         let mut known = HashSet::new();
         let mut updates = String::new();
-        for pull in db::backups::list_pull_request_heads(pool, repository.id).await? {
+        let pulls = db::backups::list_pull_request_heads(pool, repository.id).await?;
+        let ci_revisions = db::backups::list_ci_revisions(pool, repository.id).await?;
+        let branches: HashMap<String, String> = mirror::refs(path, "refs/heads/").await?.into_iter().collect();
+        let mut revisions = ci_revisions.clone();
+        revisions.extend(refs.values().cloned());
+        revisions.extend(branches.values().cloned());
+        for pull in &pulls {
+            revisions.extend([pull.head_sha.clone(), pull.base_sha.clone()]);
+            revisions.extend(pull.fork_sha.iter().chain(&pull.merge_commit_sha).cloned());
+        }
+        revisions.sort();
+        revisions.dedup();
+        let present = mirror::existing_commits(path, &revisions).await?;
+        for mut pull in pulls {
             known.insert(pull.number);
             let number = pull.number;
             let name = format!("refs/pull/{number}/head");
             match refs.get(&name) {
                 Some(sha) if *sha == pull.head_sha => {}
                 // A push after the backup moved the pull request; Git is newer.
-                Some(sha) if pull.state == "open" && mirror::has_commit(path, sha).await? => {
+                Some(sha) if pull.state == "open" && present.contains(sha) => {
                     if !repair {
                         report(format!(
                             "{label}: pull request #{number} records {}, Git has {sha}",
@@ -132,7 +142,7 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                 Some(sha)
                     if repair
                         && pull.state != "open"
-                        && mirror::has_commit(path, &pull.head_sha).await? =>
+                        && present.contains(&pull.head_sha) =>
                 {
                     updates.push_str(&format!("update {name} {} {sha}\n", pull.head_sha));
                     println!(
@@ -144,7 +154,7 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                     "{label}: pull request #{number} ({}) records {}, Git has {sha}",
                     pull.state, pull.head_sha
                 )),
-                None if mirror::has_commit(path, &pull.head_sha).await? => {
+                None if present.contains(&pull.head_sha) => {
                     if repair {
                         updates.push_str(&format!("create {name} {}\n", pull.head_sha));
                         println!("{label}: recreated {name}");
@@ -157,18 +167,29 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                     pull.head_sha
                 )),
             }
-            // Nothing keeps a closed pull request's base in Git, so once its branch moves on the
-            // commit may be pruned. Only an open pull request still needs it.
+            if pull.state == "open" {
+                if let Some(base) = branches.get(&format!("refs/heads/{}", pull.base_branch)).filter(|base| **base != pull.base_sha) {
+                    if !repair {
+                        report(format!("{label}: pull request #{number} records base {}, Git has {base}", pull.base_sha));
+                    } else if db::pull_requests::records::move_open_pull_request_base(pool, pull.id, &pull.base_sha, base, &pull.base_branch, pull.fork_sha.as_deref()).await? {
+                        pull.base_sha = base.clone();
+                        println!("{label}: pull request #{number} now records base {base}");
+                    } else {
+                        report(format!("{label}: pull request #{number} base changed meanwhile"));
+                    }
+                }
+            }
+            // Closed discussions and review diffs still require their recorded bases.
             let bases = std::iter::once(&pull.base_sha).chain(&pull.fork_sha);
-            for base in bases.filter(|_| pull.state == "open") {
-                if !mirror::has_commit(path, base).await? {
+            for base in bases {
+                if !present.contains(base) {
                     report(format!(
                         "{label}: pull request #{number} base commit {base} is missing from Git"
                     ));
                 }
             }
             if let Some(merge) = &pull.merge_commit_sha {
-                if !mirror::has_commit(path, merge).await? {
+                if !present.contains(merge) {
                     report(format!(
                         "{label}: pull request #{number} merge commit {merge} is missing from Git"
                     ));
@@ -192,12 +213,15 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
         }
         // A run that has not finished still checks its commit out. A finished run's commit may
         // be pruned like any other unreachable commit.
-        for sha in db::backups::list_ci_revisions(pool, repository.id).await? {
-            if !mirror::has_commit(path, &sha).await? {
+        for sha in ci_revisions {
+            if !present.contains(&sha) {
                 report(format!(
                     "{label}: an unfinished CI run's commit {sha} is missing from Git"
                 ));
             }
+        }
+        if let Some(fsck) = mirror::check(path).await? {
+            report(format!("{label}: git fsck: {fsck}"));
         }
     }
     if problems == 0 {
@@ -215,6 +239,7 @@ pub async fn rebuild(pool: &db::DbPool) -> Result<()> {
         if repository.storage_node_id.is_some() {
             continue;
         }
+        db::repositories::records::advance_contribution_version(pool, repository.id).await?;
         let path = Path::new(&repository.disk_path);
         if !path.join("HEAD").is_file() {
             continue;
@@ -234,6 +259,8 @@ pub async fn rebuild(pool: &db::DbPool) -> Result<()> {
         )
         .await
         .map_err(|error| anyhow::anyhow!("languages of {}: {error}", repository.name))?;
+        let size = i64::try_from(store.size_bytes().await?)?;
+        db::repositories::records::update_repo_size(pool, repository.id, size).await?;
         rebuilt += 1;
     }
     println!("Rebuilt {rebuilt} repositories.");
