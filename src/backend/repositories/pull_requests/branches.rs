@@ -114,7 +114,19 @@ async fn move_head(
     actor_id: i64,
     ci_access: Option<db::models::AccessLevel>,
 ) -> Result<bool, RefreshError> {
-    let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to)
+    let pull = db::pull_requests::records::get_pull_request_by_id(pool, pull_id)
+        .await.map_err(|_| RefreshError::Database)?.ok_or(RefreshError::Conflict)?;
+    let head = db::repositories::records::get_repository_by_id(pool, pull.head_repo_id.unwrap_or(base.id))
+        .await.map_err(|_| RefreshError::Database)?;
+    let pusher = if let Some(head) = head {
+        repo_store(&head, ci.cluster.as_ref()).branch_publication(head.id, &format!("refs/heads/{}", pull.head_branch))
+            .await.map_err(|_| RefreshError::Storage)?
+            .filter(|record| record.publication.new == to)
+            .and_then(|record| record.publication.actor.user_id())
+    } else {
+        None
+    };
+    let moved = db::pull_requests::records::move_open_pull_request_head(pool, pull_id, from, to, pusher)
         .await
         .map_err(|_| RefreshError::Database)?;
     if !moved {
