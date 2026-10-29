@@ -907,6 +907,7 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
         peers: vec![cluster::CorePeer {
+            target: None,
             public_key: core.public_key().to_string(),
             address: NodeAddress {
                 tcp: vec![silent_tcp_address().await, address_of(&core)],
@@ -945,6 +946,7 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
         peers: vec![cluster::CorePeer {
+            target: None,
             public_key: core.public_key().to_string(),
             address: NodeAddress {
                 tcp: vec![silent_tcp_address().await],

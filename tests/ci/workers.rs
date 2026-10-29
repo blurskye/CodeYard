@@ -611,6 +611,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         context: worker.clone(),
         peers: vec![
             cluster::CorePeer {
+                target: None,
                 public_key: cluster::NodeKey::generate().public_hex(),
                 address: cluster::NodeAddress {
                     addrs: vec!["127.0.0.1:9".parse().unwrap()],
@@ -678,6 +679,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     let mut stale_claim = claimed.clone();
     stale_claim.storage_node_id = Some(core_node.id + 100_000);
     stale_claim.storage_peer = Some(cluster::CorePeer {
+        target: None,
         public_key: cluster::NodeKey::generate().public_hex(),
         address: cluster::NodeAddress {
             tcp: vec!["127.0.0.1:1".parse().unwrap()],
@@ -1388,6 +1390,7 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
     std::fs::create_dir(&state_dir).unwrap();
     std::fs::write(state_dir.join("node.key"), key.secret_hex()).unwrap();
     let peer = cluster::CorePeer {
+        target: None,
         public_key: cluster::NodeKey::generate().public_hex(),
         address: cluster::NodeAddress {
             addrs: vec!["127.0.0.1:9".parse().unwrap()],
@@ -2285,6 +2288,7 @@ async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
     context.remember_peer(
         100_000,
         cluster::CorePeer {
+            target: None,
             public_key: endpoint.id().to_string(),
             address: cluster::NodeAddress::of(&endpoint.addr()),
         },
@@ -4084,6 +4088,7 @@ async fn ci_fixture() -> CiFixture {
     .unwrap();
     let worker = client(&worker_key).await;
     let peer = cluster::CorePeer {
+        target: None,
         public_key: core_key.public_hex(),
         address: cluster::NodeAddress::of(&endpoint.addr()),
     };
@@ -4583,6 +4588,7 @@ async fn successful_core_is_tried_first_for_subsequent_log_batches() {
         preferred: Default::default(),
         peers: vec![
             cluster::CorePeer {
+                target: None,
                 public_key: cluster::NodeKey::generate().public_hex(),
                 address: cluster::NodeAddress {
                     tcp: vec![address],
@@ -4650,6 +4656,7 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
         context: fixture.worker.clone(),
         preferred: Default::default(),
         peers: vec![cluster::CorePeer {
+            target: None,
             public_key: endpoint.id().to_string(),
             address: cluster::NodeAddress::of(&endpoint.addr()),
         }],
@@ -4723,6 +4730,7 @@ async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
         context: fixture.worker.clone(),
         peers: vec![
             cluster::CorePeer {
+                target: None,
                 public_key: endpoint.id().to_string(),
                 address: cluster::NodeAddress::of(&endpoint.addr()),
             },
@@ -4874,6 +4882,7 @@ async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
         preferred: Default::default(),
         context: fixture.worker.clone(),
         peers: vec![cluster::CorePeer {
+            target: None,
             public_key: endpoint.id().to_string(),
             address: cluster::NodeAddress::of(&endpoint.addr()),
         }],

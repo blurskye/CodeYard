@@ -232,6 +232,7 @@ mod tests {
         context.remember_peer(
             2,
             CorePeer {
+                target: None,
                 public_key: server_key.public_hex(),
                 address: NodeAddress {
                     tcp: vec![listener.local_addr().unwrap()],

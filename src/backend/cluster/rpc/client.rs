@@ -181,7 +181,8 @@ impl NodeContext {
                     .get(&node_id)
                     .cloned()
                     .ok_or_else(unavailable)?;
-                (peer.node().map_err(|_| unavailable())?, peer.address)
+                let address = peer.resolved_address().await.map_err(|_| unavailable())?;
+                (peer.node().map_err(|_| unavailable())?, address)
             };
             let linked = transport::dial_node(&self.iroh, node, &address, alpn).await;
             self.note_dial(node_id, linked.is_ok());

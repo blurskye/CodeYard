@@ -360,6 +360,7 @@ impl CiHandler {
                     })
                     .ok_or_else(|| anyhow::anyhow!(CORE_UNAVAILABLE))?;
                 let peer = super::CorePeer {
+                    target: None,
                     public_key: node.public_key,
                     address: serde_json::from_str(
                         node.addr_hint

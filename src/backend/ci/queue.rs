@@ -507,6 +507,7 @@ impl RunQueue {
                                 })
                                 .context("storage node unavailable")?;
                             Some(cluster::CorePeer {
+                                target: None,
                                 public_key: node.public_key,
                                 address: serde_json::from_str(
                                     node.addr_hint
@@ -533,6 +534,7 @@ impl RunQueue {
                             storage_replicas.push((
                                 id,
                                 cluster::CorePeer {
+                                    target: None,
                                     public_key: node.public_key,
                                     address,
                                 },
@@ -891,7 +893,10 @@ impl RunQueue {
             // dial_node bounds each attempt itself. An outer timeout here would cut the
             // fallback short, so the other addresses and iroh would never be tried. A stop
             // ends only the dial: once the request is written, its reply is awaited below.
-            let dial = cluster::dial_node(&context.iroh, node, &peer.address, cluster::ALPN_EVENTS);
+            let dial = async {
+                let address = peer.resolved_address().await?;
+                cluster::dial_node(&context.iroh, node, &address, cluster::ALPN_EVENTS).await
+            };
             let dialed = match stop.as_deref_mut() {
                 Some(stop) => {
                     // The stop wins a tie, and is read again once the dial is ready, so a
