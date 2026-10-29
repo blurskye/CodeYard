@@ -11,6 +11,7 @@ pub struct PullRequestHead {
     pub state: String,
     pub head_sha: String,
     pub base_sha: String,
+    pub base_branch: String,
     pub fork_sha: Option<String>,
     pub merge_commit_sha: Option<String>,
 }

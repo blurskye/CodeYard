@@ -27,7 +27,7 @@ pub async fn set_disk_path(pool: &PgPool, repo_id: i64, disk_path: &str) -> Resu
 
 pub async fn list_pull_request_heads(pool: &PgPool, repo_id: i64) -> Result<Vec<PullRequestHead>> {
     Ok(sqlx::query_as(
-        "SELECT id, number::BIGINT AS number, state, head_sha, base_sha, fork_sha, merge_commit_sha FROM pull_requests WHERE repo_id = $1 ORDER BY number",
+        "SELECT id, number::BIGINT AS number, state, head_sha, base_sha, base_branch, fork_sha, merge_commit_sha FROM pull_requests WHERE repo_id = $1 ORDER BY number",
     )
     .bind(repo_id)
     .fetch_all(pool)

@@ -52,7 +52,9 @@ pub async fn compute_and_store(
                 let tip = git::branch_tip(path, &branch)?;
                 let languages = compute_local(pool, path, &branch, &source).await?;
                 let current = git::default_branch(path).await?.unwrap_or_else(|| "main".into());
-                if current == branch && git::branch_tip(path, &branch)? == tip {
+                if current == branch && git::branch_tip(path, &branch)? == tip
+                    && db::repository_stats::languages_computed(pool, &source, &tip.clone().unwrap_or_default()).await?
+                {
                     return Ok(languages);
                 }
                 let Some(current_source) = db::repository_stats::language_source(pool, repository.id).await? else {
@@ -74,9 +76,7 @@ pub async fn compute_and_store(
         let languages = if revision.is_empty() { Vec::new() } else {
             store.languages(&revision).await?
         };
-        if let Err(error) = store_rows(pool, &source, &revision, &languages).await {
-            tracing::warn!(repo_id = source.repo_id, %error, "could not store repository languages");
-        }
+        anyhow::ensure!(store_rows(pool, &source, &revision, &languages).await?, "Repository changed during language persistence");
         Ok::<_, anyhow::Error>(languages)
     }).await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Language computation timed out"))?
         .map_err(RepoError::from)
@@ -153,11 +153,11 @@ async fn compute_local(
     };
     // Do not publish a scan if this copy moved while it was running. Its push queued a refresh.
     if git::branch_tip(path, branch)?.unwrap_or_default() == tip {
-        match store_rows(pool, source, &tip, &languages).await {
-            Ok(true) => {}
+        match store_rows(pool, source, &tip, &languages).await? {
+            true => {}
             // A push that moved the version during this scan also lost the store. Scanning the
             // default branch again uses a fresh source, so the stored rows are not left stale.
-            Ok(false) => refresh_default_branch(
+            false => refresh_default_branch(
                 pool.clone(),
                 source.repo_id,
                 path.to_owned(),
@@ -165,9 +165,6 @@ async fn compute_local(
                 // The retry keeps this copy's placement, so a promotion meanwhile refuses it.
                 Some(source.storage_node_id),
             ),
-            Err(error) => {
-                tracing::warn!(repo_id = source.repo_id, %error, "could not store repository languages");
-            }
         }
     }
     Ok(languages)
