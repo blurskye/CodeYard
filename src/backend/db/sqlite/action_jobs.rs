@@ -258,9 +258,15 @@ pub async fn list(
 pub async fn steps(pool: &SqlitePool, repo: i64, job: i64) -> Result<Vec<Step>> {
     Ok(sqlx::query_as("SELECT s.* FROM actions_steps s JOIN actions_jobs j ON j.id=s.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY s.number").bind(repo).bind(job).fetch_all(pool).await?)
 }
-pub async fn annotations(pool: &SqlitePool, repo: i64, job: i64) -> Result<Vec<Json<Annotation>>> {
-    Ok(sqlx::query_scalar("SELECT a.annotation FROM actions_job_annotations a JOIN actions_jobs j ON j.id=a.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY a.id")
-        .bind(repo).bind(job).fetch_all(pool).await?)
+pub async fn annotations(pool: &SqlitePool, repo: i64, job: i64, offset: i64, limit: i64) -> Result<(i64, Vec<Json<Annotation>>)> {
+    ensure!(offset >= 0 && (1..=100).contains(&limit), "invalid annotation page");
+    let mut tx = pool.begin().await?;
+    let total = sqlx::query_scalar("SELECT COUNT(*) FROM actions_job_annotations a JOIN actions_jobs j ON j.id=a.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2")
+        .bind(repo).bind(job).fetch_one(&mut *tx).await?;
+    let rows = sqlx::query_scalar("SELECT a.annotation FROM actions_job_annotations a JOIN actions_jobs j ON j.id=a.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY a.id LIMIT $3 OFFSET $4")
+        .bind(repo).bind(job).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((total, rows))
 }
 pub async fn usage(
     pool: &SqlitePool,

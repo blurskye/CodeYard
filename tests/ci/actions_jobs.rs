@@ -602,10 +602,10 @@ async fn annotations(
             assert_eq!(result.unwrap(), job);
         }
     }
-    assert!(db::action_jobs::annotations(f.pool(), other, job)
+    assert!(db::action_jobs::annotations(f.pool(), other, job, 0, 100)
         .await
         .unwrap()
-        .is_empty());
+        .1.is_empty());
     let path = format!("/api/v3/repos/alice/project/check-runs/{job}/annotations");
     let (_, body) = checked(
         api,

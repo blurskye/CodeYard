@@ -454,7 +454,7 @@ pub async fn query_objects(
         .build_query_scalar()
         .fetch_one(&mut *tx)
         .await?;
-    let mut query = object_query(filter, "*");
+    let mut query = object_query(filter, "id,repo_id,run_id,kind,scope,name,version,size,finalized,NULL AS manifest,created_at,accessed_at,expires_at");
     let order = match filter.order {
         ObjectOrder::Created => "created_at",
         ObjectOrder::Accessed => "accessed_at",

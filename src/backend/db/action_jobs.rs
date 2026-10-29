@@ -80,6 +80,6 @@ native_operation!(crate::backend::db::postgres::action_jobs::list,crate::backend
 native_operation!(crate::backend::db::postgres::action_jobs::steps,crate::backend::db::sqlite::action_jobs::steps,
     fn steps(pool:&DbPool,repo:i64,job:i64)->Result<Vec<Step>>);
 native_operation!(crate::backend::db::postgres::action_jobs::annotations,crate::backend::db::sqlite::action_jobs::annotations,
-    fn annotations(pool:&DbPool,repo:i64,job:i64)->Result<Vec<Json<Annotation>>>);
+    fn annotations(pool:&DbPool,repo:i64,job:i64,offset:i64,limit:i64)->Result<(i64,Vec<Json<Annotation>>)>);
 native_operation!(crate::backend::db::postgres::action_jobs::observed,crate::backend::db::sqlite::action_jobs::observed,
     fn observed(pool:&DbPool,repo:i64,run:i64)->Result<bool>);
