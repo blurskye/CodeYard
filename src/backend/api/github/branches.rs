@@ -44,21 +44,26 @@ async fn list(
         .refs()
         .await
         .map_err(store_error)?;
+    let mut refs: Vec<_> = refs.into_iter().filter_map(|(reference, sha)| reference.strip_prefix("refs/heads/").map(|branch| (branch.to_owned(), sha))).collect();
+    refs.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut has_next = refs.len() > offset + limit;
+    if query.protected.is_none() {
+        refs = refs.into_iter().skip(offset).take(limit).collect();
+    }
     let mut branches = Vec::new();
     let mut budget = WorkflowMatchBudget::new();
-    for (reference, sha) in refs {
-        let Some(branch) = reference.strip_prefix("refs/heads/") else {
-            continue;
-        };
-        let protected = protection::branch_is_protected(&rules, branch, &mut budget)
+    for (branch, sha) in refs {
+        let protected = protection::branch_is_protected(&rules, &branch, &mut budget)
             .map_err(Error::unavailable)?;
         if query.protected.is_none_or(|filter| filter == protected) {
-            branches.push((branch.to_owned(), sha, protected));
+            branches.push((branch, sha, protected));
         }
     }
-    branches.sort_by(|a, b| a.0.cmp(&b.0));
-    let has_next = branches.len() > offset + limit;
-    let values = branches.into_iter().skip(offset).take(limit).map(|(branch, sha, protected)| json!({
+    if query.protected.is_some() {
+        has_next = branches.len() > offset + limit;
+        branches = branches.into_iter().skip(offset).take(limit).collect();
+    }
+    let values = branches.into_iter().map(|(branch, sha, protected)| json!({
         "name": branch, "commit": {"sha": sha, "url": format!("{}/commits/{sha}", repo_url(&owner, &name))},
         "protected": protected,
     })).collect();
@@ -122,20 +127,23 @@ pub(super) async fn document(
         repo_url(owner, name),
         crate::webui::encode_component(branch)
     );
-    let mut checks: Vec<_> = rules
+    let mut contexts: Vec<_> = rules
         .iter()
         .filter(|rule| rule.require_status_checks)
         .flat_map(|rule| rule.required_status_checks.clone())
         .collect();
-    checks.sort();
+    contexts.sort();
+    contexts.dedup();
+    let mut checks: Vec<_> = rules.iter().filter(|rule| rule.require_status_checks).flat_map(super::protection::check_documents).collect();
+    checks.sort_by(|a, b| a["context"].as_str().cmp(&b["context"].as_str()).then(a["app_id"].as_i64().cmp(&b["app_id"].as_i64())));
     checks.dedup();
     Ok(json!({
         "name": branch, "commit": super::commits::read_document(state, repo.id, &commit, owner, name).await?,
         "protected": protected, "protection_url": format!("{url}/protection"),
         "protection": {"enabled": protected, "required_status_checks": {
             "enforcement_level": if rules.iter().any(|rule| rule.enforce_admins) { "everyone" } else if protected { "non_admins" } else { "off" },
-            "contexts": checks,
-            "checks": checks.iter().map(|context| json!({"context": context, "app_id": null})).collect::<Vec<_>>(),
+            "contexts": contexts,
+            "checks": checks,
         }},
         "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(branch))},
     }))

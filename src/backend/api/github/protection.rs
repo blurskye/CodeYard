@@ -73,11 +73,15 @@ pub(super) async fn protected(
     Ok((rule, (actor.id, auth.token.id), url))
 }
 
+pub(super) fn check_documents(rule: &BranchProtectionRule) -> Vec<Value> {
+    rule.required_status_checks.iter().map(|context| rule.github_settings.checks.iter().find(|check| check["context"] == *context).cloned().unwrap_or_else(|| json!({"context": context, "app_id": null}))).collect()
+}
+
 fn checks(rule: &BranchProtectionRule, url: &str) -> Value {
     let url = format!("{url}/required_status_checks");
     json!({"url": url, "strict": rule.require_up_to_date_branch, "contexts_url": format!("{url}/contexts"),
         "contexts": rule.required_status_checks,
-        "checks": rule.required_status_checks.iter().map(|context| rule.github_settings.checks.iter().find(|check| check["context"] == *context).cloned().unwrap_or_else(|| json!({"context": context, "app_id": null}))).collect::<Vec<_>>()})
+        "checks": check_documents(rule)})
 }
 
 fn admins(rule: &BranchProtectionRule, url: &str) -> Value {
