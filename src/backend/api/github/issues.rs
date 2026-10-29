@@ -649,7 +649,7 @@ pub(super) fn pull_error(
 
 fn title(value: Option<&Value>) -> Result<Option<String>> {
     match value {
-        None => Ok(None),
+        None | Some(Value::Null) => Ok(None),
         Some(Value::String(title)) => Ok(Some(title.clone())),
         Some(Value::Number(title)) if title.is_i64() || title.is_u64() => {
             Ok(Some(title.to_string()))
@@ -665,6 +665,21 @@ fn text(value: &Value, field: &str) -> Result<Option<String>> {
         Some(Value::String(text)) => Ok(Some(text.clone())),
         _ => Err(Error::invalid(format!("Invalid {field}"))),
     }
+}
+
+fn assignee_names(names: Vec<String>) -> Result<Vec<String>> {
+    let mut unique = std::collections::BTreeSet::new();
+    for name in names {
+        unique.insert(name);
+        if unique.len() > db::assignees::MAX_ASSIGNEES as usize { return Err(Error::invalid("Too many assignees")); }
+    }
+    Ok(unique.into_iter().collect())
+}
+
+async fn resolve_assignees(pool: &db::DbPool, names: &[String]) -> Result<Vec<db::models::User>> {
+    let users = db::users::accounts::get_users_by_usernames(pool, names).await.map_err(Error::unavailable)?;
+    if users.len() != names.len() { return Err(Error::invalid("User cannot be assigned")); }
+    Ok(users)
 }
 
 #[derive(Default)]
@@ -743,30 +758,11 @@ pub(in crate::backend::api) async fn metadata(
                 None => Vec::new(),
             }
         };
-        let assignable = db::assignees::list_assignable_usernames(pool, repo.id)
-            .await
-            .map_err(Error::unavailable)?;
-        let mut users = Vec::new();
-        for name in names {
-            if !assignable
-                .iter()
-                .any(|candidate| candidate.eq_ignore_ascii_case(&name))
-            {
-                return Err(Error::invalid("User cannot be assigned"));
-            }
-            let user = db::users::accounts::get_user_by_username(pool, &name)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(|| Error::invalid("User cannot be assigned"))?;
-            if !users
-                .iter()
-                .any(|candidate: &db::models::User| candidate.id == user.id)
-            {
-                users.push(user);
-            }
-        }
-        if users.len() > db::assignees::MAX_ASSIGNEES as usize {
-            return Err(Error::invalid("Too many assignees"));
+        let names = assignee_names(names)?;
+        let users = resolve_assignees(pool, &names).await?;
+        let ids: Vec<_> = users.iter().map(|user| user.id).collect();
+        if db::assignees::assignable_user_ids(pool, repo.id, &ids).await.map_err(Error::unavailable)?.len() != ids.len() {
+            return Err(Error::invalid("User cannot be assigned"));
         }
         result.assignees = Some(users);
     }
@@ -966,7 +962,16 @@ async fn update(
     if matches!(item, AssignedItem::PullRequest(_)) && metadata.issue_type.is_some() {
         return Err(Error::invalid("Pull requests do not support issue types"));
     }
+    let metadata_only = title.is_none() && body.is_none() && requested_state.is_none() && reason.is_none() && (metadata.issue_type.is_some() || metadata.labels.is_some() || metadata.assignees.is_some() || metadata.milestone.is_some());
     let (number, title) = match item {
+        AssignedItem::Issue(id) if metadata_only => {
+            let issue = db::issues::get_issue_by_id(&state.pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            (issue.number, issue.title)
+        }
+        AssignedItem::PullRequest(id) if metadata_only => {
+            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            (pull.number, pull.title)
+        }
         AssignedItem::Issue(id) => {
             let issue = db::issues::get_issue_by_id(&state.pool, id)
                 .await
@@ -1027,23 +1032,7 @@ async fn change_assignees(
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth.ok_or_else(auth::required)?.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
-    let mut names = db::assignees::list_assignees(&state.pool, item)
-        .await
-        .map_err(Error::unavailable)?;
-    if remove {
-        names.retain(|name| {
-            !input
-                .assignees
-                .iter()
-                .any(|removed| removed.eq_ignore_ascii_case(name))
-        });
-    } else {
-        names.extend(input.assignees);
-    }
-    let plan = metadata(&state.pool, &repo, &actor, &json!({"assignees":names})).await?;
-    if plan.assignees.is_none() {
-        return Err(Error::new(StatusCode::FORBIDDEN, "Assignment denied"));
-    }
+    let names = assignee_names(input.assignees)?;
     let current = document(&state.pool, &repo, &p["owner"], item).await?;
     let number = current["number"]
         .as_i64()
@@ -1052,15 +1041,14 @@ async fn change_assignees(
     let title = current["title"]
         .as_str()
         .ok_or_else(|| Error::unavailable(()))?;
-    apply_metadata(
-        &state,
-        &actor,
-        &repo,
-        item,
-        (&p["owner"], number, title),
-        plan,
-    )
-    .await?;
+    use crate::backend::issues::assignments;
+    let target = assignments::Target { actor: &actor, repository: &repo, owner: &p["owner"], item, number, title };
+    if remove {
+        assignments::unassign(&state.pool, &target, &names).await.map_err(assignment_error)?;
+    } else {
+        let users = resolve_assignees(&state.pool, &names).await?;
+        assignments::assign(&state.pool, &state.notification_broadcaster, &target, &users).await.map_err(assignment_error)?;
+    }
     Ok(Json(document(&state.pool, &repo, &p["owner"], item).await?))
 }
 
