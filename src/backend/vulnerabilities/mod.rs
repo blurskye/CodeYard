@@ -138,7 +138,18 @@ pub struct Range {
     #[serde(default)]
     pub events: Vec<Value>,
 }
+/// The validated catalogue projection paired with its original OSV record.
+pub struct PreparedAdvisory {
+    pub(crate) advisory: Advisory,
+    pub(crate) document: Value,
+}
+
 impl Advisory {
+    pub fn prepare(self) -> Result<PreparedAdvisory> {
+        let document = self.global_document()?;
+        Ok(PreparedAdvisory { advisory: self, document })
+    }
+
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= 4 * 1024 * 1024,
@@ -346,7 +357,9 @@ impl Advisory {
 }
 
 pub async fn ingest(pool: &db::DbPool, bytes: &[u8]) -> Result<bool> {
-    let changed = db::vulnerabilities::upsert(pool, &Advisory::parse(bytes)?).await?;
+    let bytes = bytes.to_vec();
+    let record = tokio::task::spawn_blocking(move || Advisory::parse(&bytes)?.prepare()).await??;
+    let changed = db::vulnerabilities::upsert(pool, &record).await?;
     if changed {
         db::vulnerabilities::rescan_all(pool).await?;
     }
@@ -418,7 +431,7 @@ pub async fn synchronize(
             );
             bytes.extend_from_slice(&chunk);
         }
-        let records = tokio::task::spawn_blocking(move || -> Result<Vec<Advisory>> {
+        let records = tokio::task::spawn_blocking(move || -> Result<Vec<PreparedAdvisory>> {
             let mut archive = crate::backend::zip_archives::open(bytes, 1_000_000)?;
             let mut records = Vec::new();
             let mut expanded = 0u64;
@@ -442,7 +455,7 @@ pub async fn synchronize(
                 ensure!(expanded <= 2 * 1024 * 1024 * 1024, "Expanded OSV archive exceeds its limit");
                 ensure!(bytes.len() as u64 == declared, "OSV archive entry size mismatch");
                 // One record the catalogue cannot hold must not stop the rest of the archive.
-                match Advisory::parse(&bytes) {
+                match Advisory::parse(&bytes).and_then(Advisory::prepare) {
                     Ok(record) => records.push(record),
                     Err(error) => {
                         tracing::warn!(entry = entry.name(), %error, "OSV record was skipped")
@@ -455,10 +468,6 @@ pub async fn synchronize(
         // Repositories are rescanned once per archive, not once per changed record.
         let mut changed = false;
         for record in records {
-            if let Err(error) = record.global_document() {
-                tracing::warn!(advisory = %record.id, %error, "OSV record was skipped");
-                continue;
-            }
             changed |= db::vulnerabilities::upsert(pool, &record).await?;
         }
         if changed {
