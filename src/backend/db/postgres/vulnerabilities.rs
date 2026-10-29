@@ -1,7 +1,7 @@
 use crate::backend::{
     db::vulnerabilities::*,
     dependency_graph::Snapshot,
-    vulnerabilities::{self, Advisory},
+    vulnerabilities::{self, PreparedAdvisory},
 };
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
@@ -54,8 +54,8 @@ pub async fn save_settings(
     tx.commit().await?;
     Ok(())
 }
-pub async fn upsert(pool: &PgPool, advisory: &Advisory) -> Result<bool> {
-    let document = advisory.global_document()?;
+pub async fn upsert(pool: &PgPool, prepared: &PreparedAdvisory) -> Result<bool> {
+    let PreparedAdvisory { advisory, document } = prepared;
     let mut tx = pool.begin().await?;
     let changed=sqlx::query("INSERT INTO osv_advisories(id,modified,data) VALUES($1,$2,$3) ON CONFLICT(id) DO UPDATE SET modified=excluded.modified,data=excluded.data WHERE excluded.modified>osv_advisories.modified")
         .bind(&advisory.id).bind(advisory.modified).bind(serde_json::to_string(advisory)?).execute(&mut *tx).await?.rows_affected()>0;
