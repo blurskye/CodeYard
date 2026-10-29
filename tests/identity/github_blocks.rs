@@ -153,7 +153,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     for (a, b) in [(alice, bob), (bob, alice), (carol, alice)] {
-        db::following::follow_user(f.pool(), a, b).await.unwrap();
+        db::following::follow_user(f.pool(), a, b, &db::users::accounts::AccountCredential::Trusted).await.unwrap();
     }
     for actor in [bob, carol] {
         db::repositories::engagement::star_repo(f.pool(), actor, public.id)
@@ -594,7 +594,7 @@ async fn contract(pg: bool) {
         let pool = f.pool().clone();
         let follower =
             tokio::spawn(
-                async move { db::following::follow_user(&pool, bob, alice).await.is_err() },
+                async move { db::following::follow_user(&pool, bob, alice, &db::users::accounts::AccountCredential::Trusted).await.is_err() },
             );
         wait_until_blocked(f.pg(), pid, 3).await;
         gate.commit().await.unwrap();

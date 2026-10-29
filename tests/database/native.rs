@@ -2493,10 +2493,10 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     db::repositories::engagement::watch_repo(pool, reader.id, repo.id)
         .await
         .unwrap();
-    db::following::follow_user(pool, reader.id, owner.id)
+    db::following::follow_user(pool, reader.id, owner.id, &db::users::accounts::AccountCredential::Trusted)
         .await
         .unwrap();
-    assert!(db::following::follow_user(pool, reader.id, reader.id)
+    assert!(db::following::follow_user(pool, reader.id, reader.id, &db::users::accounts::AccountCredential::Trusted)
         .await
         .is_err());
     let rule = db::repositories::protection::upsert_branch_protection_rule(
