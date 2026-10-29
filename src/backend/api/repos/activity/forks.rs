@@ -46,7 +46,10 @@ pub async fn fork_repo(
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        user.id,
+        db::users::accounts::AccountActor::Session {
+            user_id: user.id,
+            session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        },
         source_repo.id,
         &owner,
     )

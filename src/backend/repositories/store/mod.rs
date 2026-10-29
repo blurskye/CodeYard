@@ -417,21 +417,23 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        actor: impl Into<db::users::accounts::AccountActor>,
         source: &RepoStore,
         options: &CopyOptions,
     ) -> Result<(), RepoError> {
+        let authority = actor.into();
+        let actor = authority.user_id();
         match (&self.0, &source.0) {
             (Backend::Local(local), Backend::Local(from)) => {
                 local
-                    .initialize_copy(pool, repo_id, source_repo_id, actor, from, options)
+                    .initialize_copy(pool, repo_id, source_repo_id, authority, from, options)
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
                 let source = rpc::repository_uuid(&from.disk_path)?;
                 let operation = Operation::InitializeCopy {
                     source,
-                    default_branch: options.default_branch.clone(),
+                    default_branch: rpc::wire::PublicationText::retain(&options.default_branch, authority),
                     template: options.template,
                     default_branch_only: options.default_branch_only,
                 };

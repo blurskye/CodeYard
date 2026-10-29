@@ -716,10 +716,11 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        authority: db::users::accounts::AccountActor,
         source: &LocalStore,
         options: &super::CopyOptions,
     ) -> Result<(), RepoError> {
+        let actor = authority.user_id();
         let default_branch = options.default_branch.as_str();
         // The row is already discoverable. Keep copied objects outside its live path
         // until the source-access check, on the same filesystem for atomic publication.
@@ -808,6 +809,18 @@ impl LocalStore {
             &copied,
         )
         .await?;
+        // Retain the initiating credential through copying, lock waits and namespace checks.
+        live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        if let db::users::accounts::AccountActor::Token { token_id, .. } = &authority {
+            let source_repository = access::current_repository(pool, source_repo_id).await
+                .map_err(|_| RepoError::authority_unavailable())?;
+            crate::backend::repositories::git_sessions::ReceiveCredential::Token(*token_id)
+                .authorize(pool, &source_repository, false).await.map_err(RepoError::from)?;
+        }
+        if !destination.is_gist {
+            live_write(pool, repo_id, actor, None, &History::SingleCommit, self.path(), self.node_id).await?;
+        }
+        access::credential_user(pool, &authority, true).await.map_err(RepoError::from)?;
         tokio::fs::rename(temporary.path(), self.path())
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;

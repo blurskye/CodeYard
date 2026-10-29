@@ -77,6 +77,10 @@ pub async fn create_repo(
 ) -> Result<(StatusCode, Json<RepoResponse>), (StatusCode, Json<ApiError>)> {
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
+    let authority = db::users::accounts::AccountActor::Session {
+        user_id: user.id,
+        session: crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    };
 
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
@@ -113,6 +117,7 @@ pub async fn create_repo(
         lifecycle::CreationInput {
             owner: creation_owner,
             properties: &properties,
+            admission: db::repositories::creation::CreationAdmission { authority: Some(&authority), advisory: None },
         },
         &req.name,
         req.description.as_deref(),
@@ -535,6 +540,10 @@ pub(crate) async fn create_repository(
             return creation_error(&ctx, values, page, status, None, message).await
         }
     };
+    let authority = db::users::accounts::AccountActor::Session {
+        user_id: user.id,
+        session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    };
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match target {
@@ -543,7 +552,7 @@ pub(crate) async fn create_repository(
         },
     };
     let result = if !values.source.is_empty() {
-        create_selection(&ctx, creation_owner, &values, files, &property_values).await
+        create_selection(&ctx, creation_owner, &values, files, &property_values, &authority).await
     } else {
         lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
@@ -551,6 +560,7 @@ pub(crate) async fn create_repository(
             lifecycle::CreationInput {
                 owner: creation_owner,
                 properties: &property_values,
+                admission: db::repositories::creation::CreationAdmission { authority: Some(&authority), advisory: None },
             },
             &values.name,
             Some(&values.description)
@@ -595,6 +605,7 @@ async fn create_selection(
     values: &NewRepositoryForm,
     files: InitialFiles,
     properties: &[db::organizations::properties::ValueInput],
+    authority: &db::users::accounts::AccountActor,
 ) -> Result<db::models::Repository, lifecycle::StorageError> {
     let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
     let source = source_name(&values.source).map_err(|(_, message)| lifecycle::StorageError {
@@ -624,6 +635,7 @@ async fn create_selection(
                     name: Some(&values.name),
                     default_branch_only: !values.all_branches,
                     properties,
+                    authority: Some(authority),
                 },
                 source.id,
                 source_owner,
@@ -641,15 +653,19 @@ async fn create_selection(
                     private: values.is_private,
                     all_branches: values.all_branches,
                     properties,
+                    authority: Some(authority),
                 },
             )
             .await
         }
     } else {
-        lifecycle::provision_with_initial_files(
+        lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
             &ctx.state.repos_path,
-            owner,
+            lifecycle::CreationInput {
+                owner, properties,
+                admission: db::repositories::creation::CreationAdmission { authority: Some(authority), advisory: None },
+            },
             &values.name,
             description,
             values.is_private,

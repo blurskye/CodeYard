@@ -1561,7 +1561,7 @@ async fn mutate(
                 cluster,
                 &ctx.state.repos_path,
                 &ctx.state.notification_broadcaster,
-                actor.id,
+                authority(),
                 repository.id,
                 owner,
             )

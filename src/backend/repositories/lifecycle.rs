@@ -191,6 +191,7 @@ async fn cleanup_failed_initialization(
 pub struct CreationInput<'a> {
     pub owner: repo_lifecycle::RepositoryCreationOwner,
     pub properties: &'a [db::organizations::properties::ValueInput],
+    pub admission: repo_lifecycle::CreationAdmission<'a>,
 }
 
 /// UUID directory names never change on a rename or ownership transfer.
@@ -209,6 +210,7 @@ pub async fn provision(
         CreationInput {
             owner,
             properties: &[],
+            admission: Default::default(),
         },
         name,
         description,
@@ -256,6 +258,7 @@ pub async fn provision_gist(
         CreationInput {
             owner,
             properties: &[],
+            admission: Default::default(),
         },
         name,
         None,
@@ -297,6 +300,7 @@ async fn provision_from(
     description: Option<&str>,
     options: ProvisionOptions<'_>,
     chosen: &[db::organizations::properties::ValueInput],
+    authority: Option<&db::users::accounts::AccountActor>,
 ) -> Result<Repository, StorageError> {
     let mut properties = inherited_properties(node.0, owner, options.creation_source).await?;
     // Values chosen in the creation form replace inherited ones.
@@ -312,6 +316,7 @@ async fn provision_from(
         CreationInput {
             owner,
             properties: &properties,
+            admission: repo_lifecycle::CreationAdmission { authority, advisory: None },
         },
         name,
         description,
@@ -382,6 +387,8 @@ async fn provision_stored(
         description.map(str::to_owned), creation.properties.to_vec(),
     );
     let owner = creation.owner;
+    let authority = creation.admission.authority.cloned();
+    let advisory = creation.admission.advisory.map(str::to_owned);
     let (private, gist) = (options.private, options.gist);
     let source = options.creation_source.map(|source| source.repository().clone());
     let template = matches!(options.creation_source, Some(CreationSource::Template { .. }));
@@ -400,7 +407,12 @@ async fn provision_stored(
         });
         provision_stored_owned(
             (&pool, context.as_ref()), &repos_path,
-            CreationInput { owner, properties: &properties }, &name, description.as_deref(),
+            CreationInput {
+                owner, properties: &properties,
+                admission: repo_lifecycle::CreationAdmission {
+                    authority: authority.as_ref(), advisory: advisory.as_deref(),
+                },
+            }, &name, description.as_deref(),
             ProvisionOptions { private, creation_source, gist },
         ).await
     }).await.map_err(|_| unavailable())?
@@ -446,7 +458,7 @@ async fn provision_stored_owned(
     let mut repository = if gist {
         repo_lifecycle::insert_gist_repository(pool, input).await
     } else {
-        repo_lifecycle::insert_repository_with_properties(pool, input, creation.properties).await
+        repo_lifecycle::insert_repository_with_admission(pool, input, creation.properties, creation.admission).await
     }
     .map_err(storage_error)?
     .ok_or(StorageError {
@@ -485,7 +497,7 @@ async fn provision_stored_owned(
                     pool,
                     repository.id,
                     source.id,
-                    owner.actor_id,
+                    creation.admission.authority.cloned().unwrap_or_else(|| owner.actor_id.into()),
                     &repo_store(source, context),
                     &super::store::CopyOptions {
                         default_branch: repository.default_branch.clone(),
@@ -592,6 +604,7 @@ pub async fn provision_with_initial_files(
         CreationInput {
             owner,
             properties: &[],
+            admission: Default::default(),
         },
         name,
         description,
@@ -609,7 +622,8 @@ pub async fn provision_with_initial_properties(
     private: bool,
     files: InitialFiles,
 ) -> Result<Repository, StorageError> {
-    let owner = input.owner;
+    let authority = input.admission.authority.cloned()
+        .unwrap_or_else(|| input.owner.actor_id.into());
     let repository =
         provision_with_properties(node, repos_path, input, name, description, private, None)
             .await?;
@@ -620,7 +634,7 @@ pub async fn provision_with_initial_properties(
     commit_initial_files(
         pool,
         context,
-        owner.actor_id,
+        authority,
         &repository,
         description,
         files,
@@ -636,11 +650,12 @@ pub async fn provision_with_initial_properties(
 async fn commit_initial_files(
     pool: &db::DbPool,
     context: Option<&NodeContext>,
-    actor: i64,
+    authority: db::users::accounts::AccountActor,
     repository: &Repository,
     description: Option<&str>,
     files: InitialFiles,
 ) -> Result<(), StorageError> {
+    let actor = authority.user_id();
     let user = db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| unavailable())?
@@ -683,10 +698,11 @@ async fn commit_initial_files(
     };
     let content: Vec<u8> = texts.iter().flat_map(|(_, text)| text.bytes()).collect();
     let store = repo_store(repository, context);
-    let prepared = store
+    let mut prepared = store
         .prepare_upload(&write, &content, &user.username, &user.commit_email())
         .await
         .map_err(git_storage_error)?;
+    prepared.authority = Some(authority);
     store
         .publish_file_as(pool, repository.id, actor, &prepared)
         .await
@@ -890,10 +906,12 @@ pub async fn fork(
     context: Option<&NodeContext>,
     repos_path: &Path,
     broadcaster: &crate::backend::notifications::NotificationBroadcaster,
-    actor: i64,
+    actor: impl Into<db::users::accounts::AccountActor>,
     source_id: i64,
     owner: &str,
 ) -> Result<Repository, StorageError> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     fork_into(
         pool,
         context,
@@ -904,6 +922,7 @@ pub async fn fork(
             name: None,
             default_branch_only: false,
             properties: &[],
+            authority: Some(&authority),
         },
         source_id,
         owner,
@@ -917,6 +936,7 @@ pub struct ForkOptions<'a> {
     pub default_branch_only: bool,
     /// Organization property values chosen for the copy.
     pub properties: &'a [db::organizations::properties::ValueInput],
+    pub authority: Option<&'a db::users::accounts::AccountActor>,
 }
 
 pub async fn fork_into(
@@ -929,6 +949,7 @@ pub async fn fork_into(
     owner: &str,
 ) -> Result<Repository, StorageError> {
     let actor = options.owner.actor_id;
+    live_creation_actor(pool, actor, options.authority).await?;
     repo_lifecycle::check_creation_authority(pool, options.owner)
         .await
         .map_err(storage_error)?;
@@ -953,6 +974,7 @@ pub async fn fork_into(
         });
     }
     if let Some(existing) = existing_fork(pool, actor, options.owner.target, source.id).await? {
+        live_creation_actor(pool, actor, options.authority).await?;
         return Ok(existing);
     }
     let user = db::users::accounts::get_user_by_id(pool, actor)
@@ -990,6 +1012,7 @@ pub async fn fork_into(
             gist: false,
         },
         options.properties,
+        options.authority,
     )
     .await
     {
@@ -998,6 +1021,7 @@ pub async fn fork_into(
             if let Some(existing) =
                 existing_fork(pool, actor, options.owner.target, source.id).await?
             {
+                live_creation_actor(pool, actor, options.authority).await?;
                 return Ok(existing);
             }
             return Err(error);
@@ -1070,6 +1094,20 @@ pub async fn fork_into(
     Ok(fork)
 }
 
+async fn live_creation_actor(
+    pool: &db::DbPool,
+    actor: i64,
+    authority: Option<&db::users::accounts::AccountActor>,
+) -> Result<(), StorageError> {
+    if let Some(authority) = authority {
+        if authority.user_id() != actor {
+            return Err(storage_error(db::users::accounts::AccountRestricted.into()));
+        }
+        super::access::credential_user(pool, authority, true).await.map_err(storage_error)?;
+    }
+    Ok(())
+}
+
 async fn existing_fork(
     pool: &db::DbPool,
     actor: i64,
@@ -1110,6 +1148,7 @@ pub struct TemplateOptions<'a> {
     pub all_branches: bool,
     /// Organization property values chosen for the copy.
     pub properties: &'a [db::organizations::properties::ValueInput],
+    pub authority: Option<&'a db::users::accounts::AccountActor>,
 }
 
 pub async fn generate(
@@ -1125,10 +1164,12 @@ pub async fn generate(
         private,
         all_branches,
         properties,
+        authority,
     } = options;
     if let Some(description) = description {
         validate_description(description)?;
     }
+    live_creation_actor(node.0, owner.actor_id, authority).await?;
     repo_lifecycle::check_creation_authority(node.0, owner)
         .await
         .map_err(storage_error)?;
@@ -1166,6 +1207,7 @@ pub async fn generate(
     let name = name.to_owned();
     let description = description.map(str::to_owned);
     let properties = properties.to_vec();
+    let authority = authority.cloned();
     let task = tokio::spawn(async move {
         provision_from(
             (&pool, context.as_ref()),
@@ -1182,6 +1224,7 @@ pub async fn generate(
                 gist: false,
             },
             &properties,
+            authority.as_ref(),
         )
         .await
     });

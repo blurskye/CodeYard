@@ -274,7 +274,7 @@ async fn submit(
             "save"=>{advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&value).await?;}
             "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
             "cve"=>advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
-            "fork"=>{workflow::private_fork(&ctx.state,actor,&loaded.repository,&ghsa).await?;}
+            "fork"=>{workflow::private_fork(&ctx.state,authority.clone(),&loaded.repository,&ghsa).await?;}
             _=>anyhow::bail!(advisories::Refusal::Invalid),
         }
         Ok::<_,anyhow::Error>(ghsa.clone())
