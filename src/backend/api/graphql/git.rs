@@ -19,14 +19,17 @@ pub(super) fn commit(repo: i64, row: &CommitInfo, scope: &str, request: &Request
     let date = |time| chrono::DateTime::from_timestamp(time, 0).ok_or_else(|| unavailable(()));
     let authored = date(row.timestamp)?;
     let committed = date(row.committer_timestamp)?;
-    let actor = |name: &str, email: &str, date: chrono::DateTime<chrono::Utc>| json!({"__typename":"GitActor","_repo":repo,"_scope":scope,"_email":email,"name":name,"email":email,"date":date});
-    let author = actor(&row.author_name, &row.author_email, authored);
+    let zone = |minutes: i32| minutes.checked_mul(60).and_then(chrono::FixedOffset::east_opt).ok_or_else(|| unavailable(()));
+    let author_date = authored.with_timezone(&zone(row.author_offset_minutes)?);
+    let committer_date = committed.with_timezone(&zone(row.committer_offset_minutes)?);
+    let actor = |name: &str, email: &str, date: chrono::DateTime<chrono::FixedOffset>| json!({"__typename":"GitActor","_repo":repo,"_scope":scope,"_email":email,"name":name,"email":email,"date":date});
+    let author = actor(&row.author_name, &row.author_email, author_date);
     let mut authors = vec![author.clone()];
     if let Ok(trailers) = git2::message_trailers_strs(&row.message) {
         for (_, value) in trailers.iter().filter(|(key, _)| key.eq_ignore_ascii_case("Co-authored-by")) {
             if let Some((name, email)) = value.rsplit_once('<').and_then(|(name, rest)| rest.strip_suffix('>').map(|email| (name.trim(), email.trim()))) {
                 if !name.is_empty() && !email.is_empty() && !authors.iter().any(|actor| actor["email"].as_str().is_some_and(|existing| existing.eq_ignore_ascii_case(email))) {
-                    authors.push(actor(name, email, authored));
+                    authors.push(actor(name, email, author_date));
                 }
             }
         }
@@ -37,7 +40,7 @@ pub(super) fn commit(repo: i64, row: &CommitInfo, scope: &str, request: &Request
         "message":row.message,"messageHeadline":row.message.lines().next().unwrap_or(""),"messageBody":row.message.split_once('\n').map(|(_,s)|s.trim_start_matches('\n')).unwrap_or(""),
         "authoredDate":authored,"committedDate":committed,
         "author":author,"_authors":authors,
-        "committer":actor(&row.committer_name,&row.committer_email,committed)}),
+        "committer":actor(&row.committer_name,&row.committer_email,committer_date)}),
     )
 }
 
