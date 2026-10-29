@@ -53,20 +53,17 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, false).await?;
-    let configurations = db::private_registries::list(&state.pool, actor.user.id, org)
+    let (offset, limit) = page.window()?;
+    let (total, configurations) = db::private_registries::list(&state.pool, actor.user.id, org, None, offset as i64, limit as i64)
         .await
         .map_err(error)?;
-    let total = configurations.len();
-    let (offset, limit) = page.window()?;
     let configurations = configurations
         .into_iter()
-        .skip(offset)
-        .take(limit)
         .map(|r| r.document())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(error)?;
     Ok((
-        page.headers(&uri, offset.saturating_add(limit) < total)?,
+        page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,
         Json(json!({"total_count":total, "configurations":configurations})),
     )
         .into_response())
@@ -78,11 +75,11 @@ async fn registry(
     Path((org, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, false).await?;
-    let registry = db::private_registries::list(&state.pool, actor.user.id, org)
+    let registry = db::private_registries::list(&state.pool, actor.user.id, org, Some(&name), 0, 1)
         .await
         .map_err(error)?
-        .into_iter()
-        .find(|r| r.name.eq_ignore_ascii_case(&name))
+        .1.into_iter()
+        .next()
         .ok_or_else(Error::missing)?;
     Ok(Json(registry.document().map_err(error)?))
 }
@@ -135,6 +132,7 @@ async fn create(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         org,
         None,
         &body,
@@ -162,6 +160,7 @@ async fn update(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         org,
         Some(&name.to_ascii_uppercase()),
         &body,
@@ -178,7 +177,7 @@ async fn remove(
     Path((org, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    db::private_registries::delete(&state.pool, actor.user.id, org, &name.to_ascii_uppercase())
+    db::private_registries::delete(&state.pool, actor.user.id, &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash), org, &name.to_ascii_uppercase())
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

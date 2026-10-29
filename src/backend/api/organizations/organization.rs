@@ -645,10 +645,10 @@ pub(super) async fn respond_with_hook_draft(
         }
         if model.tab == "private-registries" {
             let registries =
-                match crate::backend::db::private_registries::list(&ctx.state.pool, actor, org)
+                match crate::backend::db::private_registries::list(&ctx.state.pool, actor, org, None, 0, 100)
                     .await
                 {
-                    Ok(registries) => registries,
+                    Ok((_, registries)) => registries,
                     Err(crate::backend::db::private_registries::RegistryError::Secret(
                         crate::backend::db::secrets::SecretsError::Denied
                         | crate::backend::db::secrets::SecretsError::NotFound,

@@ -8,34 +8,46 @@ use crate::backend::{
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-pub async fn list(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<Registry>, RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
-    let mut registries: Vec<Registry> = sqlx::query_as("SELECT name,configuration,created_at,updated_at FROM org_private_registries WHERE org_id=$1 ORDER BY name")
-        .bind(org).fetch_all(&mut *tx).await?;
-    let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND owner_user_id IS NULL")
-        .bind(org).fetch_all(&mut *tx).await?;
-    for registry in &mut registries {
-        let mut config: Configuration = serde_json::from_str(&registry.configuration)?;
-        if let Some(selected) = config.selected_repository_ids.as_mut() {
-            selected.retain(|id| ids.contains(id));
-        }
-        registry.configuration = serde_json::to_string(&config)?;
+async fn prune(c: &mut sqlx::SqliteConnection, org: i64, configurations: &mut [Configuration]) -> Result<(), RegistryError> {
+    let ids: Vec<i64> = configurations.iter().flat_map(|config| config.selected_repository_ids.iter().flatten().copied()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+    let mut owned = std::collections::HashSet::<i64>::new();
+    for chunk in ids.chunks(500) {
+        owned.extend(sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND owner_user_id IS NULL AND id IN (SELECT value FROM json_each($2))")
+            .bind(org).bind(serde_json::to_string(chunk)?).fetch_all(&mut *c).await?);
     }
+    for config in configurations {
+        if let Some(selected) = config.selected_repository_ids.as_mut() { selected.retain(|id| owned.contains(id)); }
+    }
+    Ok(())
+}
+
+pub async fn list(pool: &SqlitePool, actor: i64, org: i64, name: Option<&str>, offset: i64, limit: i64) -> Result<(i64, Vec<Registry>), RegistryError> {
+    if offset < 0 || !(1..=101).contains(&limit) { return Err(RegistryError::Invalid("page")); }
+    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM org_private_registries WHERE org_id=$1 AND ($2 IS NULL OR lower(name)=lower($2))")
+        .bind(org).bind(name).fetch_one(&mut *tx).await?;
+    let mut registries: Vec<Registry> = sqlx::query_as("SELECT name,configuration,created_at,updated_at FROM org_private_registries WHERE org_id=$1 AND ($2 IS NULL OR lower(name)=lower($2)) ORDER BY name LIMIT $3 OFFSET $4")
+        .bind(org).bind(name).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    let mut configurations = registries.iter().map(|registry| serde_json::from_str::<Configuration>(&registry.configuration)).collect::<Result<Vec<_>, _>>()?;
+    prune(&mut tx, org, &mut configurations).await?;
+    for (registry, config) in registries.iter_mut().zip(configurations) { registry.configuration = serde_json::to_string(&config)?; }
     tx.commit().await?;
-    Ok(registries)
+    Ok((total, registries))
 }
 
 pub async fn save(
     pool: &SqlitePool,
     encryptor: Option<&SecretEncryptor>,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
     name: Option<&str>,
     input: &Value,
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
     let mut tx = super::dependabot::authorized(pool, actor, org).await?;
-    let stored: Option<String> = match name {
+    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(SecretsError::authority)?;
+    let mut stored: Option<String> = match name {
         Some(name) => Some(
             sqlx::query_scalar(
                 "SELECT configuration FROM org_private_registries WHERE org_id=$1 AND name=$2",
@@ -48,6 +60,13 @@ pub async fn save(
         ),
         None => None,
     };
+    if input.as_object().is_some_and(|input| !input.contains_key("selected_repository_ids")) {
+        if let Some(document) = stored.as_mut() {
+            let mut config: Configuration = serde_json::from_str(document)?;
+            prune(&mut tx, org, std::slice::from_mut(&mut config)).await?;
+            *document = serde_json::to_string(&config)?;
+        }
+    }
     let config = private_registries::configuration(stored.as_deref(), input)?;
     config.validate(value, stored.is_some())?;
     if let Some(ids) = &config.selected_repository_ids {
@@ -93,10 +112,12 @@ pub async fn save(
 pub async fn delete(
     pool: &SqlitePool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
     name: &str,
 ) -> Result<(), RegistryError> {
     let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await.map_err(SecretsError::authority)?;
     let deleted = sqlx::query("DELETE FROM org_private_registries WHERE org_id=$1 AND name=$2")
         .bind(org)
         .bind(name)
