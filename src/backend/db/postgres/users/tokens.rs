@@ -3,6 +3,63 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
+/// The initiating credential is checked inside the same transaction as its repository write.
+/// This only narrows authority; the caller must also hold native repository write authority.
+pub(crate) async fn repository_write_on(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    token: i64,
+    actor: i64,
+    repo: i64,
+    permission: &str,
+) -> Result<bool> {
+    use crate::backend::{db::fine_grained_tokens::Bounds, identity::{fine_grained, github_apps, oauth_apps}};
+    let live: Option<String> = sqlx::query_scalar("SELECT u.username FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 AND t.user_id=$2 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF t")
+        .bind(token).bind(actor).fetch_optional(&mut **tx).await?;
+    let Some(username) = live else { return Ok(false); };
+    if username == crate::backend::db::ci_tokens::BOT {
+        let job: Option<(i64, String)> = sqlx::query_as("SELECT r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND t.revoked_at IS NULL AND r.status='running' FOR SHARE OF t,r")
+            .bind(token).fetch_optional(&mut **tx).await?;
+        return Ok(match job {
+            Some((id, permissions)) => id == repo && serde_json::from_str::<crate::backend::ci::tokens::Permissions>(&permissions)?.allows(permission, true),
+            None => false,
+        });
+    }
+    let bounds: Option<Bounds> = sqlx::query_as(&format!("{} FOR SHARE OF f,t", super::super::fine_grained_tokens::BOUNDS))
+        .bind(token).fetch_optional(&mut **tx).await?;
+    if let Some(bounds) = bounds {
+        let selected: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.id=$1 AND NOT r.is_gist AND (($2::bigint IS NULL AND r.owner_user_id=$3) OR r.owner_org_id=$2) AND ($4='all' OR ($4='selected' AND EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id=$5 AND s.repo_id=r.id))))")
+            .bind(repo).bind(bounds.owner_org_id).bind(actor).bind(&bounds.repository_access).bind(token).fetch_one(&mut **tx).await?;
+        let active = bounds.active();
+        let permissions = serde_json::from_str(&bounds.permissions)?;
+        return Ok(active && selected && fine_grained::allows(&permissions, &permission.replace('-', "_"), true));
+    }
+    let bound: Option<(i64, String, String)> = sqlx::query_as("SELECT installation_id,permissions,repositories FROM github_app_tokens WHERE token_id=$1 FOR SHARE")
+        .bind(token).fetch_optional(&mut **tx).await?;
+    if let Some((installation, permissions, repositories)) = bound {
+        let selected: Vec<i64> = serde_json::from_str(&repositories)?;
+        let covers: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users u ON u.id=a.owner_id JOIN repositories r ON r.id=$2 WHERE i.id=$1 AND i.suspended_at IS NULL AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))")
+            .bind(installation).bind(repo).fetch_one(&mut **tx).await?;
+        return Ok(covers && (selected.is_empty() || selected.contains(&repo)) && github_apps::allows(&serde_json::from_str(&permissions)?, &permission.replace('-', "_"), true));
+    }
+    let oauth: Option<(String, String)> = sqlx::query_as("SELECT client_id,scopes FROM oauth_app_tokens WHERE token_id=$1 FOR SHARE")
+        .bind(token).fetch_optional(&mut **tx).await?;
+    if let Some((client, scopes)) = oauth {
+        let app: Option<(i64, String)> = sqlx::query_as("SELECT a.id,a.permissions FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF a")
+            .bind(&client).fetch_optional(&mut **tx).await?;
+        if let Some((app, permissions)) = app {
+            let covers: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_installations i JOIN repositories r ON r.id=$2 WHERE i.app_id=$1 AND i.suspended_at IS NULL AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))")
+                .bind(app).bind(repo).fetch_one(&mut **tx).await?;
+            return Ok(covers && github_apps::allows(&serde_json::from_str(&permissions)?, &permission.replace('-', "_"), true));
+        }
+        let exists: bool = sqlx::query_scalar("SELECT $1=$2 OR EXISTS(SELECT 1 FROM oauth_applications WHERE client_id=$1)")
+            .bind(client).bind(oauth_apps::CLI_CLIENT).fetch_one(&mut **tx).await?;
+        return Ok(exists && oauth_apps::allows(&scopes, "/repos/owner/repo", true));
+    }
+    let refused: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE r.id=$1 AND NOT p.classic_allowed)")
+        .bind(repo).fetch_one(&mut **tx).await?;
+    Ok(!refused)
+}
+
 pub async fn create_token(
     pool: &PgPool,
     user_id: i64,

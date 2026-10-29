@@ -723,6 +723,7 @@ pub async fn add_asset(
         name,
         release_id,
         AssetUpload {
+            token: None,
             name: filename,
             label,
             content_type: "application/octet-stream",
@@ -733,6 +734,7 @@ pub async fn add_asset(
 }
 
 pub struct AssetUpload<'a> {
+    pub token: Option<i64>,
     pub name: &'a str,
     pub label: Option<&'a str>,
     pub content_type: &'a str,
@@ -749,6 +751,7 @@ pub async fn upload_asset(
     input: AssetUpload<'_>,
 ) -> Result<ReleaseAsset, ReleaseError> {
     let AssetUpload {
+        token,
         name: filename,
         label,
         content_type,
@@ -801,7 +804,7 @@ pub async fn upload_asset(
     )
     .await
     .map_err(ReleaseError::Upload)?;
-    let linked = db::releases::add_release_asset(
+    let linked = db::releases::add_release_asset_with_token(
         pool,
         actor,
         repository.id,
@@ -813,6 +816,7 @@ pub async fn upload_asset(
             content_type,
             size,
         },
+        token,
     )
     .await
     .map_err(write_error);

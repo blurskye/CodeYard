@@ -183,9 +183,13 @@ native_operation!(crate::backend::db::postgres::releases::delete_release,
     crate::backend::db::sqlite::releases::delete_release,
     fn delete_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64) -> Result<Vec<File>>);
 
+pub async fn add_release_asset(pool: &DbPool, actor: i64, repo: i64, release: i64, asset: &NewReleaseAsset<'_>) -> Result<ReleaseAsset> {
+    add_release_asset_with_token(pool, actor, repo, release, asset, None).await
+}
+
 native_operation!(crate::backend::db::postgres::releases::add_release_asset,
     crate::backend::db::sqlite::releases::add_release_asset,
-    fn add_release_asset(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, asset: &NewReleaseAsset<'_>) -> Result<ReleaseAsset>);
+    fn add_release_asset_with_token(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64, asset: &NewReleaseAsset<'_>, token: Option<i64>) -> Result<ReleaseAsset>);
 
 // Removes an asset and its unused file, with durable object cleanup in the same transaction.
 native_operation!(crate::backend::db::postgres::releases::delete_release_asset,

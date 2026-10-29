@@ -266,8 +266,12 @@ pub async fn add_release_asset(
     repo_id: i64,
     release_id: i64,
     asset: &NewReleaseAsset<'_>,
+    token: Option<i64>,
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    if let Some(token) = token {
+        anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor_id, repo_id, "contents").await?, ReleaseRefusal::Denied);
+    }
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     anyhow::ensure!(!release.is_immutable, ReleaseRefusal::Immutable);
     let taken: Option<i64> =
