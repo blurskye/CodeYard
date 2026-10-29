@@ -77,7 +77,7 @@ pub struct InvitationFilter {
 }
 
 native_operation!(crate::backend::db::postgres::organizations::invitations::create_organization_invitation, crate::backend::db::sqlite::organizations::invitations::create_organization_invitation,
-    fn create_organization_invitation(pool: &DbPool, actor: i64, org: i64, input: &NewInvitation, owner_only: bool) -> Result<OrganizationOutcome<OrgInvitation>>);
+    fn create_organization_invitation(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, input: &NewInvitation, owner_only: bool) -> Result<OrganizationOutcome<OrgInvitation>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::invitation_page, crate::backend::db::sqlite::organizations::invitations::invitation_page,
     fn invitation_page(pool: &DbPool, actor: i64, org: i64, filter: &InvitationFilter, window: (i64,i64)) -> Result<OrganizationOutcome<Vec<OrgInvitation>>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::invitation_teams, crate::backend::db::sqlite::organizations::invitations::invitation_teams,
@@ -85,12 +85,12 @@ native_operation!(crate::backend::db::postgres::organizations::invitations::invi
 native_operation!(crate::backend::db::postgres::organizations::invitations::invitation_team_counts, crate::backend::db::sqlite::organizations::invitations::invitation_team_counts,
     fn invitation_team_counts(pool: &DbPool, ids: &[i64]) -> Result<std::collections::HashMap<i64,i64>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::cancel_invitation_id, crate::backend::db::sqlite::organizations::invitations::cancel_invitation_id,
-    fn cancel_invitation_id(pool: &DbPool, actor: i64, org: i64, id: i64, owner_only: bool) -> Result<OrganizationOutcome<()>>);
+    fn cancel_invitation_id(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, id: i64, owner_only: bool) -> Result<OrganizationOutcome<()>>);
 
 native_operation!(crate::backend::db::postgres::organizations::invitations::invite_organization_member, crate::backend::db::sqlite::organizations::invitations::invite_organization_member,
     fn invite_organization_member(pool: &DbPool, actor: i64, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgInvitation>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::set_organization_invitation_by_owner, crate::backend::db::sqlite::organizations::invitations::set_organization_invitation_by_owner,
-    fn set_organization_invitation_by_owner(pool: &DbPool, actor: i64, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgInvitation>>);
+    fn set_organization_invitation_by_owner(pool: &DbPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, org: i64, target: i64, role: OrgRole) -> Result<OrganizationOutcome<OrgInvitation>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::list_organization_invitations, crate::backend::db::sqlite::organizations::invitations::list_organization_invitations,
     fn list_organization_invitations(pool: &DbPool, actor: i64, org: i64, page: OrganizationPage) -> Result<OrganizationOutcome<Vec<OrgInvitation>>>);
 native_operation!(crate::backend::db::postgres::organizations::invitations::cancel_organization_invitation, crate::backend::db::sqlite::organizations::invitations::cancel_organization_invitation,
