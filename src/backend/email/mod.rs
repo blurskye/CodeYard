@@ -85,17 +85,30 @@ pub async fn signup_decision(pool: &DbPool, email: Option<&str>, username: &str,
     }
 }
 
-/// Sends a test message now, not through the outbox, so the answer is the server's.
+#[derive(Debug, thiserror::Error)]
+pub enum TestMailError {
+    #[error("A live unrestricted administrator session is required")]
+    Authority(crate::backend::identity::sessions::AccountAuthorityError),
+    #[error("Your account has no email address. Add one in Settings under Email address.")]
+    NoAddress,
+    #[error("{0}")]
+    Delivery(String),
+}
+
+/// Rechecks the initiating administrator after configuration loading, at send admission.
 pub async fn send_test(
     pool: &DbPool,
     secrets: Option<&SecretEncryptor>,
-    to: &str,
-) -> Result<(), String> {
-    let (config, _) = config::load(pool, secrets)
-        .await?
-        .ok_or("Email is not set up. Save the settings first.")?;
+    session: &str,
+) -> Result<String, TestMailError> {
+    let (config, _) = config::load(pool, secrets).await.map_err(TestMailError::Delivery)?
+        .ok_or_else(|| TestMailError::Delivery("Email is not set up. Save the settings first.".into()))?;
+    let admin = crate::backend::identity::sessions::administrator(pool, Some(session)).await
+        .map_err(TestMailError::Authority)?;
+    let to = admin.email.as_deref().map(str::trim).filter(|email| !email.is_empty()).ok_or(TestMailError::NoAddress)?;
     let mail = messages::test_message();
-    send::send(&config, to, &mail.subject, &mail.body).await
+    send::send(&config, to, &mail.subject, &mail.body).await.map_err(TestMailError::Delivery)?;
+    Ok(to.to_owned())
 }
 
 #[cfg(test)]
