@@ -219,8 +219,9 @@ pub async fn unlock_repository(
     let Some(row) = scoped(&mut tx, actor, org, migration).await? else {
         return Ok(false);
     };
-    let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE LOWER(name)=LOWER($1) AND (($3 IS NULL AND owner_user_id=$2) OR owner_org_id=$3)").bind(name).bind(actor).bind(org).fetch_optional(&mut *tx).await?;
-    let Some(repo) = repo.filter(|repo| row.repository_ids().is_ok_and(|ids| ids.contains(repo)))
+    let ids = row.repository_ids()?;
+    let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id IN (SELECT value FROM json_each($4)) AND LOWER(name)=LOWER($1) AND (($3 IS NULL AND owner_user_id=$2) OR owner_org_id=$3) ORDER BY (name=$1) DESC,id LIMIT 1").bind(name).bind(actor).bind(org).bind(serde_json::to_string(&ids)?).fetch_optional(&mut *tx).await?;
+    let Some(repo) = repo
     else {
         return Ok(false);
     };

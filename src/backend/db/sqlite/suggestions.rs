@@ -174,7 +174,12 @@ async fn prepare(
             } else {
                 reason.into()
             };
-            (Value::String(reason.into()), name, issue.state == "closed")
+            let duplicate: Option<i64> = sqlx::query_scalar("SELECT duplicate_id FROM issue_duplicates WHERE issue_id=?1")
+                .bind(issue.id).fetch_optional(&mut **tx).await?;
+            let current = issue.state == "closed"
+                && issue.state_reason.as_deref().unwrap_or("completed") == reason
+                && duplicate == target;
+            (Value::String(reason.into()), name, current)
         }
     };
     Ok(Prepared {
