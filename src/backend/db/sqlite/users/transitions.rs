@@ -309,11 +309,21 @@ pub async fn change_email(
     {
         return Ok(EmailChange::Taken);
     }
+    let changed: bool = sqlx::query_scalar("SELECT email IS NOT ?2 FROM users WHERE id=?1")
+        .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
+    let verified: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_emails WHERE user_id=?1 AND lower(email)=lower(?2) AND verified)")
+        .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
+    if changed {
+        sqlx::query("DELETE FROM email_tokens WHERE user_id=?1").bind(user_id).execute(&mut *tx).await?;
+    }
+    sqlx::query("DELETE FROM user_emails WHERE user_id=?1 AND lower(email)=lower(?2)")
+        .bind(user_id).bind(email).execute(&mut *tx).await?;
     let user = sqlx::query_as::<_, User>(
-        "UPDATE users SET email_verified=CASE WHEN email IS NOT ?2 THEN FALSE ELSE email_verified END,email=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *",
+        "UPDATE users SET email_verified=CASE WHEN email IS NOT ?2 THEN ?3 ELSE email_verified END,email=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *",
     )
     .bind(user_id)
     .bind(email)
+    .bind(verified)
     .fetch_optional(&mut *tx)
     .await?;
     let Some(user) = user else {
@@ -349,6 +359,9 @@ pub async fn change_admin_role(
     let Some(user) = user else {
         return Ok(RoleChange::Missing);
     };
+    if !admin {
+        crate::backend::db::sqlite::ci::stop_actor_ci_runs(&mut tx, target).await?;
+    }
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'user.admin_role','user',?2,?3)")
         .bind(actor.user_id).bind(target).bind(serde_json::json!({"is_admin":admin,"outcome":"applied"}).to_string()).execute(&mut *tx).await?;
     tx.commit().await?;

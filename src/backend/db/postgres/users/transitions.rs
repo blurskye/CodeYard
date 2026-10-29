@@ -406,11 +406,21 @@ pub async fn change_email(
     {
         return Ok(EmailChange::Taken);
     }
+    let changed: bool = sqlx::query_scalar("SELECT email IS DISTINCT FROM $2 FROM users WHERE id=$1")
+        .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
+    let verified: bool = sqlx::query_scalar("SELECT COALESCE(bool_or(verified),FALSE) FROM user_emails WHERE user_id=$1 AND lower(email)=lower($2)")
+        .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
+    if changed {
+        sqlx::query("DELETE FROM email_tokens WHERE user_id=$1").bind(user_id).execute(&mut *tx).await?;
+    }
+    sqlx::query("DELETE FROM user_emails WHERE user_id=$1 AND lower(email)=lower($2)")
+        .bind(user_id).bind(email).execute(&mut *tx).await?;
     let user = sqlx::query_as::<_, User>(
-        "UPDATE users SET email_verified=CASE WHEN email IS DISTINCT FROM $2 THEN FALSE ELSE email_verified END,email=$2,updated_at=NOW() WHERE id=$1 RETURNING *",
+        "UPDATE users SET email_verified=CASE WHEN email IS DISTINCT FROM $2 THEN $3 ELSE email_verified END,email=$2,updated_at=NOW() WHERE id=$1 RETURNING *",
     )
     .bind(user_id)
     .bind(email)
+    .bind(verified)
     .fetch_optional(&mut *tx)
     .await;
     // A concurrent claim of the same address loses on the unique constraint.
@@ -454,6 +464,9 @@ pub async fn change_admin_role(
     let Some(user) = user else {
         return Ok(RoleChange::Missing);
     };
+    if !admin {
+        crate::backend::db::postgres::ci::stop_actor_ci_runs(&mut tx, target).await?;
+    }
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'user.admin_role','user',$2,$3)")
         .bind(actor.user_id).bind(target).bind(serde_json::json!({"is_admin":admin,"outcome":"applied"})).execute(&mut *tx).await?;
     tx.commit().await?;

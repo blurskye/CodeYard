@@ -7,10 +7,11 @@ use super::authority::*;
 
 pub async fn recover_suspended_organization_owner(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::transitions::AdministratorActor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if sqlx::query_scalar::<_, i64>("SELECT id FROM organizations WHERE id=?1")
         .bind(org)
@@ -20,14 +21,7 @@ pub async fn recover_suspended_organization_owner(
     {
         return Ok(Missing);
     }
-    let admin: bool = sqlx::query_scalar(
-        "SELECT is_admin AND NOT is_banned AND NOT must_change_password FROM users WHERE id=?1",
-    )
-    .bind(actor)
-    .fetch_optional(&mut *tx)
-    .await?
-    .unwrap_or(false);
-    if !admin {
+    if !crate::backend::db::sqlite::users::transitions::active_admin_session(&mut tx, &actor).await? {
         return Ok(Denied);
     }
     if remaining_active_owner(&mut tx, org, -1).await? {
@@ -51,7 +45,7 @@ pub async fn recover_suspended_organization_owner(
     .await?;
     let audit = serde_json::json!({"reason":"no_usable_owner","previous_role":old,"replacement_user_id":target});
     sqlx::query("INSERT INTO audit_log(org_id,actor_id,action,target_type,target_id,metadata) VALUES(?1,?2,'org.governance.recover_owner','org_membership',?3,?4)")
-        .bind(org).bind(actor).bind(member.id).bind(audit.to_string()).execute(&mut *tx).await?;
+        .bind(org).bind(actor.user_id).bind(member.id).bind(audit.to_string()).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(member))
 }
