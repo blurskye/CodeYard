@@ -101,6 +101,40 @@ fn repository_matches_path(
     }
 }
 
+async fn live_pull_read(
+    pool: &db::DbPool,
+    repo_id: i64,
+    actor: super::PullHeadActor,
+    path: &Path,
+    node_id: Option<Option<i64>>,
+) -> Result<(), RepoError> {
+    if let Some(token) = actor.token {
+        let user = db::users::tokens::token_user(pool, token, false).await
+            .map_err(|_| RepoError::authority_unavailable())?
+            .filter(|user| user.id == actor.user)
+            .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "repository read denied"))?;
+        if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, token).await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            if !bounds.allows(pool, user.id, repo_id, "contents", false).await
+                .map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
+            }
+        } else if user.username == db::ci_tokens::BOT {
+            let job = db::ci_tokens::get(pool, token).await.map_err(|_| RepoError::authority_unavailable())?
+                .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "repository read denied"))?;
+            let permissions: crate::backend::ci::tokens::Permissions = serde_json::from_str(&job.permissions)
+                .map_err(|_| RepoError::authority_unavailable())?;
+            if job.repo_id != repo_id || !permissions.allows("contents", false) {
+                return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
+            }
+        } else if db::fine_grained_tokens::classic_refused_repository(pool, token, repo_id).await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
+        }
+    }
+    live_read(pool, repo_id, actor.user, path, node_id).await
+}
+
 async fn live_read(
     pool: &db::DbPool,
     repo_id: i64,
@@ -1333,12 +1367,13 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        actor: impl Into<super::PullHeadActor>,
         source: &LocalStore,
         number: i32,
         head: &str,
         expected_head: Option<&str>,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         let current = git::repository::current_pull_head(self.path(), number)
             .await
             .map_err(RepoError::from)?;
@@ -1353,8 +1388,8 @@ impl LocalStore {
             )));
         }
 
-        live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
         let prepared = git::repository::prepare_pull_head(self.path(), source.path(), head)
             .await
             .map_err(RepoError::from)?;
@@ -1381,13 +1416,14 @@ impl LocalStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        actor: impl Into<super::PullHeadActor>,
         source: &LocalStore,
         number: i32,
         head: &str,
         expected_head: Option<&str>,
         prepared: git::repository::PreparedPullHead,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         let _lock = git::locks::lock(self.path()).await;
         let current = git::repository::current_pull_head(self.path(), number)
             .await
@@ -1409,8 +1445,8 @@ impl LocalStore {
         // The fetch happened only in temporary storage. Recheck live authority
         // after waiting for the destination lock and immediately before
         // receive-pack can migrate objects and publish the exact CAS ref.
-        live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        live_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
+        live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
         let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
         git::repository::publish_pull_head(self.path(), number, head, expected_head, &prepared)
             .await

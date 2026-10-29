@@ -47,6 +47,7 @@ pub enum Operation {
     },
     /// Fetches a commit of another repository on this node into a pull ref.
     FetchPullHead {
+        token: Option<i64>,
         source: Uuid,
         number: i32,
         head: String,

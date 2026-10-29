@@ -48,7 +48,7 @@ pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
 pub use types::{
     allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobRange, BranchMergePublication,
-    GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate,
+    GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate, PullHeadActor,
     RestackMove, RevertRequest, UpstreamMerge, UpstreamMergeType, MAX_ARCHIVE_RESPONSE_BYTES,
     MAX_BLOB_RESPONSE_BYTES, MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE,
     MAX_CONTRIBUTOR_RESPONSE_BYTES,
@@ -1400,12 +1400,13 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: i64,
+        actor: impl Into<PullHeadActor>,
         source: &RepoStore,
         number: i32,
         head: &str,
         expected_head: Option<&str>,
     ) -> Result<(), RepoError> {
+        let actor = actor.into();
         match (&self.0, &source.0) {
             (Backend::Local(base), Backend::Local(from)) => {
                 base.fetch_pull_head(
@@ -1422,8 +1423,9 @@ impl RepoStore {
             }
             (Backend::Remote(base), Backend::Remote(from)) if base.node_id == from.node_id => {
                 base.call_as(
-                    actor,
+                    actor.user,
                     Operation::FetchPullHead {
+                        token: actor.token,
                         source: rpc::repository_uuid(&from.disk_path)?,
                         number,
                         head: head.into(),

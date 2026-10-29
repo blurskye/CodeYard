@@ -529,6 +529,7 @@ impl RpcHandler {
                 ))
             }
             Operation::FetchPullHead {
+                token,
                 source,
                 number,
                 head,
@@ -542,7 +543,10 @@ impl RpcHandler {
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                     source_repo_id,
-                    actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                    crate::backend::repositories::store::PullHeadActor {
+                        user: actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                        token,
+                    },
                     &source,
                     number,
                     &head,

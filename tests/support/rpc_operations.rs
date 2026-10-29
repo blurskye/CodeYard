@@ -120,6 +120,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::FetchPullHead {
+                token: None,
                 source: Uuid::nil(),
                 number: 1,
                 head: "main".into(),
