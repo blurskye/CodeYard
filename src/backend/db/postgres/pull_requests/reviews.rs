@@ -1068,8 +1068,8 @@ pub async fn request_code_owner_reviews(
     }) else {
         return Ok(Vec::new());
     };
-    let added = sqlx::query_as::<_, User>("WITH inserted AS (INSERT INTO pr_reviewers (pull_request_id, user_id, as_code_owner) SELECT $1, owner, TRUE FROM unnest($2::bigint[]) owner WHERE NOT EXISTS (SELECT 1 FROM pr_reviews WHERE pull_request_id = $1 AND author_id = owner AND state <> 'pending') ON CONFLICT DO NOTHING RETURNING user_id) SELECT u.* FROM users u JOIN inserted i ON i.user_id = u.id")
-        .bind(pull.id).bind(&eligible).fetch_all(&mut *tx).await?;
+    let added = sqlx::query_as::<_, User>("WITH inserted AS (INSERT INTO pr_reviewers (pull_request_id, user_id, as_code_owner) SELECT $1, owner, TRUE FROM unnest($2::bigint[]) owner WHERE NOT COALESCE((SELECT state IN ('approved','changes_requested') AND commit_sha=$3 FROM pr_reviews WHERE pull_request_id=$1 AND author_id=owner AND state NOT IN ('commented','pending') ORDER BY created_at DESC,id DESC LIMIT 1),FALSE) ON CONFLICT DO NOTHING RETURNING user_id) SELECT u.* FROM users u JOIN inserted i ON i.user_id = u.id")
+        .bind(pull.id).bind(&eligible).bind(&pull.head_sha).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(added)
 }

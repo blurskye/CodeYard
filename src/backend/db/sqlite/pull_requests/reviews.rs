@@ -1105,9 +1105,9 @@ pub async fn request_code_owner_reviews(
          WHERE r.id=?2 AND u.id IN (SELECT value FROM json_each(?3)) AND u.id<>?4
            AND NOT r.is_archived AND NOT u.is_banned AND NOT u.must_change_password
            AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=3)
-           AND NOT EXISTS (SELECT 1 FROM pr_reviews WHERE pull_request_id=?1 AND author_id=u.id AND state<>'pending')
+           AND NOT COALESCE((SELECT state IN ('approved','changes_requested') AND commit_sha=?5 FROM pr_reviews WHERE pull_request_id=?1 AND author_id=u.id AND state NOT IN ('commented','pending') ORDER BY created_at DESC,id DESC LIMIT 1),FALSE)
          ON CONFLICT DO NOTHING RETURNING user_id"
-    )).bind(pull.id).bind(pull.repo_id).bind(serde_json::to_string(owners)?).bind(current.author_id)
+    )).bind(pull.id).bind(pull.repo_id).bind(serde_json::to_string(owners)?).bind(current.author_id).bind(&current.head_sha)
         .fetch_all(&mut *tx).await?;
     let users = sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE id IN (SELECT value FROM json_each(?1))",
