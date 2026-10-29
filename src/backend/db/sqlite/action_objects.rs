@@ -236,6 +236,7 @@ pub async fn seal_blob(pool: &SqlitePool, object_id: i64, blocks: &[String]) -> 
 pub async fn finalize_object(
     pool: &SqlitePool,
     run_id: i64,
+    hash: &str,
     object_id: i64,
     size: i64,
     cache_limit: i64,
@@ -253,6 +254,11 @@ pub async fn finalize_object(
         .bind(repo)
         .execute(&mut *tx)
         .await?;
+    let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.run_id=$1 AND t.token_hash=$2 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-5 minutes')))")
+        .bind(run_id).bind(hash).fetch_one(&mut *tx).await?;
+    if !live {
+        return Ok(false);
+    }
     let object: ActionObject = sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1")
         .bind(object_id)
         .fetch_one(&mut *tx)

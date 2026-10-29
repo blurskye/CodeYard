@@ -258,6 +258,7 @@ pub async fn seal_blob(pool: &PgPool, object_id: i64, blocks: &[String]) -> Resu
 pub async fn finalize_object(
     pool: &PgPool,
     run_id: i64,
+    hash: &str,
     object_id: i64,
     size: i64,
     cache_limit: i64,
@@ -275,6 +276,11 @@ pub async fn finalize_object(
         .bind(repo)
         .execute(&mut *tx)
         .await?;
+    let live: Option<i64> = sqlx::query_scalar("SELECT t.run_id FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.run_id=$1 AND t.token_hash=$2 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '5 minutes') FOR SHARE OF t")
+        .bind(run_id).bind(hash).fetch_optional(&mut *tx).await?;
+    if live.is_none() {
+        return Ok(false);
+    }
     let object: ActionObject =
         sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1 FOR UPDATE")
             .bind(object_id)

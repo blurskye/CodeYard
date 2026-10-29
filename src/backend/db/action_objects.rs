@@ -149,7 +149,7 @@ native_operation!(crate::backend::db::postgres::action_objects::seal_blob,
     fn seal_blob(pool: &DbPool, object_id: i64, blocks: &[String]) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::action_objects::finalize_object,
     crate::backend::db::sqlite::action_objects::finalize_object,
-    fn finalize_object(pool: &DbPool, run_id: i64, object_id: i64, size: i64, cache_limit: i64) -> Result<bool>);
+    fn finalize_object(pool: &DbPool, run_id: i64, hash: &str, object_id: i64, size: i64, cache_limit: i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::action_objects::find_cache,
     crate::backend::db::sqlite::action_objects::find_cache,
     fn find_cache(pool: &DbPool, run: &RuntimeRun, keys: &[String], version: &str) -> Result<Option<ActionObject>>);
