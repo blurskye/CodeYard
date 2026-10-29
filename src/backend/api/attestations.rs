@@ -151,8 +151,10 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
             encode_component(&owner),
             encode_component(&repository.name)
         );
-        let subjects: Vec<String> =
+        let mut subjects: Vec<String> =
             serde_json::from_str(&row.subjects).map_err(|error| failure(ctx, error.into()))?;
+        let omitted_subjects = subjects.len().saturating_sub(5);
+        subjects.truncate(5);
         let can_delete = if let Some(user) = &ctx.user {
             access::can_write(&ctx.state.pool, user, &repository)
                 .await
@@ -167,6 +169,7 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
             bundle_href: format!("{repository_href}/attestations/{}/bundle", row.id),
             predicate: row.predicate_type.clone(),
             subjects,
+            omitted_subjects,
             delete_action: can_delete.then(|| base.clone()),
             inventory_base: repository
                 .owner_org_id

@@ -1186,12 +1186,12 @@ const fn form_action(name: &'static str, page: &'static str, flags: u8) -> FormA
 // `write-file` has no GIT flag: with storage down it still opens its editor.
 #[rustfmt::skip]
 const FORM_ACTIONS: &[FormAction] = &[
-    form_action("star", "", 0),
+    form_action("star", "", BOUND),
     form_action("unstar", "", BOUND),
-    form_action("watch", "", 0),
-    form_action("unwatch", "", 0),
-    form_action("watch-level", "", 0),
-    form_action("fork", "", GIT),
+    form_action("watch", "", BOUND),
+    form_action("unwatch", "", BOUND),
+    form_action("watch-level", "", BOUND),
+    form_action("fork", "", GIT | BOUND),
     form_action("create-branch", "/branches", GIT | BOUND | WRITE),
     form_action("delete-branch", "/branches", GIT | BOUND | WRITE | CONFIRM),
     form_action("create-tag", "/tags", GIT | BOUND | WRITE),

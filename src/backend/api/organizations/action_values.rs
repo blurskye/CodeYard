@@ -106,11 +106,7 @@ pub(super) async fn build(
 fn repositories(form: &HashMap<String, String>) -> Result<Option<Vec<i64>>, ValueError> {
     let ids = field(form, "repositories");
     if field(form, "visibility") != "selected" {
-        return if ids.trim().is_empty() {
-            Ok(None)
-        } else {
-            Err(ValueError::Visibility)
-        };
+        return Ok(None);
     }
     ids.split(|c: char| c == ',' || c.is_ascii_whitespace())
         .filter(|s| !s.is_empty())
@@ -207,6 +203,18 @@ async fn change(
         )
         .await;
     }
+    let submitted_value = if action == "secret-access" { None } else {
+        let original = if action == "variable-save" {
+            match values::list(&ctx.state.pool, actor, org, kind).await {
+                Ok(rows) => match rows.into_iter().find(|row| row.name == previous) {
+                    Some(row) => row.value,
+                    None => return organization::not_found(&ctx),
+                },
+                Err(_) => return organization::unavailable(&ctx),
+            }
+        } else { String::new() };
+        Some(crate::backend::repositories::files::native_text(field(&form, "value"), &original))
+    };
     let result = if action.ends_with("-delete") {
         values::delete(&ctx.state.pool, actor, org, kind, &name).await
     } else {
@@ -221,7 +229,7 @@ async fn change(
                     kind,
                     previous: (action == "variable-save").then_some(previous.as_str()),
                     name: &name,
-                    value: (action != "secret-access").then(|| field(&form, "value")),
+                    value: submitted_value.as_deref(),
                     visibility: Some(field(&form, "visibility")),
                     repositories: repositories.as_deref(),
                 },
