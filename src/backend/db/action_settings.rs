@@ -236,6 +236,9 @@ native_operation!(crate::backend::db::postgres::action_settings::settings,
 native_operation!(crate::backend::db::postgres::action_settings::effective,
     crate::backend::db::sqlite::action_settings::effective,
     fn effective(pool: &DbPool, repo: i64) -> Result<(Value, Value)>);
+native_operation!(crate::backend::db::postgres::action_settings::policies_page,
+    crate::backend::db::sqlite::action_settings::policies_page,
+    fn policies_page(pool: &DbPool, actor: i64, token: i64, scope: &Scope, offset: i64, limit: i64) -> Result<(i64, Vec<Policy>)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies,
     crate::backend::db::sqlite::action_settings::policies,
     fn policies(pool: &DbPool, actor: i64, token: i64, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);

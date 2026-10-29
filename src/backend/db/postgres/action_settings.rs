@@ -165,6 +165,17 @@ pub async fn repositories(
     Ok((total, rows))
 }
 
+pub async fn policies_page(pool: &PgPool, actor: i64, token: i64, scope: &Scope, offset: i64, limit: i64) -> Result<(i64, Vec<Policy>)> {
+    ensure!(offset >= 0 && (1..=100).contains(&limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
+    let (_, column, scope_id) = authority(&mut tx, actor, token, scope, false).await?;
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM actions_policies WHERE {column}=$1")).bind(scope_id).fetch_one(&mut *tx).await?;
+    let rows = sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 ORDER BY id LIMIT $2 OFFSET $3")).bind(scope_id).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
 pub async fn policies(
     pool: &PgPool,
     actor: i64,
@@ -175,7 +186,11 @@ pub async fn policies(
 ) -> Result<Vec<Policy>> {
     let mut tx = pool.begin().await?;
     let (_, column, scope_id) = authority(&mut tx, actor, token, scope, change.is_some()).await?;
-    let mut rows: Vec<Policy> = sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND (CAST($2 AS BIGINT) IS NULL OR id=$2) ORDER BY id FOR UPDATE")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?;
+    ensure!(id.is_some() || change.is_some(), Refusal::Invalid);
+    let mut rows: Vec<Policy> = if let Some(id) = id {
+        let lock = if change.is_some() { "FOR UPDATE" } else { "" };
+        sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=$1 AND id=$2 {lock}")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?
+    } else { Vec::new() };
     ensure!(id.is_none() || !rows.is_empty(), Refusal::Missing);
     if let Some(change) = change {
         if let Some(input) = change {
