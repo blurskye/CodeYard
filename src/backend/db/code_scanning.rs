@@ -88,7 +88,7 @@ impl BranchAlert {
 }
 
 pub struct NewUpload<'a> {
-    pub actor: i64,
+    pub actor: super::credentials::Actor,
     pub repo: i64,
     pub ref_name: &'a str,
     pub commit_sha: &'a str,
@@ -281,6 +281,6 @@ native_operation!(super::postgres::code_scanning::instance, super::sqlite::code_
 native_operation!(super::postgres::code_scanning::instances, super::sqlite::code_scanning::instances,
     fn instances(pool: &DbPool, alert: i64, reference: Option<&str>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
 native_operation!(super::postgres::code_scanning::dismiss, super::sqlite::code_scanning::dismiss,
-    fn dismiss(pool: &DbPool, actor: i64, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
+    fn dismiss(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
 native_operation!(super::postgres::code_scanning::delete_analysis, super::sqlite::code_scanning::delete_analysis,
-    fn delete_analysis(pool: &DbPool, actor: i64, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);
+    fn delete_analysis(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);

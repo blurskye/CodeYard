@@ -345,7 +345,7 @@ async fn remove(
         }
         (vec![], vec![digest.clone()])
     };
-    let count = attestations::delete(&state.pool, actor.user.id, owner, &ids, &digests)
+    let count = attestations::delete(&state.pool, actor.database_actor(&headers)?, owner, &ids, &digests)
         .await
         .map_err(failure)?;
     if count == 0 {

@@ -31,7 +31,7 @@ pub struct Submission {
 
 native_operation!(super::postgres::dependency_graph::submit,
     super::sqlite::dependency_graph::submit,
-    fn submit(pool: &DbPool, actor: i64, repo: i64, snapshot: &Snapshot)
+    fn submit(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, snapshot: &Snapshot)
     -> Result<Submission, GraphError>);
 
 native_operation!(super::postgres::dependency_graph::snapshots,

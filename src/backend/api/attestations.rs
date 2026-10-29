@@ -336,7 +336,7 @@ async fn remove(
             return ctx.error(StatusCode::NOT_FOUND, "Repository owner not found.");
         }
     };
-    match attestations::delete(&ctx.state.pool, actor, org, &[id], &[]).await {
+    match attestations::delete(&ctx.state.pool, ctx.database_actor(actor), org, &[id], &[]).await {
         Ok(0) => ctx.error(StatusCode::NOT_FOUND, "Attestation not found."),
         Ok(_) => ctx.redirect(&page.base),
         Err(error) => failure(&ctx, error),

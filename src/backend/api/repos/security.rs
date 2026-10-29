@@ -314,7 +314,7 @@ async fn dismiss(
     }
     match code_scanning::dismiss(
         &ctx.state.pool,
-        ctx.user.as_ref().expect("authorized user").id,
+        ctx.database_actor(ctx.user.as_ref().expect("authorized user").id),
         loaded.repository.id,
         number,
         &input,

@@ -10,15 +10,16 @@ use sqlx::{SqliteConnection, SqlitePool};
 pub async fn enqueue(pool: &SqlitePool, input: &NewUpload<'_>) -> Result<Upload> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, input.actor, input.repo).await?,
+        super::discussions::lock_write_authority(&mut tx, input.actor.user_id, input.repo).await?
+            && super::credentials::repository(&mut tx, &input.actor, input.repo, "security_events", true).await?,
         Refusal::Denied
     );
     let recent: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM code_scanning_uploads WHERE actor_id=$1 AND created_at>=$2 AND (repo_id=$3 OR NOT EXISTS(SELECT 1 FROM users WHERE id=$1 AND username=$4))")
-        .bind(input.actor).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
+        .bind(input.actor.user_id).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
     ensure!(recent < 1000, Refusal::RateLimited);
     let id = uuid::Uuid::new_v4().to_string();
     let upload = sqlx::query_as("INSERT INTO code_scanning_uploads(id,repo_id,actor_id,ref_name,commit_sha,sarif,checkout_uri,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *")
-        .bind(id).bind(input.repo).bind(input.actor).bind(input.ref_name).bind(input.commit_sha).bind(input.sarif).bind(input.checkout_uri).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
+        .bind(id).bind(input.repo).bind(input.actor.user_id).bind(input.ref_name).bind(input.commit_sha).bind(input.sarif).bind(input.checkout_uri).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(upload)
 }
@@ -161,15 +162,18 @@ pub async fn instances(
 
 pub async fn dismiss(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     number: i64,
     input: &Dismissal<'_>,
 ) -> Result<Alert> {
     input.validate()?;
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
+            && super::credentials::repository(&mut tx, &credential, repo, "security_events", true).await?,
         Refusal::Denied
     );
     let dismissed = input.state == "dismissed";
@@ -182,14 +186,17 @@ pub async fn dismiss(
 
 pub async fn delete_analysis(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     confirm: bool,
 ) -> Result<Option<i64>> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?
+            && super::credentials::repository(&mut tx, &credential, repo, "security_events", true).await?,
         Refusal::Denied
     );
     let analysis: Analysis = sqlx::query_as(&format!(

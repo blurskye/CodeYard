@@ -26,16 +26,21 @@ pub(super) async fn drop_replaced_snapshots(
 
 pub async fn submit(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     snapshot: &Snapshot,
 ) -> Result<Submission, GraphError> {
     snapshot.validate()?;
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !super::discussions::lock_write_authority(&mut tx, actor, repo)
         .await
         .map_err(GraphError::Authority)?
     {
+        return Err(GraphError::Denied);
+    }
+    if !super::credentials::repository(&mut tx, &credential, repo, "contents", true).await.map_err(GraphError::Authority)? {
         return Err(GraphError::Denied);
     }
     let mut submission: Submission = sqlx::query_as("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,created_at")

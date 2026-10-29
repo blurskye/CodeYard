@@ -28,14 +28,17 @@ pub async fn collect(pool: &PgPool) -> Result<u64> {
 
 pub async fn create(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     bundle: &Bundle,
     initiator: &str,
 ) -> Result<i64> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = begin(pool).await?;
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
+            && super::credentials::repository(&mut tx, &credential, repo, "attestations", true).await?,
         Refusal::Denied
     );
     sqlx::query(
@@ -104,17 +107,20 @@ pub async fn repositories(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<(i64
 
 pub async fn delete(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     owner: Owner,
     ids: &[i64],
     digests: &[String],
 ) -> Result<u64> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = begin(pool).await?;
     let rows: Vec<(i64,i64)> = sqlx::query_as(&format!("SELECT DISTINCT a.id,a.repo_id FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$4 WHERE ((CAST($1 AS BIGINT) IS NOT NULL AND r.owner_org_id=$1) OR (CAST($5 AS BIGINT) IS NOT NULL AND r.owner_user_id=$5)) AND (a.id=ANY($2) OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($3))) AND {} ORDER BY a.repo_id,a.id",super::repositories::access::readable_condition()))
         .bind(owner.org()).bind(ids).bind(digests).bind(actor).bind(owner.user()).fetch_all(&mut *tx).await?;
     for (_, repo) in &rows {
         anyhow::ensure!(
-            super::discussions::lock_write_authority(&mut tx, actor, *repo).await?,
+            super::discussions::lock_write_authority(&mut tx, actor, *repo).await?
+                && super::credentials::repository(&mut tx, &credential, *repo, "attestations", true).await?,
             Refusal::Denied
         );
         let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND ((owner_kind='org' AND owner_org_id=$2) OR (owner_kind='user' AND owner_user_id=$3)))").bind(repo).bind(owner.org()).bind(owner.user()).fetch_one(&mut *tx).await?;

@@ -61,7 +61,7 @@ async fn create(
     auth.require_write()?;
     let Json(body) = body.map_err(|_| Error::invalid("Invalid attestation input"))?;
     let bundle = PreparedBundle::new(&body.bundle).map_err(error)?;
-    let id = store::create(&state.pool, auth.user.id, repo.id, &bundle)
+    let id = store::create(&state.pool, auth.database_actor(&headers)?, repo.id, &bundle)
         .await
         .map_err(error)?;
     Ok((StatusCode::CREATED, Json(json!({"id":id}))).into_response())

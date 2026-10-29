@@ -205,18 +205,19 @@ pub struct Attestation {
 
 pub async fn create(
     pool: &DbPool,
-    actor: i64,
+    actor: impl Into<super::credentials::Actor>,
     repo: i64,
     bundle: &PreparedBundle,
 ) -> Result<i64, AttestationError> {
     use sha2::{Digest, Sha256};
+    let actor = actor.into();
     let bundle = super::attestations::Bundle {
         hash: format!("{:x}", Sha256::digest(bundle.bundle.as_bytes())),
         json: bundle.bundle.clone(),
         predicate: bundle.predicate_type.clone(),
         subjects: bundle.subjects.iter().cloned().collect(),
     };
-    let user = super::users::accounts::get_user_by_id(pool, actor)
+    let user = super::users::accounts::get_user_by_id(pool, actor.user_id)
         .await
         .map_err(AttestationError::Authority)?
         .ok_or(AttestationError::Denied)?;
