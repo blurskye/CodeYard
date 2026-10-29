@@ -37,6 +37,7 @@ pub(crate) async fn can_update_head(
         || actor.must_change_password
         || base.is_archived
         || head.is_archived
+        || db::repository_exports::locked(pool, head.id).await?
         || pull.state != "open"
         || pull.repo_id != base.id
         || pull.head_repo_id != Some(head.id)
