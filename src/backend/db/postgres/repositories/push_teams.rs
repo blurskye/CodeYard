@@ -9,7 +9,7 @@ const PERMISSION:&str="GREATEST(CASE WHEN a.permission BETWEEN 1 AND 5 THEN a.pe
 
 pub async fn by_names(pool: &PgPool, repo: i64, names: &[String]) -> Result<Vec<Team>> {
     validate_count(names.len())?;
-    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL WHERE r.id=$1 AND LOWER(t.slug)=ANY($2) AND t.privacy IN ('visible','secret') ORDER BY t.id").bind(repo).bind(names).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL WHERE r.id=$1 AND t.slug=ANY($2) AND t.privacy IN ('visible','secret') ORDER BY t.id").bind(repo).bind(names).fetch_all(pool).await?)
 }
 pub async fn by_ids(pool: &PgPool, repo: i64, ids: &[i64]) -> Result<Vec<TeamAccess>> {
     validate_count(ids.len())?;
