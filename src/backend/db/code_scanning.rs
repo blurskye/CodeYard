@@ -77,7 +77,14 @@ pub struct AlertFilters<'a> {
     pub tool_guid: Option<&'a str>,
     pub state: Option<&'a str>,
     pub severity: Option<&'a str>,
+    pub pull_request: Option<i32>,
     pub sort: AlertSort,
+}
+
+/// `reference`, `pull_request`, and `default` are native SQL expressions, never user input.
+/// The explicit reference intersects a PR's head/merge refs instead of falling back to main.
+pub(crate) fn instance_condition(reference: &str, pull_request: &str, default: &str) -> String {
+    format!("((CAST({pull_request} AS BIGINT) IS NULL AND i.ref_name=COALESCE({reference},{default})) OR (CAST({pull_request} AS BIGINT) IS NOT NULL AND (CAST({reference} AS TEXT) IS NULL OR i.ref_name={reference}) AND i.ref_name IN ('refs/pull/' || CAST({pull_request} AS TEXT) || '/head','refs/pull/' || CAST({pull_request} AS TEXT) || '/merge')))")
 }
 
 #[derive(sqlx::FromRow)]
@@ -291,6 +298,10 @@ native_operation!(super::postgres::code_scanning::organization_alert_page, super
     fn organization_alert_page(pool: &DbPool, actor: i64, org: i64, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<OrganizationAlert>>);
 native_operation!(super::postgres::code_scanning::alert, super::sqlite::code_scanning::alert,
     fn alert(pool: &DbPool, repo: i64, number: i64) -> Result<Option<Alert>>);
+native_operation!(super::postgres::code_scanning::instance_filtered, super::sqlite::code_scanning::instance_filtered,
+    fn instance_filtered(pool: &DbPool, alert: i64, reference: Option<&str>, pull_request: Option<i32>) -> Result<Option<Instance>>);
+native_operation!(super::postgres::code_scanning::instances_filtered, super::sqlite::code_scanning::instances_filtered,
+    fn instances_filtered(pool: &DbPool, alert: i64, reference: Option<&str>, pull_request: Option<i32>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
 native_operation!(super::postgres::code_scanning::instance, super::sqlite::code_scanning::instance,
     fn instance(pool: &DbPool, alert: i64, reference: Option<&str>) -> Result<Option<Instance>>);
 native_operation!(super::postgres::code_scanning::instances, super::sqlite::code_scanning::instances,
