@@ -196,14 +196,20 @@ pub async fn is_valid(pool: &DbPool, purpose: Purpose, token: &str) -> Result<bo
     Ok(valid)
 }
 
+pub(crate) async fn password_reset_account(pool: &DbPool, token: &str) -> Result<Option<User>, LinkError> {
+    db::users::transitions::password_reset_account(pool, &hash(token)).await.map_err(unavailable)
+}
+
 /// Uses up a reset link and sets the account's new password hash, in one transaction. Returns the
 /// account the link was for, or None when the link is no longer usable.
 pub async fn use_reset_link(
     pool: &DbPool,
     token: &str,
     password_hash: &str,
+    expected: &User,
 ) -> Result<Option<i64>, LinkError> {
-    db::users::transitions::reset_password_with_link(pool, &hash(token), password_hash)
+    let Some(expected_hash) = expected.password_hash.as_deref() else { return Ok(None) };
+    db::users::transitions::reset_password_with_link(pool, &hash(token), password_hash, expected_hash, expected.must_change_password)
         .await
         .map_err(unavailable)
 }
