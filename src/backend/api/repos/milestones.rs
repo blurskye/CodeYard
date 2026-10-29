@@ -655,34 +655,6 @@ pub(crate) async fn native_set_item_milestone(
         }
     }
     .map_err(milestone_write_error);
-    let previous = value.milestone.as_ref();
-    if outcome.is_ok() && chosen != previous.map(|milestone| milestone.number) {
-        let (event, title) = match chosen {
-            Some(number) => {
-                let found = db::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
-                    .await
-                    .ok()
-                    .flatten();
-                (
-                    "milestoned",
-                    found.map(|found| found.milestone.title).unwrap_or_default(),
-                )
-            }
-            None => (
-                "demilestoned",
-                previous.map(|old| old.title.clone()).unwrap_or_default(),
-            ),
-        };
-        db::timeline::record_for(
-            &ctx.state.pool,
-            repo.record.id,
-            subject,
-            actor,
-            event,
-            &title,
-        )
-        .await;
-    }
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
 }
 

@@ -307,7 +307,7 @@ pub async fn set_lock(
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
         sqlx::query(&format!("UPDATE {table} SET locked=$2,lock_reason=$3,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")).bind(id).bind(locked).bind(reason).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail) VALUES ($1,$2,$3,$4,$5,$6)").bind(repo_id).bind(subject).bind(id).bind(actor_id).bind(if locked {"locked"} else {"unlocked"}).bind(reason.unwrap_or("")).execute(&mut *tx).await?;
+        super::timeline::append(&mut tx, repo_id, subject, id, actor_id, if locked {"locked"} else {"unlocked"}, reason.unwrap_or(""), "").await?;
     }
     tx.commit().await?;
     Ok(())

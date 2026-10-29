@@ -819,30 +819,6 @@ pub(in crate::backend::api) async fn apply_metadata(
         labels::save_labels(&state.pool, actor.id, repo.id, item, &ids, true).await?;
     }
     if let Some(number) = metadata.milestone {
-        let old_id = match item {
-            AssignedItem::Issue(id) => db::issues::get_issue_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-                .and_then(|issue| issue.milestone_id),
-            AssignedItem::PullRequest(id) => {
-                db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .and_then(|pull| pull.milestone_id)
-            }
-        };
-        let before = match old_id {
-            Some(id) => db::milestones::get_milestone_by_id(&state.pool, repo.id, id)
-                .await
-                .map_err(Error::unavailable)?,
-            None => None,
-        };
-        let after = match number {
-            Some(number) => db::milestones::get_milestone(&state.pool, repo.id, number)
-                .await
-                .map_err(Error::unavailable)?,
-            None => None,
-        };
         match item {
             AssignedItem::Issue(id) => {
                 db::milestones::set_issue_milestone(&state.pool, actor.id, repo.id, id, number)
@@ -860,32 +836,6 @@ pub(in crate::backend::api) async fn apply_metadata(
             }
         }
         .map_err(Error::unavailable)?;
-        if before.as_ref().map(|summary| summary.milestone.id)
-            != after.as_ref().map(|summary| summary.milestone.id)
-        {
-            if let Some(summary) = before {
-                db::timeline::record_for(
-                    &state.pool,
-                    repo.id,
-                    item,
-                    actor.id,
-                    "demilestoned",
-                    &summary.milestone.title,
-                )
-                .await;
-            }
-            if let Some(summary) = after {
-                db::timeline::record_for(
-                    &state.pool,
-                    repo.id,
-                    item,
-                    actor.id,
-                    "milestoned",
-                    &summary.milestone.title,
-                )
-                .await;
-            }
-        }
     }
     if let Some(users) = metadata.assignees {
         let mut added = Vec::new();
@@ -893,15 +843,9 @@ pub(in crate::backend::api) async fn apply_metadata(
             .await
             .map_err(Error::unavailable)?
         {
-            if !users
-                .iter()
-                .any(|user| user.username.eq_ignore_ascii_case(&name))
-                && db::assignees::unassign_user(&state.pool, actor.id, repo.id, item, &name)
-                    .await
-                    .map_err(assignment_error)?
-            {
-                db::timeline::record_for(&state.pool, repo.id, item, actor.id, "unassigned", &name)
-                    .await;
+            if !users.iter().any(|user| user.username.eq_ignore_ascii_case(&name)) {
+                db::assignees::unassign_user(&state.pool, actor.id, repo.id, item, &name)
+                    .await.map_err(assignment_error)?;
             }
         }
         for user in users {
@@ -910,15 +854,6 @@ pub(in crate::backend::api) async fn apply_metadata(
                 .map_err(assignment_error)?
             {
                 added.push(user.id);
-                db::timeline::record_for(
-                    &state.pool,
-                    repo.id,
-                    item,
-                    actor.id,
-                    "assigned",
-                    &user.username,
-                )
-                .await;
             }
         }
         let (owner, number, title) = detail;

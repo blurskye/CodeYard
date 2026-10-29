@@ -52,8 +52,20 @@ pub async fn record_event(
     detail: &str,
     previous: &str,
 ) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO timeline_events (repo_id, subject_kind, subject_id, actor_id, kind, detail, previous) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    let mut tx = pool.begin().await?;
+    append(&mut tx, repo_id, subject, subject_id, actor_id, kind, detail, previous).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn append(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, repo_id: i64, subject: &str, subject_id: i64,
+    actor_id: i64, kind: &str, detail: &str, previous: &str,
+) -> Result<i64> {
+    let (detail, previous) = crate::backend::db::timeline::event_details(kind, detail, previous)?;
+    Ok(sqlx::query_scalar(
+        "INSERT INTO timeline_events (repo_id, subject_kind, subject_id, actor_id, kind, detail, previous, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp()) RETURNING id",
     )
     .bind(repo_id)
     .bind(subject)
@@ -62,9 +74,8 @@ pub async fn record_event(
     .bind(kind)
     .bind(detail)
     .bind(previous)
-    .execute(pool)
-    .await?;
-    Ok(())
+    .fetch_one(&mut **tx)
+    .await?)
 }
 
 /// The events from `after` up to `before`, each bound optional, oldest first.

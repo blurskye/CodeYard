@@ -1434,17 +1434,6 @@ pub async fn publish_prepared_merge(
     }
 
     for layer in &chain {
-        db::timeline::record(
-            pool,
-            repository.id,
-            db::timeline::Subject::PullRequest,
-            layer.id,
-            user.id,
-            "merged",
-            &merge.base_branch,
-            "",
-        )
-        .await;
         if let Ok(Some(merged)) =
             db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
         {

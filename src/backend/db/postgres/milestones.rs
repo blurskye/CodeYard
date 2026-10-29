@@ -427,7 +427,7 @@ async fn set_item_milestone(
     milestone_number: Option<i32>,
 ) -> Result<()> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    set_item_milestone_in_transaction(&mut tx, repo_id, table, item_id, milestone_number).await?;
+    set_item_milestone_in_transaction(&mut tx, actor_id, repo_id, table, item_id, milestone_number).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -436,13 +436,14 @@ async fn set_item_milestone(
 /// write authority.
 pub(crate) async fn set_item_milestone_in_transaction(
     tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
     repo_id: i64,
     table: &'static str,
     item_id: i64,
     milestone_number: Option<i32>,
 ) -> Result<()> {
-    let item: Option<i64> = sqlx::query_scalar(&format!(
-        "SELECT id FROM {table} WHERE id = $1 AND repo_id = $2"
+    let item: Option<Option<i64>> = sqlx::query_scalar(&format!(
+        "SELECT milestone_id FROM {table} WHERE id = $1 AND repo_id = $2 FOR UPDATE"
     ))
     .bind(item_id)
     .bind(repo_id)
@@ -462,6 +463,15 @@ pub(crate) async fn set_item_milestone_in_transaction(
             .ok_or(MilestoneWriteRefusal::NotFound)?,
         ),
     };
+    let old = item.flatten();
+    if old == milestone_id { return Ok(()); }
+    let subject = if table == "issues" { "issue" } else { "pull_request" };
+    for (id, kind) in [(old, "demilestoned"), (milestone_id, "milestoned")] {
+        if let Some(id) = id {
+            let title: String = sqlx::query_scalar("SELECT title FROM milestones WHERE id=$1 AND repo_id=$2").bind(id).bind(repo_id).fetch_one(&mut **tx).await?;
+            super::timeline::append(tx, repo_id, subject, item_id, actor_id, kind, &title, "").await?;
+        }
+    }
     sqlx::query(&format!(
         "UPDATE {table} SET milestone_id = $2 WHERE id = $1"
     ))

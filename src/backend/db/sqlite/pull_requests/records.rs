@@ -706,12 +706,12 @@ pub async fn update_pull_request(
     {
         return Ok(None);
     }
-    let stored: Option<(String, String)> =
-        sqlx::query_as("SELECT state,updated_at FROM pull_requests WHERE id=?1")
+    let stored: Option<(String, String, String)> =
+        sqlx::query_as("SELECT state,updated_at,title FROM pull_requests WHERE id=?1")
             .bind(pr_id)
             .fetch_optional(&mut *tx)
             .await?;
-    let Some((state, stored_revision)) = stored else {
+    let Some((state, stored_revision, old_title)) = stored else {
         return Ok(None);
     };
     let previous = crate::backend::db::sqlite::time::decode(&stored_revision)?;
@@ -760,6 +760,11 @@ pub async fn update_pull_request(
         .bind(base.as_ref().map(|base| base.branch)).bind(base.as_ref().map(|base| base.sha))
         .bind(maintainer_can_modify).bind(edit.actor_id)
         .fetch_optional(&mut *tx).await?;
+    if let Some(pr) = pr.as_ref() {
+        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state) {
+            super::super::timeline::append(&mut tx, repo, "pull_request", pr_id, edit.actor_id, kind, detail, previous).await?;
+        }
+    }
     tx.commit().await?;
     Ok(pr)
 }
@@ -793,6 +798,7 @@ pub async fn mark_pull_requests_merged(
         if changed != 1 {
             return Ok(false);
         }
+        super::super::timeline::append(&mut tx, pull.repo_id, "pull_request", pull.id, actor_id, "merged", &pull.base_branch, "").await?;
         sqlx::query("UPDATE repository_ref_activities SET activity_type='pr_merge' WHERE id=(SELECT id FROM repository_ref_activities WHERE repo_id=?1 AND reference='refs/heads/'||?2 AND after_sha=?3 ORDER BY id DESC LIMIT 1) AND activity_type IN ('push','force_push')")
             .bind(pull.repo_id).bind(&pull.base_branch).bind(merge_sha).execute(&mut *tx).await?;
     }

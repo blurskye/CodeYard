@@ -190,12 +190,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .map_err(github::Error::graphql)?;
         } else if label {
             for label_id in changes {
-                let name = db::labels::get_label_by_id(pool, label_id)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .name;
-                let removed = match item {
+                match item {
                     AssignedItem::Issue(id) => {
                         db::labels::remove_issue_label(pool, actor, repo.id, id, label_id).await
                     }
@@ -205,25 +200,15 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     }
                 }
                 .map_err(|e| github::labels::write_error(e).graphql())?;
-                if removed {
-                    db::timeline::record_for(pool, repo.id, item, actor, "unlabeled", &name).await;
-                }
             }
         } else if !remove {
             let mut added = Vec::new();
             for user in changes {
-                let username = db::users::accounts::get_user_by_id(pool, user)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .username;
                 if db::assignees::assign_user(pool, actor, repo.id, item, user)
                     .await
                     .map_err(|e| github::issues::assignment_error(e).graphql())?
                 {
                     added.push(user);
-                    db::timeline::record_for(pool, repo.id, item, actor, "assigned", &username)
-                        .await;
                 }
             }
             let owner = repository::owner(&repo, request).await?;
@@ -257,13 +242,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     .map_err(unavailable)?
                     .ok_or_else(missing)?
                     .username;
-                if db::assignees::unassign_user(pool, actor, repo.id, item, &username)
+                db::assignees::unassign_user(pool, actor, repo.id, item, &username)
                     .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?
-                {
-                    db::timeline::record_for(pool, repo.id, item, actor, "unassigned", &username)
-                        .await;
-                }
+                    .map_err(|e| github::issues::assignment_error(e).graphql())?;
             }
         }
     }

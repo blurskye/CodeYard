@@ -51,6 +51,7 @@ pub async fn create_issue_with_metadata(
         if !metadata.labels.is_empty() {
             super::labels::write_item_labels_transaction(
                 &mut tx,
+                author_id,
                 repo_id,
                 LabelTarget::Issue,
                 issue.id,
@@ -62,6 +63,7 @@ pub async fn create_issue_with_metadata(
         for &user in metadata.assignees {
             super::assignees::assign_in_transaction(
                 &mut tx,
+                author_id,
                 repo_id,
                 AssignedItem::Issue(issue.id),
                 user,
@@ -71,6 +73,7 @@ pub async fn create_issue_with_metadata(
         if let Some(number) = metadata.milestone {
             super::milestones::set_item_milestone_in_transaction(
                 &mut tx,
+                author_id,
                 repo_id,
                 "issues",
                 issue.id,
@@ -371,6 +374,8 @@ pub(crate) async fn update_issue_in_transaction(
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
     state_reason: Option<&str>,
 ) -> Result<Option<Issue>> {
+    let old: Option<Issue> = sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+        .bind(issue_id).bind(repo).fetch_optional(&mut **tx).await?;
     let issue = sqlx::query_as::<_, Issue>(
         r#"UPDATE issues SET
             title = COALESCE($2, title), body = COALESCE($3, body),
@@ -385,6 +390,11 @@ pub(crate) async fn update_issue_in_transaction(
     ).bind(issue_id).bind(edit.title).bind(edit.body).bind(edit.state)
         .bind(edit.expected_state).bind(edit.expected_updated).bind(edit.actor_id).bind(repo).bind(state_reason)
         .fetch_optional(&mut **tx).await?;
+    if let (Some(old), Some(issue)) = (old, issue.as_ref()) {
+        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old.title, &old.state, &issue.title, &issue.state) {
+            super::timeline::append(tx, repo, "issue", issue_id, edit.actor_id, kind, detail, previous).await?;
+        }
+    }
     Ok(issue)
 }
 

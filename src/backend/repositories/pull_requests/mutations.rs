@@ -714,38 +714,6 @@ pub async fn update_pull_request(
         }
     })?.ok_or_else(|| OperationError::Conflict { code: "conflict", message: "This entry, merge operation, or your permission changed; reload and review your preserved submission".to_owned() })?;
 
-    let subject = db::timeline::Subject::PullRequest;
-    if pull_request.title != existing.title {
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            "renamed",
-            &pull_request.title,
-            &existing.title,
-        )
-        .await;
-    }
-    if pull_request.state != existing.state {
-        let kind = if pull_request.state == "closed" {
-            "closed"
-        } else {
-            "reopened"
-        };
-        db::timeline::record(
-            pool,
-            repository.id,
-            subject,
-            existing.id,
-            user.id,
-            kind,
-            "",
-            "",
-        )
-        .await;
-    }
     if let Some(body) = req.body.as_deref() {
         let link = format!("/{owner}/{repo}/pulls/{number}");
         notify_mentions(

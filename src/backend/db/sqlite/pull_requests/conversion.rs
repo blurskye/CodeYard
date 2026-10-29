@@ -68,11 +68,9 @@ pub(super) async fn move_source(
     sqlx::query("UPDATE timeline_events SET subject_kind='pull_request',subject_id=?1 WHERE subject_kind='issue' AND subject_id=?2")
         .bind(pull.id).bind(issue.id).execute(&mut **tx).await?;
     if issue.state == "closed" {
-        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind) VALUES(?1,'pull_request',?2,?3,'reopened')")
-            .bind(pull.repo_id).bind(pull.id).bind(actor).execute(&mut **tx).await?;
+        super::super::timeline::append(tx, pull.repo_id, "pull_request", pull.id, actor, "reopened", "", "").await?;
     }
-    sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind) VALUES(?1,'pull_request',?2,?3,'converted')")
-        .bind(pull.repo_id).bind(pull.id).bind(actor).execute(&mut **tx).await?;
+    super::super::timeline::append(tx, pull.repo_id, "pull_request", pull.id, actor, "converted", "", "").await?;
     // Project entries move to the new pull request, keeping their fields, archive state and position.
     sqlx::query("UPDATE project_items SET issue_id=NULL,pull_request_id=?1 WHERE issue_id=?2")
         .bind(pull.id)
