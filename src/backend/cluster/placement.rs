@@ -8,7 +8,6 @@ use crate::backend::{
     },
     repositories::store::RepoError,
 };
-use std::cmp::Reverse;
 
 pub async fn storage_node(
     context: Option<&NodeContext>,
@@ -43,14 +42,5 @@ pub async fn storage_node(
 /// Online storage nodes that report their free space, most free space first. Ties go
 /// to the older node. New repositories and replica copies both pick from this order.
 pub fn ranked(nodes: &[ClusterNode]) -> Vec<&ClusterNode> {
-    let mut candidates: Vec<&ClusterNode> = nodes
-        .iter()
-        .filter(|node| {
-            node.is_online()
-                && node.roles.iter().any(|role| role == "storage")
-                && node.disk_free.is_some()
-        })
-        .collect();
-    candidates.sort_by_key(|node| (Reverse(node.disk_free.unwrap_or_default()), node.id));
-    candidates
+    ClusterNode::ranked_storage(nodes)
 }

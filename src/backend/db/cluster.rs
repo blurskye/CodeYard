@@ -1,4 +1,5 @@
 //! Cluster membership: the `nodes` table and the join tokens that admit new nodes.
+pub(crate) mod replicas;
 use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };
@@ -48,6 +49,11 @@ pub struct DeclaredMember {
 
 /// A fresh copy holds its downloaded staging pack and installed pack simultaneously.
 pub const REPLICA_STAGING_FACTOR: i64 = 2;
+
+native_operation!(crate::backend::db::postgres::cluster::assign_replica_family,
+    crate::backend::db::sqlite::cluster::assign_replica_family,
+    /// Replans a complete fork family under serialized capacity reservation ownership.
+    fn assign_replica_family(pool: &DbPool, repository: i64, primary: i64, setting: super::models::ReplicaSetting) -> Result<Vec<i64>>);
 
 /// A primary and optional copy: id, path, holder, applied version, size, ever completed.
 pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64, bool);

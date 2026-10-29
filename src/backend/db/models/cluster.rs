@@ -27,6 +27,13 @@ pub struct ClusterNode {
 }
 
 impl ClusterNode {
+    /// Eligible allocation targets, most reported free bytes first, then oldest id.
+    pub fn ranked_storage(nodes: &[Self]) -> Vec<&Self> {
+        let mut nodes: Vec<_> = nodes.iter().filter(|node| node.is_serving_storage()).collect();
+        nodes.sort_by_key(|node| (std::cmp::Reverse(node.disk_free.unwrap_or_default()), node.id));
+        nodes
+    }
+
     pub fn is_serving_storage(&self) -> bool {
         self.is_online() && self.disk_free.is_some() && self.roles.iter().any(|role| role == "storage")
     }

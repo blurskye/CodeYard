@@ -500,6 +500,33 @@ pub async fn pending_replica_bytes(pool: &SqlitePool) -> Result<Vec<(i64, i64)>>
         .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(pool).await?)
 }
 
+pub async fn assign_replica_family(pool: &SqlitePool, repository: i64, primary: i64, setting: crate::backend::db::models::ReplicaSetting) -> Result<Vec<i64>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repository).fetch_all(&mut *tx).await?;
+    let ids: Vec<i64> = members.iter().map(|row| row.0).collect();
+    if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) { return Ok(ids); }
+    let mut storage: Vec<ClusterNode> = sqlx::query_as(&format!("SELECT *,{NOW} AS observed_at FROM nodes ORDER BY id"))
+        .fetch_all(&mut *tx).await?;
+    storage.retain(|node| node.status == "active" && node.roles.iter().any(|role| role == "storage"));
+    let reservations: Vec<(i64, i64)> = sqlx::query_as("SELECT rr.node_id,CASE WHEN SUM(MAX(r.size_bytes,1))<=9223372036854775807/?1 THEN SUM(MAX(r.size_bytes,1))*?1 END FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
+        .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(&mut *tx).await?;
+    let rows: Vec<PrimaryReplicaRow> = sqlx::query_as(&format!("WITH family AS ({FORK_FAMILY}) SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_replicas rr ON rr.repository_id=r.id ORDER BY r.id,rr.node_id"))
+        .bind(repository).fetch_all(&mut *tx).await?;
+    for (repository, change) in crate::backend::db::cluster::replicas::family_plan(setting, primary, &mut storage, &rows, &reservations)? {
+        for node in change.add {
+            sqlx::query("INSERT INTO repository_replicas(repository_id,node_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
+                .bind(repository).bind(node).execute(&mut *tx).await?;
+        }
+        for node in change.remove {
+            sqlx::query("DELETE FROM repository_replicas WHERE repository_id=?1 AND node_id=?2")
+                .bind(repository).bind(node).execute(&mut *tx).await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(ids)
+}
+
 pub async fn list_held_replicas(pool: &SqlitePool, node_id: i64) -> Result<Vec<HeldReplica>> {
     Ok(sqlx::query_as(
         "SELECT rr.repository_id, r.disk_path, r.storage_node_id AS primary_node_id,

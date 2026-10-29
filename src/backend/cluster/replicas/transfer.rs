@@ -15,6 +15,7 @@ use anyhow::{ensure, Context, Result};
 use serde::Deserialize;
 use std::{collections::HashMap, path::Path};
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// What the primary sends before its pack.
@@ -33,16 +34,23 @@ pub(super) async fn copy(
     primary: i64,
     repository: Uuid,
     mirror: &Path,
+    stop: &CancellationToken,
 ) -> Result<()> {
-    // A copy Git cannot open has no refs to offer, so the primary sends everything.
-    let have = if super::connected(mirror).await? {
-        tips(context, repository, mirror).await?
-    } else {
-        Vec::new()
+    // No directory mutation is admitted during preparation or download.
+    let have = tokio::select! {
+        biased;
+        _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
+        have = async {
+            if super::connected(mirror).await? {
+                tips(context, repository, mirror).await
+            } else {
+                Ok(Vec::new())
+            }
+        } => have?,
     };
     // The primary filters missing have tips before packing. Other failures must not trigger
     // another, more expensive full pack with the same underlying failure.
-    fetch(context, primary, repository, mirror, &have).await
+    fetch(context, primary, repository, mirror, &have, stop).await
 }
 
 /// The distinct commits at the copy's refs. The primary leaves their history out of the pack.
@@ -66,6 +74,7 @@ async fn fetch(
     repository: Uuid,
     mirror: &Path,
     have: &[String],
+    stop: &CancellationToken,
 ) -> Result<()> {
     let copies = mirror.parent().context("replica copy has no directory")?;
     tokio::fs::create_dir_all(copies).await?;
@@ -75,8 +84,10 @@ async fn fetch(
         .prefix(TEMP_PREFIX)
         .tempfile_in(copies)?;
     let mut output = tokio::fs::File::from_std(pack.reopen()?);
-    let (listing, status) = context
-        .git_session(
+    let (listing, status) = tokio::select! {
+        biased;
+        _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
+        downloaded = context.git_session(
             primary,
             Request {
                 repository,
@@ -91,8 +102,8 @@ async fn fetch(
                 output: &mut output,
                 errors: &mut tokio::io::sink(),
             },
-        )
-        .await?;
+        ) => downloaded?,
+    };
     ensure!(status.success(), "the primary could not make a pack");
     output.flush().await?;
     drop(output);
@@ -102,8 +113,18 @@ async fn fetch(
     let pool = context.database()?;
     let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
         .await?.context("replica repository was deleted")?;
-    let _installation = crate::backend::git::repository::locks::lock(&crate::backend::repositories::store::primary_path(&context.repos_path, repository)).await;
-    let _mirror_installation = crate::backend::git::repository::locks::lock(mirror).await;
+    let primary_path = crate::backend::repositories::store::primary_path(&context.repos_path, repository);
+    let (_installation, _mirror_installation) = tokio::select! {
+        biased;
+        _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
+        guards = async {
+            let primary = crate::backend::git::repository::locks::lock(&primary_path).await;
+            let mirror = crate::backend::git::repository::locks::lock(mirror).await;
+            (primary, mirror)
+        } => guards,
+    };
+    // From here cancellation is deferred until installation has ended. Copying retains
+    // the task and its directory reservation until join, including during shutdown.
     ensure!(crate::backend::db::cluster::set_applied_version(pool, row.id, context.node_id, primary, -1).await?, "replica assignment changed before installation");
     // `initialize` needs an empty path, so a directory Git cannot open is renamed aside first.
     if !super::connected(mirror).await? {
@@ -259,7 +280,7 @@ mod tests {
                 stream.shutdown().await.unwrap();
             }
         });
-        assert!(copy(&context, 2, Uuid::new_v4(), &mirror).await.is_err());
+        assert!(copy(&context, 2, Uuid::new_v4(), &mirror, &CancellationToken::new()).await.is_err());
         let calls = calls.load(Ordering::SeqCst);
         server.abort();
         let _ = server.await;

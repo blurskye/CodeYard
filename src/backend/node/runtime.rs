@@ -607,7 +607,13 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             warn!(%error, "auto-merge stopped unexpectedly");
         }
     }
-    drain_worker(replicas, deadline).await;
+    // Replica downloads cancel on stop; an installation already mutating Git must
+    // be joined before directory ownership and the storage-root lock can be released.
+    if let Some(replicas) = replicas {
+        if let Err(error) = replicas.await {
+            warn!(%error, "replica worker stopped unexpectedly");
+        }
+    }
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
         member.shutdown().await;
