@@ -200,16 +200,13 @@ pub(crate) async fn load_settings(
             &ctx.state.pool,
             user.id,
             session::extract_session_id(&ctx.headers).as_deref(),
+            submitted.and_then(|form| form.get("sessions_before")).or_else(|| ctx.query.get("sessions_before"))
+                .and_then(|value| value.parse::<i64>().ok()).unwrap_or(0).max(0),
         )
         .await
-        .map_err(|_| {
-            ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load your sessions.",
-            )
-        })?
+        .map_err(|error| ctx.error(error.0, public_api_message(&error.1.0)))?
     } else {
-        Vec::new()
+        super::sessions::SessionListing::default()
     };
     let blocked = if tab == "blocked" {
         let page = ctx
@@ -329,7 +326,8 @@ pub(crate) async fn load_settings(
         signing_keys,
         gpg_keys,
         tokens,
-        sessions,
+        sessions: sessions.items,
+        session_pagination: sessions.pagination,
         new_token: None,
         password_supported: user.password_hash.is_some(),
         must_change_password: user.must_change_password,
