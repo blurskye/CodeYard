@@ -3330,9 +3330,10 @@ CREATE TABLE repository_import_authors (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
     author_name TEXT NOT NULL,
     author_email TEXT NOT NULL,
+    identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64),
     mapped_name TEXT,
     mapped_email TEXT,
-    UNIQUE (repo_id, author_name, author_email)
+    UNIQUE (repo_id, identity_hash)
 );
 
 CREATE TABLE project_teams (

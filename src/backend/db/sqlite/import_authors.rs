@@ -14,10 +14,18 @@ pub async fn record(
         ImportRefusal::Denied
     );
     let mut rows = Vec::new();
-    for (name, email) in authors {
-        let row = sqlx::query_as("INSERT INTO repository_import_authors(repo_id,author_name,author_email) VALUES($1,$2,$3) ON CONFLICT(repo_id,author_name,author_email) DO UPDATE SET author_name=excluded.author_name RETURNING *").bind(repo).bind(name).bind(email).fetch_one(&mut *tx).await?;
-        rows.push(row);
+    for authors in crate::backend::db::import_authors::identities(authors).chunks(200) {
+        let mut insert = sqlx::QueryBuilder::<sqlx::Sqlite>::new("INSERT INTO repository_import_authors(repo_id,identity_hash,author_name,author_email) ");
+        insert.push_values(authors, |mut row, (hash, name, email)| {
+            row.push_bind(repo).push_bind(hash).push_bind(*name).push_bind(*email);
+        });
+        insert.push(" ON CONFLICT(repo_id,identity_hash) DO NOTHING");
+        insert.build().execute(&mut *tx).await?;
+        let hashes: Vec<_> = authors.iter().map(|(hash, _, _)| hash).collect();
+        rows.extend(sqlx::query_as::<_, Author>("SELECT * FROM repository_import_authors WHERE repo_id=$1 AND identity_hash IN (SELECT value FROM json_each($2)) ORDER BY id")
+            .bind(repo).bind(serde_json::to_string(&hashes)?).fetch_all(&mut *tx).await?);
     }
+    rows.sort_by_key(|row| row.id);
     tx.commit().await?;
     Ok(rows)
 }
