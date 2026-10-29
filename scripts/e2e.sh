@@ -285,7 +285,8 @@ check_build_artifacts() {
 pg_url() { # pg_url NAME: GITSERV_TEST_DATABASE_URL pointed at the database NAME
     E2E_PG_DATABASE="$1" "$PYTHON" -I -c 'import os, urllib.parse as u
 parts = u.urlsplit(os.environ["GITSERV_TEST_DATABASE_URL"])
-print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"]).geturl())'
+query = [(key, value) for key, value in u.parse_qsl(parts.query, keep_blank_values=True) if key != "dbname"]
+print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"], query=u.urlencode(query)).geturl())'
 }
 
 prepare_database() {
