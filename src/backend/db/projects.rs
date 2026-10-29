@@ -356,6 +356,14 @@ native_operation!(super::postgres::projects::delete_field, super::sqlite::projec
     fn delete_field(pool: &DbPool, actor: i64, project: i64, field: i64) -> Result<()>);
 native_operation!(super::postgres::projects::add_item, super::sqlite::projects::add_item,
     fn add_item(pool: &DbPool, actor: i64, project: i64, content: &Content) -> Result<Item>);
+native_operation!(super::postgres::projects::item, super::sqlite::projects::item,
+    fn item(pool: &DbPool, viewer: Option<i64>, project: i64, id: i64) -> Result<Option<Item>>);
+native_operation!(super::postgres::projects::items_window, super::sqlite::projects::items_window,
+    fn items_window(pool: &DbPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Item>>);
+native_operation!(super::postgres::projects::list_window, super::sqlite::projects::list_window,
+    fn list_window(pool: &DbPool, viewer: Option<i64>, owner: Owner, after: i64, before: i64, limit: i64) -> Result<Vec<Project>>);
+native_operation!(super::postgres::projects::fields_window, super::sqlite::projects::fields_window,
+    fn fields_window(pool: &DbPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Field>>);
 native_operation!(super::postgres::projects::items, super::sqlite::projects::items,
     fn items(pool: &DbPool, viewer: Option<i64>, project: i64) -> Result<Vec<Item>>);
 native_operation!(super::postgres::projects::update_item, super::sqlite::projects::update_item,

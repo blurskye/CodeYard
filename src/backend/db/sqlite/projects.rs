@@ -3,7 +3,7 @@ use crate::backend::db::projects::{
     validate_project, Field, NewField, NewView, Owner, Project, Refusal, SelectOption, Settings,
 };
 use anyhow::Result;
-pub use exports::{fields_page, list_page};
+pub use exports::{fields_page, fields_window, list_page, list_window};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 mod extended;
 mod items;
