@@ -487,6 +487,14 @@ impl RepoStore {
         if let Backend::Local(store) = &self.0 { local::refresh_storage_size(pool, repo_id, store.clone()); }
     }
 
+    /// Wait for this request's coalesced scan to be published, including on a remote primary.
+    pub(crate) async fn refresh_storage_size_now(&self, pool: &db::DbPool, repo_id: i64) -> Result<i64, RepoError> {
+        match &self.0 {
+            Backend::Local(store) => local::refresh_storage_size_now(pool.clone(), repo_id, store.clone()).await,
+            Backend::Remote(remote) => remote.call(Operation::RefreshStorageSize, b"").await,
+        }
+    }
+
     /// Bytes the repository takes on disk.
     pub async fn size_bytes(&self) -> Result<u64, RepoError> {
         match &self.0 {

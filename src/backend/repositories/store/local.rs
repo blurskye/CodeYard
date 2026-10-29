@@ -270,42 +270,60 @@ async fn record_branch_update(
 /// it may not hold yet.
 static REF_CHANGES: LazyLock<Mutex<HashMap<PathBuf, usize>>> = LazyLock::new(Default::default);
 
-static SIZE_REFRESHES: LazyLock<Mutex<HashMap<PathBuf, bool>>> = LazyLock::new(Default::default);
+type SizeResult = Option<(u64, Result<i64, RepoError>)>;
+struct SizeRefresh {
+    requested: u64,
+    completed: tokio::sync::watch::Sender<SizeResult>,
+}
+static SIZE_REFRESHES: LazyLock<Mutex<HashMap<PathBuf, SizeRefresh>>> = LazyLock::new(Default::default);
 
 /// Coalesce writes while a scan runs. Accounting never holds a publication lock or RefChange.
 pub(super) fn refresh_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) {
-    let path = store.path().to_owned();
-    {
-        let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(dirty) = pending.get_mut(&path) {
-            *dirty = true;
-            return;
+    request_storage_size(pool, repo_id, store);
+}
+
+pub(super) async fn refresh_storage_size_now(pool: db::DbPool, repo_id: i64, store: LocalStore) -> Result<i64, RepoError> {
+    let (ticket, mut completed) = request_storage_size(pool, repo_id, store);
+    tokio::time::timeout(process::RPC_TIMEOUT, async {
+        loop {
+            if let Some((generation, result)) = completed.borrow_and_update().clone() {
+                if generation >= ticket { return result; }
+            }
+            completed.changed().await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Repository accounting stopped"))?;
         }
-        pending.insert(path.clone(), false);
-    }
+    }).await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Repository accounting timed out"))?
+}
+
+fn request_storage_size(pool: db::DbPool, repo_id: i64, store: LocalStore) -> (u64, tokio::sync::watch::Receiver<SizeResult>) {
+    let path = store.path().to_owned();
+    let receiver = {
+        let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(refresh) = pending.get_mut(&path) {
+            refresh.requested += 1;
+            return (refresh.requested, refresh.completed.subscribe());
+        }
+        let (completed, receiver) = tokio::sync::watch::channel(None);
+        pending.insert(path.clone(), SizeRefresh { requested: 1, completed });
+        receiver
+    };
     tokio::spawn(async move {
         loop {
-            // Wait for the publication that queued us to release its lock and ref-change guard.
+            let generation = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner())[&path].requested;
+            // One owner scans and publishes in order, without retaining a publication lease.
             drop(git::locks::lock(&path).await);
             let result = async {
                 let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
-                db::repositories::records::update_repo_size(&pool, repo_id, size)
-                    .await
-                    .map_err(RepoError::from)
-            }
-            .await;
-            if let Err(error) = result {
-                tracing::warn!(repo_id, %error, "could not refresh repository storage size");
-            }
+                db::repositories::records::update_repo_size(&pool, repo_id, size).await.map_err(RepoError::from)?;
+                Ok(size)
+            }.await;
+            if let Err(error) = &result { tracing::warn!(repo_id, %error, "could not refresh repository storage size"); }
             let mut pending = SIZE_REFRESHES.lock().unwrap_or_else(|e| e.into_inner());
-            if pending.get(&path) == Some(&true) {
-                pending.insert(path.clone(), false);
-            } else {
-                pending.remove(&path);
-                break;
-            }
+            let refresh = pending.get_mut(&path).expect("owned size refresh");
+            refresh.completed.send_replace(Some((generation, result)));
+            if refresh.requested == generation { pending.remove(&path); break; }
         }
     });
+    (1, receiver)
 }
 
 fn ref_change_counts() -> MutexGuard<'static, HashMap<PathBuf, usize>> {
