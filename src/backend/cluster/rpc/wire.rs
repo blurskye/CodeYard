@@ -76,6 +76,29 @@ impl PublicationText {
     }
 }
 
+/// Filtered listings use an object in the existing ref slot: older peers reject the
+/// request rather than silently returning an unfiltered prefix.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FilePathQuery {
+    Reference(String),
+    Filtered { reference: String, query: String },
+}
+impl From<&str> for FilePathQuery {
+    fn from(reference: &str) -> Self { Self::Reference(reference.into()) }
+}
+impl From<String> for FilePathQuery {
+    fn from(reference: String) -> Self { Self::Reference(reference) }
+}
+impl FilePathQuery {
+    pub fn into_parts(self) -> (String, String) {
+        match self {
+            Self::Reference(reference) => (reference, String::new()),
+            Self::Filtered { reference, query } => (reference, query),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operation {
     Initialize {
@@ -293,7 +316,7 @@ pub enum Operation {
         git_ref: String,
     },
     FilePaths {
-        git_ref: String,
+        git_ref: FilePathQuery,
         limit: usize,
         #[serde(default)]
         raw_json: bool,

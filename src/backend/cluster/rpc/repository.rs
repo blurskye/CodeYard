@@ -865,7 +865,8 @@ impl RpcHandler {
                 limit,
                 raw_json,
             } => {
-                let paths = store.file_paths(&git_ref, limit).await?;
+                let (git_ref, query) = git_ref.into_parts();
+                let paths = store.file_paths_matching(&git_ref, &query, limit).await?;
                 encode_json(&paths, raw_json, &mut output)?
             }
             Operation::Blame { git_ref, path } => {

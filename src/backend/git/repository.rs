@@ -815,7 +815,7 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
 const MAX_FILE_LIST_BYTES: usize = 1024 * 1024;
 
 /// The file paths at a revision, sorted. `truncated` is set when there were more than
-/// `limit`; the first `limit` paths in sorted order are kept.
+/// the count or byte budget; the first matching paths in sorted order are kept.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileList {
     pub paths: Vec<String>,
@@ -828,7 +828,9 @@ pub(crate) async fn list_file_paths(
     repo_path: &Path,
     git_ref: &str,
     limit: usize,
+    query: &str,
 ) -> Result<FileList> {
+    let terms = crate::file_search::query_terms(query);
     let revision = {
         let repo = Repository::open_bare(repo_path)?;
         let commit = peel_to_commit_checked(&repo, git_ref)?;
@@ -887,6 +889,9 @@ pub(crate) async fn list_file_paths(
                 continue;
             }
             let path = String::from_utf8_lossy(path).into_owned();
+            if !crate::file_search::matches_terms(&path, &terms) {
+                continue;
+            }
             if cutoff.as_ref().is_some_and(|cutoff| path >= *cutoff) {
                 truncated = true;
                 continue;
