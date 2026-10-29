@@ -179,9 +179,10 @@ pub fn import_document(value: &Value) -> Result<Value> {
                 .is_some_and(|s| s.len() <= 65535),
         Refusal::Invalid
     );
+    ensure!(value["cve_id"].is_null() || value["cve_id"].is_string(), Refusal::Invalid);
     ensure!(
         matches!(
-            value["severity"].as_str(),
+            value.get("severity").and_then(Value::as_str),
             Some("low" | "medium" | "high" | "critical" | "unknown")
         ),
         Refusal::Invalid
@@ -346,9 +347,7 @@ pub(crate) fn matches(
         std::collections::HashMap::new();
     for advisory in advisories {
         let osv = advisory["ghsa_id"].as_str().and_then(|id| osv.get(id));
-        if !advisory["withdrawn_at"].is_null()
-            || (advisory["severity"] == "unknown" && osv.is_none())
-        {
+        if !advisory["withdrawn_at"].is_null() {
             continue;
         }
         for vulnerability in advisory["vulnerabilities"].as_array().into_iter().flatten() {
