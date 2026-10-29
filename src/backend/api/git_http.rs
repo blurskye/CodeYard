@@ -167,7 +167,7 @@ async fn authorize_repository(
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
     // Gist repositories need the gist scope; every other repository needs repo.
-    if !crate::backend::identity::oauth_apps::allows_git(&state.pool, token.id, repo.is_gist)
+    if !crate::backend::identity::oauth_apps::allows_git(&state.pool, token.id, repo.is_gist, !write && !repo.is_private && !config.is_private())
         .await
         .map_err(|_| unavailable())?
     {

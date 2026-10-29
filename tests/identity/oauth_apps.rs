@@ -434,10 +434,10 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    assert!(!oauth::allows_git(f.pool(), limited.id, false)
+    assert!(!oauth::allows_git(f.pool(), limited.id, false, false)
         .await
         .unwrap());
-    assert!(!oauth::allows_git(f.pool(), limited.id, true).await.unwrap());
+    assert!(!oauth::allows_git(f.pool(), limited.id, true, false).await.unwrap());
     assert_eq!(limited.scope, "read");
     let authorization = format!("Bearer {}", limited_token(&router, &user).await);
     super::github::request(
@@ -671,10 +671,10 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    assert!(oauth::allows_git(f.pool(), repo_only.id, false)
+    assert!(oauth::allows_git(f.pool(), repo_only.id, false, false)
         .await
         .unwrap());
-    assert!(!oauth::allows_git(f.pool(), repo_only.id, true)
+    assert!(!oauth::allows_git(f.pool(), repo_only.id, true, false)
         .await
         .unwrap());
     // Revoking the approving session before exchange must not mint a new credential.

@@ -149,8 +149,10 @@ impl ReceiveCredential {
             }
             Self::DeployKey(id) => return deploy_keys::authorize(pool, id, repo, write).await,
             Self::Token(id) => {
+                let public_read = !write && !repo.is_private && db::node_config::get_node_configuration(pool).await?
+                    .is_some_and(|config| config.setup_completed && !config.is_private());
                 anyhow::ensure!(
-                    crate::backend::identity::oauth_apps::allows_git(pool, id, repo.is_gist)
+                    crate::backend::identity::oauth_apps::allows_git(pool, id, repo.is_gist, public_read)
                         .await?,
                     "OAuth repository access denied"
                 );
