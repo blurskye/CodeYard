@@ -197,14 +197,6 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
         .await
 }
 
-struct DownloadTask(tokio::task::JoinHandle<io::Result<()>>);
-
-impl Drop for DownloadTask {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 /// How long a download or search waits for a free slot before the request is refused.
 const SLOT_WAIT: Duration = Duration::from_secs(3);
 
@@ -238,7 +230,7 @@ pub(crate) fn download_body(
     stream: impl Stream<Item = io::Result<bytes::Bytes>> + Send + 'static,
 ) -> axum::body::Body {
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let task = DownloadTask(tokio::spawn(async move {
+    let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
         let mut stream = Box::pin(stream);
         let started = tokio::time::Instant::now();
         let mut sent = 0_u64;
@@ -280,7 +272,7 @@ pub(crate) fn download_body(
             match receiver.recv().await {
                 Some(chunk) => Ok(Some((chunk, (receiver, task)))),
                 None => {
-                    (&mut task.0)
+                    (&mut task)
                         .await
                         .map_err(|_| io::Error::other("Download task unavailable"))??;
                     Ok::<_, io::Error>(None)

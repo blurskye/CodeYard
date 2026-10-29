@@ -18,6 +18,7 @@ pub(crate) use transport::DIAL_TIMEOUT;
 pub use worker::{worker_context, CorePeer};
 
 pub use identity::{load_existing, load_or_create, parse_public_key, NodeKey};
+pub(crate) use identity::durable_directory;
 pub use pairing::{
     apply_declared_nodes, approve, create_invite, hash_secret, join, normalize_name,
     parse_declared_nodes, parse_duration, revoke, DeclaredNode, DeclaredSummary, InviteOptions,
@@ -40,7 +41,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
-use tokio::task::JoinHandle;
+use tokio_util::task::AbortOnDropHandle;
 use tracing::{info, warn};
 
 /// How often a running node records that it is alive and where it can be reached.
@@ -229,7 +230,7 @@ pub struct Cluster {
     router: Option<iroh::protocol::Router>,
     /// The TCP listener, when the node listens on TCP.
     tcp_listener: Option<tcp::Listener>,
-    heartbeat: std::sync::Mutex<Option<JoinHandle<()>>>,
+    heartbeat: std::sync::Mutex<Option<AbortOnDropHandle<()>>>,
     pool: DbPool,
     storage_path: Option<PathBuf>,
     /// The TCP addresses this node reports to peers.
@@ -300,14 +301,7 @@ impl Cluster {
             self.tcp_advertised.clone(),
             self.storage_path.clone(),
         ));
-        let previous = self
-            .heartbeat
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .replace(heartbeat);
-        if let Some(previous) = previous {
-            previous.abort();
-        }
+        drop(self.heartbeat.lock().unwrap_or_else(|e| e.into_inner()).replace(AbortOnDropHandle::new(heartbeat)));
         info!(
             key = %self.public_key(),
             listening = ?self.endpoint().map(|endpoint| endpoint.bound_sockets()),
@@ -365,19 +359,6 @@ impl Cluster {
             }
         }
         self.context.iroh.close().await;
-    }
-}
-
-impl Drop for Cluster {
-    fn drop(&mut self) {
-        if let Some(heartbeat) = self
-            .heartbeat
-            .get_mut()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
-            heartbeat.abort();
-        }
     }
 }
 
@@ -560,7 +541,7 @@ pub async fn client_context(
         return Ok(None);
     };
     require_postgres(pool)?;
-    std::fs::create_dir_all(state_dir)?;
+    durable_directory(state_dir)?;
     let identity_lock = crate::backend::locks::exclusive_file(&state_dir.join("serve.lock"))?;
     let key = load_existing(state_dir)?
         .ok_or_else(|| anyhow!("this node has not joined the cluster; start serve first"))?;

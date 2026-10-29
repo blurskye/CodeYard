@@ -42,7 +42,7 @@ async fn wait_for_session_slot(
 struct ChannelState {
     channel: Option<ChannelWriteHalf<Msg>>,
     input: Option<tokio::io::DuplexStream>,
-    reader: Option<tokio::task::JoinHandle<()>>,
+    _reader: Option<tokio_util::task::AbortOnDropHandle<()>>,
     queued: Option<tokio_util::sync::CancellationToken>,
     git_protocol: Option<String>,
 }
@@ -51,9 +51,6 @@ impl Drop for ChannelState {
     fn drop(&mut self) {
         if let Some(queued) = self.queued.take() {
             queued.cancel();
-        }
-        if let Some(reader) = self.reader.take() {
-            reader.abort();
         }
     }
 }
@@ -439,7 +436,7 @@ impl russh::server::Handler for GitSshHandler {
             ChannelState {
                 channel: Some(outgoing),
                 input: Some(input),
-                reader: Some(reader),
+                _reader: Some(tokio_util::task::AbortOnDropHandle::new(reader)),
                 queued: None,
                 git_protocol: None,
             },
@@ -750,7 +747,7 @@ mod tests {
             git_protocol: None,
             channel: None,
             input: None,
-            reader: None,
+            _reader: None,
         };
         assert!(!token.is_cancelled());
         drop(state);

@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use tokio_util::task::AbortOnDropHandle;
 #[derive(Serialize, Deserialize)]
 struct Announcement {
     origin: String,
@@ -40,7 +40,7 @@ pub struct NotificationBroadcaster {
     pool: db::DbPool,
     origin: String,
     stop: watch::Sender<bool>,
-    listener: Mutex<Option<JoinHandle<()>>>,
+    listener: Mutex<Option<AbortOnDropHandle<()>>>,
     sockets: SocketCounts,
 }
 
@@ -61,12 +61,12 @@ impl NotificationBroadcaster {
     pub async fn start(&self) {
         let mut task = self.listener.lock().await;
         if matches!(&self.pool, db::DbPool::Postgres(_)) && task.is_none() {
-            *task = Some(tokio::spawn(listen(
+            *task = Some(AbortOnDropHandle::new(tokio::spawn(listen(
                 self.pool.clone(),
                 self.origin.clone(),
                 self.subscriptions.clone(),
                 self.stop.subscribe(),
-            )));
+            ))));
         }
     }
 
@@ -141,9 +141,6 @@ impl NotificationBroadcaster {
 impl Drop for NotificationBroadcaster {
     fn drop(&mut self) {
         self.stop.send_replace(true);
-        if let Some(task) = self.listener.get_mut().take() {
-            task.abort();
-        }
     }
 }
 

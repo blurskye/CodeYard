@@ -34,7 +34,7 @@ async fn resolve(host: &str) -> Result<Vec<SocketAddr>> {
 }
 
 pub fn save_core(state_dir: &Path, ticket: &super::JoinTicket) -> Result<()> {
-    std::fs::create_dir_all(state_dir)?;
+    super::durable_directory(state_dir)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -120,6 +120,9 @@ pub async fn worker_context(
             (Err(error), Ok(peer)) => {
                 tracing::warn!(%error, "cluster join failed; using the saved core address");
                 peers.push(peer);
+            }
+            (Err(error), Err(_)) if !peers.is_empty() => {
+                tracing::warn!(%error, "cluster join failed; trying configured cores");
             }
             (Err(error), Err(_)) => return Err(error),
         }

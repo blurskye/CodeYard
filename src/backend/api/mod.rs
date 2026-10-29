@@ -142,7 +142,6 @@ pub async fn run_web_server(
     state: AppState,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let traffic_pool = state.pool.clone();
     let dependency_pool = state.pool.clone();
     let dependency_ci = state.ci_runs.clone();
     let dependency_notifications = state.notification_broadcaster.clone();
@@ -165,19 +164,12 @@ pub async fn run_web_server(
         .await
     };
     let result = {
-        let maintenance =
-            crate::backend::repositories::traffic::maintain(traffic_pool, stop.clone());
-        let dependencies = crate::backend::repositories::dependencies::worker::run(
+        let workers = crate::backend::repositories::dependencies::worker::run(
             dependency_pool,
             dependency_ci,
             dependency_notifications,
             stop.clone(),
         );
-        // Keep polling both workers until both stop. A worker future left unpolled could hold
-        // the pool slot it was waiting for, and starve the request handlers.
-        let workers = async {
-            tokio::join!(maintenance, dependencies);
-        };
         tokio::pin!(server, workers);
         tokio::select! {result=&mut server=>result,()=&mut workers=>server.await}
     };

@@ -32,11 +32,21 @@ fn validate_cluster_encryptor(
     Ok(())
 }
 
-/// Holds the state directory for this server until the returned file is dropped. A second
-/// server started on it by mistake would otherwise recover the first one's merges as abandoned.
+/// All background owners use the same shutdown deadline and abort fallback.
+async fn drain_worker<T>(task: Option<tokio::task::JoinHandle<T>>, deadline: tokio::time::Instant) {
+    if let Some(task) = task {
+        let mut task = tokio_util::task::AbortOnDropHandle::new(task);
+        if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+            task.abort();
+            let _ = task.await;
+        }
+    }
+}
+
+/// Holds the state directory so a second server cannot recover this server's active merges.
 fn lock_state_dir(state_dir: &Path) -> Result<std::fs::File> {
     use std::os::fd::AsRawFd;
-    std::fs::create_dir_all(state_dir)?;
+    cluster::durable_directory(state_dir)?;
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -417,6 +427,8 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         pool.close().await;
         return started.map(|_| ()).and(stopped);
     }
+    let (stop_traffic, traffic_stop) = tokio::sync::watch::channel(false);
+    let traffic = tokio::spawn(crate::backend::repositories::traffic::maintain(pool.clone(), traffic_stop));
     let (stop_vulnerabilities, vulnerabilities_stop) = tokio::sync::watch::channel(false);
     let vulnerabilities = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(crate::backend::vulnerabilities::run(
@@ -544,6 +556,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     if signalled {
         stop_listeners.send_replace(true);
     }
+    stop_traffic.send_replace(true);
     stop_vulnerabilities.send_replace(true);
     stop_scanning.send_replace(true);
     stop_schedules.send_replace(true);
@@ -579,82 +592,22 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     if let Some(member) = &member {
         let _ = tokio::time::timeout_at(deadline, member.drain_sessions()).await;
     }
-    if let Some(mut task) = vulnerabilities {
-        if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
-            task.abort();
-            let _ = task.await;
-        }
-    }
-    if let Some(mut scanning) = scanning {
-        if tokio::time::timeout_at(deadline, &mut scanning)
-            .await
-            .is_err()
-        {
-            scanning.abort();
-            let _ = scanning.await;
-        }
-    }
-    if let Some(mut schedules) = schedules {
-        if tokio::time::timeout_at(deadline, &mut schedules)
-            .await
-            .is_err()
-        {
-            schedules.abort();
-            let _ = schedules.await;
-        }
-    }
-    if let Some(mut expiry) = expiry {
-        let finished = tokio::time::timeout_at(deadline, &mut expiry).await;
-        if finished.is_err() {
-            expiry.abort();
-            let _ = expiry.await;
-        }
-    }
-    if let Some(mut email) = email {
-        let finished = tokio::time::timeout_at(deadline, &mut email).await;
-        if finished.is_err() {
-            email.abort();
-            let _ = email.await;
-        }
-    }
-    if let Some(mut metadata) = metadata {
-        let finished = tokio::time::timeout_at(deadline, &mut metadata).await;
-        if finished.is_err() {
-            metadata.abort();
-            let _ = metadata.await;
-        }
-    }
-    if let Some(mut scanning) = secret_scanning {
-        if tokio::time::timeout_at(deadline, &mut scanning)
-            .await
-            .is_err()
-        {
-            scanning.abort();
-            let _ = scanning.await;
-        }
-    }
-    if let Some(mut auto_merge) = auto_merge {
-        if tokio::time::timeout_at(deadline, &mut auto_merge)
-            .await
-            .is_err()
-        {
-            auto_merge.abort();
-            let _ = auto_merge.await;
-        }
-    }
-    if let Some(mut replicas) = replicas {
-        let finished = tokio::time::timeout_at(deadline, &mut replicas).await;
-        if finished.is_err() {
-            replicas.abort();
-            let _ = replicas.await;
-        }
-    }
+    drain_worker(Some(traffic), deadline).await;
+    drain_worker(vulnerabilities, deadline).await;
+    drain_worker(scanning, deadline).await;
+    drain_worker(schedules, deadline).await;
+    drain_worker(expiry, deadline).await;
+    drain_worker(email, deadline).await;
+    drain_worker(metadata, deadline).await;
+    drain_worker(secret_scanning, deadline).await;
+    drain_worker(auto_merge, deadline).await;
+    drain_worker(replicas, deadline).await;
     crate::backend::organizations::shutdown(deadline).await;
-    crate::backend::webhooks::shutdown(deadline).await;
     let stopped = workers.shutdown().await;
     if let Some(member) = &member {
         member.shutdown().await;
     }
+    crate::backend::webhooks::shutdown(deadline).await;
     notifications.shutdown().await;
     pool.close().await;
     result.and(stopped)
