@@ -316,13 +316,18 @@ pub async fn set_node_status(
     })
 }
 
-pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::pool::PoolConnection<sqlx::Postgres>> {
+pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConnection> {
     let mut connection = pool.acquire().await?;
     connection.close_on_drop();
     let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(723947121,hashtext($1))")
         .bind(identity).fetch_one(&mut *connection).await?;
     ensure!(locked, "another server is using this installation or node identity");
-    Ok(connection)
+    Ok(connection.detach())
+}
+
+pub async fn has_storage_assignments(pool: &PgPool, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE storage_node_id=$1) OR EXISTS(SELECT 1 FROM repository_replicas WHERE node_id=$1)")
+        .bind(node).fetch_one(pool).await?)
 }
 
 pub async fn record_node_heartbeat(

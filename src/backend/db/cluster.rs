@@ -8,28 +8,20 @@ use chrono::{DateTime, Utc};
 
 /// Retains a serving lease on a dedicated connection; closing it releases the advisory lock.
 pub struct ServingLock {
-    postgres: Option<sqlx::pool::PoolConnection<sqlx::Postgres>>,
+    _postgres: Option<sqlx::PgConnection>,
     _file: Option<std::fs::File>,
-}
-
-impl Drop for ServingLock {
-    fn drop(&mut self) {
-        if let Some(connection) = self.postgres.take() {
-            drop(connection.detach());
-        }
-    }
 }
 
 pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> {
     match pool {
         DbPool::Postgres(pool) => Ok(ServingLock {
-            postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
+            _postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
             _file: None,
         }),
         DbPool::Sqlite(pool) => {
             let mut path = pool.connect_options().get_filename().as_os_str().to_owned();
             path.push(".serve.lock");
-            Ok(ServingLock { postgres: None, _file: Some(crate::backend::locks::exclusive_file(std::path::Path::new(&path))?) })
+            Ok(ServingLock { _postgres: None, _file: Some(crate::backend::locks::exclusive_file(std::path::Path::new(&path))?) })
         }
     }
 }
@@ -42,6 +34,10 @@ pub enum Authority<'a> {
     Operator,
     Administrator { user_id: i64, session: &'a str },
 }
+
+native_operation!(crate::backend::db::postgres::cluster::has_storage_assignments,
+    crate::backend::db::sqlite::cluster::has_storage_assignments,
+    fn has_storage_assignments(pool: &DbPool, node: i64) -> Result<bool>);
 
 /// One entry of the declared membership list.
 pub struct DeclaredMember {

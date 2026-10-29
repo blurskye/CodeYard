@@ -302,6 +302,11 @@ pub async fn set_node_status(
     })
 }
 
+pub async fn has_storage_assignments(pool: &SqlitePool, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE storage_node_id=$1) OR EXISTS(SELECT 1 FROM repository_replicas WHERE node_id=$1)")
+        .bind(node).fetch_one(pool).await?)
+}
+
 pub async fn record_node_heartbeat(
     pool: &SqlitePool,
     public_key: &str,
