@@ -7,45 +7,28 @@ use serde_yaml::{Mapping, Value as Yaml};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn job_order(workflow: &Workflow) -> Result<Vec<String>> {
-    fn visit(
-        workflow: &Workflow,
-        id: &str,
-        visiting: &mut BTreeSet<String>,
-        done: &mut BTreeSet<String>,
-        result: &mut Vec<String>,
-    ) -> Result<()> {
-        if done.contains(id) {
-            return Ok(());
-        }
-        ensure!(
-            visiting.insert(id.to_owned()),
-            "jobs.{id}.needs: The workflow contains a cycle in its job dependencies"
-        );
-        let (_, job) = workflow
-            .jobs
-            .iter()
-            .find(|(key, _)| key == id)
-            .with_context(|| format!("Job '{id}' needs an unknown job"))?;
-        for need in needs(job)? {
-            let (canonical, _) = workflow
-                .jobs
-                .iter()
-                .find(|(key, _)| key.eq_ignore_ascii_case(&need))
-                .with_context(|| {
-                    format!("jobs.{id}.needs: Job '{id}' needs unknown job '{need}'")
-                })?;
-            visit(workflow, canonical, visiting, done, result)?;
-        }
-        visiting.remove(id);
-        done.insert(id.to_owned());
-        result.push(id.to_owned());
-        Ok(())
-    }
+    let jobs: BTreeMap<_, _> = workflow.jobs.iter().map(|(id, job)| (id.to_ascii_lowercase(), (id, job))).collect();
     let mut result = Vec::new();
     let mut visiting = BTreeSet::new();
     let mut done = BTreeSet::new();
-    for (id, _) in &workflow.jobs {
-        visit(workflow, id, &mut visiting, &mut done, &mut result)?;
+    for (root, _) in &workflow.jobs {
+        let mut pending = vec![(root.clone(), false)];
+        while let Some((id, exiting)) = pending.pop() {
+            if exiting {
+                visiting.remove(&id);
+                done.insert(id.clone());
+                result.push(id);
+                continue;
+            }
+            if done.contains(&id) { continue; }
+            ensure!(visiting.insert(id.clone()), "jobs.{id}.needs: The workflow contains a cycle in its job dependencies");
+            pending.push((id.clone(), true));
+            let (_, job) = jobs[&id.to_ascii_lowercase()];
+            for need in needs(job)?.into_iter().rev() {
+                let (canonical, _) = jobs.get(&need.to_ascii_lowercase()).with_context(|| format!("jobs.{id}.needs: Job '{id}' needs unknown job '{need}'"))?;
+                pending.push(((*canonical).clone(), false));
+            }
+        }
     }
     Ok(result)
 }
@@ -128,6 +111,19 @@ fn json_argument(template: &str) -> Option<&str> {
     None
 }
 
+fn json_numbers(value: Yaml) -> Result<Yaml> {
+    match value {
+        Yaml::Mapping(map) if map.len() == 1 && map.contains_key("$serde_json::private::Number") => {
+            let number = map["$serde_json::private::Number"].as_str().context("Invalid JSON number")?.parse::<f64>()?;
+            ensure!(number.is_finite(), "Invalid JSON number");
+            yaml_value(Value::Number(number))
+        }
+        Yaml::Mapping(map) => Ok(Yaml::Mapping(map.into_iter().map(|(key, value)| Ok((key, json_numbers(value)?))).collect::<Result<_>>()?)),
+        Yaml::Sequence(values) => Ok(Yaml::Sequence(values.into_iter().map(json_numbers).collect::<Result<_>>()?)),
+        value => Ok(value),
+    }
+}
+
 fn resolve(value: &Yaml, contexts: &Contexts, status: Status) -> Result<Yaml> {
     match value {
         Yaml::String(template) => {
@@ -135,7 +131,7 @@ fn resolve(value: &Yaml, contexts: &Contexts, status: Status) -> Result<Yaml> {
             // The JSON parser reads it straight into the ordered YAML value, escapes included.
             if let Some(argument) = json_argument(template) {
                 if let Value::String(source) = evaluate(argument, contexts, status)? {
-                    return serde_json::from_str::<Yaml>(&source).context("Error parsing fromJSON");
+                    return json_numbers(serde_json::from_str::<Yaml>(&source).context("Error parsing fromJSON")?);
                 }
             }
             yaml_value(interpolate(template, contexts, status)?)
@@ -185,7 +181,9 @@ fn number_value(value: Option<&Yaml>, default: f64, path: &str) -> Result<f64> {
 }
 
 // Filters compare every leaf, using expression equality (including case folding and coercion).
-fn matches(actual: Option<&Yaml>, expected: &Yaml) -> Result<bool> {
+fn matches(actual: Option<&Yaml>, expected: &Yaml, work: &mut u32) -> Result<bool> {
+    *work += 1;
+    ensure!(*work <= MAX_MATRIX_VISITS, "strategy.matrix: Matrix is too large to expand (work budget exceeded)");
     match expected {
         Yaml::Mapping(map) => {
             for (key, expected) in map {
@@ -197,7 +195,7 @@ fn matches(actual: Option<&Yaml>, expected: &Yaml) -> Result<bool> {
                         })
                         .map(|(_, v)| v)
                 });
-                if !matches(child, expected)? {
+                if !matches(child, expected, work)? {
                     return Ok(false);
                 }
             }
@@ -206,20 +204,22 @@ fn matches(actual: Option<&Yaml>, expected: &Yaml) -> Result<bool> {
         Yaml::Sequence(items) => {
             for (i, expected) in items.iter().enumerate() {
                 let child = actual.and_then(Yaml::as_sequence).and_then(|v| v.get(i));
-                if !matches(child, expected)? {
+                if !matches(child, expected, work)? {
                     return Ok(false);
                 }
             }
             Ok(true)
         }
         _ => {
+            let Some(actual) = actual else { return Ok(false); };
+            if std::mem::discriminant(actual) != std::mem::discriminant(expected) { return Ok(false); }
             let mut contexts = Contexts::default();
             contexts.values.insert(
                 "matrix".into(),
                 Value::Object(BTreeMap::from([
                     (
                         "actual".into(),
-                        expression_value(actual.unwrap_or(&Yaml::Null))?,
+                        expression_value(actual)?,
                     ),
                     ("expected".into(), expression_value(expected)?),
                 ])),
@@ -289,10 +289,13 @@ fn cross_product(
         "strategy.matrix: Matrix is too large to expand"
     );
     for filter in exclude {
+        *visits += 1;
+        ensure!(*visits <= MAX_MATRIX_VISITS, "strategy.matrix: Matrix is too large to expand (work budget exceeded)");
         if filter.keys().all(|key| product.contains_key(key))
             && matches(
                 Some(&Yaml::Mapping(product.clone())),
                 &Yaml::Mapping((*filter).clone()),
+                visits,
             )?
         {
             return Ok(());
@@ -339,6 +342,7 @@ fn matrix(value: Option<&Yaml>) -> Result<Vec<Combination>> {
             "strategy.matrix.{}: Matrix vector does not contain any values",
             text(key, "matrix")?
         );
+        ensure!(axes.len() < 64, "strategy.matrix: Too many matrix axes");
         axes.push((key, values.as_slice()));
     }
     let filters = |key: &str| -> Result<Vec<&Mapping>> {
@@ -371,6 +375,7 @@ fn matrix(value: Option<&Yaml>) -> Result<Vec<Combination>> {
             ensure!(axes.iter().any(|(axis, _)| *axis == key), "strategy.matrix.exclude: Matrix exclude key '{}' does not match any key within the matrix", text(key, "exclude")?);
         }
     }
+    let mut work = 0;
     let mut products = Vec::new();
     if !axes.is_empty() {
         cross_product(
@@ -379,7 +384,7 @@ fn matrix(value: Option<&Yaml>) -> Result<Vec<Combination>> {
             &mut Mapping::new(),
             &exclude,
             &mut products,
-            &mut 0,
+            &mut work,
         )?;
     }
     let mut result = Vec::new();
@@ -393,7 +398,7 @@ fn matrix(value: Option<&Yaml>) -> Result<Vec<Combination>> {
                 .filter(|(key, _)| axes.iter().any(|(axis, _)| *axis == *key))
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
-            if matches(Some(&original), &Yaml::Mapping(constraints))? {
+            if matches(Some(&original), &Yaml::Mapping(constraints), &mut work)? {
                 matched[i] = true;
                 for (key, value) in *filter {
                     if !product.contains_key(key) {
@@ -406,6 +411,7 @@ fn matrix(value: Option<&Yaml>) -> Result<Vec<Combination>> {
     }
     for (i, filter) in include.iter().enumerate() {
         if !matched[i] {
+            ensure!(result.len() < 256, "strategy.matrix: Matrix cannot generate more than 256 jobs");
             // Unmatched includes do not extend one another. Names list vector keys first.
             let mut ordered = Mapping::new();
             for (key, _) in &axes {
