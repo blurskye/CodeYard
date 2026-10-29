@@ -178,7 +178,7 @@ pub async fn save(
                 .map_err(unavailable)?
                 .ok_or(HookError::Denied)?;
             // A hook that was saved stays saved when its ping cannot be queued.
-            if ping(pool, owner, actor, id).await.is_err() {
+            if ping(pool, owner, actor, credential, id).await.is_err() {
                 tracing::warn!(webhook_id = id, "could not queue the webhook ping");
             }
             Ok(id)
