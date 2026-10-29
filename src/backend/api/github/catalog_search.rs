@@ -83,6 +83,7 @@ async fn catalog(
                     "Search is busy. Try again shortly.",
                 )
             })?;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
     let (search, git_incomplete) = if search.needs_git() {
         crate::backend::repositories::catalog_search::prepare(
             &state.pool,
@@ -115,6 +116,7 @@ async fn catalog(
     let readable =
         auth::readable_repositories(&state, authentication.as_ref(), &ids, "metadata").await?;
     let mut items = Vec::new();
+    let licenses = search.git_licenses();
     let mut incomplete = git_incomplete;
     for hit in results.items {
         let value = match kind {
@@ -137,6 +139,8 @@ async fn catalog(
                         &state,
                         &repo,
                         authentication.as_ref(),
+                        deadline,
+                        licenses.get(&repo.id).map(|license| license.as_deref()),
                     )
                     .await?
                 } else {

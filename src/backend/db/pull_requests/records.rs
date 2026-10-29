@@ -6,7 +6,7 @@ use anyhow::Result;
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::commit_association_candidates,
     crate::backend::db::sqlite::pull_requests::records::commit_association_candidates,
-    fn commit_association_candidates(pool: &DbPool, repo: i64, before: i64, limit: i64) -> Result<Vec<PullRequest>>);
+    fn commit_association_candidates(pool: &DbPool, repo: i64, before: i64, limit: i64, merged_only: bool) -> Result<Vec<PullRequest>>);
 
 #[derive(Debug, thiserror::Error)]
 #[error("duplicate_open_pull_request")]

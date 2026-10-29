@@ -52,15 +52,21 @@ pub struct Topic {
 }
 impl Search {
     pub fn parse(kind: Kind, text: &str) -> Result<Self, &'static str> {
-        let mut expr = discussion_search::expression(text)?;
-        if kind == Kind::Repositories
-            && !has(&expr, "fork", None)
-            && !has(&expr, "is", Some("fork"))
-            && !has(&expr, "repo", None)
+        Self::from_expression(kind, discussion_search::expression(text)?)
+            .map(Self::with_default_fork_filter)
+    }
+    pub fn with_default_fork_filter(mut self) -> Self {
+        if self.kind == Kind::Repositories
+            && !has(&self.expr, "fork", None)
+            && !has(&self.expr, "is", Some("fork"))
+            && !has(&self.expr, "repo", None)
         {
-            expr = Expr::And(vec![expr, Expr::Term("fork".into(), "false".into())]);
+            self.expr = Expr::And(vec![self.expr, Expr::Term("fork".into(), "false".into())]);
         }
-        Self::from_expression(kind, expr)
+        self
+    }
+    pub fn needs_readme(&self) -> bool {
+        self.fields.iter().any(|field| field == "readme")
     }
     pub fn needs_git(&self) -> bool {
         self.kind == Kind::Repositories
@@ -69,6 +75,12 @@ impl Search {
     pub fn with_git(mut self, facts: String) -> Self {
         self.git = Some(facts);
         self
+    }
+    pub fn git_licenses(&self) -> std::collections::HashMap<i64, Option<String>> {
+        #[derive(serde::Deserialize)]
+        struct Fact { repo_id: i64, license: Option<String> }
+        self.git.as_deref().and_then(|facts| serde_json::from_str::<Vec<Fact>>(facts).ok())
+            .unwrap_or_default().into_iter().map(|fact| (fact.repo_id, fact.license)).collect()
     }
     pub fn git_candidates(&self) -> Self {
         fn broader(expr: &Expr, readme: bool, negative: bool) -> Expr {
