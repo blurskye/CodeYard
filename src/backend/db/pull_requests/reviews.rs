@@ -29,6 +29,22 @@ pub struct NewPullRequestComment<'a> {
     pub expected_revisions: Option<(&'a str, &'a str)>,
 }
 
+/// A review and its validated inline comments commit or roll back together.
+pub struct ReviewBatch<'a> {
+    pub pr_id: i64,
+    pub author_id: i64,
+    pub state: Option<&'a str>,
+    pub body: Option<&'a str>,
+    pub commit_sha: Option<&'a str>,
+    pub expected_pending: Option<i64>,
+    pub create_pending: bool,
+    pub comments: &'a [NewPullRequestComment<'a>],
+    pub token: Option<i64>,
+}
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_review_batch,
+    crate::backend::db::sqlite::pull_requests::reviews::save_review_batch,
+    fn save_review_batch(pool: &DbPool, input: ReviewBatch<'_>) -> Result<PullRequestReview>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_comment,
     fn add_pull_request_comment(

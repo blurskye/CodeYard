@@ -31,6 +31,24 @@ pub struct CreatePullRequestCommentRequest {
     pub review_id: Option<i64>,
 }
 
+pub(super) type DiffCache = std::collections::HashMap<(String, String, String), std::sync::Arc<crate::backend::git::DiffInfo>>;
+
+pub(super) struct PreparedComment {
+    pub request: CreatePullRequestCommentRequest,
+    reply_parent: Option<(i64, i64)>,
+}
+impl PreparedComment {
+    pub(super) fn input<'a>(&'a self, pull: &'a db::models::PullRequest, author: i64) -> db::pull_requests::reviews::NewPullRequestComment<'a> {
+        let req = &self.request;
+        db::pull_requests::reviews::NewPullRequestComment {
+            pr_id: pull.id, author_id: author, body: &req.body, path: req.path.as_deref(), line: req.line, side: req.side.as_deref(),
+            start_line: req.start_line, start_side: req.start_side.as_deref(), commit_sha: req.commit_sha.as_deref(),
+            in_reply_to_comment_id: req.in_reply_to_comment_id,
+            expected_revisions: (req.path.is_some() && req.in_reply_to_comment_id.is_none()).then_some((pull.head_sha.as_str(), pull.base_sha.as_str())),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -225,6 +243,7 @@ pub(super) async fn emit_comment_webhook(
 
 /// The file must be one this pull request changes, and the line must be a line of its diff on the
 /// side named, or on either side when none is. The diff is the one the diff page shows.
+#[expect(clippy::too_many_arguments, reason = "Anchor validation carries pinned revisions, a patch cache and explicit coordinates.")]
 async fn check_diff_anchor(
     cluster: Option<&NodeContext>,
     repository: &db::models::Repository,
@@ -233,6 +252,7 @@ async fn check_diff_anchor(
     line: Option<i32>,
     side: Option<&str>,
     start: Option<(i32, &str)>,
+    cache: &mut DiffCache,
 ) -> Result<Option<&'static str>, OperationError> {
     let refusal = |message: &str| OperationError::Invalid {
         code: "validation_error",
@@ -243,22 +263,20 @@ async fn check_diff_anchor(
         return Err(refusal("path must be a file this pull request changes"));
     }
     // Only the selected file's patch is read, so another file's size cannot block this comment.
-    let diff = repo_store(repository, cluster)
-        .diff_file(&pull_request.base_sha, &pull_request.head_sha, path)
-        .await
-        .map_err(|error| {
-            if error.is_response_too_large() {
-                OperationError::TooLarge {
-                    code: "response_too_large",
-                    message: "The diff of this file is too large to comment on.".to_owned(),
-                }
-            } else {
-                OperationError::Unavailable {
-                    code: "git_unavailable",
-                    message: "The pull request diff is temporarily unavailable".to_owned(),
-                }
-            }
+    let key = (pull_request.diff_base().to_owned(), pull_request.head_sha.clone(), path.to_owned());
+    if !cache.contains_key(&key) {
+        let diff = repo_store(repository, cluster).diff_file(&key.0, &key.1, path).await.map_err(|error| {
+            if error.is_response_too_large() { OperationError::TooLarge { code: "response_too_large", message: "The diff of this file is too large to comment on.".to_owned() } }
+            else { OperationError::Unavailable { code: "git_unavailable", message: "The pull request diff is temporarily unavailable".to_owned() } }
         })?;
+        let bytes = |diff: &crate::backend::git::DiffInfo| diff.files.iter().map(|file| file.patch.len() + file.filename.len() + file.previous_filename.as_ref().map_or(0, String::len) + 512).sum::<usize>();
+        let held = cache.values().map(|diff| bytes(diff)).sum::<usize>();
+        if held.saturating_add(bytes(&diff)) > 16 * 1024 * 1024 {
+            return Err(OperationError::TooLarge { code: "response_too_large", message: "The review's selected patches exceed the validation budget.".into() });
+        }
+        cache.insert(key.clone(), std::sync::Arc::new(diff));
+    }
+    let diff = &cache[&key];
     let file = diff
         .files
         .iter()
@@ -362,6 +380,21 @@ pub async fn create_pull_request_comment(
             message: "Pull request not found".to_owned(),
         })?;
 
+    let prepared = prepare_comment(pool, cluster, &repository, &pull_request, req, &mut DiffCache::new()).await?;
+    save_comment(pool, broadcaster, &user, &repository, &pull_request, (owner, repo), prepared).await
+}
+
+pub(super) async fn prepare_comment(
+    pool: &db::DbPool,
+    cluster: Option<&NodeContext>,
+    repository: &db::models::Repository,
+    pull_request: &db::models::PullRequest,
+    mut req: CreatePullRequestCommentRequest,
+    cache: &mut DiffCache,
+) -> Result<PreparedComment, OperationError> {
+    if req.repository_id.is_some_and(|id| id != repository.id) {
+        return Err(OperationError::Conflict { code: "revision_conflict", message: "The repository changed after this comment was started. Reload before commenting.".into() });
+    }
     if let Err(message) = crate::backend::issues::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
             code: "validation_error",
@@ -529,6 +562,7 @@ pub async fn create_pull_request_comment(
                 line,
                 side.as_deref(),
                 start_line.zip(start_side.as_deref()),
+                cache,
             )
             .await?;
             if let Some(inferred) = inferred {
@@ -546,22 +580,31 @@ pub async fn create_pull_request_comment(
             message: "Pull request is not open".to_owned(),
         });
     }
-    let input = db::pull_requests::reviews::NewPullRequestComment {
-        pr_id: pull_request.id,
-        author_id: user.id,
-        body: &req.body,
-        path: path.as_deref(),
-        line,
-        side: side.as_deref(),
-        start_line,
-        start_side: start_side.as_deref(),
-        commit_sha: commit_sha.as_deref(),
-        in_reply_to_comment_id: reply_root,
-        expected_revisions: (path.is_some() && req.in_reply_to_comment_id.is_none()).then_some((
-            pull_request.head_sha.as_str(),
-            pull_request.base_sha.as_str(),
-        )),
-    };
+    req.path = path;
+    req.line = line;
+    req.side = side;
+    req.start_line = start_line;
+    req.start_side = start_side;
+    req.commit_sha = commit_sha;
+    req.in_reply_to_comment_id = reply_root;
+    req.pending = pending;
+    Ok(PreparedComment { request: req, reply_parent })
+}
+
+async fn save_comment(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    user: &db::models::User,
+    repository: &db::models::Repository,
+    pull_request: &db::models::PullRequest,
+    location: (String, String),
+    prepared: PreparedComment,
+) -> Result<db::models::PullRequestComment, OperationError> {
+    let (owner, repo) = location;
+    let req = &prepared.request;
+    let pending = req.pending;
+    let reply_parent = prepared.reply_parent;
+    let input = prepared.input(pull_request, user.id);
     let stored = if let Some(review_id) = req.review_id {
         db::pull_requests::reviews::add_comment_to_pending_review(pool, input, review_id).await
     } else if pending {

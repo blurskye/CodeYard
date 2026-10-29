@@ -101,6 +101,13 @@ async fn insert_comment(
             crate::backend::db::discussions::DiscussionWriteRefusal::ReviewFull
         );
     }
+    let comment = insert_comment_on(&mut tx, &input, review_id).await?;
+    touch_revision(&mut tx, input.pr_id).await?;
+    tx.commit().await?;
+    Ok(comment)
+}
+
+async fn insert_comment_on(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, input: &NewPullRequestComment<'_>, review_id: Option<i64>) -> Result<PullRequestComment> {
     let comment = sqlx::query_as::<_, PullRequestComment>(
         r#"
         INSERT INTO pr_comments (pull_request_id, author_id, body, path, line, side, commit_sha, in_reply_to_comment_id, review_id,start_line,start_side)
@@ -119,11 +126,8 @@ async fn insert_comment(
     .bind(review_id)
     .bind(input.start_line)
     .bind(input.start_side)
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut **tx)
     .await?;
-    touch_revision(&mut tx, input.pr_id).await?;
-    tx.commit().await?;
-
     Ok(comment)
 }
 
@@ -648,6 +652,11 @@ pub async fn save_pull_request_review(
     commit_sha: Option<&str>,
     expected_pending: Option<i64>,
 ) -> Result<PullRequestReview> {
+    save_review_batch(pool, crate::backend::db::pull_requests::reviews::ReviewBatch { pr_id, author_id, state: Some(state), body, commit_sha, expected_pending, create_pending: false, comments: &[], token: None }).await
+}
+
+pub async fn save_review_batch(pool: &PgPool, input: crate::backend::db::pull_requests::reviews::ReviewBatch<'_>) -> Result<PullRequestReview> {
+    let (pr_id, author_id, state, body, commit_sha, expected_pending) = (input.pr_id, input.author_id, input.state.unwrap_or("commented"), input.body, input.commit_sha, input.expected_pending);
     let commit_sha = commit_sha.map(str::to_ascii_lowercase);
     let mut tx = pool.begin().await?;
     // A plain comment needs read access; a vote needs write access.
@@ -684,6 +693,27 @@ pub async fn save_pull_request_review(
                 crate::backend::db::discussions::DiscussionWriteRefusal::Denied
             );
         }
+    }
+    let (repo, base): (i64, String) = sqlx::query_as("SELECT repo_id,base_sha FROM pull_requests WHERE id=$1").bind(pr_id).fetch_one(&mut *tx).await?;
+    if let Some(token) = input.token {
+        anyhow::ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, author_id, repo, "pull-requests").await?, crate::backend::db::discussions::DiscussionWriteRefusal::Denied);
+    }
+    if input.create_pending {
+        anyhow::ensure!(input.comments.len() <= MAX_REVIEW_COMMENTS as usize, crate::backend::db::discussions::DiscussionWriteRefusal::ReviewFull);
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews WHERE pull_request_id=$1 AND author_id=$2 AND state='pending')").bind(pr_id).bind(author_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(!exists, crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview);
+        let draft: PullRequestReview = sqlx::query_as("INSERT INTO pr_reviews(pull_request_id,author_id,state,body,commit_sha) VALUES($1,$2,'pending',$3,$4) RETURNING *").bind(pr_id).bind(author_id).bind(body).bind(commit_sha.as_deref()).fetch_one(&mut *tx).await?;
+        for comment in input.comments {
+            anyhow::ensure!(comment.pr_id == pr_id && comment.author_id == author_id && comment.in_reply_to_comment_id.is_none() && comment.path.is_some() && comment.expected_revisions == Some((current_head.as_str(), base.as_str())), crate::backend::db::discussions::DiscussionWriteRefusal::RevisionChanged);
+            insert_comment_on(&mut tx, comment, Some(draft.id)).await?;
+        }
+        if input.state.is_none() {
+            touch_revision(&mut tx, pr_id).await?;
+            tx.commit().await?;
+            return Ok(draft);
+        }
+    } else {
+        anyhow::ensure!(input.comments.is_empty(), crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview);
     }
     let pending_body: Option<Option<String>> = sqlx::query_scalar("SELECT body FROM pr_reviews WHERE pull_request_id=$1 AND author_id=$2 AND state='pending' FOR UPDATE")
         .bind(pr_id).bind(author_id).fetch_optional(&mut *tx).await?;

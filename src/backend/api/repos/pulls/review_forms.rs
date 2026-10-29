@@ -470,6 +470,7 @@ pub(crate) async fn native_review(
         commit_sha: Some(compare.head_sha.clone()),
         // The pending review the form showed; another one started since is not published.
         review_id: submitted.pending_review,
+        token: None,
     };
     let user = ctx.require_user()?.id;
     match review_rules::create_pull_request_review(
