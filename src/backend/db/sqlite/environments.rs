@@ -78,12 +78,17 @@ pub async fn upsert(
     Ok(row)
 }
 
-pub async fn delete(pool: &SqlitePool, actor: i64, repo: i64, name: &str) -> Result<()> {
+pub async fn delete(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64, name: &str) -> Result<()> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    if let Some(token) = credential.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "environments").await?, Refusal::Denied);
+    }
     sqlx::query("UPDATE deployment_protection_gates SET state='disabled' WHERE rule_id IN (SELECT p.id FROM deployment_protection_rules p JOIN deployment_environments e ON e.id=p.environment_id WHERE e.repo_id=?1 AND e.name_key=?2) AND state IN ('pending','rejected')")
         .bind(repo).bind(name.to_lowercase()).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM deployment_environments WHERE repo_id=?1 AND name_key=?2")

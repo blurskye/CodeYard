@@ -54,9 +54,9 @@ native_operation!(crate::backend::db::postgres::deployment_protection::rules, cr
 native_operation!(crate::backend::db::postgres::deployment_protection::integrations, crate::backend::db::sqlite::deployment_protection::integrations,
     fn integrations(pool: &DbPool, repo: i64) -> Result<Vec<App>>);
 native_operation!(crate::backend::db::postgres::deployment_protection::create, crate::backend::db::sqlite::deployment_protection::create,
-    fn create(pool: &DbPool, actor: i64, repo: i64, environment: i64, app: i64) -> Result<Rule>);
+    fn create(pool: &DbPool, actor: impl Into<super::users::tokens::Actor>, repo: i64, environment: i64, app: i64) -> Result<Rule>);
 native_operation!(crate::backend::db::postgres::deployment_protection::disable, crate::backend::db::sqlite::deployment_protection::disable,
-    fn disable(pool: &DbPool, actor: i64, repo: i64, environment: i64, rule: i64) -> Result<()>);
+    fn disable(pool: &DbPool, actor: impl Into<super::users::tokens::Actor>, repo: i64, environment: i64, rule: i64) -> Result<()>);
 native_operation!(crate::backend::db::postgres::deployment_protection::gates, crate::backend::db::sqlite::deployment_protection::gates,
     fn gates(pool: &DbPool, run: i64) -> Result<Vec<Gate>>);
 

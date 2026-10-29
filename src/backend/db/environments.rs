@@ -132,7 +132,7 @@ native_operation!(crate::backend::db::postgres::environments::upsert,
     fn upsert(pool: &DbPool, actor: i64, repo: i64, name: &str, input: &Update) -> Result<Environment>);
 native_operation!(crate::backend::db::postgres::environments::delete,
     crate::backend::db::sqlite::environments::delete,
-    fn delete(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<()>);
+    fn delete(pool: &DbPool, actor: impl Into<super::users::tokens::Actor>, repo: i64, name: &str) -> Result<()>);
 native_operation!(crate::backend::db::postgres::environments::branches,
     crate::backend::db::sqlite::environments::branches,
     fn branches(pool: &DbPool, environment: i64, offset: i64, limit: i64) -> Result<Vec<Branch>>);

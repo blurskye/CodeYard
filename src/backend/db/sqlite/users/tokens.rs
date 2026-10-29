@@ -131,6 +131,8 @@ pub(crate) async fn permits_write(
         let Some(grant) = grant else { return Ok(false) };
         let grant: serde_json::Value = serde_json::from_str(&grant)?;
         let permissions: serde_json::Value = if installation.is_some() { serde_json::from_str(&permissions)? } else { grant.clone() };
+        // App environment administration and fine-grained environment grants use different names.
+        let permission = if permission == "environments" { "administration" } else { permission };
         return Ok((selected.is_empty() || selected.contains(&repo))
             && crate::backend::identity::github_apps::allows(&permissions, permission, true)
             && crate::backend::identity::github_apps::allows(&grant, permission, true));

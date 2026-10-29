@@ -27,18 +27,25 @@ pub async fn integrations(pool: &SqlitePool, repo: i64) -> Result<Vec<App>> {
     Ok(apps.into_iter().filter(provider).collect())
 }
 
+async fn begin_write(pool: &SqlitePool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>> {
+    let credential = actor.into();
+    let actor = credential.user_id;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(super::discussions::lock_admin_authority(&mut tx, actor, repo).await?, Refusal::Denied);
+    if let Some(token) = credential.token_id {
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "environments").await?, Refusal::Denied);
+    }
+    Ok(tx)
+}
+
 pub async fn create(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     environment: i64,
     app: i64,
 ) -> Result<Rule> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
-        Refusal::Denied
-    );
+    let mut tx = begin_write(pool, actor, repo).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM deployment_environments WHERE id=?1 AND repo_id=?2)",
     )
@@ -72,16 +79,12 @@ pub async fn create(
 
 pub async fn disable(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     environment: i64,
     rule: i64,
 ) -> Result<()> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    anyhow::ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
-        Refusal::Denied
-    );
+    let mut tx = begin_write(pool, actor, repo).await?;
     let changed = sqlx::query("UPDATE deployment_protection_rules SET enabled=FALSE WHERE id=?1 AND environment_id=?2 AND EXISTS(SELECT 1 FROM deployment_environments WHERE id=?2 AND repo_id=?3)")
         .bind(rule).bind(environment).bind(repo).execute(&mut *tx).await?;
     anyhow::ensure!(changed.rows_affected() == 1, Refusal::NotFound);
