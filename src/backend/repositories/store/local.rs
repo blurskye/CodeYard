@@ -645,21 +645,27 @@ impl LocalStore {
         // hidden ref keeps it, and the ref change makes replicas copy it like any other
         // accepted write. A single server keeps it until Git prunes unreachable objects.
         let reference = format!("refs/codeyard/objects/{sha}");
-        if repository.storage_node_id.is_some()
-            && !self.mirror_refs().await?.contains_key(&reference)
-        {
-            let held = self.blocking(git::retained_objects_in_use).await?;
-            ensure_room(
-                held,
-                &[&reference],
-                "Git-data objects that no branch or tag names",
-                git::MAX_RETAINED_OBJECT_REFS,
-                git::MAX_RETAINED_OBJECT_REF_BYTES,
-            )?;
-            let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-            git::publish_ref_create(self.path(), &reference, &sha)
-                .await
-                .map_err(RepoError::from)?;
+        if repository.storage_node_id.is_some() {
+            let _publication = git::locks::publication(self.path()).await.map_err(RepoError::from)?;
+            let retained_ref = reference.clone();
+            if !self.blocking(move |path| git::repository::retained::exists(path, &retained_ref)).await? {
+                let held = self.blocking(git::retained_objects_in_use).await?;
+                if ensure_room(held, &[&reference], "Git-data objects that no branch or tag names",
+                    git::MAX_RETAINED_OBJECT_REFS, git::MAX_RETAINED_OBJECT_REF_BYTES).is_err()
+                {
+                    let candidates = self.blocking(git::repository::retained::candidates).await?;
+                    let redundant = git::repository::retained::reachable(self.path(), candidates).await.map_err(RepoError::from)?;
+                    if !redundant.is_empty() {
+                        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+                        git::repository::retained::delete(self.path(), &redundant).await.map_err(RepoError::from)?;
+                    }
+                    ensure_room(self.blocking(git::retained_objects_in_use).await?, &[&reference],
+                        "Git-data objects that no branch or tag names", git::MAX_RETAINED_OBJECT_REFS,
+                        git::MAX_RETAINED_OBJECT_REF_BYTES)?;
+                }
+                let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
+                git::publish_ref_create(self.path(), &reference, &sha).await.map_err(RepoError::from)?;
+            }
         }
         refresh_storage_size(pool.clone(), repo_id, self.clone());
         Ok(sha)
