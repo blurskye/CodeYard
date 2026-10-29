@@ -12,22 +12,24 @@ pub async fn commit_authors(
     pool: &db::DbPool,
     emails: &[String],
 ) -> anyhow::Result<HashMap<String, db::models::User>> {
-    anyhow::ensure!(emails.len() <= 512, "Too many commit email addresses");
-    let usernames = emails
-        .iter()
-        .filter_map(|email| email.strip_suffix("@users.noreply").map(str::to_owned))
-        .collect::<Vec<_>>();
-    let mut users = db::users::accounts::get_users_by_emails(pool, emails).await?;
-    users.extend(db::users::accounts::get_users_by_usernames(pool, &usernames).await?);
     let mut result = HashMap::new();
-    for user in &users {
-        if let Some(email) = &user.email {
-            result.insert(email.clone(), user.clone());
+    for emails in emails.chunks(256) {
+        let owners = db::users::accounts::get_verified_email_owners(pool, emails).await?;
+        let ids = owners.iter().map(|(_, id)| *id).collect::<Vec<_>>();
+        let accounts = db::users::accounts::get_users_by_ids(pool, &ids).await?
+            .into_iter().map(|user| (user.id, user)).collect::<HashMap<_, _>>();
+        for (email, id) in owners {
+            if let Some(user) = accounts.get(&id) {
+                result.insert(email, user.clone());
+            }
         }
-    }
-    // The generated namespace belongs to the account, not to someone claiming it as an email.
-    for user in users {
-        result.insert(format!("{}@users.noreply", user.username), user);
+        let usernames = emails.iter()
+            .filter_map(|email| email.strip_suffix("@users.noreply").map(str::to_owned))
+            .collect::<Vec<_>>();
+        // The generated namespace belongs to the account, not to someone claiming it as an email.
+        for user in db::users::accounts::get_users_by_usernames(pool, &usernames).await? {
+            result.insert(user.noreply_email(), user);
+        }
     }
     Ok(result)
 }

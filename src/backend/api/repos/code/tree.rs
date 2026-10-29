@@ -1,8 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
 use crate::backend::api::repos::chrome::{
-    branch_name, commit, default_ref, load_refs_from_repo, ref_names_under, resolve,
+    branch_name, commit, default_ref, ref_names_under, resolve,
     root_if_missing, store_error, Loaded,
 };
 use crate::backend::api::repos::refs::references::resolve_references;
@@ -79,7 +79,7 @@ pub async fn get_tree_root(
     tree_entries(&state, &headers, (&owner, &repo), &git_ref, "").await
 }
 
-/// The entries of the folder at `path`, or none for a repository without refs.
+/// The entries of the folder at `path`, resolved directly from the requested revision.
 async fn tree_entries(
     state: &AppState,
     headers: &HeaderMap,
@@ -88,11 +88,6 @@ async fn tree_entries(
     path: &str,
 ) -> Result<Json<Vec<TreeEntryResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, owner, repo, headers).await?;
-
-    let refs = load_refs_from_repo(state, &repository).await?;
-    if refs.is_empty() {
-        return Ok(Json(Vec::new()));
-    }
 
     let tree = repo_store(&repository, state.cluster.as_ref())
         .tree(git_ref, path)
@@ -104,6 +99,7 @@ async fn tree_entries(
             )
         })?;
 
+    check_repo_read_access(&state.pool, &repository, headers).await?;
     Ok(Json(
         tree.into_iter().map(TreeEntryResponse::from).collect(),
     ))

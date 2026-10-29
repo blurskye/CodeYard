@@ -46,6 +46,7 @@ async fn file(
         .await
     {
         // An oversized file is refused from its size, so the whole blob is never parsed.
+        Ok(blob) if !matches!(blob.mode, 0o100644 | 0o100755) => Err(invalid("Dependency files must be regular files; submit a dependency snapshot for symlinked manifests")),
         Ok(blob) if blob.size > limit => Err(invalid("Dependency file is too large")),
         Ok(blob) => Ok(Some(blob.bytes)),
         Err(error) if matches!(error.kind, ErrorKind::MissingPath | ErrorKind::NotFound) => {
@@ -62,7 +63,7 @@ const MAX_INVENTORY_PACKAGES: usize = 10_000;
 
 fn is_manifest(path: &str) -> bool {
     let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
-    (name == "package-lock.json" || super::dependencies::lockfiles::FILES.contains(&name))
+    (matches!(name, "package.json" | "package-lock.json" | "npm-shrinkwrap.json") || super::dependencies::lockfiles::FILES.contains(&name))
         && !directory
             .split('/')
             .any(|part| matches!(part, "node_modules" | "vendor" | ".git"))
@@ -142,7 +143,11 @@ pub(crate) async fn native_inventory(
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
     let store = repo_store(repo, state.cluster.as_ref());
-    let sha = store.commit(reference).await?.sha;
+    let sha = if crate::backend::git::is_full_commit_id(reference) {
+        store.commit(reference).await?
+    } else {
+        store.commit_from_primary(reference).await?
+    }.sha;
     let listing = store.file_paths(&sha, MAX_LISTED_PATHS).await?;
     // A partial listing could hide a lockfile, and a scan that saved it would mark its alerts fixed.
     if listing.truncated {
@@ -179,16 +184,28 @@ pub(crate) async fn native_inventory(
             "The repository has too many dependency files; submit a dependency snapshot",
         ));
     }
+    let paths = listing.paths.iter().map(String::as_str).collect::<HashSet<_>>();
+    let sibling = |directory: &str, name: &str| if directory.is_empty() { name.to_owned() } else { format!("{directory}/{name}") };
     let mut packages = BTreeMap::new();
     for path in manifests {
         if covered.contains(path) {
             continue;
         }
         let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
+        let shrinkwrap = sibling(directory, "npm-shrinkwrap.json");
+        if name == "package-lock.json" && paths.contains(shrinkwrap.as_str()) {
+            continue;
+        }
+        if name == "package.json" {
+            if paths.contains(shrinkwrap.as_str()) || paths.contains(sibling(directory, "package-lock.json").as_str()) {
+                continue;
+            }
+            return Err(invalid("An npm manifest needs a supported lockfile; submit a complete dependency snapshot"));
+        }
         let Some(bytes) = file(&store, &sha, path).await? else {
             continue;
         };
-        let parsed = if name == "package-lock.json" {
+        let parsed = if matches!(name, "package-lock.json" | "npm-shrinkwrap.json") {
             npm_packages(&store, &sha, directory, path, &bytes).await?
         } else {
             super::dependencies::lockfiles::parse(path, &bytes)

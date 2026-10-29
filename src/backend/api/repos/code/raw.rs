@@ -5,7 +5,7 @@ use crate::backend::api::repos::chrome::{load, resolve};
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange, RepoError};
 use axum::extract::{OriginalUri, Path, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use std::collections::HashMap;
@@ -56,6 +56,11 @@ pub fn raw_content_type(path: &str, is_binary: bool) -> &'static str {
 }
 
 pub(crate) fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
+    // These adapters do not publish a strong validator or Last-Modified. No If-Range
+    // value can be matched, so RFC 9110 requires a complete replacement response.
+    if headers.contains_key(header::IF_RANGE) {
+        return Ok((BlobRange::Full, false));
+    }
     let mut values = headers.get_all(header::RANGE).iter();
     let Some(value) = values.next() else {
         return Ok((BlobRange::Full, false));
@@ -125,11 +130,13 @@ fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
 pub async fn get_raw_blob(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, git_ref, path)): Path<(String, String, String, String)>,
+    method: Method,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let (range, partial) = requested_range(&headers).map_err(|_| {
+    let head = method == Method::HEAD;
+    let (range, partial) = (if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) }).map_err(|_| {
         (
             StatusCode::RANGE_NOT_SATISFIABLE,
             Json(ApiError::new(
@@ -138,14 +145,14 @@ pub async fn get_raw_blob(
             )),
         )
     })?;
-    let permit = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+    let permit = if head { None } else { Some(crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
         .await
         .ok_or_else(|| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ApiError::new("downloads_busy", "Repository downloads busy")),
             )
-        })?;
+        })?) };
     let blob = repo_store(&repository, state.cluster.as_ref())
         .blob_range(&git_ref, &path, range)
         .await
@@ -159,8 +166,10 @@ pub(crate) fn raw_response(
     path: &str,
     blob: BlobBytes,
     partial: bool,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    permit: impl Into<Option<tokio::sync::OwnedSemaphorePermit>>,
 ) -> Response {
+    let permit = permit.into();
+    let head = permit.is_none();
     let BlobBytes {
         id: _,
         bytes,
@@ -169,9 +178,11 @@ pub(crate) fn raw_response(
         offset,
         mode: _,
     } = blob;
-    let length = bytes.len();
-    let mut response =
-        Response::new(crate::backend::api::http::middleware::buffered_download_body(bytes, permit));
+    let length = if head { size } else { bytes.len() as u64 };
+    let mut response = Response::new(match permit {
+        Some(permit) => crate::backend::api::http::middleware::buffered_download_body(bytes, permit),
+        None => axum::body::Body::empty(),
+    });
     *response.status_mut() = if partial {
         StatusCode::PARTIAL_CONTENT
     } else {
@@ -224,10 +235,12 @@ pub(crate) fn raw_response(
 pub async fn raw_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    method: Method,
     OriginalUri(uri): OriginalUri,
     Path(params): Path<HashMap<String, String>>,
 ) -> Response {
-    let (range, partial) = match requested_range(&headers) {
+    let head = method == Method::HEAD;
+    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) } {
         Ok(range) => range,
         Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
     };
@@ -245,13 +258,11 @@ pub async fn raw_page(
         Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let Some(permit) =
-        crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await
-    else {
-        return ctx.error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Repository downloads busy.",
-        );
+    let permit = if head { None } else {
+        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await else {
+            return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Repository downloads busy.");
+        };
+        Some(permit)
     };
     let blob = repo_store(&loaded.repository, ctx.state.cluster.as_ref())
         .blob_range(&resolved.reference, &resolved.path, range)

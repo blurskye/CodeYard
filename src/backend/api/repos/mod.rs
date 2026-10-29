@@ -154,7 +154,7 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(advisories::page_router())
         .merge(disclosure::page_router())
         .merge(checks::router())
-        .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024))
+        .layer(axum::extract::DefaultBodyLimit::max(code::contents::EDITOR_FORM_BODY_LIMIT))
         .merge(code::upload_router())
         .merge(code::download_router())
         .merge(refs::commits::router())

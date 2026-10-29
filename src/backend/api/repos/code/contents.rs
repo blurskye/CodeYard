@@ -6,7 +6,7 @@ use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
 use crate::backend::repositories::files;
-use crate::backend::repositories::store::{repo_store, FileWrite, MAX_EDITOR_BYTES};
+use crate::backend::repositories::store::{repo_store, BlobRange, FileWrite, MAX_EDITOR_BYTES};
 use crate::webui::components::references::References;
 use crate::webui::pages::repos as view;
 use crate::webui::pages::repos::ref_path::{branch_url, compare_url, is_markdown_path};
@@ -17,6 +17,9 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+/// LF textarea contents become CRLF and then `%0D%0A` in a native form.
+pub(crate) const EDITOR_FORM_BODY_LIMIT: usize = 6 * MAX_EDITOR_BYTES + 64 * 1024;
+
 #[derive(Deserialize)]
 pub struct WriteFileRequest {
     pub content: String,
@@ -229,6 +232,13 @@ fn new_branch_for(ctx: &PageContext, loaded: &Loaded) -> String {
     }
 }
 
+fn check_form_path(ctx: &PageContext, path: &str) -> Result<(), Response> {
+    if path.contains(['\r', '\n']) {
+        return Err(ctx.error(StatusCode::BAD_REQUEST, "Filenames containing line breaks cannot be changed through native forms."));
+    }
+    Ok(())
+}
+
 async fn editor_page(
     ctx: &PageContext,
     loaded: &Loaded,
@@ -237,12 +247,7 @@ async fn editor_page(
 ) -> Result<Response, Response> {
     ctx.require_user()?;
     let (branch, path, expected) = write_target(ctx, loaded, tail, !creating)?;
-    if path.contains(['\r', '\n']) {
-        return Err(ctx.error(
-            StatusCode::BAD_REQUEST,
-            "Filenames containing line breaks cannot be edited in the web editor.",
-        ));
-    }
+    check_form_path(ctx, &path)?;
     let mut editor = view::editor::Editor {
         path: if creating && !path.is_empty() {
             format!("{path}/")
@@ -256,9 +261,15 @@ async fn editor_page(
     };
     if !creating {
         let blob = repo_store(&loaded.repository, ctx.state.cluster.as_ref())
-            .blob_bytes(&editor.expected_revision, &path)
+            .blob_range(&editor.expected_revision, &path, BlobRange::Window {
+                offset: 0,
+                length: MAX_EDITOR_BYTES as u64 + 1,
+            })
             .await
             .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
+        if blob.size > MAX_EDITOR_BYTES as u64 {
+            return Err(ctx.error(StatusCode::PAYLOAD_TOO_LARGE, "The web editor supports files up to 1 MiB."));
+        }
         editor.content = files::editor_text(&blob.bytes, blob.is_binary)
             .map_err(|error| ctx.error(write_status(&error), &error.message))?
             .to_owned();
@@ -508,6 +519,7 @@ pub(in crate::backend::api::repos) async fn replaced_repository_editor(
 async fn delete_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
     ctx.require_user()?;
     let (branch, path, expected) = write_target(ctx, loaded, tail, true)?;
+    check_form_path(ctx, &path)?;
     let protected = refuses_direct_commit(ctx, loaded, &branch, &expected).await;
     let file = view::editor::DeleteFile {
         message: format!("Delete {path}"),
@@ -538,6 +550,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
 ) -> Response {
     let branch = field(form, "branch");
     let path = field(form, "path");
+    if let Err(response) = check_form_path(&ctx, &path) { return response; }
     ctx.return_to = Some(branch_url(&loaded.chrome.base(), "delete", &branch, &path));
     if !loaded.chrome.can_write {
         return ctx.error(StatusCode::FORBIDDEN, "Write access is required.");
@@ -644,7 +657,8 @@ pub(in crate::backend::api::repos) async fn page(
             Err(response) => return response,
         };
     let tail = params.get("ref_path").map(String::as_str).unwrap_or("");
-    let kind = uri.path().split('/').nth(3);
+    let path = uri.path().strip_prefix(crate::backend::api::repos::LEGACY_PREFIX).unwrap_or(uri.path());
+    let kind = path.split('/').nth(3);
     let page = if kind == Some("delete") {
         delete_page(&ctx, &loaded, tail).await
     } else {
