@@ -640,6 +640,7 @@ async fn retained_history_and_merge_hook_contract(pg: bool) {
         f.pool(),
         db::webhooks::HookOwner::Repository(app.repository.id),
         app.owner,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), app.owner).await),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,

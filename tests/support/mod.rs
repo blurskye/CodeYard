@@ -15,3 +15,11 @@ pub mod server;
 /// Password hashing has a few process-wide permits, and a request that finds them taken fails at
 /// once. Tests in one binary that hash passwords hold this lock so they do not compete.
 pub static PASSWORD_WORK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+pub async fn live_session(pool: &codeyard::backend::db::DbPool, actor: i64) -> String {
+    let id = uuid::Uuid::new_v4().simple().to_string().repeat(2);
+    codeyard::backend::db::users::sessions::create_session(
+        pool, &id, actor, None, None, chrono::Utc::now() + chrono::Duration::hours(1),
+    ).await.unwrap();
+    id
+}

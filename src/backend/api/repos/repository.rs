@@ -694,7 +694,7 @@ pub(super) async fn settings_model(
             csrf_token: &loaded.chrome.csrf_token,
             repository_id: Some(loaded.repository.id),
         };
-        let built = panel::build(&ctx.state.pool, viewer, &place, &ctx.query)
+        let built = panel::build(&ctx.state.pool, viewer, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), &place, &ctx.query)
             .await
             .map_err(|error| webhook_page_error(ctx, loaded, error))?;
         settings.webhooks = Some(Box::new(built));
@@ -987,6 +987,7 @@ async fn webhook_form(
         pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
+        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         owner,
         action,
         form,

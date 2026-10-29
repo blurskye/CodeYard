@@ -87,6 +87,7 @@ async fn contract(pg: bool) {
         f.pool(),
         db::webhooks::HookOwner::Repository(repo.id),
         alice,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,

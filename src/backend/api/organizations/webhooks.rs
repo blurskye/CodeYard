@@ -36,6 +36,7 @@ pub(super) async fn post(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
+        &crate::backend::db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         HookOwner::Organization(org),
         &action,
         &form,

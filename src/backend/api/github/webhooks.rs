@@ -4,7 +4,7 @@ use crate::backend::{
     app::AppState,
     db::{
         self,
-        models::{User, Webhook, WebhookDelivery},
+        models::{Webhook, WebhookDelivery},
         webhooks::{HookOwner, HookSettings},
     },
     webhooks::{
@@ -41,12 +41,12 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(HookOwner, User)> {
+) -> Result<(HookOwner, auth::Authentication)> {
     let (repo, actor) =
         repository(state, headers, &params["owner"], &params["repo"], write).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
+    let actor = actor.ok_or_else(auth::required)?;
     let owner = HookOwner::Repository(repo.id);
-    settings::authorize(&state.pool, &actor, owner)
+    settings::authorize(&state.pool, &actor.user, owner)
         .await
         .map_err(hook_error)?;
     Ok((owner, actor))
@@ -63,12 +63,12 @@ fn id(params: &Params, key: &str) -> Result<i64> {
 async fn snapshot(
     state: &AppState,
     owner: HookOwner,
-    actor: &User,
+    actor: &auth::Authentication,
     hook: i64,
     delivery: Option<i64>,
 ) -> Result<(Webhook, HookSettings)> {
     let mut settings =
-        db::webhooks::read_settings(&state.pool, owner, actor.id, Some(hook), delivery, 0, false)
+        db::webhooks::read_settings(&state.pool, owner, actor.user.id, &actor.credential(), Some(hook), delivery, 0, false)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(|| {
@@ -82,7 +82,7 @@ async fn read_hook(
     state: &AppState,
     params: &Params,
     owner: HookOwner,
-    actor: &User,
+    actor: &auth::Authentication,
     hook: i64,
 ) -> Result<Value> {
     let (hook, settings) = snapshot(state, owner, actor, hook, None).await?;
@@ -230,7 +230,8 @@ async fn save(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
-                &actor,
+                &actor.user,
+                &actor.credential(),
                 None,
                 &form,
             )
@@ -268,7 +269,8 @@ async fn save(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
-                &actor,
+                &actor.user,
+                &actor.credential(),
                 id,
                 &patch,
             )
@@ -331,7 +333,7 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    settings::delete(&state.pool, owner, &actor, id(&params, "hook_id")?)
+    settings::delete(&state.pool, owner, &actor.user, &actor.credential(), id(&params, "hook_id")?)
         .await
         .map_err(hook_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -464,7 +466,8 @@ async fn trigger(
         settings::redeliver(
             &state.pool,
             owner,
-            &actor,
+            &actor.user,
+            &actor.credential(),
             hook,
             id(&params, "delivery_id")?,
         )
@@ -473,11 +476,11 @@ async fn trigger(
         return Ok((StatusCode::ACCEPTED, Json(json!({}))).into_response());
     }
     if uri.path().ends_with("/tests") {
-        settings::test_push(&state.pool, state.cluster.as_ref(), owner, &actor, hook)
+        settings::test_push(&state.pool, state.cluster.as_ref(), owner, &actor.user, &actor.credential(), hook)
             .await
             .map_err(hook_error)?;
     } else {
-        settings::ping(&state.pool, owner, &actor, hook)
+        settings::ping(&state.pool, owner, &actor.user, &actor.credential(), hook)
             .await
             .map_err(hook_error)?;
     }

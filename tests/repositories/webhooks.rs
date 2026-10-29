@@ -17,9 +17,10 @@ use codeyard::backend::{
         models::OrgRole,
         organizations::{self as orgs, OrganizationOutcome},
         webhooks::{HookOwner, WebhookFields},
+        users::accounts::AccountCredential,
     },
     storage::ObjectStore,
-    webhooks::delivery::hmac_sha256,
+    crypto::hmac_sha256,
 };
 use database::Database;
 use pulls::Client;
@@ -537,7 +538,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         active: true,
         ssl_verify: true,
     };
-    let id = db::webhooks::insert_webhook(pool, owner, actor, &fields, None)
+    let id = db::webhooks::insert_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), &fields, None)
         .await
         .unwrap()
         .unwrap();
@@ -557,14 +558,14 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     assert_eq!(rows[0].status_code, Some(200));
     assert_eq!(rows[0].response_body.as_deref(), Some("ok\\0binary"));
     fields.active = false;
-    db::webhooks::update_webhook(pool, owner, actor, id, &fields, None)
+    db::webhooks::update_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), id, &fields, None)
         .await
         .unwrap();
     delivery::send(pool, &hook, &outgoing).await;
     assert_eq!(receiver.received().len(), 1, "disabled queued hook sent");
     fields.active = true;
     fields.payload_url.push_str("/changed");
-    db::webhooks::update_webhook(pool, owner, actor, id, &fields, None)
+    db::webhooks::update_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), id, &fields, None)
         .await
         .unwrap();
     delivery::send(pool, &hook, &outgoing).await;
@@ -587,7 +588,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(receiver.received().len(), 2);
-    db::webhooks::delete_webhook(pool, owner, actor, id)
+    db::webhooks::delete_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), id)
         .await
         .unwrap();
     sending.await.unwrap();
@@ -629,7 +630,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         ssl_verify: true,
     };
     let hook =
-        db::webhooks::insert_webhook(pool, HookOwner::Repository(repo.id), actor, &fields, None)
+        db::webhooks::insert_webhook(pool, HookOwner::Repository(repo.id), actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), &fields, None)
             .await
             .unwrap()
             .unwrap();
@@ -917,6 +918,7 @@ async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
         pool,
         HookOwner::Organization(org.id),
         actor,
+        &AccountCredential::Session(&crate::support::live_session(pool, actor).await),
         &WebhookFields {
             username: None,
             password: None,
@@ -1064,24 +1066,24 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     };
     let organization = HookOwner::Organization(org.id);
     assert_eq!(
-        db::webhooks::insert_webhook(pool, organization, owner, &fields, None)
+        db::webhooks::insert_webhook(pool, organization, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), &fields, None)
             .await
             .unwrap(),
         None,
         "a demoted owner created an organization hook"
     );
-    let hook = db::webhooks::insert_webhook(pool, organization, second, &fields, None)
+    let hook = db::webhooks::insert_webhook(pool, organization, second, &AccountCredential::Session(&crate::support::live_session(pool, second).await), &fields, None)
         .await
         .unwrap()
         .expect("a current owner creates a hook");
     assert_eq!(
-        db::webhooks::update_webhook(pool, organization, owner, hook, &fields, None)
+        db::webhooks::update_webhook(pool, organization, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), hook, &fields, None)
             .await
             .unwrap(),
         None
     );
     assert_eq!(
-        db::webhooks::delete_webhook(pool, organization, owner, hook)
+        db::webhooks::delete_webhook(pool, organization, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), hook)
             .await
             .unwrap(),
         None
@@ -1096,24 +1098,24 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
 
     let repository = HookOwner::Repository(repo.id);
     assert_eq!(
-        db::webhooks::insert_webhook(pool, repository, outsider, &fields, None)
+        db::webhooks::insert_webhook(pool, repository, outsider, &AccountCredential::Session(&crate::support::live_session(pool, outsider).await), &fields, None)
             .await
             .unwrap(),
         None,
         "a user without access created a repository hook"
     );
-    let repository_hook = db::webhooks::insert_webhook(pool, repository, owner, &fields, None)
+    let repository_hook = db::webhooks::insert_webhook(pool, repository, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), &fields, None)
         .await
         .unwrap()
         .expect("the repository owner creates a hook");
     assert_eq!(
-        db::webhooks::update_webhook(pool, repository, outsider, repository_hook, &fields, None)
+        db::webhooks::update_webhook(pool, repository, outsider, &AccountCredential::Session(&crate::support::live_session(pool, outsider).await), repository_hook, &fields, None)
             .await
             .unwrap(),
         None
     );
     assert_eq!(
-        db::webhooks::delete_webhook(pool, repository, outsider, repository_hook)
+        db::webhooks::delete_webhook(pool, repository, outsider, &AccountCredential::Session(&crate::support::live_session(pool, outsider).await), repository_hook)
             .await
             .unwrap(),
         None

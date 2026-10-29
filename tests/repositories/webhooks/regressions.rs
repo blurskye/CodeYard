@@ -11,6 +11,7 @@ async fn insert_hook(database: &Database, url: &str) -> db::models::Webhook {
         database.pool(),
         owner,
         repo.owner_user_id.unwrap(),
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(database.pool(), repo.owner_user_id.unwrap()).await),
         &WebhookFields {
             username: None,
             password: None,
@@ -69,6 +70,8 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
             .await
             .unwrap()
             .unwrap();
+    let session = crate::support::live_session(database.pool(), actor.id).await;
+    let credential = db::users::accounts::AccountCredential::Session(&session);
     let place = webhooks::panel::Place {
         owner: HookOwner::Repository(hooks[0].repo_id.unwrap()),
         base: "/alice/proj/settings?tab=webhooks",
@@ -76,7 +79,7 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
         csrf_token: "token",
         repository_id: hooks[0].repo_id,
     };
-    let first = webhooks::panel::build(database.pool(), &actor, &place, &Default::default())
+    let first = webhooks::panel::build(database.pool(), &actor, &credential, &place, &Default::default())
         .await
         .unwrap();
     assert_eq!(first.hooks.len(), 30);
@@ -85,7 +88,7 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
     assert_eq!(first.hooks[2].last, "Last delivery 201");
     assert!(first.next_href.is_some() && first.first_href.is_none());
     let query = [("hook_after".into(), hooks[29].id.to_string())].into();
-    let next = webhooks::panel::build(database.pool(), &actor, &place, &query)
+    let next = webhooks::panel::build(database.pool(), &actor, &credential, &place, &query)
         .await
         .unwrap();
     assert_eq!(next.hooks.len(), 2);
@@ -95,7 +98,7 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
         ("edit".into(), "1".into()),
     ]
     .into();
-    let editor = webhooks::panel::build(database.pool(), &actor, &place, &query)
+    let editor = webhooks::panel::build(database.pool(), &actor, &credential, &place, &query)
         .await
         .unwrap();
     assert!(editor.hooks.is_empty());

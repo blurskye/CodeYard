@@ -1,7 +1,7 @@
 //! Webhook rows and their delivery records. Each change checks, in its own transaction, that
 //! the actor may manage the owner's hooks. Settings reads retain that authority too.
 use crate::backend::db::models::{Webhook, WebhookDelivery};
-use crate::backend::db::DbPool;
+use crate::backend::db::{users::accounts::AccountCredential, DbPool};
 use anyhow::Result;
 
 /// The repository or organization a webhook belongs to.
@@ -110,12 +110,12 @@ pub struct HookSettings {
 }
 
 native_operation!(crate::backend::db::postgres::webhooks::read_settings, crate::backend::db::sqlite::webhooks::read_settings,
-    fn read_settings(pool: &DbPool, owner: HookOwner, actor_id: i64, hook: Option<i64>, delivery: Option<i64>, after: i64, full_deliveries: bool) -> Result<Option<HookSettings>>);
+    fn read_settings(pool: &DbPool, owner: HookOwner, actor_id: i64, credential: &AccountCredential<'_>, hook: Option<i64>, delivery: Option<i64>, after: i64, full_deliveries: bool) -> Result<Option<HookSettings>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::list_managed_webhooks, crate::backend::db::sqlite::webhooks::list_managed_webhooks,
-    fn list_managed_webhooks(pool: &DbPool, owner: HookOwner, actor: i64, offset: i64, limit: i64) -> Result<Option<Vec<Webhook>>>);
+    fn list_managed_webhooks(pool: &DbPool, owner: HookOwner, actor: i64, credential: &AccountCredential<'_>, offset: i64, limit: i64) -> Result<Option<Vec<Webhook>>>);
 native_operation!(crate::backend::db::postgres::webhooks::patch_webhook, crate::backend::db::sqlite::webhooks::patch_webhook,
-    fn patch_webhook(pool: &DbPool, owner: HookOwner, actor: i64, id: i64, patch: &WebhookPatch, secret: Option<&SealedSecret>) -> Result<Option<bool>>);
+    fn patch_webhook(pool: &DbPool, owner: HookOwner, actor: i64, credential: &AccountCredential<'_>, id: i64, patch: &WebhookPatch, secret: Option<&SealedSecret>) -> Result<Option<bool>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::list_webhooks, crate::backend::db::sqlite::webhooks::list_webhooks,
     fn list_webhooks(pool: &DbPool, owner: HookOwner) -> Result<Vec<Webhook>>);
@@ -128,15 +128,15 @@ native_operation!(crate::backend::db::postgres::webhooks::get_webhook, crate::ba
 
 // The writes below return `None` when `actor_id` may not manage the owner's hooks.
 native_operation!(crate::backend::db::postgres::webhooks::insert_webhook, crate::backend::db::sqlite::webhooks::insert_webhook,
-    fn insert_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<Option<i64>>);
+    fn insert_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, credential: &AccountCredential<'_>, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<Option<i64>>);
 
 // A `None` secret keeps the stored one. `Some(false)` means the webhook is not on `owner`.
 native_operation!(crate::backend::db::postgres::webhooks::update_webhook, crate::backend::db::sqlite::webhooks::update_webhook,
-    fn update_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, id: i64, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<Option<bool>>);
+    fn update_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, credential: &AccountCredential<'_>, id: i64, fields: &WebhookFields, secret: Option<&SealedSecret>) -> Result<Option<bool>>);
 
 // `Some(false)` means the webhook is not on `owner`.
 native_operation!(crate::backend::db::postgres::webhooks::delete_webhook, crate::backend::db::sqlite::webhooks::delete_webhook,
-    fn delete_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, id: i64) -> Result<Option<bool>>);
+    fn delete_webhook(pool: &DbPool, owner: HookOwner, actor_id: i64, credential: &AccountCredential<'_>, id: i64) -> Result<Option<bool>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::prune_expired_deliveries, crate::backend::db::sqlite::webhooks::prune_expired_deliveries,
     fn prune_expired_deliveries(pool: &DbPool) -> Result<u64>);

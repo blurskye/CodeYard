@@ -737,7 +737,7 @@ pub(super) async fn respond_with_hook_draft(
             let viewer = ctx.require_user().ok();
             let built = match viewer {
                 Some(viewer) => {
-                    webhooks::panel::build(&ctx.state.pool, viewer, &place, &ctx.query).await
+                    webhooks::panel::build(&ctx.state.pool, viewer, &crate::backend::db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), &place, &ctx.query).await
                 }
                 None => Err(webhooks::settings::HookError::Denied),
             };
