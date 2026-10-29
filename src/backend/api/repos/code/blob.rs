@@ -1,9 +1,9 @@
 use super::tree::view_entries;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
 use crate::backend::api::repos::chrome::{
-    is_branch, load_refs_from_repo, ref_names_under, resolve, root_if_missing, store_error, Loaded,
+    is_branch, ref_names_under, resolve, root_if_missing, store_error, Loaded,
 };
 use crate::backend::api::repos::paging::number;
 use crate::backend::api::repos::refs::references::resolve_references;
@@ -114,21 +114,12 @@ pub async fn get_blob(
             )
         })?;
 
-    let refs = load_refs_from_repo(&state, &repository).await?;
-    if refs.is_empty() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiError::new("not_found", "Repository is empty")),
-        ));
-    }
-
-    const DEFAULT_PREVIEW_LIMIT: usize = 256 * 1024;
     const MAX_PREVIEW_LIMIT: usize = 2 * 1024 * 1024;
     const MAX_INLINE_BINARY_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
 
     let preview_limit = query
         .limit
-        .unwrap_or(DEFAULT_PREVIEW_LIMIT)
+        .unwrap_or(PREVIEW_BYTES as usize)
         .clamp(MIN_TEXT_WINDOW, MAX_PREVIEW_LIMIT);
     let store = repo_store(&repository, state.cluster.as_ref());
     let preview = store
@@ -223,6 +214,7 @@ pub async fn get_blob(
             )),
         )
     })?;
+    check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Response::builder()
         .header(axum::http::header::CONTENT_TYPE, "application/json")
         .body(crate::backend::api::http::middleware::buffered_download_body(response, permit))
@@ -425,6 +417,9 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     } else {
         false
     };
+    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+        .await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     let mut page = view::blob::BlobPage {
         reference: if !on_branch && !resolved.reference.starts_with("refs/") {
             head.sha.clone()

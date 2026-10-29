@@ -267,26 +267,22 @@ pub(in crate::backend::api::repos) async fn post(
     // Each upload is held in memory until its commit lands, so only a few run at once. The slot
     // is taken before the body is read, so a busy server reads nothing from the request.
     let Ok(_slot) = ctx.state.upload_reads.clone().try_acquire_owned() else {
-        return refusal(
-            &ctx,
-            &loaded,
-            form,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Uploads are busy. Try again in a moment.",
-        );
+        return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Uploads are busy. Try again in a moment.");
     };
     let Ok(multipart) = multipart else {
-        return refusal(
-            &ctx,
-            &loaded,
-            form,
-            StatusCode::BAD_REQUEST,
-            "The upload could not be read. Choose the files again.",
-        );
+        return ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read. Open the upload page again.");
     };
     let parts = match read(multipart).await {
         Ok(parts) => parts,
-        Err(error) => return refusal(&ctx, &loaded, form, error.status(), error.message()),
+        Err(error) => return ctx.error(error.status(), error.message()),
+    };
+    // Multipart bodies may take minutes. Authenticate the original cookie and its current
+    // synchronizer again, rather than retaining the authority cached before the upload.
+    let ctx = match PageContext::load(ctx.state.clone(), ctx.headers.clone(), &uri).await {
+        Ok(current) if current.user.as_ref().map(|user| user.id) == ctx.user.as_ref().map(|user| user.id)
+            && current.user.is_some() => current,
+        Ok(_) => return ctx.error(StatusCode::UNAUTHORIZED, "Your session expired. Sign in again."),
+        Err(response) => return response,
     };
     if let Err(response) = ctx.check_csrf(&parts.fields) {
         return response;

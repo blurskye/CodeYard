@@ -113,6 +113,11 @@ pub fn is_license_file(name: &str) -> bool {
 /// The license template a text is. Case, punctuation, spacing and copyright lines do not
 /// change the answer; the community profile, REST, GraphQL and search all use this.
 pub fn detect_license(bytes: &[u8]) -> Option<&'static Template> {
+    // Bundled licenses fit well below this bound. Unknown documents must not amplify
+    // the raw-blob allowance into millions of per-word allocations.
+    if bytes.len() > 64 * 1024 {
+        return None;
+    }
     fn normalize(text: &str) -> String {
         text.lines()
             .filter(|line| {

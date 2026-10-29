@@ -1,7 +1,7 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::readable_repository;
-use crate::backend::api::repos::chrome::{load, load_refs_from_repo, resolve};
+use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
+use crate::backend::api::repos::chrome::{load, resolve};
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange, RepoError};
 use axum::extract::{OriginalUri, Path, State};
@@ -129,14 +129,6 @@ pub async fn get_raw_blob(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let refs = load_refs_from_repo(&state, &repository).await?;
-    if refs.is_empty() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiError::new("not_found", "Repository is empty")),
-        ));
-    }
-
     let (range, partial) = requested_range(&headers).map_err(|_| {
         (
             StatusCode::RANGE_NOT_SATISFIABLE,
@@ -158,6 +150,7 @@ pub async fn get_raw_blob(
         .blob_range(&git_ref, &path, range)
         .await
         .map_err(raw_store_error)?;
+    check_repo_read_access(&state.pool, &repository, &headers).await?;
 
     Ok(raw_response(&path, blob, partial, permit))
 }
@@ -264,7 +257,14 @@ pub async fn raw_page(
         .blob_range(&resolved.reference, &resolved.path, range)
         .await;
     match blob {
-        Ok(blob) => ctx.with_cookie(raw_response(&resolved.path, blob, partial, permit)),
+        Ok(blob) => {
+            if let Err((status, _)) = check_repo_read_access(
+                &ctx.state.pool, &loaded.repository, &ctx.headers,
+            ).await {
+                return ctx.error(status, "Unable to download this repository file.");
+            }
+            ctx.with_cookie(raw_response(&resolved.path, blob, partial, permit))
+        }
         Err(error) if error.is_response_too_large() => ctx.error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "Raw responses are limited to 32 MiB; request a byte range.",
