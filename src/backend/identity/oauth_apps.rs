@@ -222,8 +222,8 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
     }
 }
 
-/// Git access to a gist needs the `gist` scope; to any other repository, `repo`.
-pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool) -> anyhow::Result<bool> {
+/// OAuth credentials retain anonymous-equivalent public reads; private reads and writes need scopes.
+pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool, public_read: bool) -> anyhow::Result<bool> {
     if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
         // A fine-grained token's per-repository check follows, including public reads.
         if bounds.personal().is_some() {
@@ -238,7 +238,7 @@ pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool) -> anyhow::Res
     let scope = if gist { "gist" } else { "repo" };
     Ok(db::oauth_apps::token(pool, token_id)
         .await?
-        .is_none_or(|token| has_scope(&token.scopes, scope)))
+        .is_none_or(|token| public_read || has_scope(&token.scopes, scope)))
 }
 
 /// Whether a token may change workflow files. Apps and fine-grained tokens use their

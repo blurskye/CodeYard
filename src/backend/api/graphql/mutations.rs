@@ -570,7 +570,6 @@ pub(super) async fn resolve(
                 let repo = repository::by_id(current.repo_id, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
                 if field == "enablePullRequestAutoMerge" {
-                    request.require_oauth_scope("workflow")?;
                     request.authorize(repo.id, "contents", true).await?;
                     let options = pull_requests::auto_merge::EnableRequest {
                         token: Some(request.auth.token.id),
