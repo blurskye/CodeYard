@@ -688,8 +688,10 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
             .map(|(id, _)| id)
             .collect();
         let mut placed = std::collections::HashSet::new();
+        let mut attempted = std::collections::HashSet::new();
         for &id in &local {
-            if !placed.contains(&id) {
+            if attempted.insert(id) {
+                attempted.extend(db::cluster::list_fork_family(pool, id).await?.into_iter().map(|(member, _, _)| member));
                 placed.extend(db::cluster::place_fork_family(pool, id, node_id, &local).await?);
             }
         }
