@@ -140,9 +140,6 @@ pub const ACCESS_LOST_MESSAGE: &str = "The person who started this run no longer
 native_operation!(crate::backend::db::postgres::ci::scheduled_repositories,
     crate::backend::db::sqlite::ci::scheduled_repositories,
     fn scheduled_repositories(pool: &DbPool, after: i64) -> Result<Vec<i64>>);
-native_operation!(crate::backend::db::postgres::ci::schedule_actor,
-    crate::backend::db::sqlite::ci::schedule_actor,
-    fn schedule_actor(pool: &DbPool, repo: i64, reference: &str, sha: &str) -> Result<Option<i64>>);
 
 // Commits retained by recorded runs, including runs whose branch no longer exists.
 native_operation!(crate::backend::db::postgres::ci::retained_ci_commits,

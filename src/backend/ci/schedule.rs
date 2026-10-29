@@ -103,9 +103,13 @@ impl CiRuns {
             }
             Err(error) => return Err(error.into()),
         };
-        let Some(actor) =
-            db::ci::schedule_actor(&self.pool, repo.id, &reference, &commit.sha).await?
-        else {
+        let Some(proof) = store.branch_publication(repo.id, &reference).await? else {
+            return Ok(());
+        };
+        if proof.publication.new != commit.sha {
+            return Ok(());
+        }
+        let Some(actor) = proof.publication.actor.user_id() else {
             return Ok(());
         };
         if !self.actor_may_discover_workflows(repo.id, actor).await? {

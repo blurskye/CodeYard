@@ -477,7 +477,7 @@ pub async fn refresh_open_pull_requests(
     let mut first_error = None;
     for pull in open {
         let pull_id = pull.id;
-        match refresh_one(pool, repo, ci, actor_id, &mut listed, pull, Some(ci_access)).await {
+        match refresh_one(pool, repo, ci, actor_id, &mut listed, pull, (ci_access != db::models::AccessLevel::None).then_some(ci_access)).await {
             Ok(true) => changed += 1,
             Ok(false) => {}
             Err(error) => {

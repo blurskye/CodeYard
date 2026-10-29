@@ -111,16 +111,6 @@ pub async fn scheduled_repositories(pool: &PgPool, after: i64) -> Result<Vec<i64
     .await?)
 }
 
-pub async fn schedule_actor(
-    pool: &PgPool,
-    repo: i64,
-    reference: &str,
-    sha: &str,
-) -> Result<Option<i64>> {
-    Ok(sqlx::query_scalar("SELECT COALESCE((SELECT actor_id FROM ci_accepted_pushes WHERE repo_id=$1 AND reference=$2 AND sha=$3 ORDER BY accepted_at DESC LIMIT 1),owner_user_id) FROM repositories WHERE id=$1")
-        .bind(repo).bind(reference).bind(sha).fetch_optional(pool).await?.flatten())
-}
-
 pub async fn retained_ci_commits(pool: &PgPool, repo_id: i64) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar(
         "SELECT DISTINCT head_sha FROM ci_runs WHERE repo_id=$1 AND head_sha IS NOT NULL",
