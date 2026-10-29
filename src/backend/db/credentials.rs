@@ -37,6 +37,7 @@ pub(crate) fn app_permission(permissions: &str, repositories: &str, repo: i64, p
 
 pub(crate) fn oauth_organization_path(permission: &str) -> String {
     let resource = match permission {
+        "organization_administration" => "code-security",
         "members" => "members",
         "organization_hooks" => "hooks",
         "organization_secrets" => "actions/secrets",

@@ -9,7 +9,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 pub async fn list(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Registry>, RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+    let mut tx = super::dependabot::authorized(pool, actor, org, false).await?;
     let mut registries: Vec<Registry> = sqlx::query_as("SELECT name,configuration,created_at,updated_at FROM org_private_registries WHERE org_id=$1 ORDER BY name")
         .bind(org).fetch_all(&mut *tx).await?;
     let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND owner_user_id IS NULL")
@@ -34,7 +34,7 @@ pub async fn save(
     input: &Value,
     value: Option<&str>,
 ) -> Result<Registry, RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+    let mut tx = super::dependabot::authorized(pool, actor, org, true).await?;
     let stored: Option<String> = match name {
         Some(name) => Some(
             sqlx::query_scalar(
@@ -91,7 +91,7 @@ pub async fn save(
 }
 
 pub async fn delete(pool: &PgPool, actor: i64, org: i64, name: &str) -> Result<(), RegistryError> {
-    let mut tx = super::dependabot::authorized(pool, actor, org).await?;
+    let mut tx = super::dependabot::authorized(pool, actor, org, true).await?;
     let deleted = sqlx::query("DELETE FROM org_private_registries WHERE org_id=$1 AND name=$2")
         .bind(org)
         .bind(name)

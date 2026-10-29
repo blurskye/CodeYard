@@ -609,7 +609,7 @@ pub(super) async fn respond_with_hook_draft(
         }
         if model.tab == "dependabot" {
             let (default_level, repositories) =
-                match crate::backend::db::dependabot::repository_access(&ctx.state.pool, actor, org)
+                match crate::backend::db::dependabot::repository_access(&ctx.state.pool, ctx.database_actor(actor), org)
                     .await
                 {
                     Ok(access) => access,
