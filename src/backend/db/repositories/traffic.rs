@@ -109,7 +109,7 @@ impl Window {
         Self {
             today: date.to_string(),
             yesterday: (date - chrono::Duration::days(1)).to_string(),
-            first: (date - chrono::Duration::days(14)).to_string(),
+            first: (date - chrono::Duration::days(13)).to_string(),
         }
     }
 }

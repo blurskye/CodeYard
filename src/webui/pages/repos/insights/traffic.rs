@@ -70,7 +70,7 @@ pub fn render(repo: &RepoChrome, path: &str, page: &Page) -> Element {
         div { class: "repo-insights-content repo-traffic",
             section { class: "panel p-4",
                 h2 { "Repository traffic" }
-                p { "The last 14 completed UTC days and today. Unique visitors are distinct across the period, not the sum of daily counts." }
+                p { "The last 14 UTC dates, including today. Unique visitors are distinct across the period, not the sum of daily counts." }
                 form { method: "get", action: path, class: "repo-traffic-filter",
                     label { "Group observations by "
                         select { name: "per", class:"form-select",

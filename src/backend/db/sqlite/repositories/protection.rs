@@ -285,6 +285,10 @@ pub async fn rename_branch_settings(
     .bind(new)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM issue_linked_branches WHERE repo_id=?1 AND name=?2 AND EXISTS(SELECT 1 FROM issue_linked_branches destination WHERE destination.issue_id=issue_linked_branches.issue_id AND destination.repo_id=?1 AND destination.name=?3)")
+        .bind(repo).bind(old).bind(new).execute(&mut *tx).await?;
+    sqlx::query("UPDATE issue_linked_branches SET name=?3 WHERE repo_id=?1 AND name=?2")
+        .bind(repo).bind(old).bind(new).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM branch_redirects WHERE repo_id=?1 AND old_name=?2")
         .bind(repo)
         .bind(new)

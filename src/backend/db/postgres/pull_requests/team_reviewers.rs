@@ -67,7 +67,7 @@ pub async fn change(
             continue;
         }
         if expected.is_some() {
-            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews v JOIN effective_team_memberships m ON m.user_id=v.author_id AND m.team_id=$2 WHERE v.pull_request_id=$1 AND v.state<>'pending')")
+            let reviewed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pr_reviews v JOIN effective_team_memberships m ON m.user_id=v.author_id AND m.team_id=$2 WHERE v.pull_request_id=$1 AND v.state<>'pending' AND v.author_id<>(SELECT author_id FROM pull_requests WHERE id=$1))")
                 .bind(pull).bind(team.id).fetch_one(&mut *tx).await?;
             if reviewed {
                 continue;
