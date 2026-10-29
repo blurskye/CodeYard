@@ -30,6 +30,8 @@ pub struct Member {
     #[sqlx(flatten)]
     pub run: CiRun,
     pub holding: bool,
+    pub job_id: Option<i64>,
+    pub job_name: Option<String>,
 }
 
 native_operation!(crate::backend::db::postgres::action_concurrency::groups,crate::backend::db::sqlite::action_concurrency::groups,
