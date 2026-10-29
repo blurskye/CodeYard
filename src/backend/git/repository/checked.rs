@@ -13,8 +13,7 @@ use std::{
 const MAX_OUTPUT: usize = 1024 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(300);
-/// Longest merge or squash message, title included. A squash body is cut to fit.
-pub(crate) const MAX_MERGE_MESSAGE_BYTES: usize = 8192;
+pub(crate) use crate::git_limits::MAX_MERGE_MESSAGE_BYTES;
 /// Conflicting paths that a refusal names. The rest are counted.
 const LISTED_CONFLICTS: usize = 20;
 
@@ -392,12 +391,13 @@ fn check_commit_text(message: &str, people: &[&Person<'_>]) -> Result<()> {
             && !person.name.contains(['\n', '\r', '\0'])
             && !person.email.contains(['\n', '\r', '\0'])
     };
-    ensure!(
-        !message.is_empty()
-            && message.len() <= MAX_MERGE_MESSAGE_BYTES
-            && people.iter().all(|person| valid_person(person)),
-        "Invalid merge commit identity or message"
-    );
+    if message.is_empty() || message.contains('\0') || message.len() > MAX_MERGE_MESSAGE_BYTES
+        || !people.iter().all(|person| valid_person(person))
+    {
+        return Err(crate::backend::repositories::store::RepoError::new(
+            crate::backend::repositories::store::ErrorKind::Invalid, "Invalid merge commit identity or message",
+        ).into());
+    }
     Ok(())
 }
 
