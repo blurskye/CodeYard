@@ -18,6 +18,15 @@ pub fn is_hex_token(value: &str, len: usize) -> bool {
     value.len() == len && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+/// HMAC-SHA256 bytes; callers own key encoding and wire prefixes.
+pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    use hmac::Mac;
+    let mut mac = <hmac::Hmac<sha2::Sha256> as Mac>::new_from_slice(key)
+        .expect("HMAC accepts any key length");
+    mac.update(message);
+    mac.finalize().into_bytes().into()
+}
+
 pub struct SecretEncryptor {
     cipher: Aes256Gcm,
 }
