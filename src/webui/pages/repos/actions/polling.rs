@@ -137,6 +137,7 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                     }
                     match result {
                         Ok(update) => {
+                            let terminal = !update.has_more && !matches!(super::logs::normalize_status(&update.progress.status), "queued" | "running");
                             let mut page = current.write();
                             if let crate::webui::app::Page::Actions(
                                 crate::webui::pages::ci::Page::Actions(model),
@@ -144,7 +145,12 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                             {
                                 apply_update(model, update);
                             }
+                            drop(page);
                             failure.set(false);
+                            if terminal {
+                                crate::webui::navigation::refresh_page();
+                                break;
+                            }
                         }
                         Err(()) => failure.set(true),
                     }

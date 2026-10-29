@@ -536,7 +536,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                     label { class: "identity-expiry-option",
                                         input { r#type: "radio", name: "expiry", value: "date", checked: values.expiry != "never" }
                                         span { "Expires on" }
-                                        input { r#type: "date", name: "expires_at", class: FIELD, value: token_expiry_day(values.expires_at.clone()) }
+                                        crate::webui::components::DraftInput { input_type: "date", name: "expires_at", class: FIELD, initial_value: token_expiry_day(values.expires_at.clone()) }
                                     }
                                     p { class: "identity-form-hint", "A token that expires stops working at the end of the chosen day, in UTC." }
                                 }
@@ -682,7 +682,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                     if model.blocked.more { a { href: format!("/settings?tab=blocked&page={}",model.blocked.page+1), "Next" } }
                                 }
                             }
-                            form { method: "post", action: "/settings/blocks", class: "identity-form", {csrf(token)} {text_field("username", "Username to block", String::new(), "text", true, 255)} div { class: "identity-form-actions", button { r#type: "submit", class: "btn btn-danger", "Block user" } } }
+                            form { method: "post", action: "/settings/blocks", class: "identity-form", {csrf(token)} {text_field("username", "Username to block", String::new(), "text", true, 510)} div { class: "identity-form-actions", button { r#type: "submit", class: "btn btn-danger", "Block user" } } }
                         }
                     } else if model.tab == "sessions" {
                         section { class: "identity-settings-section", aria_labelledby: "settings-sessions-title",

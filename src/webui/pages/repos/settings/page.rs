@@ -333,6 +333,7 @@ fn security_section(repo: &RepoChrome, settings: &Settings) -> Element {
     rsx! {
         section { class: "repo-settings-section panel",style:"min-width: 0; overflow-wrap: anywhere;",
             header { class: "repo-section-heading", h3 { "Code security" } }
+            NavLink { href: format!("{}/security/secret-scanning", repo.base()), "View secret-scanning alerts" }
             form { method: "post", action: repo.action("code-security"), class: "repo-form-body",
                 {csrf(&repo.csrf_token)}
                 {repository_id(repo.id)}
@@ -1153,8 +1154,9 @@ pub fn rejected_form(
                             label { class: "repo-check-label", DraftCheckbox { name: "use_default", initial_checked: checked("use_default") } "Use the default subject" }
                             label { class: "repo-field", span { "Subject claim keys, in order" } DraftInput { name: "include_claim_keys", initial_value: values.get("include_claim_keys").cloned().unwrap_or_default() } }
                         } else if action == "actions-settings" {
-                            // The engine list is not on this page, so the chosen engine is kept as sent.
-                            input { r#type: "hidden", name: "engine", value: values.get("engine").cloned().unwrap_or_default() }
+                            label { class: "repo-field", span { "Execution engine" }
+                                DraftSelect { name: "engine", initial_value: String::new(), options: vec![SelectOption::new("", "Site default")] }
+                            }
                             {actions_fields(checked("enabled"), ["run_timeout_minutes", "job_cpus", "job_memory_gib"].map(|name| values.get(name).map_or("", String::as_str)), Default::default())}
                             {cache_fields(values.get("cache_size_gib").map_or("", String::as_str), values.get("cache_retention_days").map_or("", String::as_str))}
                         } else if action == "watch-level" {

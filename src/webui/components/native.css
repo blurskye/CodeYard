@@ -1437,7 +1437,7 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .collaboration-split-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .collaboration-split-cell { display: flex; min-width: 0; overflow-x: auto; white-space: pre; }
 .collaboration-split-row > .collaboration-split-cell:first-child { border-right: 1px solid var(--border); }
-.collaboration-split-cell .patch-number { flex: none; width: 48px; padding: 0 8px; text-align: right; color: var(--muted-foreground); user-select: none; }
+.collaboration-split-cell .patch-number { flex: none; width: max(48px, calc(var(--patch-digits, 4) * 1ch + 16px)); padding: 0 8px; text-align: right; color: var(--muted-foreground); user-select: none; }
 .collaboration-split-cell > .patch-add { flex: none; }
 /* The text takes the rest of the half cell, so an added or removed line is tinted across it. */
 .collaboration-split-cell > span { flex: 1 0 auto; }
