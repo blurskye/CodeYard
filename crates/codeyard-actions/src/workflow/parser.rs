@@ -815,6 +815,7 @@ fn validate_job(job: &Mapping, path: &str) -> Result<()> {
             !steps.is_empty(),
             "{path}.steps: Expected at least one step"
         );
+        ensure!(steps.len() <= super::MAX_JOB_STEPS, "{path}.steps: Too many steps");
         let mut ids = BTreeSet::new();
         for (i, step) in steps.iter().enumerate() {
             let step = parse_step(step).with_context(|| format!("{path}.steps[{i}]"))?;

@@ -613,6 +613,9 @@ pub(super) async fn parse_admission_workflow(
             }
         }
         for job in jobs.values() {
+            if job.get("steps").and_then(serde_yaml::Value::as_sequence).is_some_and(|steps| steps.len() > codeyard_actions::workflow::MAX_JOB_STEPS) {
+                return Err(AdmissionError::Invalid("CI job has too many steps"));
+            }
             if let Some(value) = job.get("environment") {
                 let name = value
                     .as_str()

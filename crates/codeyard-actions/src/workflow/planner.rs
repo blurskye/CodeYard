@@ -632,6 +632,7 @@ pub(super) fn expand(
         };
         let timeout = resolved(job, "timeout-minutes", &contexts, status)?;
         let timeout = number_value(timeout.as_ref(), 360.0, &format!("{path}.timeout-minutes"))?;
+        super::validate_timeout_minutes(timeout)?;
         let continue_on_error = resolved(job, "continue-on-error", &contexts, status)?;
         let continue_on_error = bool_value(
             continue_on_error.as_ref(),

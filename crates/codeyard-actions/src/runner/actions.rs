@@ -239,6 +239,9 @@ impl Job {
             .map(|(key, template)| Ok((key.clone(), text(template, &self.contexts, self.status)?)))
             .collect::<Result<BTreeMap<_, _>>>()?;
         if reference.starts_with("docker://") {
+            for (key, value) in &supplied {
+                env.insert(format!("INPUT_{}", key.replace(' ', "_").to_ascii_uppercase()), value.clone());
+            }
             let args = supplied
                 .remove("args")
                 .map(|args| commands::words(&args))
@@ -258,6 +261,8 @@ impl Job {
                 )
                 .await;
         }
+        let docker_args = supplied.get("args").cloned();
+        let docker_entrypoint = supplied.get("entrypoint").cloned();
         let directory = until_deadline(deadline, self.action_directory(reference)).await?;
         let file = ["action.yml", "action.yaml"]
             .into_iter()
@@ -290,6 +295,9 @@ impl Job {
             },
             None => bail!("Can't find 'action.yml', 'action.yaml' or 'Dockerfile' for action"),
         };
+        let composite_steps = if metadata.runs.using == "composite" {
+            metadata.runs.steps.iter().map(workflow::parse_step).collect::<Result<Vec<_>>>()?
+        } else { Vec::new() };
         let old_inputs = self.contexts.values.get("inputs").cloned();
         let mut old_action = BTreeMap::new();
         if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
@@ -354,9 +362,8 @@ impl Job {
                     self.status.failed = false;
                     let mut discarded = BTreeMap::new();
                     let nested = async {
-                        for value in &metadata.runs.steps {
-                            let step = workflow::parse_step(value)?;
-                            self.step(&step, depth + 1, &mut discarded).await?;
+                        for step in &composite_steps {
+                            self.step(step, depth + 1, &mut discarded).await?;
                         }
                         for (key, output) in &metadata.outputs {
                             if let Some(value) = &output.value {
@@ -394,6 +401,19 @@ impl Job {
                     let exported = self.saved_env.clone();
                     let mut state = BTreeMap::new();
                     let mut ok = true;
+                    let main = metadata.runs.main.as_deref().context("Action is missing runs.main")?;
+                    let post = match metadata.runs.post.as_ref() {
+                        Some(script) => {
+                            self.posts.push(Post {
+                                directory: directory.clone(), script: script.clone(), runtime: runtime.clone(),
+                                condition: metadata.runs.post_if.clone().unwrap_or_else(|| "always()".into()),
+                                env: env.clone(), exported: exported.clone(), state: state.clone(),
+                                main_files: None, contexts: self.contexts.clone(),
+                            });
+                            Some(self.posts.len() - 1)
+                        }
+                        None => None,
+                    };
                     if let Some(pre) = &metadata.runs.pre {
                         if expressions::evaluate_condition(
                             metadata.runs.pre_if.as_deref().unwrap_or("always()"),
@@ -401,44 +421,12 @@ impl Job {
                             self.status,
                         )? {
                             self.prepare_files()?;
-                            ok = self
-                                .node(
-                                    (&directory, pre, &runtime),
-                                    (env.clone(), &exported),
-                                    deadline,
-                                    outputs,
-                                    &mut state,
-                                )
-                                .await?;
+                            if let Some(index) = post { self.posts[index].main_files = Some(self.active_files.clone()); }
+                            let result = self.node((&directory, pre, &runtime), (env.clone(), &exported), deadline, outputs, &mut state).await;
+                            if let Some(index) = post { self.posts[index].state = state.clone(); }
+                            ok = result?;
                         }
                     }
-                    let main = metadata
-                        .runs
-                        .main
-                        .as_deref()
-                        .context("Action is missing runs.main")?;
-                    // Register the cleanup before main runs, so a job timeout during main still runs post.
-                    let post = match metadata.runs.post {
-                        Some(script) => {
-                            self.posts.push(Post {
-                                directory: directory.clone(),
-                                script,
-                                runtime: runtime.clone(),
-                                condition: metadata
-                                    .runs
-                                    .post_if
-                                    .clone()
-                                    .unwrap_or_else(|| "always()".into()),
-                                env: env.clone(),
-                                exported: exported.clone(),
-                                state: state.clone(),
-                                main_files: None,
-                                contexts: self.contexts.clone(),
-                            });
-                            Some(self.posts.len() - 1)
-                        }
-                        None => None,
-                    };
                     let result = if ok {
                         self.prepare_files()?;
                         if let Some(index) = post {
@@ -467,12 +455,11 @@ impl Job {
                     for (key, value) in &metadata.runs.env {
                         env.insert(key.clone(), text(value, &self.contexts, self.status)?);
                     }
-                    let args = metadata
-                        .runs
-                        .args
-                        .iter()
-                        .map(|value| text(value, &self.contexts, self.status))
-                        .collect::<Result<Vec<_>>>()?;
+                    let args = match &docker_args {
+                        Some(args) => commands::words(args)?,
+                        None => metadata.runs.args.iter().map(|value| text(value, &self.contexts, self.status)).collect::<Result<Vec<_>>>()?,
+                    };
+                    let entrypoint = docker_entrypoint.or(metadata.runs.entrypoint.clone());
                     let image = metadata
                         .runs
                         .image
@@ -482,7 +469,7 @@ impl Job {
                         image,
                         &directory,
                         env,
-                        metadata.runs.entrypoint.as_deref(),
+                        entrypoint.as_deref(),
                         &args,
                         deadline,
                         outputs,
@@ -607,9 +594,18 @@ impl Job {
                 self.contexts.values.insert(name.into(), value.clone());
             }
         }
-        if !expressions::evaluate_condition(&post.condition, &self.contexts, self.status)? {
-            self.contexts = outer_contexts;
-            return Ok(false);
+        let mut post_env = post.env.clone();
+        for (key, value) in &self.saved_env {
+            if post.exported.get(key) != Some(value) { post_env.insert(key.clone(), value.clone()); }
+        }
+        self.contexts.values.insert("env".into(), object(&post_env));
+        match expressions::evaluate_condition(&post.condition, &self.contexts, self.status) {
+            Ok(true) => {}
+            condition => {
+                self.contexts = outer_contexts;
+                condition?;
+                return Ok(false);
+            }
         }
         self.log.line(&format!(
             "Post action started: {}",
@@ -661,7 +657,8 @@ impl Job {
         deadline: Instant,
         outputs: &mut BTreeMap<String, String>,
     ) -> Result<bool> {
-        let env = self.environment(env);
+        let mut env = self.environment(env);
+        env.insert("GITHUB_EVENT_PATH".into(), self.restore_event()?.display().to_string());
         let files = self.active_files.clone();
         let mut command = until_deadline(
             deadline,
@@ -673,6 +670,7 @@ impl Job {
                 &env,
                 entrypoint,
                 args,
+                deadline,
             ),
         )
         .await?;
@@ -686,7 +684,7 @@ impl Job {
             &mut commands,
             &mut self.cancel,
             deadline,
-            false,
+            env.get("ACTIONS_ALLOW_UNSECURE_COMMANDS").is_some_and(|value| value.eq_ignore_ascii_case("true")),
         )
         .await;
         self.matchers = commands.matchers;

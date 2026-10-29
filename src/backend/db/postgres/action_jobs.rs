@@ -90,7 +90,7 @@ pub async fn apply(
             number,
             name: display,
         } => {
-            ensure!((1..=10000).contains(number), "invalid step number");
+            ensure!((1..=codeyard_actions::progress::MAX_STEP_NUMBER).contains(number), "invalid step number");
             name(display)?;
             let active: bool =
                 sqlx::query_scalar("SELECT status='in_progress' FROM actions_jobs WHERE id=$1")

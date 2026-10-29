@@ -22,10 +22,10 @@ pub(super) fn files(root: &Yaml, directory: &Path) -> Result<BTreeMap<String, Ya
             let Some(reference) = job.get("uses").and_then(Yaml::as_str) else {
                 continue;
             };
-            ensure!(depth < 3, "Reusable workflows exceed four levels");
+            ensure!(depth + 1 < crate::workflow::MAX_REUSABLE_LEVELS, "Reusable workflows exceed four levels");
             ensure!(active.insert(reference.into()), "Reusable workflow cycle");
             if !result.contains_key(reference) {
-                ensure!(result.len() < 20, "More than twenty called workflows");
+                ensure!(result.len() < crate::workflow::MAX_CALLED_WORKFLOWS, "More than twenty called workflows");
                 let path = reference
                     .strip_prefix("./.github/workflows/")
                     .context("Remote reusable workflows must be resolved by the Codeyard server")?;
@@ -61,7 +61,7 @@ pub(super) fn files(root: &Yaml, directory: &Path) -> Result<BTreeMap<String, Ya
                 height
             };
             ensure!(
-                depth + 1 + child_height <= 3,
+                depth + 1 + child_height < crate::workflow::MAX_REUSABLE_LEVELS,
                 "Reusable workflows exceed four levels"
             );
             height = height.max(child_height + 1);

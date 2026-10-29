@@ -142,13 +142,13 @@ impl<'a> Resolver<'a> {
                 repository.id,
                 called_ref.as_ref().map_or("", |(name, _)| name.as_str())
             );
-            if depth > 3 || !self.active.insert(identity.clone()) {
+            if depth >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS || !self.active.insert(identity.clone()) {
                 return Err(AdmissionError::Invalid(
                     "Called workflows exceed four levels or contain a cycle",
                 ));
             }
             if let Some((snapshot, height)) = self.snapshots.get(&identity) {
-                if depth + height > 3 {
+                if depth + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS {
                     return Err(AdmissionError::Invalid("Called workflows exceed four levels"));
                 }
                 self.active.remove(&identity);
@@ -169,7 +169,7 @@ impl<'a> Resolver<'a> {
             };
             if depth > 0 {
                 self.called.insert(identity.clone());
-                if self.called.len() > 20 {
+                if self.called.len() > codeyard_actions::workflow::MAX_CALLED_WORKFLOWS {
                     return Err(AdmissionError::Invalid("More than twenty called workflows"));
                 }
                 if !codeyard_actions::workflow::events::declares_event(yaml.get("on"), "workflow_call") {
@@ -286,7 +286,7 @@ impl<'a> Resolver<'a> {
                     Sha256::digest(key.as_bytes())
                 );
                 let mut snapshot = if let Some((snapshot, height)) = self.snapshots.get(&key) {
-                    if self.active.contains(&key) || depth + 1 + height > 3 {
+                    if self.active.contains(&key) || depth + 1 + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS {
                         return Err(AdmissionError::Invalid("Called workflows exceed four levels or contain a cycle"));
                     }
                     snapshot.clone()
@@ -325,98 +325,4 @@ impl<'a> Resolver<'a> {
 
 pub(super) fn content(value: &serde_json::Value) -> Option<&str> {
     value.get("content").and_then(serde_json::Value::as_str)
-}
-
-/// act inherits its original secret file instead of the immediate caller's secrets.
-/// Explicit expressions preserve the same scope through nested calls.
-pub(super) fn act_secrets(
-    definitions: BTreeMap<String, Vec<u8>>,
-    roots: &[String],
-    secrets: BTreeSet<String>,
-) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
-    use anyhow::Context;
-    let mut files = definitions
-        .into_iter()
-        .map(|(path, bytes)| Ok((path, super::workflows::parse_yaml(&bytes)?)))
-        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
-    let mut available: BTreeMap<_, _> = roots
-        .iter()
-        .map(|path| (path.clone(), secrets.clone()))
-        .collect();
-    loop {
-        let mut changed = false;
-        for (path, yaml) in &files {
-            let Some(names) = available.get(path).cloned() else {
-                continue;
-            };
-            for job in yaml
-                .get("jobs")
-                .and_then(Value::as_mapping)
-                .into_iter()
-                .flat_map(|jobs| jobs.values())
-            {
-                let Some(reference) = job.get("uses").and_then(Value::as_str) else {
-                    continue;
-                };
-                let target = reference
-                    .strip_prefix("./")
-                    .context("unresolved called workflow")?;
-                let mut passed = if job.get("secrets").and_then(Value::as_str) == Some("inherit") {
-                    names.clone()
-                } else {
-                    job.get("secrets")
-                        .and_then(Value::as_mapping)
-                        .into_iter()
-                        .flat_map(|values| values.keys())
-                        .filter_map(Value::as_str)
-                        .map(str::to_owned)
-                        .collect()
-                };
-                passed.insert("GITHUB_TOKEN".into());
-                let target = available.entry(target.to_owned()).or_default();
-                let before = target.len();
-                target.extend(passed);
-                changed |= target.len() != before;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    for (path, yaml) in &mut files {
-        for job in yaml
-            .get_mut("jobs")
-            .and_then(Value::as_mapping_mut)
-            .into_iter()
-            .flat_map(|jobs| jobs.values_mut())
-        {
-            let Some(job) = job.as_mapping_mut().filter(|job| job.contains_key("uses")) else {
-                continue;
-            };
-            let mut passed = if job.get("secrets").and_then(Value::as_str) == Some("inherit") {
-                available
-                    .get(path)
-                    .into_iter()
-                    .flatten()
-                    .map(|name| {
-                        (
-                            Value::String(name.clone()),
-                            Value::String(format!("${{{{ secrets.{name} }}}}")),
-                        )
-                    })
-                    .collect::<serde_yaml::Mapping>()
-            } else {
-                job.get("secrets")
-                    .and_then(Value::as_mapping)
-                    .cloned()
-                    .unwrap_or_default()
-            };
-            passed.insert("GITHUB_TOKEN".into(), "${{ secrets.GITHUB_TOKEN }}".into());
-            job.insert("secrets".into(), Value::Mapping(passed));
-        }
-    }
-    files
-        .into_iter()
-        .map(|(path, yaml)| Ok((path, serde_yaml::to_string(&yaml)?.into_bytes())))
-        .collect()
 }

@@ -17,6 +17,16 @@ pub use parser::text as scalar_text;
 mod tests;
 use std::collections::BTreeMap;
 
+pub const MAX_JOB_STEPS: usize = crate::progress::MAX_STEP_NUMBER as usize - 2;
+
+pub fn validate_timeout_minutes(value: f64) -> anyhow::Result<()> {
+    anyhow::ensure!(value.is_finite() && value > 0.0 && value <= 525_600.0, "timeout-minutes must be a positive number no greater than one year");
+    Ok(())
+}
+
+pub const MAX_REUSABLE_LEVELS: usize = 4;
+pub const MAX_CALLED_WORKFLOWS: usize = 20;
+
 pub const PERMISSION_SCOPES: &[&str] = &[
     "actions", "artifact-metadata", "attestations", "checks", "contents", "deployments",
     "discussions", "id-token", "issues", "models", "packages", "pages", "pull-requests",

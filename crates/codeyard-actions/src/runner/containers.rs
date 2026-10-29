@@ -15,7 +15,8 @@ pub(super) struct Podman {
     prefix: String,
     containers: Vec<String>,
     images: Vec<String>,
-    network: Option<String>,
+    pub(super) network: Option<String>,
+    deny_docker: bool,
     pub job: Option<String>,
 }
 
@@ -25,6 +26,7 @@ impl Podman {
             url: std::env::var("DOCKER_HOST").ok(),
             options: words(&options.container_options)?,
             pull: options.pull,
+            deny_docker: options.deny_docker,
             prefix,
             containers: Vec::new(),
             images: Vec::new(),
@@ -73,6 +75,7 @@ impl Podman {
         if job.is_none() && services.is_empty() {
             return Ok(serde_json::json!({}));
         }
+        anyhow::ensure!(!self.deny_docker, "Container actions require CI_EXECUTION_MODE=podman");
         let network = format!("{}-network", self.prefix);
         self.network = Some(network.clone());
         let mut args: Vec<String> = vec!["network".into(), "create".into()];
@@ -82,11 +85,15 @@ impl Podman {
         args.push(network);
         self.output(&args).await?;
         let mut contexts = serde_json::Map::new();
+        let mut started = Vec::new();
         for (name, service) in services {
             let id = self
                 .create(name, service, workspace, temp, cache, false)
                 .await?;
             self.output(&["start".into(), id.clone()]).await?;
+            started.push((name, id));
+        }
+        for (name, id) in started {
             let mut healthy = false;
             for attempt in 0..30 {
                 let health = self
@@ -143,7 +150,7 @@ impl Podman {
         cache: &Path,
         job: bool,
     ) -> Result<String> {
-        let id = format!("{}-{name}", self.prefix);
+        let id = if job { format!("{}-job", self.prefix) } else { format!("{}-service-{name}", self.prefix) };
         self.containers.push(id.clone());
         let mut args = vec!["create".into(), "--name".into(), id.clone()];
         args.extend(self.options.clone());
@@ -248,8 +255,10 @@ impl Podman {
         env: &BTreeMap<String, String>,
         entrypoint: Option<&str>,
         args: &[String],
+        deadline: std::time::Instant,
     ) -> Result<Command> {
-        let built = image == "Dockerfile"
+        anyhow::ensure!(!self.deny_docker, "Docker actions require CI_EXECUTION_MODE=podman");
+        let built = directory.join(image).is_file() || image == "Dockerfile"
             || image.ends_with("/Dockerfile")
             || image.ends_with(".dockerfile");
         let image = if built {
@@ -266,7 +275,8 @@ impl Podman {
                 directory.join(image).display().to_string(),
                 directory.display().to_string(),
             ]);
-            self.output(&args).await?;
+            let output = super::process::output(self.command().args(&args), deadline.saturating_duration_since(std::time::Instant::now())).await?;
+            anyhow::ensure!(output.status.success(), "Docker action image build failed: {}", String::from_utf8_lossy(&output.stderr));
             tag
         } else {
             image.strip_prefix("docker://").unwrap_or(image).into()
@@ -300,10 +310,14 @@ impl Podman {
                     .arg(format!("{}:{}:rw", path.display(), path.display()));
             }
         }
-        command.arg("--workdir").arg(workspace);
+        if workspace != Path::new("/github/workspace") {
+            command.arg("--volume").arg(format!("{}:/github/workspace:rw", workspace.display()));
+        }
+        command.arg("--workdir").arg("/github/workspace");
         for (key, value) in env {
             command.arg("--env").arg(key).env(key, value);
         }
+        command.arg("--env").arg("GITHUB_WORKSPACE").env("GITHUB_WORKSPACE", "/github/workspace");
         if let Some(entrypoint) = entrypoint {
             command.args(["--entrypoint", entrypoint]);
         }

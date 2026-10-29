@@ -44,7 +44,7 @@ pub(super) fn scheduling_from_value(
         }
         if local {
             ensure!(
-                job.get("container").is_none() && job.get("services").is_none(),
+                job.get("container").is_none() && job.get("services").is_none_or(|services| services.as_mapping().is_some_and(|services| services.is_empty())),
                 "container jobs and services need CI_EXECUTION_MODE=podman"
             );
             let steps = job.get("steps").and_then(Value::as_sequence);

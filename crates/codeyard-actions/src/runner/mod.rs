@@ -82,6 +82,8 @@ pub struct Options {
     pub no_cache_server: bool,
     #[arg(long)]
     pub action_offline_mode: bool,
+    #[arg(long, hide = true)]
+    pub deny_docker: bool,
 }
 
 fn object(values: &BTreeMap<String, String>) -> Value {
@@ -110,9 +112,7 @@ fn boolean(template: &str, contexts: &Contexts, status: Status) -> Result<bool> 
 }
 
 fn minutes(value: f64) -> Result<Duration> {
-    if !value.is_finite() || value <= 0.0 || value > 525600.0 {
-        bail!("timeout-minutes must be a positive number");
-    }
+    workflow::validate_timeout_minutes(value)?;
     Ok(Duration::from_secs_f64(value * 60.0))
 }
 
@@ -923,9 +923,7 @@ impl WorkflowRun {
                         environment_values.apply(&token_id, &mut contexts);
                         contexts.values.insert(
                             "strategy".into(),
-                            Value::from_json(
-                                &serde_json::json!({"job-index":index,"job-total":total}),
-                            ),
+                            Value::from_json(&serde_json::json!({"job-index":index,"job-total":total,"fail-fast":job.fail_fast,"max-parallel":job.max_parallel.map_or(total as f64, f64::from)})),
                         );
                         contexts.values.insert("matrix".into(), job.matrix.clone());
                         let env = env.clone();
@@ -1222,7 +1220,9 @@ struct Job {
     temp: tempfile::TempDir,
     cache: PathBuf,
     podman: Podman,
+    explicit_container: bool,
     sequence: usize,
+    anonymous_action: usize,
     public_step: u32,
     active_files: PathBuf,
     posts: Vec<actions::Post>,
@@ -1279,7 +1279,9 @@ async fn run_job(
             temp,
             cache,
             podman,
+            explicit_container: false,
             sequence: 0,
+            anonymous_action: 0,
             public_step:1,
             active_files: PathBuf::new(),
             posts: Vec::new(),
@@ -1351,15 +1353,22 @@ async fn run_job(
 }
 
 impl Job {
+    fn restore_event(&self) -> Result<PathBuf> {
+        let path = self.temp.path().join("event.json");
+        let payload = self.contexts.values.get("github").and_then(|github| match github {
+            Value::Object(values) => values.get("event"),
+            _ => None,
+        }).map(Value::to_json).unwrap_or_else(|| serde_json::json!({}));
+        crate::fs::replace_file(&path, &serde_json::to_vec(&payload)?)?;
+        Ok(path)
+    }
+
     async fn execute(&mut self) -> Result<JobResult> {
         let setup = Instant::now();
         self.log.start_step(1, "Set up job");
+        let event = self.restore_event()?;
         if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
             github.insert("job".into(), Value::String(self.plan.job_id.clone()));
-            let event = self.temp.path().join("event.json");
-            if let Some(payload) = github.get("event") {
-                std::fs::write(&event, serde_json::to_vec(&payload.to_json())?)?;
-            }
             github.insert(
                 "event_path".into(),
                 Value::String(event.display().to_string()),
@@ -1370,14 +1379,7 @@ impl Job {
             .insert("matrix".into(), self.plan.matrix.clone());
         if let Some(Value::Object(strategy)) = self.contexts.values.get_mut("strategy") {
             strategy.insert("fail-fast".into(), Value::Bool(self.plan.fail_fast));
-            strategy.insert(
-                "max-parallel".into(),
-                Value::Number(
-                    self.plan
-                        .max_parallel
-                        .unwrap_or(self.options.concurrent_jobs) as f64,
-                ),
-            );
+            strategy.entry("max-parallel".into()).or_insert_with(|| Value::Number(self.plan.max_parallel.unwrap_or(self.options.concurrent_jobs) as f64));
         }
         self.contexts.values.insert("runner".into(), Value::from_json(&serde_json::json!({"os":runner_os(),"arch":runner_arch(),"name":"codeyard-actions","temp":self.temp.path(),"tool_cache":self.cache.join("tool_cache"),"environment":"self-hosted","debug":self.env.get("RUNNER_DEBUG").cloned().unwrap_or_default()})));
         std::fs::create_dir_all(self.cache.join("tool_cache"))?;
@@ -1394,6 +1396,7 @@ impl Job {
             .map(|container| self.container(container))
             .transpose()?
             .filter(|container| !container.image.is_empty());
+        self.explicit_container = container.is_some();
         if container.is_none() {
             // Admission lowercases labels, so the platform key is matched without case.
             let mapped = self.plan.runs_on.iter().find_map(|label| {
@@ -1441,13 +1444,21 @@ impl Job {
                 &self.cache,
             )
             .await?;
-        self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job}})));
+        self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job,"network":self.podman.network}})));
         self.log.finish_step(1, Conclusion::Success, setup);
         let steps = self.plan.steps.clone();
         let mut outputs = BTreeMap::new();
         for step in &steps {
             self.public_step += 1;
-            self.step(step, 0, &mut outputs).await?;
+            let started = Instant::now();
+            if let Err(error) = self.step(step, 0, &mut outputs).await {
+                self.status.failed = true;
+                self.log.line(&format!("Error evaluating step: {error:#}"));
+                self.log.finish_step(self.public_step, Conclusion::Failure, started);
+                if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
+                    job.insert("status".into(), Value::String("failure".into()));
+                }
+            }
         }
         let mut env = self.env.clone();
         env.extend(self.saved_env.clone());
@@ -1537,8 +1548,9 @@ impl Job {
                 },
             });
         }
+        let image = expand(&container.image)?;
         Ok(Container {
-            image: expand(&container.image)?,
+            image: image.strip_prefix("docker://").unwrap_or(&image).to_owned(),
             credentials: container
                 .credentials
                 .as_ref()
@@ -1568,11 +1580,15 @@ impl Job {
             self.status.cancelled = *self.cancel.borrow();
             self.matchers.reset();
             self.prepare_files()?;
+            let action = match &step.id {
+                Some(id) => id.clone(),
+                None => {
+                    self.anonymous_action += 1;
+                    if self.anonymous_action == 1 { "__run".into() } else { format!("__run_{}", self.anonymous_action) }
+                }
+            };
             if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
-                github.insert(
-                    "action".into(),
-                    Value::String(step.id.clone().unwrap_or_else(|| "__run".into())),
-                );
+                github.insert("action".into(), Value::String(action));
             }
             let name = step
                 .name
@@ -1582,17 +1598,6 @@ impl Job {
                     StepAction::Run { .. } => "Run script".into(),
                     StepAction::Uses { reference, .. } => reference.clone(),
                 });
-            let name = text(&name, &self.contexts, self.status)?;
-            if self.log.progress.is_some() {
-                anyhow::ensure!(
-                    name.len() <= 1024,
-                    "step name exceeds the progress metadata limit"
-                );
-            }
-            let step_started = Instant::now();
-            if depth == 0 {
-                self.log.start_step(self.public_step, &name);
-            }
             let mut env = self.env.clone();
             env.extend(self.saved_env.clone());
             self.contexts.values.insert("env".into(), object(&env));
@@ -1600,6 +1605,10 @@ impl Job {
                 env.insert(key.clone(), text(template, &self.contexts, self.status)?);
             }
             self.contexts.values.insert("env".into(), object(&env));
+            let name = text(&name, &self.contexts, self.status)?;
+            let name = commands::bounded(&self.log.masker.mask(&name), 1024);
+            let step_started = Instant::now();
+            if depth == 0 { self.log.start_step(self.public_step, &name); }
             let condition = expressions::evaluate_condition(
                 step.condition.as_deref().unwrap_or("success()"),
                 &self.contexts,
@@ -1743,7 +1752,7 @@ impl Job {
     ) -> Result<bool> {
         // GitHub gives a job container sh and a host job bash, whatever runs the container engine.
         let explicit_shell = shell.is_some();
-        let shell = shell.unwrap_or(if self.plan.container.is_some() {
+        let shell = shell.unwrap_or(if self.explicit_container {
             "sh"
         } else {
             "bash"
@@ -1754,6 +1763,7 @@ impl Job {
         }
         let mut program = parts.remove(0);
         if program == "bash"
+            && !explicit_shell
             && self.podman.job.is_none()
             && !executable("bash", &env)
             && shell == "bash"
@@ -1776,7 +1786,7 @@ impl Job {
             "cmd" => format!("@echo off\n{script}"),
             _ => script.into(),
         };
-        std::fs::write(&path, script)?;
+        crate::fs::replace_file(&path, script.as_bytes())?;
         if parts.is_empty() {
             parts = match program.as_str() {
                 // Only an explicitly chosen bash gets pipefail. GitHub's default is bash -e.
@@ -1816,8 +1826,8 @@ impl Job {
                 }
             }
         }
+        env.entry("CI".into()).or_insert_with(|| "true".into());
         for (key, value) in [
-            ("CI", "true"),
             ("GITHUB_ACTIONS", "true"),
             ("RUNNER_OS", runner_os()),
             ("RUNNER_ARCH", runner_arch()),
@@ -1843,11 +1853,10 @@ impl Job {
 
     fn prepare_files(&mut self) -> Result<()> {
         self.sequence += 1;
-        let files = self.temp.path().join(format!("commands-{}", self.sequence));
-        std::fs::create_dir_all(&files)?;
+        let files = crate::fs::private_tempdir("commands-", Some(self.temp.path()))?.keep();
         for name in ["ENV", "OUTPUT", "PATH", "STEP_SUMMARY", "STATE"] {
             let path = files.join(name);
-            std::fs::write(&path, "")?;
+            crate::fs::replace_file(&path, b"")?;
             if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
                 github.insert(
                     name.to_ascii_lowercase(),
@@ -1872,12 +1881,7 @@ impl Job {
     ) -> Result<bool> {
         let mut env = self.environment(env);
         let files = self.active_files.clone();
-        let event = self.temp.path().join("event.json");
-        if let Some(Value::Object(github)) = self.contexts.values.get("github") {
-            if let Some(payload) = github.get("event") {
-                std::fs::write(&event, serde_json::to_vec(&payload.to_json())?)?;
-            }
-        }
+        let event = self.restore_event()?;
         env.insert("GITHUB_EVENT_PATH".into(), event.display().to_string());
         let allow_unsafe = env
             .get("ACTIONS_ALLOW_UNSECURE_COMMANDS")
@@ -1933,13 +1937,19 @@ impl Job {
             state.extend(commands::pairs(&read_command_file(&files.join("STATE"))?)?);
         }
         let summary = files.join("STEP_SUMMARY");
-        if open_command_file(&summary, false)?.metadata()?.len() > COMMAND_FILE_LIMIT {
-            self.log
-                .line("Error: Step summary exceeds the maximum allowed size of 1024k.");
-            write_command_file(&summary, "")?;
-        } else {
-            let contents = read_command_file(&summary)?;
-            write_command_file(&summary, &self.log.masker.mask(&contents))?;
+        let summary_file = match open_command_file(&summary, false) {
+            Ok(file) => Some(file),
+            Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => None,
+            Err(error) => return Err(error),
+        };
+        if let Some(file) = summary_file {
+            if file.metadata()?.len() > COMMAND_FILE_LIMIT {
+                self.log.line("Error: Step summary exceeds the maximum allowed size of 1024k.");
+                write_command_file(&summary, "")?;
+            } else {
+                let contents = read_command_file(&summary)?;
+                write_command_file(&summary, &self.log.masker.mask(&contents))?;
+            }
         }
         for path in read_command_file(&files.join("PATH"))?
             .lines()
@@ -1983,14 +1993,13 @@ fn read_command_file(path: &Path) -> Result<String> {
         contents.len() as u64 <= COMMAND_FILE_LIMIT,
         "A command file exceeds the maximum allowed size"
     );
+    if contents.starts_with('\u{feff}') { contents.drain(..3); }
     Ok(contents)
 }
 
 fn write_command_file(path: &Path, contents: &str) -> Result<()> {
-    use std::io::Write;
-    let mut file = open_command_file(path, true)?;
-    file.set_len(0)?;
-    file.write_all(contents.as_bytes())?;
+    let _file = open_command_file(path, false)?;
+    crate::fs::replace_file(path, contents.as_bytes())?;
     Ok(())
 }
 

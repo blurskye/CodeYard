@@ -507,9 +507,10 @@ async fn run_workflows(
             let config = service.config.clone();
             let names = service.names.clone();
             let run_id = run.run_id;
+            let limits = claim.limits.container_options();
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                prepare_workflow_for_engine(&path, &workflow, &config, &names, run_id, native)
+                prepare_workflow_for_engine(&path, &workflow, &config, &names, run_id, native, &limits)
             })
             .await?
         };
@@ -890,6 +891,11 @@ fn act_command(
         ("GITHUB_GRAPHQL_URL", format!("{origin}/api/graphql")),
         ("GITHUB_SHA", run.head_sha.clone().unwrap_or_default()),
         ("SHA_REF", run.head_sha.clone().unwrap_or_default()),
+        ("GITHUB_WORKFLOW_SHA", run.workflow_sha.as_ref().or(run.head_sha.as_ref()).cloned().unwrap_or_default()),
+        ("GITHUB_WORKFLOW_REF", {
+            let workflow = run.workflow_path.split(',').find(|path| workspace.definition(path) == definition).unwrap_or(&run.workflow_path);
+            format!("{}/{}/{workflow}@{}", claim.owner, claim.repository_name, github_ref(claim).unwrap_or_default())
+        }),
         (
             "GITHUB_RUN_ID",
             run.workflow_run_id.unwrap_or(run.id).to_string(),
@@ -952,6 +958,8 @@ fn act_command(
     }
     match config.mode {
         CiExecutionMode::Local => {
+            command.env("CODEYARD_DENY_DOCKER", "1");
+            if native { command.arg("--deny-docker"); }
             for label in labels {
                 command.arg("-P").arg(format!("{label}=-self-hosted"));
             }
@@ -974,8 +982,7 @@ fn act_command(
             // One job at a time, so the limits below bound the whole run.
             command.arg("--concurrent-jobs").arg("1");
             if let Some(label) = podman_label {
-                // act applies these only to a job without its own `container.options`, so a
-                // workflow can replace the limits. They stop a runaway job, not a hostile one.
+                // Explicit job/service containers also receive these caps during rewriting.
                 let limits = claim.limits.container_options();
                 let options = run_container_options(label);
                 command
@@ -1019,7 +1026,7 @@ fn prepare_workflow(
     names: &WorkflowNames,
     run_id: uuid::Uuid,
 ) -> Result<(BTreeSet<String>, Option<WorkflowName>)> {
-    prepare_workflow_for_engine(path, workflow, config, names, run_id, false)
+    prepare_workflow_for_engine(path, workflow, config, names, run_id, false, "")
 }
 
 fn prepare_workflow_for_engine(
@@ -1029,17 +1036,33 @@ fn prepare_workflow_for_engine(
     names: &WorkflowNames,
     run_id: uuid::Uuid,
     native: bool,
+    limits: &str,
 ) -> Result<(BTreeSet<String>, Option<WorkflowName>)> {
     let mut value = super::workflows::parse_yaml(&std::fs::read(path)?)?;
+    if config.mode != CiExecutionMode::Local {
+        for job in value.get_mut("jobs").and_then(Value::as_mapping_mut).into_iter().flat_map(|jobs| jobs.values_mut()) {
+            if let Some(selector) = job.get_mut("runs-on").and_then(Value::as_mapping_mut) {
+                if selector.contains_key("group") && selector.get("labels").is_none_or(|labels| labels.as_sequence().is_some_and(Vec::is_empty)) {
+                    let label = config.act_platform_map.keys().find(|label| label.as_str() == "ubuntu-latest").or_else(|| config.act_platform_map.keys().next()).context("Group-only jobs need a configured default platform")?;
+                    selector.insert("labels".into(), label.clone().into());
+                }
+            }
+        }
+    }
     let labels = labels_from_value(&value, config.mode == CiExecutionMode::Local)?;
     if config.mode == CiExecutionMode::Local {
         return Ok((labels, None));
     }
-    if let Some(label) = labels
-        .iter()
-        .find(|label| !config.act_platform_map.contains_key(*label))
-    {
-        bail!("no runner image for `runs-on: {label}`; add it to CI_ACT_PLATFORM_MAP");
+    for job in value.get("jobs").and_then(Value::as_mapping).into_iter().flat_map(|jobs| jobs.values()) {
+        if job.get("uses").is_some() { continue; }
+        let selector = job.get("runs-on").context("Job needs runs-on")?;
+        let selector = selector.get("labels").unwrap_or(selector);
+        let selected: Vec<_> = match selector {
+            Value::String(label) => vec![label.as_str()],
+            Value::Sequence(labels) => labels.iter().filter_map(Value::as_str).collect(),
+            _ => Vec::new(),
+        };
+        ensure!(selected.iter().any(|label| config.act_platform_map.keys().any(|key| key.eq_ignore_ascii_case(label))), "no runner image matches this job's runs-on selectors; add one to CI_ACT_PLATFORM_MAP");
     }
     // Native containers already have per-job random names. Only act needs its workflow
     // title rewritten to isolate container names; that private suffix is not native metadata.
@@ -1053,22 +1076,21 @@ fn prepare_workflow_for_engine(
                 Value::String(unique.name.clone()),
             );
     }
-    add_container_label(&mut value, &run_container_label(run_id))?;
+    add_container_options(&mut value, &format!("{} {limits}", run_container_options(&run_container_label(run_id))))?;
     std::fs::write(path, serde_yaml::to_string(&value)?)?;
     Ok((labels, unique))
 }
 
-fn add_container_label(workflow: &mut Value, label: &str) -> Result<()> {
+fn add_container_options(workflow: &mut Value, option: &str) -> Result<()> {
     let Some(jobs) = workflow.get_mut("jobs").and_then(Value::as_mapping_mut) else {
         bail!("workflow jobs must be a mapping");
     };
-    let option = run_container_options(label);
     for job in jobs.values_mut() {
         let Some(job) = job.as_mapping_mut() else {
             continue;
         };
         if let Some(container) = job.get_mut(Value::String("container".into())) {
-            append_container_option(container, &option)?;
+            append_container_option(container, option)?;
         }
         if let Some(services) = job
             .get_mut(Value::String("services".into()))
@@ -1077,7 +1099,7 @@ fn add_container_label(workflow: &mut Value, label: &str) -> Result<()> {
             // The parser accepts the image shorthand for services too; an empty image there
             // disables the service, and the runner leaves it out.
             for service in services.values_mut() {
-                append_container_option(service, &option)?;
+                append_container_option(service, option)?;
             }
         }
     }
@@ -1100,7 +1122,7 @@ fn append_container_option(spec: &mut Value, option: &str) -> Result<()> {
     };
     let key = Value::String("options".into());
     match mapping.get_mut(&key) {
-        None => {
+        None | Some(Value::Null) => {
             mapping.insert(key, Value::String(option.to_owned()));
         }
         Some(Value::String(options)) => {
@@ -1566,29 +1588,6 @@ impl Workspace {
             };
             definitions.insert(path.clone(), content);
         }
-        if run.engine.as_deref() == Some("act")
-            && blobs
-                .values()
-                .any(|value| super::reusable::content(value).is_some())
-        {
-            let roots = run
-                .workflow_path
-                .split(',')
-                .map(str::to_owned)
-                .collect::<Vec<_>>();
-            let secrets = claim
-                .secrets
-                .iter()
-                .map(|(name, _)| name.clone())
-                .chain(std::iter::once("GITHUB_TOKEN".into()))
-                .collect();
-            let permit = super::workflows::PARSING_SLOTS.acquire().await?;
-            definitions = tokio::task::spawn_blocking(move || {
-                let _permit = permit;
-                super::reusable::act_secrets(definitions, &roots, secrets)
-            })
-            .await??;
-        }
         for (path, content) in definitions {
             tokio::fs::write(workspace.definition(&path), content).await?;
         }
@@ -1719,7 +1718,7 @@ impl Workspace {
             return Ok(None);
         };
         let mut environments = BTreeMap::new();
-        for key in jobs.values() {
+        for key in jobs.values().collect::<BTreeSet<_>>() {
             let scope = values
                 .environments
                 .get(key)
@@ -1941,6 +1940,7 @@ mod tests {
             &WorkflowNames::default(),
             run_id,
             true,
+            "",
         )
         .unwrap();
         assert!(name.is_none());
@@ -2712,7 +2712,7 @@ jobs:
         )
         .unwrap();
         let mut yaml = super::super::workflows::parse_yaml(&std::fs::read(path).unwrap()).unwrap();
-        add_container_label(&mut yaml, &label).unwrap();
+        add_container_options(&mut yaml, &run_container_options(&label)).unwrap();
         let jobs = yaml.get("jobs").unwrap();
         assert_eq!(
             jobs["image-shorthand"]["container"]["options"],
