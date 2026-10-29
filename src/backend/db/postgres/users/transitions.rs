@@ -67,7 +67,7 @@ pub(crate) async fn require_user_namespace(
 
 /// The account row is locked by the caller before retaining its session.
 pub(crate) async fn live_session(
-    tx: &mut Transaction<'_, Postgres>,
+    connection: &mut PgConnection,
     actor: i64,
     session: &str,
 ) -> Result<bool> {
@@ -75,14 +75,39 @@ pub(crate) async fn live_session(
         sqlx::query_scalar("SELECT expires_at FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE")
             .bind(session)
             .bind(actor)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *connection)
             .await?;
     Ok(
         sqlx::query_scalar("SELECT COALESCE($1::timestamptz>clock_timestamp(),FALSE)")
             .bind(expiry)
-            .fetch_one(&mut **tx)
+            .fetch_one(&mut *connection)
             .await?,
     )
+}
+
+/// Call within a transaction; authority and session locks are retained until commit.
+async fn active_account_locked(connection: &mut PgConnection, actor: i64, exclusive: bool) -> Result<bool> {
+    lock_membership_shared(connection).await?;
+    let lock = if exclusive { "FOR NO KEY UPDATE" } else { "FOR SHARE" };
+    Ok(sqlx::query_scalar(&format!("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 {lock}"))
+        .bind(actor).fetch_optional(connection).await?.unwrap_or(false))
+}
+
+pub(crate) async fn active_account(connection: &mut PgConnection, actor: i64) -> Result<bool> {
+    active_account_locked(connection, actor, true).await
+}
+
+async fn active_session_locked(connection: &mut PgConnection, actor: i64, session: &str, exclusive: bool) -> Result<bool> {
+    Ok(active_account_locked(connection, actor, exclusive).await? && live_session(connection, actor, session).await?)
+}
+
+pub(crate) async fn active_session(connection: &mut PgConnection, actor: i64, session: &str) -> Result<bool> {
+    active_session_locked(connection, actor, session, true).await
+}
+
+/// For operations which do not modify the account or upgrade its lock later.
+pub(crate) async fn active_session_read(connection: &mut PgConnection, actor: i64, session: &str) -> Result<bool> {
+    active_session_locked(connection, actor, session, false).await
 }
 
 pub(crate) async fn require_account(
@@ -91,10 +116,7 @@ pub(crate) async fn require_account(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     use crate::backend::db::users::accounts::AccountRestricted;
-    lock_membership_shared(tx).await?;
-    let active: bool = sqlx::query_scalar("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR NO KEY UPDATE")
-        .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false);
-    anyhow::ensure!(active, AccountRestricted);
+    anyhow::ensure!(active_account(tx, actor).await?, AccountRestricted);
     anyhow::ensure!(credential_live(tx, actor, credential, true).await?, AccountRestricted);
     Ok(())
 }

@@ -37,12 +37,26 @@ pub(crate) async fn require_user_namespace(
 }
 
 pub(crate) async fn live_session(
-    tx: &mut Transaction<'_, Sqlite>,
+    connection: &mut sqlx::SqliteConnection,
     actor: i64,
     session: &str,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND user_id=?2 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
-        .bind(session).bind(actor).fetch_one(&mut **tx).await?)
+        .bind(session).bind(actor).fetch_one(connection).await?)
+}
+
+/// Call within the operation's transaction to retain one authority snapshot.
+pub(crate) async fn active_account(connection: &mut sqlx::SqliteConnection, actor: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
+        .bind(actor).fetch_one(connection).await?)
+}
+
+pub(crate) async fn active_session(connection: &mut sqlx::SqliteConnection, actor: i64, session: &str) -> Result<bool> {
+    Ok(active_account(connection, actor).await? && live_session(connection, actor, session).await?)
+}
+
+pub(crate) async fn active_session_read(connection: &mut sqlx::SqliteConnection, actor: i64, session: &str) -> Result<bool> {
+    active_session(connection, actor, session).await
 }
 
 pub(crate) async fn require_account(
@@ -51,9 +65,7 @@ pub(crate) async fn require_account(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     use crate::backend::db::users::accounts::AccountRestricted;
-    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
-        .bind(actor).fetch_one(&mut **tx).await?;
-    anyhow::ensure!(active, AccountRestricted);
+    anyhow::ensure!(active_account(tx, actor).await?, AccountRestricted);
     anyhow::ensure!(credential_live(tx, actor, credential, true).await?, AccountRestricted);
     Ok(())
 }

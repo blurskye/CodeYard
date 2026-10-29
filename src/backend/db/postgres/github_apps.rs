@@ -24,17 +24,7 @@ pub(super) async fn register_in_connection(
     app: &App,
     secret_hash: &str,
 ) -> Result<Option<App>> {
-    super::users::transitions::lock_membership_shared(tx).await?;
-    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(actor)
-        .fetch_optional(&mut *tx)
-        .await?;
-    sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR SHARE")
-        .bind(session)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let live: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND s.expires_at>clock_timestamp())").bind(actor).bind(session).fetch_one(&mut *tx).await?;
-    if !live {
+    if !super::users::transitions::active_session(tx, actor, session).await? {
         return Ok(None);
     }
     sqlx::query("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri,is_github_app) VALUES($1,$2,$3,$4,$5,$5,TRUE)").bind(actor).bind(&app.client_id).bind(secret_hash).bind(&app.name).bind(&app.homepage).execute(&mut *tx).await?;
@@ -82,16 +72,8 @@ pub async fn install(
     repos: Option<&[i64]>,
 ) -> Result<Option<Installation>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
-    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(actor)
-        .fetch_optional(&mut *tx)
-        .await?;
-    sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR SHARE")
-        .bind(session)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let allowed: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password AND (($3=u.id AND $4 IS NULL) OR ($3 IS NULL AND EXISTS(SELECT 1 FROM org_memberships WHERE org_id=$4 AND user_id=u.id AND role='owner'))))").bind(actor).bind(session).bind(user).bind(org).fetch_one(&mut *tx).await?;
+    if !super::users::transitions::active_session(&mut tx, actor, session).await? { return Ok(None); }
+    let allowed: bool=sqlx::query_scalar("SELECT COALESCE(($2=$1 AND $3::bigint IS NULL) OR ($2::bigint IS NULL AND EXISTS(SELECT 1 FROM org_memberships WHERE org_id=$3 AND user_id=$1 AND role='owner')),FALSE)").bind(actor).bind(user).bind(org).fetch_one(&mut *tx).await?;
     let visible:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (a.is_public OR (a.owner_id=$2 AND a.owner_id=$3 AND CAST($4 AS BIGINT) IS NULL)))").bind(app).bind(actor).bind(user).bind(org).fetch_one(&mut *tx).await?;
     if !visible || !allowed || user.is_some() == org.is_some() {
         return Ok(None);
@@ -198,16 +180,8 @@ pub async fn managed_installations(
 }
 pub async fn uninstall(pool: &PgPool, actor: i64, session: &str, id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
-    sqlx::query("SELECT id FROM users WHERE id=$1 FOR SHARE")
-        .bind(actor)
-        .fetch_optional(&mut *tx)
-        .await?;
-    sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR SHARE")
-        .bind(session)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let app:Option<i64>=sqlx::query_scalar("SELECT i.app_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN sessions s ON s.user_id=u.id WHERE i.id=$3 AND s.id=$2 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=u.id AND m.role='owner')) FOR UPDATE OF i").bind(actor).bind(session).bind(id).fetch_optional(&mut *tx).await?;
+    if !super::users::transitions::active_session_read(&mut tx, actor, session).await? { return Ok(false); }
+    let app:Option<i64>=sqlx::query_scalar("SELECT i.app_id FROM github_app_installations i WHERE i.id=$2 AND (i.user_id=$1 OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=$1 AND m.role='owner')) FOR UPDATE OF i").bind(actor).bind(id).fetch_optional(&mut *tx).await?;
     let Some(app) = app else {
         return Ok(false);
     };
@@ -398,16 +372,8 @@ pub async fn request_installation(
     org: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
-    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
-        .bind(actor)
-        .fetch_optional(&mut *tx)
-        .await?;
-    sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR SHARE")
-        .bind(session)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id JOIN org_memberships m ON m.user_id=u.id JOIN github_apps a ON a.id=$4 AND a.is_public WHERE u.id=$1 AND s.id=$2 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password AND m.org_id=$3 AND m.role IN ('member','admin') AND NOT EXISTS(SELECT 1 FROM github_app_installations WHERE app_id=$4 AND org_id=$3))").bind(actor).bind(session).bind(org).bind(app).fetch_one(&mut *tx).await?;
+    if !super::users::transitions::active_session(&mut tx, actor, session).await? { return Ok(false); }
+    let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN github_apps a ON a.id=$3 AND a.is_public WHERE m.user_id=$1 AND m.org_id=$2 AND m.role IN ('member','admin') AND NOT EXISTS(SELECT 1 FROM github_app_installations WHERE app_id=$3 AND org_id=$2))").bind(actor).bind(org).bind(app).fetch_one(&mut *tx).await?;
     if !live {
         return Ok(false);
     }

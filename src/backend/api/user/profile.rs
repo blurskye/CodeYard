@@ -170,7 +170,7 @@ pub(crate) async fn load_settings(
             .get("tokens_before")
             .and_then(|value| value.parse().ok())
             .unwrap_or(0);
-        db::users::tokens::list_tokens(&ctx.state.pool, user.id, before)
+        db::users::tokens::list_tokens(&ctx.state.pool, user.id, &session::extract_session_id(&ctx.headers).unwrap_or_default(), before)
             .await
             .map_err(|_| {
                 ctx.error(

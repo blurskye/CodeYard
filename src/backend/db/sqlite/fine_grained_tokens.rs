@@ -22,9 +22,7 @@ pub async fn create(
 ) -> Result<Option<(i64, String)>> {
     // The write lock serializes with suspension, password resets and membership changes.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let live: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND s.expires_at>{NOW} AND NOT u.is_banned AND NOT u.must_change_password)"))
-        .bind(user).bind(session).fetch_one(&mut *tx).await?;
-    if !live {
+    if !super::users::transitions::active_session(&mut tx, user, session).await? {
         return Ok(None);
     }
     let status = match token.owner_org_id {
@@ -61,8 +59,9 @@ pub async fn regenerate(
     expires_at: Option<DateTime<Utc>>,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let changed = sqlx::query(&format!("UPDATE personal_access_tokens SET token_hash=$4,expires_at=$5,last_used_at=NULL,last_used_ip=NULL WHERE id=$1 AND user_id=$2 AND EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND EXISTS(SELECT 1 FROM users WHERE id=$2 AND NOT is_banned AND NOT must_change_password) AND EXISTS(SELECT 1 FROM sessions WHERE id=$3 AND user_id=$2 AND expires_at>{NOW})"))
-        .bind(token).bind(user).bind(session).bind(hash).bind(expires_at.map(time::encode)).execute(&mut *tx).await?.rows_affected() == 1;
+    if !super::users::transitions::active_session(&mut tx, user, session).await? { return Ok(false); }
+    let changed = sqlx::query("UPDATE personal_access_tokens SET token_hash=$3,expires_at=$4,last_used_at=NULL,last_used_ip=NULL WHERE id=$1 AND user_id=$2 AND EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1)")
+        .bind(token).bind(user).bind(hash).bind(expires_at.map(time::encode)).execute(&mut *tx).await?.rows_affected() == 1;
     if changed {
         sqlx::query(&format!(
             "UPDATE fine_grained_tokens SET requested_at={NOW} WHERE token_id=$1"
