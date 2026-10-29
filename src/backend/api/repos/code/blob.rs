@@ -574,7 +574,7 @@ pub(in crate::backend::api::repos) async fn page(
     >,
     headers: axum::http::HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    axum::extract::Path(params): axum::extract::Path<std::collections::HashMap<String, String>>,
+    super::GitPathParams(params): super::GitPathParams,
 ) -> axum::response::Response {
     let ctx =
         match crate::backend::api::http::context::PageContext::load(state, headers, &uri).await {

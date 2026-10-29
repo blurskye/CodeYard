@@ -614,7 +614,7 @@ fn directory_tree<'repo>(
         };
         let (kind, id) = {
             let entry = tree
-                .get_name(name)
+                .get_name_bytes(&crate::git_paths::bytes(name))
                 .ok_or_else(|| missing("the path does not exist in the given tree"))?;
             (entry.kind(), entry.id())
         };
@@ -636,7 +636,8 @@ pub(crate) fn tree_entry<'repo>(
 ) -> Result<git2::TreeEntry<'static>> {
     let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
     let tree = directory_tree(repo, commit, directory)?;
-    Ok(tree.get_path(Path::new(name))?)
+    let raw = OsString::from_vec(crate::git_paths::bytes(name));
+    Ok(tree.get_path(Path::new(&raw))?)
 }
 
 fn check_tree_materialization(entry_count: usize, path_bytes: usize) -> Result<()> {
@@ -650,9 +651,10 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
     let by_name: HashMap<Vec<u8>, usize> = entries
         .iter()
         .enumerate()
-        .map(|(index, entry)| (entry.name.as_bytes().to_vec(), index))
+        .map(|(index, entry)| (crate::git_paths::bytes(entry.path.rsplit('/').next().unwrap_or(&entry.path)), index))
         .collect();
-    let directory = directory.as_bytes();
+    let directory_raw = crate::git_paths::bytes(directory);
+    let directory = directory_raw.as_slice();
     let mut assigned: Vec<bool> = entries
         .iter()
         .map(|entry| entry.last_commit.is_some())
@@ -878,7 +880,7 @@ pub(crate) async fn list_file_paths(
             {
                 continue;
             }
-            let path = String::from_utf8_lossy(path).into_owned();
+            let path = crate::git_paths::from_bytes(path);
             if cutoff.as_ref().is_some_and(|cutoff| path >= *cutoff) {
                 truncated = true;
                 continue;
@@ -913,7 +915,8 @@ fn tree_entries(repo: &Repository, tree: &git2::Tree<'_>, path: &str, sizes: boo
     let mut entries = Vec::with_capacity(tree.len());
     for entry in tree.iter() {
         let name = String::from_utf8_lossy(entry.name_bytes()).into_owned();
-        let entry_path = if path.is_empty() { name.clone() } else { format!("{path}/{name}") };
+        let identity = crate::git_paths::from_bytes(entry.name_bytes());
+        let entry_path = if path.is_empty() { identity } else { format!("{path}/{identity}") };
         if entry_path.len() > MAX_TREE_PATH_BYTES { return Err(ObjectTooLarge.into()); }
         bytes = bytes.checked_add(entry_path.len()).ok_or(ObjectTooLarge)?;
         check_tree_materialization(entries.len() + 1, bytes)?;
@@ -963,7 +966,7 @@ pub(crate) async fn list_sidebar_trees(
                 let next = if prefix.is_empty() { name.to_owned() } else { format!("{prefix}/{name}") };
                 if !trees.contains_key(&next) {
                     let parent = trees.get(&prefix).ok_or_else(|| anyhow!("Missing sidebar directory"))?;
-                    let entry = parent.get_name(name).ok_or_else(|| git2::Error::from_str("Missing sidebar directory"))?;
+                    let entry = parent.get_name_bytes(&crate::git_paths::bytes(name)).ok_or_else(|| git2::Error::from_str("Missing sidebar directory"))?;
                     ensure!(entry.kind() == Some(ObjectType::Tree), "Sidebar path is not a directory");
                     let (size, kind) = odb.read_header(entry.id())?;
                     ensure!(kind == ObjectType::Tree, "Expected tree");
@@ -1029,7 +1032,7 @@ pub(crate) async fn list_tree_with_history(
             .arg(&commit_sha)
             .arg("--");
         for entry in &entries {
-            command.arg(&entry.path);
+            command.arg(OsString::from_vec(crate::git_paths::bytes(&entry.path)));
         }
         command.current_dir(repo_path);
         process::limit_memory(&mut command);
@@ -1191,7 +1194,8 @@ pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> R
     let mut command = process::git_command()?;
     command
         .arg("--literal-pathspecs")
-        .args(["blame", "--incremental", &revision, "--", path])
+        .args(["blame", "--incremental", &revision, "--"])
+        .arg(OsString::from_vec(crate::git_paths::bytes(path)))
         .current_dir(repo_path);
     process::limit_memory(&mut command);
     let (status, output) = process::buffered(
@@ -1815,11 +1819,11 @@ async fn read_delimited_window(
 /// after the revision and a colon, and this strips that prefix. A long line is cut to a window
 /// around the first occurrence of `needle` (lowercase), so the shown text holds the match.
 fn parse_code_match(record: &[u8], prefix: &str, needle: &str) -> Option<CodeMatch> {
-    let record = String::from_utf8_lossy(record);
-    let mut parts = record.splitn(3, '\0');
-    let path = parts.next()?.strip_prefix(prefix)?;
-    let line_number = parts.next()?.parse().ok()?;
-    let text = parts.next()?.trim();
+    let mut parts = record.splitn(3, |byte| *byte == 0);
+    let path = crate::git_paths::from_bytes(parts.next()?.strip_prefix(prefix.as_bytes())?);
+    let line_number = std::str::from_utf8(parts.next()?).ok()?.parse().ok()?;
+    let text = String::from_utf8_lossy(parts.next()?);
+    let text = text.trim();
     let lower = text.to_lowercase();
     let at = lower.find(needle).unwrap_or(0);
     // Map the folded byte offset back to original characters; e.g. İ expands to i + ◌̇.
@@ -1828,7 +1832,7 @@ fn parse_code_match(record: &[u8], prefix: &str, needle: &str) -> Option<CodeMat
         Some(*end)
     }).take_while(|end| *end <= at).count().saturating_sub(MAX_CODE_LINE_CHARS / 4);
     Some(CodeMatch {
-        path: path.to_owned(),
+        path,
         line_number,
         line: text.chars().skip(skip).take(MAX_CODE_LINE_CHARS).collect(),
     })
@@ -1878,7 +1882,7 @@ pub(crate) async fn list_path_commits(
     if let Some(until) = filter.until {
         command.arg(format!("--until=@{until} +0000"));
     }
-    command.arg(&tip).arg("--").arg(path).current_dir(repo_path);
+    command.arg(&tip).arg("--").arg(OsString::from_vec(crate::git_paths::bytes(path))).current_dir(repo_path);
     let path = repo_path.to_owned();
     let filter = std::sync::Arc::new(filter.clone());
     let (_, commits) = process::read_stream(command, b"", COMMIT_WALK_TIMEOUT, |stdout, admission| async move {

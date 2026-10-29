@@ -14,7 +14,7 @@ use crate::webui::pages::repos::ref_path::{branch_url, compare_url};
 use axum::{
     extract::{
         multipart::{Multipart, MultipartError, MultipartRejection},
-        OriginalUri, Path, State,
+        OriginalUri, State,
     },
     http::{HeaderMap, StatusCode},
     response::Response,
@@ -215,7 +215,7 @@ pub(in crate::backend::api::repos) async fn page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    Path(params): Path<HashMap<String, String>>,
+    super::GitPathParams(params): super::GitPathParams,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
@@ -242,7 +242,7 @@ pub(in crate::backend::api::repos) async fn post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    Path(params): Path<HashMap<String, String>>,
+    super::GitPathParams(params): super::GitPathParams,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
