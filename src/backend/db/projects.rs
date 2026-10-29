@@ -222,6 +222,9 @@ pub struct Item {
     pub draft_title: Option<String>,
     pub draft_body: Option<String>,
     pub field_values: String,
+    #[serde(skip)]
+    #[sqlx(skip)]
+    pub parsed_values: std::sync::OnceLock<std::result::Result<Value, String>>,
     pub archived: bool,
     pub position: i64,
     pub created_at: DateTime<Utc>,
@@ -243,7 +246,8 @@ impl Item {
         if field.data_type == "title" {
             return Ok(json!(self.title));
         }
-        let values: Value = serde_json::from_str(&self.field_values)?;
+        let values = self.parsed_values.get_or_init(|| serde_json::from_str(&self.field_values).map_err(|error| error.to_string()));
+        let values = values.as_ref().map_err(|error| anyhow::anyhow!(error.clone()))?;
         Ok(values[field.id.to_string()].clone())
     }
 }

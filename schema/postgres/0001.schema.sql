@@ -2520,6 +2520,7 @@ CREATE TABLE project_fields (
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE(project_id, name)
 );
+CREATE UNIQUE INDEX project_fields_name_folded ON project_fields(project_id, translate(name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'));
 
 -- migrations
 CREATE TABLE repository_imports (

@@ -2376,6 +2376,7 @@ CREATE TABLE project_fields (
     updated_at TEXT NOT NULL,
     UNIQUE(project_id, name)
 );
+CREATE UNIQUE INDEX project_fields_name_folded ON project_fields(project_id, name COLLATE NOCASE);
 
 -- migrations
 CREATE TABLE repository_imports (

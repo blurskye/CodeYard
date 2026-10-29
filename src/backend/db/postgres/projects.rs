@@ -183,7 +183,10 @@ pub async fn save(pool: &PgPool, actor: i64, project: i64, settings: &Settings) 
 pub async fn delete(pool: &PgPool, actor: i64, project: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
     write_project(&mut tx, actor, project).await?;
-    sqlx::query("UPDATE projects SET deleted_at=$2,updated_at=$2 WHERE id=$1")
+    for table in ["project_items", "project_views", "project_fields", "project_repositories", "project_teams"] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1")).bind(project).execute(&mut *tx).await?;
+    }
+    sqlx::query("UPDATE projects SET title='',description=NULL,readme='',public=FALSE,deleted_at=$2,updated_at=$2 WHERE id=$1")
         .bind(project)
         .bind(chrono::Utc::now())
         .execute(&mut *tx)
@@ -215,6 +218,9 @@ pub async fn add_field(pool: &PgPool, actor: i64, project: i64, input: &NewField
         count < crate::backend::db::projects::MAX_FIELDS as i64,
         Refusal::Invalid
     );
+    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM project_fields WHERE project_id=$1")
+        .bind(project).fetch_all(&mut *tx).await?;
+    anyhow::ensure!(!names.iter().any(|name| name.eq_ignore_ascii_case(&input.name)), Refusal::Invalid);
     let field = sqlx::query_as("INSERT INTO project_fields(project_id,name,data_type,configuration,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5) ON CONFLICT(project_id,name) DO NOTHING RETURNING *")
         .bind(project).bind(&input.name).bind(&input.data_type).bind(config).bind(chrono::Utc::now()).fetch_optional(&mut *tx).await?.ok_or(Refusal::Invalid)?;
     sqlx::query("UPDATE projects SET updated_at=$2 WHERE id=$1")
