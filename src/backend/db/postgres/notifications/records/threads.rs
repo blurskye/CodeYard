@@ -3,7 +3,7 @@ use crate::backend::db::{
     models::Repository,
     notifications::threads::{
         self as model, NotificationThread, ThreadAction, ThreadFilter, ThreadInbox,
-        ThreadSubscription, ThreadSummary, ThreadTarget, ThreadView,
+        ThreadSubscription, ThreadSummary, ThreadView,
     },
 };
 
@@ -123,13 +123,18 @@ async fn candidates(
     if ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_as(r#"
-    WITH grouped AS (
-        SELECT t.id AS thread_id,t.scope_repository_id,MAX(n.id) AS latest_id,MAX(n.created_at) AS updated_at,MAX(n.read_at) AS last_read_at,
-               BOOL_OR(n.read_at IS NULL AND n.done_at IS NULL) AS unread,BOOL_OR(n.done_at IS NULL) AS inbox
-        FROM notification_threads t JOIN notifications n ON n.thread_id=t.id AND n.user_id=t.user_id AND n.scope_repository_id=t.scope_repository_id
-        WHERE t.user_id=$1 AND n.id<=$2 AND t.scope_repository_id=ANY($3)
+    let sql = r#"
+    WITH page AS MATERIALIZED (
+        SELECT t.id,t.scope_repository_id,
+          (SELECT n.created_at FROM notifications n WHERE n.thread_id=t.id AND n.user_id=$1 AND n.scope_repository_id=t.scope_repository_id AND n.id<=$2 ORDER BY n.created_at DESC LIMIT 1) AS updated_at
+        FROM notification_threads t
+        WHERE t.user_id=$1 AND t.scope_repository_id=ANY($3)
           AND ($4::BIGINT IS NULL OR t.scope_repository_id=$4) AND ($5::BIGINT IS NULL OR t.id=$5)
+          AND EXISTS(SELECT 1 FROM notifications n WHERE n.thread_id=t.id AND n.user_id=$1 AND n.scope_repository_id=t.scope_repository_id AND n.id<=$2)
+          AND ($5 IS NOT NULL OR EXISTS(SELECT 1 FROM notifications n WHERE n.thread_id=t.id AND n.user_id=$1 AND n.scope_repository_id=t.scope_repository_id AND n.id<=$2 AND n.done_at IS NULL))
+          AND ($7 OR EXISTS(SELECT 1 FROM notifications n WHERE n.thread_id=t.id AND n.user_id=$1 AND n.scope_repository_id=t.scope_repository_id AND n.id<=$2 AND n.read_at IS NULL AND n.done_at IS NULL))
+          AND ($8::timestamptz IS NULL OR EXISTS(SELECT 1 FROM notifications n WHERE n.thread_id=t.id AND n.user_id=$1 AND n.scope_repository_id=t.scope_repository_id AND n.id<=$2 AND n.created_at>$8))
+          AND ($9::timestamptz IS NULL OR NOT EXISTS(SELECT 1 FROM notifications n WHERE n.thread_id=t.id AND n.user_id=$1 AND n.scope_repository_id=t.scope_repository_id AND n.id<=$2 AND n.created_at>=$9))
           AND (NOT $6 OR EXISTS(SELECT 1 FROM notifications d WHERE d.thread_id=t.id AND d.id<=$2 AND d.kind IN ('mention','assigned','pull_request_review_requested','issue_assigned','pull_request_assigned','pull_request_comment_reply'))
             OR (t.subject_type='Discussion' AND (
                 EXISTS(SELECT 1 FROM pull_requests p WHERE p.repo_id=t.scope_repository_id AND p.number::TEXT=t.subject_key AND p.author_id=$1)
@@ -137,79 +142,51 @@ async fn candidates(
                 OR EXISTS(SELECT 1 FROM pr_reviews v JOIN pull_requests p ON p.id=v.pull_request_id WHERE p.repo_id=t.scope_repository_id AND p.number::TEXT=t.subject_key AND v.author_id=$1 AND v.state<>'pending')
                 OR EXISTS(SELECT 1 FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE p.repo_id=t.scope_repository_id AND p.number::TEXT=t.subject_key AND c.author_id=$1 AND NOT EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state='pending'))
                 OR EXISTS(SELECT 1 FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=t.scope_repository_id AND i.number::TEXT=t.subject_key AND c.author_id=$1))) OR (t.subject_type='Commit' AND EXISTS(SELECT 1 FROM commit_comments c WHERE c.repo_id=t.scope_repository_id AND c.commit_sha=t.subject_key AND c.author_id=$1)))
-        GROUP BY t.id,t.scope_repository_id
-    ) SELECT thread_id,scope_repository_id,latest_id,updated_at,last_read_at,unread FROM grouped
-      WHERE ($5 IS NOT NULL OR inbox) AND ($7 OR unread)
-        AND ($8::timestamptz IS NULL OR updated_at>$8) AND ($9::timestamptz IS NULL OR updated_at<$9)
-      ORDER BY updated_at DESC,thread_id DESC LIMIT $10 OFFSET $11
-    "#).bind(user).bind(scopes.high_water).bind(ids).bind(filter.repository_id).bind(thread).bind(filter.participating).bind(filter.all).bind(filter.since).bind(filter.before).bind(filter.limit.clamp(1,101)).bind(filter.offset.max(0)).fetch_all(connection).await?)
+        ORDER BY updated_at DESC,t.id DESC LIMIT $10 OFFSET $11
+    ) SELECT t.id AS thread_id,t.scope_repository_id,MAX(n.id) AS latest_id,t.updated_at,MAX(n.read_at) AS last_read_at,
+             BOOL_OR(n.read_at IS NULL AND n.done_at IS NULL) AS unread
+      FROM page t JOIN notifications n ON n.thread_id=t.id AND n.user_id=$1 AND n.scope_repository_id=t.scope_repository_id AND n.id<=$2
+      GROUP BY t.id,t.scope_repository_id,t.updated_at ORDER BY t.updated_at DESC,t.id DESC
+    "#;
+    // Incremental polls start at the recipient's timestamp index, not the thread inventory.
+    let sql = if filter.since.is_some() {
+        sql.replacen("WITH page", "WITH recent AS MATERIALIZED (SELECT DISTINCT thread_id FROM notifications WHERE user_id=$1 AND created_at>$8 AND id<=$2 AND thread_id IS NOT NULL), page", 1)
+            .replacen("FROM notification_threads t\n", "FROM notification_threads t JOIN recent ON recent.thread_id=t.id\n", 1)
+    } else { sql.to_owned() };
+    Ok(sqlx::query_as(&sql).bind(user).bind(scopes.high_water).bind(ids).bind(filter.repository_id).bind(thread).bind(filter.participating).bind(filter.all).bind(filter.since).bind(filter.before).bind(filter.limit.clamp(1,101)).bind(filter.offset.max(0)).fetch_all(connection).await?)
 }
-async fn view(
+async fn views(
     connection: &mut sqlx::PgConnection,
     user: i64,
-    summary: ThreadSummary,
-) -> Result<Option<ThreadView>> {
-    let thread: Option<NotificationThread> =
-        sqlx::query_as("SELECT * FROM notification_threads WHERE id=$1 AND user_id=$2")
-            .bind(summary.thread_id)
-            .bind(user)
-            .fetch_optional(&mut *connection)
-            .await?;
-    let notification: Option<Notification> = sqlx::query_as(
-        "SELECT * FROM notifications WHERE id=$1 AND user_id=$2 AND scope_repository_id=$3",
-    )
-    .bind(summary.latest_id)
-    .bind(user)
-    .bind(summary.scope_repository_id)
-    .fetch_optional(&mut *connection)
-    .await?;
-    let repo: Option<Repository> = sqlx::query_as("SELECT * FROM repositories WHERE id=$1")
-        .bind(summary.scope_repository_id)
-        .fetch_optional(&mut *connection)
-        .await?;
-    let (Some(thread), Some(mut notification), Some(repo)) = (thread, notification, repo) else {
-        return Ok(None);
-    };
-    if notification.kind == "repository_forked" {
-        super::refresh_links(connection, std::slice::from_mut(&mut notification)).await?;
-    }
-    let owner:Option<String>=sqlx::query_scalar("SELECT CASE WHEN r.owner_kind='user' THEN u.username ELSE o.name END FROM repositories r LEFT JOIN users u ON r.owner_user_id=u.id LEFT JOIN organizations o ON r.owner_org_id=o.id WHERE r.id=$1").bind(repo.id).fetch_optional(&mut *connection).await?.flatten();
-    let Some(owner) = owner else {
-        return Ok(None);
-    };
-    let target = if thread.subject_type == "Discussion" {
-        let discussion:Option<(bool,i32,String,i64)>=sqlx::query_as("SELECT TRUE AS is_pull,number,title,author_id FROM pull_requests WHERE repo_id=$1 AND number::TEXT=$2 UNION ALL SELECT FALSE AS is_pull,number,title,author_id FROM issues WHERE repo_id=$1 AND number::TEXT=$2 ORDER BY is_pull DESC LIMIT 1").bind(repo.id).bind(&thread.subject_key).fetch_optional(&mut *connection).await?;
-        discussion.map_or(ThreadTarget::Other, |(pull, number, title, author)| {
-            if pull {
-                ThreadTarget::Pull {
-                    number,
-                    title,
-                    author,
-                }
-            } else {
-                ThreadTarget::Issue {
-                    number,
-                    title,
-                    author,
-                }
-            }
-        })
-    } else if thread.subject_type == "Release" {
-        let release:Option<(i64,String,i64)>=sqlx::query_as("SELECT id,COALESCE(NULLIF(name,''),tag_name),author_id FROM releases WHERE repo_id=$1 AND tag_name=$2 AND NOT is_draft").bind(repo.id).bind(&thread.subject_key).fetch_optional(&mut *connection).await?;
-        release.map_or(ThreadTarget::Other, |(id, title, author)| {
-            ThreadTarget::Release { id, title, author }
-        })
-    } else {
-        ThreadTarget::Other
-    };
-    Ok(Some(ThreadView::new(
-        thread,
-        notification,
-        repo,
-        owner,
-        summary,
-        target,
-    )))
+    summaries: Vec<ThreadSummary>,
+) -> Result<Vec<ThreadView>> {
+    if summaries.is_empty() { return Ok(Vec::new()); }
+    let ids: Vec<_> = summaries.iter().map(|s| s.thread_id).collect();
+    let latest: Vec<_> = summaries.iter().map(|s| s.latest_id).collect();
+    let repos: Vec<_> = summaries.iter().map(|s| s.scope_repository_id).collect();
+    let threads = sqlx::query_as("SELECT * FROM notification_threads WHERE id=ANY($1) AND user_id=$2")
+        .bind(&ids).bind(user).fetch_all(&mut *connection).await?;
+    let mut notifications: Vec<Notification> = sqlx::query_as("SELECT n.* FROM notifications n JOIN notification_threads t ON t.id=n.thread_id AND t.scope_repository_id=n.scope_repository_id WHERE n.id=ANY($1) AND n.user_id=$2 AND t.user_id=$2 AND t.id=ANY($3)")
+        .bind(&latest).bind(user).bind(&ids).fetch_all(&mut *connection).await?;
+    super::refresh_links(connection, &mut notifications).await?;
+    let repositories: Vec<Repository> = sqlx::query_as("SELECT * FROM repositories WHERE id=ANY($1)")
+        .bind(&repos).fetch_all(&mut *connection).await?;
+    let projections: Vec<model::ThreadProjection> = sqlx::query_as(r#"
+        SELECT t.id AS thread_id,CASE WHEN r.owner_kind='user' THEN u.username ELSE o.name END AS owner,
+          p.number AS pull_number,i.number AS issue_number,e.id AS release_id,
+          COALESCE(p.title,i.title,NULLIF(e.name,''),e.tag_name) AS title,COALESCE(p.author_id,i.author_id,e.author_id) AS author,
+          c.id AS comment_id,(c.path IS NOT NULL) AS inline
+        FROM notification_threads t JOIN repositories r ON r.id=t.scope_repository_id
+        LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id
+        LEFT JOIN pull_requests p ON t.subject_type='Discussion' AND p.repo_id=r.id AND p.number::TEXT=t.subject_key
+        LEFT JOIN issues i ON t.subject_type='Discussion' AND p.id IS NULL AND i.repo_id=r.id AND i.number::TEXT=t.subject_key
+        LEFT JOIN releases e ON t.subject_type='Release' AND e.repo_id=r.id AND e.tag_name=t.subject_key AND NOT e.is_draft
+        JOIN notifications n ON n.thread_id=t.id AND n.id=ANY($3) AND n.user_id=$2 AND n.scope_repository_id=r.id
+        LEFT JOIN pr_comments c ON c.pull_request_id=p.id AND c.id::TEXT=COALESCE(n.metadata->>'pull_request_comment_id',n.metadata->>'comment_id')
+          AND (c.review_id IS NULL OR EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state<>'pending'))
+        WHERE t.id=ANY($1) AND t.user_id=$2
+    "#).bind(&ids).bind(user).bind(&latest).fetch_all(connection).await?;
+    Ok(model::hydrate(summaries, threads, notifications, repositories, projections))
 }
 async fn subscription(
     connection: &mut sqlx::PgConnection,
@@ -284,16 +261,11 @@ pub(super) async fn perform(
     match action {
         ThreadAction::List(filter) => {
             let candidates = candidates(connection, user, scopes, &filter, None).await?;
-            let mut result = ThreadInbox {
+            Ok(ThreadInbox {
                 found: true,
+                threads: views(connection, user, candidates).await?,
                 ..Default::default()
-            };
-            for candidate in candidates {
-                if let Some(view) = view(connection, user, candidate).await? {
-                    result.threads.push(view);
-                }
-            }
-            Ok(result)
+            })
         }
         ThreadAction::ReadAll {
             repository_id,
@@ -349,7 +321,7 @@ pub(super) async fn perform(
             else {
                 return Ok(ThreadInbox::default());
             };
-            let Some(view) = view(connection, user, candidate).await? else {
+            let Some(view) = views(connection, user, vec![candidate]).await?.pop() else {
                 return Ok(ThreadInbox::default());
             };
             let mut result = ThreadInbox {
