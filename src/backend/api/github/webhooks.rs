@@ -261,7 +261,7 @@ async fn save(
                 events,
                 active: input.active,
                 ssl_verify,
-                secret: config.secret,
+                secret: if config_only { config.secret } else { Some(config.secret.unwrap_or_default()) },
                 ..Default::default()
             };
             settings::update(
