@@ -10,6 +10,8 @@ use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
 use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
 
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
+
 pub async fn document(
     state: &AppState,
     alert: &records::Alert,
@@ -118,7 +120,7 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
     // scanned commits renews it on the way.
     let mut beat = std::time::Instant::now();
     let renew = |beat: &mut std::time::Instant| {
-        let due = beat.elapsed() > std::time::Duration::from_secs(60);
+        let due = beat.elapsed() > HEARTBEAT_INTERVAL;
         if due {
             *beat = std::time::Instant::now();
         }
@@ -245,7 +247,24 @@ pub async fn run_next(state: &AppState) -> Result<bool> {
     let Some(job) = records::claim(&state.pool).await? else {
         return Ok(false);
     };
-    let result = scan_job(state, &job).await;
+    // Renew while initial ref enumeration, tag peeling or any individual storage read waits,
+    // not only after traversal has yielded another scannable entry.
+    let result = async {
+        let scan = scan_job(state, &job);
+        tokio::pin!(scan);
+        let mut beats = tokio::time::interval(HEARTBEAT_INTERVAL);
+        beats.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                result = &mut scan => break result,
+                _ = beats.tick() => {
+                    let renewed = tokio::time::timeout(Duration::from_secs(5), records::heartbeat(&state.pool, job.repo_id, job.id, job.attempt, None)).await
+                        .map_err(|_| crate::backend::repositories::store::RepoError::new(crate::backend::repositories::store::ErrorKind::Unavailable, "Secret scan lease renewal unavailable"))??;
+                    ensure!(renewed, "Another worker took over this secret scan");
+                }
+            }
+        }
+    }.await;
     let completion = match &result {
         Ok(()) => records::ScanCompletion::Completed,
         Err(error) if error.downcast_ref::<crate::backend::repositories::store::RepoError>().is_some_and(|error| error.kind == crate::backend::repositories::store::ErrorKind::Unavailable) || error.is::<sqlx::Error>() => records::ScanCompletion::Retry,
