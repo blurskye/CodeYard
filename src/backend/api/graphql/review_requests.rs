@@ -5,7 +5,7 @@ use super::{
 };
 use crate::backend::repositories::{
     access,
-    pull_requests::{self, reviews, team_reviewers},
+    pull_requests::{self, team_reviewers},
 };
 use async_graphql::{Error, ErrorExtensions};
 use serde_json::json;
@@ -149,122 +149,12 @@ pub(super) async fn mutation(
     if user_ids.len() + team_ids.len() > 100 {
         return Err(Error::new("At most 100 reviewers are allowed"));
     }
-    let eligible = db::pull_requests::team_reviewers::list(pool, repo.id, None, Some(actor.id))
-        .await
-        .map_err(unavailable)?;
-    let mut teams = Vec::new();
-    for id in team_ids {
-        teams.push(
-            eligible
-                .iter()
-                .find(|row| row.team.id == id)
-                .map(|row| row.team.slug.clone())
-                .ok_or_else(missing)?,
-        );
-    }
-    let mut users = Vec::new();
-    for id in &user_ids {
-        let user = db::users::accounts::get_user_by_id(pool, *id)
-            .await
-            .map_err(unavailable)?
-            .ok_or_else(missing)?;
-        if user.id == pull.author_id
-            || !access::can_write(pool, &user, &repo)
-                .await
-                .map_err(unavailable)?
-        {
-            return Err(Error::new(
-                "Reviewers require repository write access and cannot be the author",
-            ));
-        }
-        users.push(user);
-    }
-    let owner = repository::owner(&repo, request).await?;
-    let broadcaster = &request.state.notification_broadcaster;
-    let rerequest = field == "rerequestReviews";
-    let requested = db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id)
-        .await
-        .map_err(unavailable)?;
-    if !rerequest && !input["union"].as_bool().unwrap_or(false) {
-        let old_teams =
-            db::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), Some(actor.id))
-                .await
-                .map_err(unavailable)?;
-        let removed: Vec<_> = old_teams
-            .into_iter()
-            .filter(|row| !teams.contains(&row.team.slug))
-            .map(|row| row.team.slug)
-            .collect();
-        for slugs in removed.chunks(100) {
-            team_reviewers::change(
-                pool,
-                broadcaster,
-                actor,
-                &repo,
-                &pull,
-                slugs,
-                db::pull_requests::team_reviewers::ReviewTeamAction::Remove,
-            )
-            .await
-            .map_err(operation)?;
-        }
-        for user in &requested {
-            if !user_ids.contains(&user.id) {
-                reviews::remove_requested_reviewer(
-                    pool,
-                    actor.id,
-                    owner.clone(),
-                    repo.name.clone(),
-                    pull.number,
-                    user.username.clone(),
-                )
-                .await
-                .map_err(operation)?;
-            }
-        }
-    }
-    team_reviewers::change(
-        pool,
-        broadcaster,
-        actor,
-        &repo,
-        &pull,
-        &teams,
-        if rerequest {
-            db::pull_requests::team_reviewers::ReviewTeamAction::Rerequest
-        } else {
-            db::pull_requests::team_reviewers::ReviewTeamAction::Request
+    team_reviewers::set_requests(pool, &request.state.notification_broadcaster, actor, &repo, &pull,
+        &db::pull_requests::team_reviewers::ReviewRequests {
+            users: &user_ids, teams: &team_ids, union: input["union"].as_bool().unwrap_or(false),
+            rerequest: field == "rerequestReviews", token: Some(request.auth.token.id),
         },
-    )
-    .await
-    .map_err(operation)?;
-    for user in users {
-        if rerequest && requested.iter().any(|old| old.id == user.id) {
-            reviews::remove_requested_reviewer(
-                pool,
-                actor.id,
-                owner.clone(),
-                repo.name.clone(),
-                pull.number,
-                user.username.clone(),
-            )
-            .await
-            .map_err(operation)?;
-        }
-        reviews::request_reviewer(
-            pool,
-            broadcaster,
-            actor.id,
-            owner.clone(),
-            repo.name.clone(),
-            pull.number,
-            reviews::RequestReviewerRequest {
-                username: user.username,
-            },
-        )
-        .await
-        .map_err(operation)?;
-    }
+    ).await.map_err(operation)?;
     Ok(
         json!({"clientMutationId":input["clientMutationId"],"actor":user::by_id(actor.id,request).await?,
         "pullRequest":issue::pull_object(&pull),"requestedReviewersEdge":null}),
