@@ -116,7 +116,7 @@ impl ReceiveCredential {
     )> {
         use crate::backend::{
             db,
-            repositories::{access, deploy_keys},
+            repositories::deploy_keys,
         };
         anyhow::ensure!(
             !(repo.is_gist && write && matches!(self, Self::DeployKey(_))),
@@ -197,7 +197,7 @@ impl ReceiveCredential {
                 "run token repository access denied"
             );
         }
-        let level = access::user_git_access(pool, &identity, repo).await?;
+        let level = db::repositories::access::git_access(pool, identity.id, repo.id, write).await?;
         anyhow::ensure!(
             if write {
                 level.can_write()
