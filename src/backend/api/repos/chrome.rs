@@ -245,6 +245,15 @@ pub(crate) async fn load_database(
             }
         }
     }
+    // Actor-scoped metadata (including a private personal fork link) must not outlive
+    // the browser credential that selected it, even when the source remains public.
+    if let Some(expected) = &ctx.user {
+        let current = from_api(ctx, crate::backend::api::http::session::get_optional_user(&ctx.state.pool, &ctx.headers).await)?;
+        if !current.is_some_and(|user| user.id == expected.id) {
+            return Err(ctx.error(StatusCode::UNAUTHORIZED, "Session expired; reload the page."));
+        }
+    }
+    from_api(ctx, check_repo_read_access(&ctx.state.pool, &repository, &ctx.headers).await)?;
     let default_branch = repository.default_branch.clone();
     chrome.default_branch = default_branch.clone();
     Ok(Loaded {
