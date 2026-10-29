@@ -27,6 +27,7 @@ pub struct Upload {
     pub sarif: String,
     pub checkout_uri: Option<String>,
     pub processing_status: String,
+    pub claim_id: Option<String>,
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
 }
@@ -196,9 +197,12 @@ pub struct NewFinding {
 pub struct Change {
     pub alert: Alert,
     pub action: &'static str,
+    pub instance: Option<Instance>,
 }
 
-pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>) -> Vec<Change> {
+pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>, instances: Vec<Instance>) -> Vec<Change> {
+    let mut snapshots = std::collections::HashMap::new();
+    for instance in instances { snapshots.entry(instance.alert_id).or_insert(instance); }
     let before: std::collections::HashMap<_, _> = before
         .iter()
         .map(|(id, state)| (*id, state.as_str()))
@@ -213,7 +217,8 @@ pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>) -> Vec<Change
                 Some(_) if alert.state == "fixed" => "fixed",
                 Some(_) => "reopened",
             };
-            Some(Change { alert, action })
+            let instance = snapshots.remove(&alert.id);
+            Some(Change { alert, action, instance })
         })
         .collect()
 }
@@ -281,6 +286,6 @@ native_operation!(super::postgres::code_scanning::instance, super::sqlite::code_
 native_operation!(super::postgres::code_scanning::instances, super::sqlite::code_scanning::instances,
     fn instances(pool: &DbPool, alert: i64, reference: Option<&str>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
 native_operation!(super::postgres::code_scanning::dismiss, super::sqlite::code_scanning::dismiss,
-    fn dismiss(pool: &DbPool, actor: i64, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
+    fn dismiss(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
 native_operation!(super::postgres::code_scanning::delete_analysis, super::sqlite::code_scanning::delete_analysis,
     fn delete_analysis(pool: &DbPool, actor: i64, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);

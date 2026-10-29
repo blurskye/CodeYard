@@ -2790,6 +2790,8 @@ CREATE TABLE code_scanning_uploads (
     sarif TEXT NOT NULL,
     checkout_uri TEXT,
     processing_status TEXT NOT NULL DEFAULT 'pending' CHECK(processing_status IN ('pending','complete','failed')),
+    claim_id TEXT,
+    claim_until TIMESTAMPTZ,
     error TEXT,
     created_at TIMESTAMPTZ NOT NULL
 );
