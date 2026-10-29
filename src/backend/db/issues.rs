@@ -12,6 +12,7 @@ use anyhow::Result;
 #[derive(Clone, Copy, Default)]
 pub struct IssueMetadata<'a> {
     pub parent: Option<i64>,
+    pub parent_repository: Option<i64>,
     pub labels: &'a [i64],
     pub assignees: &'a [i64],
     pub milestone: Option<i32>,

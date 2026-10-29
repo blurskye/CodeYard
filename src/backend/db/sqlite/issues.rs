@@ -93,6 +93,10 @@ pub async fn create_issue_with_metadata(
         }
         None => tx,
     };
+    if let (Some(parent), Some(expected)) = (metadata.parent, metadata.parent_repository) {
+        let current: i64 = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=?1").bind(parent).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(current == expected, crate::backend::db::relationships::Refusal::Missing);
+    }
     let issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1")
         .bind(issue.id)
         .fetch_one(&mut *tx)

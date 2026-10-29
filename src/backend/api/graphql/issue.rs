@@ -388,6 +388,7 @@ pub(super) async fn mutation(
                 body: input["body"].as_str().map(str::to_owned),
                 repository_id: Some(repo.id),
                 parent_issue_id: None,
+                parent_repository_id: None,
             },
         )
         .await

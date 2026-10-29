@@ -1154,6 +1154,7 @@ pub(crate) async fn native_create(
                     body: Some(draft.body.clone()),
                     repository_id: Some(repo.record.id),
                     parent_issue_id: None,
+                    parent_repository_id: None,
                 },
             )
             .await
