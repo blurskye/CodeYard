@@ -171,6 +171,12 @@ native_operation!(crate::backend::db::postgres::cluster::get_node_by_id,
     crate::backend::db::sqlite::cluster::get_node_by_id,
     fn get_node_by_id(pool: &DbPool, id: i64) -> Result<Option<ClusterNode>>);
 
+native_operation!(crate::backend::db::postgres::cluster::read_candidates,
+    crate::backend::db::sqlite::cluster::read_candidates,
+    fn read_candidates(pool: &DbPool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>>);
+native_operation!(crate::backend::db::postgres::cluster::replica_applied_version,
+    crate::backend::db::sqlite::cluster::replica_applied_version,
+    fn replica_applied_version(pool: &DbPool, repository: i64, node: i64) -> Result<Option<i64>>);
 native_operation!(crate::backend::db::postgres::cluster::get_repository_by_uuid,
     crate::backend::db::sqlite::cluster::get_repository_by_uuid,
     fn get_repository_by_uuid(pool: &DbPool, uuid: &str) -> Result<Option<super::models::Repository>>);

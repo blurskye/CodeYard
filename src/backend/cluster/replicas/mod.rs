@@ -403,10 +403,6 @@ pub(crate) fn copy_path(repos: &Path, uuid: Uuid) -> PathBuf {
     repos.join(MIRRORS).join(format!("{uuid}.git"))
 }
 
-fn place_path(repos: &Path, uuid: Uuid) -> PathBuf {
-    repos.join(format!("{uuid}.git"))
-}
-
 /// A recorded version outlives its directory. Clear it for a copy Git cannot open, before
 /// this node advertises itself or considers take-over, so the copy loop rebuilds it even
 /// without another write. A copy that cannot be read is cleared too, so take-over never
@@ -464,7 +460,7 @@ async fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldRepl
         if copying.is_running(uuid) {
             continue;
         }
-        let (copy, place) = (copy_path(repos, uuid), place_path(repos, uuid));
+        let (copy, place) = (copy_path(repos, uuid), crate::backend::repositories::store::primary_path(repos, uuid));
         if tokio::fs::try_exists(&copy).await.unwrap_or(true) && !tokio::fs::try_exists(&place).await.unwrap_or(false) {
             if let Err(error) = move_directory(&copy, &place).await {
                 warn!(repository=primary.repository_id, %error, "could not relocate a primary directory");
@@ -479,7 +475,7 @@ async fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldRepl
         if copying.is_running(uuid) {
             continue;
         }
-        let (copy, place) = (copy_path(repos, uuid), place_path(repos, uuid));
+        let (copy, place) = (copy_path(repos, uuid), crate::backend::repositories::store::primary_path(repos, uuid));
         if tokio::fs::try_exists(&place).await.unwrap_or(true) {
             let moved = if tokio::fs::try_exists(&copy).await.unwrap_or(true) {
                 Err(anyhow::anyhow!("both primary and mirror directories exist; refusing to copy ambiguous storage"))

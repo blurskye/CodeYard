@@ -40,6 +40,7 @@ pub fn authorize_operation(
         Operation::Initialize { .. } => ("Initialize", false),
         Operation::InitializeCopy { .. } => ("InitializeCopy", false),
         Operation::Remove => ("Remove", false),
+        Operation::Retire => ("Retire", false),
         Operation::GistSnapshot { .. } => ("GistSnapshot", false),
         Operation::GistHistory { .. } => ("GistHistory", false),
         Operation::GistWrite { .. } => ("GistWrite", false),
@@ -183,7 +184,11 @@ fn requires_actor(operation: &Operation) -> bool {
     )
 }
 
-const NOT_STORED: &str = "repository is not stored on this node";
+pub(super) struct ReadAdmission {
+    pub store: RepoStore,
+    pub repo_id: Option<i64>,
+    pub guard: tokio::sync::OwnedMutexGuard<()>,
+}
 
 fn store_at(path: &Path, node_id: i64) -> Result<RepoStore, RepoError> {
     Ok(RepoStore::on_node(
@@ -192,20 +197,7 @@ fn store_at(path: &Path, node_id: i64) -> Result<RepoStore, RepoError> {
     ))
 }
 
-/// Whether `node` holds a copy row for the repository.
-async fn holds_copy(pool: &db::DbPool, repository: i64, node: i64) -> Result<bool, RepoError> {
-    Ok(db::cluster::list_replicas(pool, repository)
-        .await
-        .map_err(|_| unavailable())?
-        .iter()
-        .any(|(holder, _)| *holder == node))
-}
-
 impl RpcHandler {
-    fn primary_path(&self, uuid: Uuid) -> PathBuf {
-        self.context.repos_path.join(format!("{uuid}.git"))
-    }
-
     async fn initialize_copy(
         &self,
         store: &RepoStore,
@@ -241,13 +233,13 @@ impl RpcHandler {
         let repository = db::cluster::get_repository_by_uuid(pool, &uuid.to_string())
             .await
             .map_err(|_| unavailable())?;
-        let primary = self.primary_path(uuid);
+        let primary = crate::backend::repositories::store::primary_path(&self.context.repos_path, uuid);
         let Some(repo) = repository else {
             // Deletion removes the row before its directory.
             if removing {
                 return Ok((None, primary));
             }
-            return Err(invalid(NOT_STORED));
+            return Err(RepoError::storage_node_unavailable());
         };
         // A repository from before the cluster has no node; it is on the node that
         // has its directory.
@@ -263,14 +255,14 @@ impl RpcHandler {
             }
             return Ok((Some(repo.id), primary));
         }
-        if read_only && holds_copy(pool, repo.id, self.context.node_id).await? {
+        if read_only && db::cluster::replica_applied_version(pool, repo.id, self.context.node_id).await.map_err(|_| unavailable())?.is_some_and(|version| version >= 0) {
             let copy = copy_path(&self.context.repos_path, uuid);
             if !copy.exists() {
                 return Err(unavailable());
             }
             return Ok((Some(repo.id), copy));
         }
-        Err(invalid(NOT_STORED))
+        Err(RepoError::storage_node_unavailable())
     }
 
     /// CI may request its pinned objects after a force-push made them unreachable.
@@ -332,13 +324,13 @@ impl RpcHandler {
         let (repo_id, directory) = self
             .check_repository(
                 request.repository,
-                matches!(request.operation, Operation::Remove),
+                matches!(request.operation, Operation::Remove | Operation::Retire),
                 request.operation.is_read_only(),
             )
             .await?;
         if matches!(request.operation, Operation::ReplicaPack { .. }) {
             let copy_held = match repo_id {
-                Some(repo_id) => holds_copy(pool, repo_id, node.id).await?,
+                Some(repo_id) => db::cluster::replica_applied_version(pool, repo_id, node.id).await.map_err(|_| unavailable())?.is_some(),
                 None => false,
             };
             if !copy_held {
@@ -449,6 +441,15 @@ impl RpcHandler {
         Ok(())
     }
 
+    pub(super) async fn read_admission(&self, request: &Request, caller: iroh::PublicKey) -> Result<ReadAdmission, RepoError> {
+        if !request.operation.is_read_only() { return Err(invalid("read admission requires a read-only operation")); }
+        let (store, _) = self.authorize_request(request, caller).await?;
+        let guard = crate::backend::git::locks::lock(Path::new(store.location())).await;
+        let (current, repo_id) = self.authorize_request(request, caller).await?;
+        if current.location() != store.location() { return Err(RepoError::storage_node_unavailable()); }
+        Ok(ReadAdmission { store, repo_id, guard })
+    }
+
     pub(super) async fn execute(
         &self,
         request: Request,
@@ -456,7 +457,13 @@ impl RpcHandler {
         caller: iroh::PublicKey,
     ) -> Result<(Value, Vec<u8>), Failure> {
         let received = std::time::Instant::now();
-        let (store, repo_id) = self.authorize_request(&request, caller).await?;
+        let (store, repo_id, _read_guard) = if request.operation.is_read_only() {
+            let admitted = self.read_admission(&request, caller).await?;
+            (admitted.store, admitted.repo_id, Some(admitted.guard))
+        } else {
+            let (store, repo_id) = self.authorize_request(&request, caller).await?;
+            (store, repo_id, None)
+        };
         let read_authority = request.operation.is_read_only().then(|| request.clone());
         let pool = self.context.database()?;
         let actor = request.actor;
@@ -502,6 +509,7 @@ impl RpcHandler {
                 }
             )),
             Operation::Remove => json!(store.remove()),
+            Operation::Retire => json!(store.retire()),
             Operation::GistSnapshot { revision } => json!(store.gist_snapshot(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -535,10 +543,10 @@ impl RpcHandler {
                 head,
                 expected_head,
             } => {
-                let (source_repo_id, _) = self.check_repository(source, false, false).await?;
+                let (source_repo_id, source_path) = self.check_repository(source, false, false).await?;
                 let source_repo_id =
                     source_repo_id.ok_or_else(|| invalid("repository unavailable"))?;
-                let source = store_at(&self.primary_path(source), self.context.node_id)?;
+                let source = store_at(&source_path, self.context.node_id)?;
                 json!(store.fetch_pull_head(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,

@@ -34,6 +34,7 @@ pub enum Operation {
         default_branch_only: bool,
     },
     Remove,
+    Retire,
     GistSnapshot {
         revision: Option<String>,
     },
@@ -467,6 +468,7 @@ impl Operation {
             Self::Initialize { .. }
             | Self::InitializeCopy { .. }
             | Self::Remove
+            | Self::Retire
             | Self::FetchPullHead { .. }
             | Self::PrepareFile { .. }
             | Self::WriteGitObject { .. }

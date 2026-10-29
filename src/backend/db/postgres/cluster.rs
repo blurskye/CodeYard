@@ -374,6 +374,16 @@ pub async fn get_node_by_id(pool: &PgPool, id: i64) -> Result<Option<ClusterNode
     )
 }
 
+pub async fn read_candidates(pool: &PgPool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>> {
+    Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE right(disk_path,40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,true AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,false,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS DISTINCT FROM r.storage_node_id AND rr.applied_version>=0) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND 'storage'=ANY(n.roles) AND n.last_seen BETWEEN NOW()-INTERVAL '60 seconds' AND NOW() ORDER BY c.moved DESC,c.applied_version DESC,c.node_id")
+        .bind(uuid).bind(previous).fetch_all(pool).await?)
+}
+
+pub async fn replica_applied_version(pool: &PgPool, repository: i64, node: i64) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar("SELECT applied_version FROM repository_replicas WHERE repository_id=$1 AND node_id=$2")
+        .bind(repository).bind(node).fetch_optional(pool).await?)
+}
+
 pub async fn get_repository_by_uuid(
     pool: &PgPool,
     uuid: &str,

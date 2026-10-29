@@ -41,12 +41,14 @@ impl NodeContext {
                 },
             )
             .await;
-        if opened.is_err() && request.operation.is_read_only() {
+        if request.operation.is_read_only() && cannot_serve(opened.as_ref().ok().map(|(_, reply)| reply), true) {
             let copies =
                 tokio::time::timeout_at(deadline, self.read_copies(request.repository, node_id))
                     .await
                     .map_err(|_| unavailable())?;
-            for (copy, moved) in copies {
+            let mut copies = copies.into_iter().peekable();
+            while let Some((copy, moved)) = copies.next() {
+                let candidate_deadline = if copies.peek().is_none() { deadline } else { attempt_deadline(deadline) };
                 if tokio::time::Instant::now() >= deadline {
                     break;
                 }
@@ -55,7 +57,7 @@ impl NodeContext {
                     // is refused. Admission comes before the streams are touched, so a copy
                     // this node cannot serve leaves them for the next one.
                     let Ok(permit) = tokio::time::timeout_at(
-                        attempt_deadline(deadline),
+                        candidate_deadline,
                         git_process::session_permit(),
                     )
                     .await
@@ -63,8 +65,8 @@ impl NodeContext {
                         continue;
                     };
                     let Ok(_permit) = permit else { continue; };
-                    if let Ok(Ok((store, checkout))) =
-                        tokio::time::timeout_at(attempt_deadline(deadline), self.own_copy(&request))
+                    if let Ok(Ok((store, checkout, _read_guard))) =
+                        tokio::time::timeout_at(candidate_deadline, self.own_copy(&request))
                             .await
                     {
                         let Operation::GitSession(mut session) = request.operation else {
@@ -78,7 +80,7 @@ impl NodeContext {
                     continue;
                 }
                 let answer = self
-                    .open_session(copy, &request, attempt_deadline(deadline))
+                    .open_session(copy, &request, candidate_deadline)
                     .await;
                 if !cannot_serve(answer.as_ref().ok().map(|(_, reply)| reply), moved) {
                     log_failover(request.repository, node_id, copy);
@@ -144,16 +146,14 @@ impl NodeContext {
 
     /// The store of the copy this node holds. A node cannot dial itself, so the handler's
     /// own checks run in process. The caller already holds a session permit.
-    async fn own_copy(&self, request: &Request) -> Result<(RepoStore, bool), RepoError> {
+    async fn own_copy(&self, request: &Request) -> Result<(RepoStore, bool, tokio::sync::OwnedMutexGuard<()>), RepoError> {
         let handler = RpcHandler::new(self.clone());
-        let (store, repo_id) = handler
-            .authorize_request(request, self.key.public_key())
-            .await?;
-        readable(&store).await?;
+        let admitted = handler.read_admission(request, self.key.public_key()).await?;
+        readable(&admitted.store).await?;
         let checkout = handler
-            .checkout_access(request, repo_id, self.key.public_key())
+            .checkout_access(request, admitted.repo_id, self.key.public_key())
             .await?;
-        Ok((store, checkout))
+        Ok((admitted.store, checkout, admitted.guard))
     }
 
     /// Connects to `node_id`, sends the request and reads the first reply. `Err` means the
@@ -219,7 +219,13 @@ impl RpcHandler {
             drop(admission);
             // The wait for the slot can outlast the membership or copy this request was
             // admitted on, so the same check runs again now.
-            let (store, repo_id) = self.authorize_request(&request, caller).await?;
+            let (store, repo_id, read_guard) = if request.operation.is_read_only() {
+                let admitted = self.read_admission(&request, caller).await?;
+                (admitted.store, admitted.repo_id, Some(admitted.guard))
+            } else {
+                let (store, repo_id) = self.authorize_request(&request, caller).await?;
+                (store, repo_id, None)
+            };
             readable(&store).await?;
             let checkout = self.checkout_access(&request, repo_id, caller).await?;
             let (admission, targets) = match &request.operation {
@@ -250,10 +256,10 @@ impl RpcHandler {
             } else {
                 None
             };
-            Ok::<_, RepoError>((store, admission, targets, receive, permit, checkout))
+            Ok::<_, RepoError>((store, admission, targets, receive, permit, checkout, read_guard))
         })
         .await.unwrap_or_else(|_| Err(unavailable()));
-        let (store, admission, targets, receive, _permit, checkout) = match prepared {
+        let (store, admission, targets, receive, _permit, checkout, _read_guard) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
                 super::refuse(&mut link, error).await?;

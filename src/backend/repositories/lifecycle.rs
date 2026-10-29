@@ -388,7 +388,7 @@ async fn provision_stored(
         .await
         .map_err(git_storage_error)?;
     let root = std::path::absolute(repos_path).map_err(|_| unavailable())?;
-    let location = root.join(format!("{}.git", Uuid::new_v4()));
+    let location = super::store::primary_path(&root, Uuid::new_v4());
     let disk_path = location.to_str().ok_or_else(unavailable)?;
     let input = repo_lifecycle::NewRepository {
         owner,

@@ -100,7 +100,7 @@ async fn fetch(
     let pool = context.database()?;
     let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
         .await?.context("replica repository was deleted")?;
-    let _installation = crate::backend::git::repository::locks::lock(&context.repos_path.join(format!("{repository}.git"))).await;
+    let _installation = crate::backend::git::repository::locks::lock(&crate::backend::repositories::store::primary_path(&context.repos_path, repository)).await;
     ensure!(crate::backend::db::cluster::set_applied_version(pool, row.id, context.node_id, primary, -1).await?, "replica assignment changed before installation");
     // `initialize` needs an empty path, so a directory Git cannot open is renamed aside first.
     if !super::connected(mirror).await? {

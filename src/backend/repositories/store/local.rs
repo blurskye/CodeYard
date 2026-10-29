@@ -667,8 +667,7 @@ impl LocalStore {
     ) -> Result<Self, RepoError> {
         let refused = || unavailable("Repository storage is unavailable.");
         let root = std::path::absolute(repos_root).map_err(|_| refused())?;
-        let disk_path = root
-            .join(format!("{}.git", Uuid::new_v4()))
+        let disk_path = super::primary_path(&root, Uuid::new_v4())
             .to_str()
             .ok_or_else(refused)?
             .to_owned();

@@ -702,7 +702,7 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
             .into_iter()
             .filter(|(_, disk_path)| {
                 rpc::repository_uuid(disk_path)
-                    .is_ok_and(|uuid| repos_path.join(format!("{uuid}.git")).exists())
+                    .is_ok_and(|uuid| crate::backend::repositories::store::primary_path(repos_path, uuid).exists())
             })
             .map(|(id, _)| id)
             .collect();
