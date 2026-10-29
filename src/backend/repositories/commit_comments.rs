@@ -324,11 +324,13 @@ pub async fn create(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
-    actor: i64,
+    actor: impl Into<db::users::tokens::Actor>,
     repo: i64,
     reference: &str,
     mut input: CreateComment,
 ) -> Result<CommentDetails> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let (user, repository, owner) = writable(pool, actor, repo).await?;
     if input.repository_id.is_some_and(|id| id != repo) {
         return Err(CommentError::Conflict);
@@ -403,6 +405,7 @@ pub async fn create(
         pool,
         CommentCreate {
             actor_id: actor,
+            token_id: credential.token_id,
             repo_id: repo,
             sha: &commit.sha,
             body: &input.body,
@@ -468,12 +471,13 @@ pub async fn edit(
 
 pub async fn delete(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::users::tokens::Actor>,
     repo: i64,
     id: i64,
     revision: Option<&str>,
 ) -> Result<CommitComment> {
-    writable(pool, actor, repo).await?;
+    let actor = actor.into();
+    writable(pool, actor.user_id, repo).await?;
     // GitHub sends commit_comment only for creation. Deletion needs no Git metadata lookup.
     records::delete_comment(pool, actor, repo, id, revision)
         .await

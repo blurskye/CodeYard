@@ -69,6 +69,7 @@ async fn contract(pg: bool) {
             f.pool(),
             db::repositories::commit_comments::CommentCreate {
                 actor_id: actor,
+                token_id: None,
                 repo_id: repo.id,
                 sha: &"b".repeat(40),
                 body: "Scoped commit discussion",
