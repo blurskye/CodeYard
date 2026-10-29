@@ -86,7 +86,7 @@ pub enum Operation {
     /// silently preserving history when a template requested its removal.
     InitializeCopy {
         source: Uuid,
-        default_branch: String,
+        default_branch: PublicationText,
         template: bool,
         default_branch_only: bool,
     },

@@ -85,7 +85,7 @@ pub async fn create(
     tx.commit().await?;
     Ok(row)
 }
-async fn administration(
+pub(crate) async fn administration(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     actor: i64,
     repo: i64,
@@ -195,18 +195,23 @@ pub async fn request_cve(pool: &PgPool, actor: impl Into<crate::backend::db::use
 }
 pub async fn attach_fork(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     ghsa: &str,
     fork: i64,
 ) -> Result<()> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin().await?;
     let row = administration(&mut tx, actor, repo, ghsa).await?;
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     anyhow::ensure!(
         row.state == "draft" && row.private_fork_id.is_none(),
         Refusal::Conflict
     );
-    let valid:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND is_private AND owner_kind='user' AND owner_user_id=$2 AND forked_from_id=$3)").bind(fork).bind(actor).bind(repo).fetch_one(&mut *tx).await?;
+    let valid:bool=sqlx::query_scalar("SELECT TRUE FROM repositories r WHERE r.id=$1 AND r.is_private AND r.owner_kind='user' AND r.owner_user_id=$2 AND r.forked_from_id=$3 AND NOT EXISTS(SELECT 1 FROM repository_advisories a WHERE a.private_fork_id=r.id) FOR NO KEY UPDATE OF r").bind(fork).bind(actor).bind(repo).fetch_optional(&mut *tx).await?.unwrap_or(false);
     anyhow::ensure!(valid, Refusal::Denied);
     sqlx::query("UPDATE repositories SET visibility_locked=true WHERE id=$1")
         .bind(fork)

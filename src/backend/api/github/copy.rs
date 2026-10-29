@@ -85,6 +85,9 @@ async fn fork(
             name: input.name.as_deref(),
             default_branch_only: input.default_branch_only,
             properties: &[],
+            authority: Some(&db::users::accounts::AccountActor::Token {
+                user_id: auth.user.id, token_id: auth.token.id,
+            }),
         },
         source.id,
         &owner,
@@ -128,6 +131,9 @@ async fn generate(
             private: input.private,
             all_branches: input.include_all_branches,
             properties: &[],
+            authority: Some(&db::users::accounts::AccountActor::Token {
+                user_id: auth.user.id, token_id: auth.token.id,
+            }),
         },
     )
     .await

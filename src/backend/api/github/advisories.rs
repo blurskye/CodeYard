@@ -323,7 +323,7 @@ async fn create(
         .await
         .map_err(failure)?;
     if value["start_private_fork"] == true {
-        workflow::private_fork(&state, actor.user.id, &repo, &row.ghsa_id)
+        workflow::private_fork(&state, crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, &repo, &row.ghsa_id)
             .await
             .map_err(failure)?;
         row = advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id)
@@ -382,7 +382,7 @@ async fn fork(
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let fork = workflow::private_fork(&state, actor.user.id, &repo, &params["ghsa_id"])
+    let fork = workflow::private_fork(&state, crate::backend::db::users::accounts::AccountActor::Token { user_id: actor.user.id, token_id: actor.token.id }, &repo, &params["ghsa_id"])
         .await
         .map_err(failure)?;
     Ok((

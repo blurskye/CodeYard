@@ -152,6 +152,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         } else {
             None
         };
+        let authority = db::users::accounts::AccountActor::Token {
+            user_id: actor, token_id: request.auth.token.id,
+        };
         let creation = RepositoryCreationOwner {
             actor_id: actor,
             target: owner,
@@ -170,14 +173,20 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     private,
                     all_branches: input["includeAllBranches"].as_bool().unwrap_or(false),
                     properties: &[],
+                    authority: Some(&authority),
                 },
             )
             .await
         } else {
-            lifecycle::provision(
+            lifecycle::provision_with_properties(
                 (pool, request.state.cluster.as_ref()),
                 &request.state.repos_path,
-                creation,
+                lifecycle::CreationInput {
+                    owner: creation, properties: &[],
+                    admission: db::repositories::creation::CreationAdmission {
+                        authority: Some(&authority), advisory: None,
+                    },
+                },
                 text(input, "name")?,
                 description,
                 private,

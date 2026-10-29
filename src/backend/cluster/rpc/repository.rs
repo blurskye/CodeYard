@@ -210,7 +210,7 @@ impl RpcHandler {
         &self,
         store: &RepoStore,
         repo_id: Option<i64>,
-        actor: Option<i64>,
+        actor: Option<crate::backend::db::users::accounts::AccountActor>,
         source: Uuid,
         options: &crate::backend::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
@@ -474,7 +474,7 @@ impl RpcHandler {
                 Some(source) => json!(self.initialize_copy(
                     &store,
                     repo_id,
-                    actor,
+                    actor.map(Into::into),
                     source,
                     &crate::backend::repositories::store::CopyOptions {
                         default_branch,
@@ -489,17 +489,17 @@ impl RpcHandler {
                 default_branch,
                 template,
                 default_branch_only,
-            } => json!(self.initialize_copy(
-                &store,
-                repo_id,
-                actor,
-                source,
-                &crate::backend::repositories::store::CopyOptions {
-                    default_branch,
-                    template,
-                    default_branch_only
-                }
-            )),
+            } => {
+                let (authority, default_branch) = default_branch.into_parts(
+                    actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
+                )?;
+                json!(self.initialize_copy(
+                    &store, repo_id, Some(authority), source,
+                    &crate::backend::repositories::store::CopyOptions {
+                        default_branch, template, default_branch_only,
+                    }
+                ))
+            },
             Operation::Remove => json!(store.remove()),
             Operation::GistSnapshot { revision } => json!(store.gist_snapshot(
                 pool,
