@@ -169,6 +169,7 @@ pub async fn rotate_authenticated_session(
     user_id: i64,
     credential: crate::backend::db::users::sessions::SessionCredential<'_>,
     user_agent: Option<&str>,
+    ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
     if !is_hex_token(fresh, 64) || old == Some(fresh) {
@@ -274,8 +275,8 @@ pub async fn rotate_authenticated_session(
     if collision {
         anyhow::bail!("Fresh session identifier collision");
     }
-    let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO sessions (id,user_id,user_agent,expires_at) VALUES (?1,?2,?3,min(?4,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+365 days'))) RETURNING id,user_id,expires_at,created_at")
-        .bind(fresh).bind(user_id).bind(user_agent).bind(crate::backend::db::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
+    let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO sessions (id,user_id,user_agent,ip_address,expires_at) VALUES (?1,?2,?3,?4,min(?5,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+365 days'))) RETURNING id,user_id,expires_at,created_at")
+        .bind(fresh).bind(user_id).bind(user_agent).bind(ip_address).bind(crate::backend::db::sqlite::time::encode(expires_at)).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(session))
 }

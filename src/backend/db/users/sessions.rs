@@ -101,26 +101,41 @@ impl<'a> SessionCredential<'a> {
     }
 }
 
-pub async fn rotate_authenticated_session<'a>(
+/// Metadata supplied by the admitting transport, never an account authority proof.
+#[derive(Clone, Copy, Default)]
+pub struct SessionClient<'a> {
+    pub user_agent: Option<&'a str>,
+    pub ip_address: Option<&'a str>,
+}
+
+impl<'a> From<Option<&'a str>> for SessionClient<'a> {
+    fn from(user_agent: Option<&'a str>) -> Self {
+        Self { user_agent, ip_address: None }
+    }
+}
+
+pub async fn rotate_authenticated_session<'a, 'c>(
     pool: &DbPool,
     old: Option<&str>,
     fresh: &str,
     user_id: i64,
     credential: impl Into<SessionCredential<'a>>,
-    user_agent: Option<&str>,
+    client: impl Into<SessionClient<'c>>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
     let credential = credential.into();
+    let client = client.into();
+    let address = client.ip_address.and_then(|address| address.parse::<std::net::IpAddr>().ok()).map(|address| address.to_string());
     match pool {
         DbPool::Postgres(pool) => {
             crate::backend::db::postgres::users::sessions::rotate_authenticated_session(
-                pool, old, fresh, user_id, credential, user_agent, expires_at,
+                pool, old, fresh, user_id, credential, client.user_agent, address.as_deref(), expires_at,
             )
             .await
         }
         DbPool::Sqlite(pool) => {
             crate::backend::db::sqlite::users::sessions::rotate_authenticated_session(
-                pool, old, fresh, user_id, credential, user_agent, expires_at,
+                pool, old, fresh, user_id, credential, client.user_agent, address.as_deref(), expires_at,
             )
             .await
         }
