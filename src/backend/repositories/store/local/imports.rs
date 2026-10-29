@@ -158,7 +158,7 @@ impl LocalStore {
                 .values()
                 .map(|sha| (ZERO_SHA.to_owned(), sha.clone()))
                 .collect();
-            self.check_workflow_grant(pool, Some(*token), updates, None)
+            self.check_publication_grant(pool, repo_id, actor, Some(*token), updates, None)
                 .await?;
         }
         let mut refs = self.mirror_refs().await?;

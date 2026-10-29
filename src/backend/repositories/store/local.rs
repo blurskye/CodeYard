@@ -590,11 +590,13 @@ impl LocalStore {
         Ok(change)
     }
 
-    /// A token without the workflows permission may publish only updates that leave every
-    /// workflow file as it is, or as a branch already has it. Session writes pass `None`.
-    async fn check_workflow_grant(
+    /// Recheck the initiating contents credential at publication. Without workflows permission,
+    /// updates must also leave workflow files as they are or as an existing branch has them.
+    async fn check_publication_grant(
         &self,
         pool: &db::DbPool,
+        repo: i64,
+        actor: i64,
         token: Option<i64>,
         updates: Vec<(String, String)>,
         quarantine: Option<PathBuf>,
@@ -602,6 +604,10 @@ impl LocalStore {
         let Some(token) = token else {
             return Ok(());
         };
+        if !db::users::tokens::repository_write(pool, token, actor, repo, "contents").await
+            .map_err(|_| RepoError::authority_unavailable())? {
+            return Err(RepoError::write_denied());
+        }
         if crate::backend::identity::oauth_apps::allows_workflows(pool, token)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
@@ -2172,8 +2178,10 @@ impl LocalStore {
         )
         .await?;
         live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
-        self.check_workflow_grant(
+        self.check_publication_grant(
             pool,
+            repo_id,
+            actor,
             request.token,
             vec![(request.head.clone(), prepared.head().to_owned())],
             Some(prepared.path().to_owned()),
@@ -2391,7 +2399,7 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
-        self.check_workflow_grant(pool, token, vec![(base.to_owned(), result.to_owned())], None)
+        self.check_publication_grant(pool, repo_id, actor, token, vec![(base.to_owned(), result.to_owned())], None)
             .await?;
         if let Some(authority) = authority {
             db::users::tokens::token_user(pool, authority.token_id, true)

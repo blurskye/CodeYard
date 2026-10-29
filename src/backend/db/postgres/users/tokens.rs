@@ -60,6 +60,13 @@ pub(crate) async fn repository_write_on(
     Ok(!refused)
 }
 
+pub async fn repository_write(pool: &PgPool, token: i64, actor: i64, repo: i64, permission: &str) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let allowed = repository_write_on(&mut tx, token, actor, repo, permission).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 pub async fn create_token(
     pool: &PgPool,
     user_id: i64,
