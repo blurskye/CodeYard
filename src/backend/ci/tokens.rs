@@ -278,7 +278,7 @@ pub(crate) async fn issue_selected(
     }
     let values: BTreeMap<_, _> = policies
         .keys()
-        .map(|key| (key.clone(), format!("ghs_{}", super::runtime::secret())))
+        .map(|key| (key.clone(), format!("{}{}", crate::backend::identity::tokens::ACTIONS_PREFIX, super::runtime::secret())))
         .collect();
     let stored: Vec<_> = policies
         .iter()

@@ -5,6 +5,13 @@ use chrono::{DateTime, Utc};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
+pub(crate) const TOKEN_BYTES: usize = 32;
+pub(crate) const HEX_TOKEN_CHARS: usize = TOKEN_BYTES * 2;
+pub(crate) const URL_TOKEN_CHARS: usize = (TOKEN_BYTES * 8 + 5) / 6;
+pub(crate) const PAT_PREFIX: &str = "cy_pat_";
+pub(crate) const FGPAT_PREFIX: &str = "cy_fgpat_";
+pub(crate) const ACTIONS_PREFIX: &str = "ghs_";
+
 pub struct TokenInput<'a> {
     pub name: &'a str,
     pub scope: &'a str,
@@ -29,7 +36,7 @@ pub enum TokenError {
 }
 
 pub(super) fn random_token() -> String {
-    let mut random = [0u8; 32];
+    let mut random = [0u8; TOKEN_BYTES];
     rand::rngs::OsRng.fill_bytes(&mut random);
     hex::encode(random)
 }
@@ -109,7 +116,7 @@ pub async fn create(
 ) -> Result<CreatedToken, TokenError> {
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    let value = format!("cy_pat_{}", random_token());
+    let value = format!("{PAT_PREFIX}{}", random_token());
     let token = tokens::create_token(
         pool,
         actor,

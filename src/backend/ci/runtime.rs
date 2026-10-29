@@ -13,7 +13,7 @@ pub struct RuntimeCredentials {
 }
 
 pub fn secret() -> String {
-    let mut bytes = [0; 32];
+    let mut bytes = [0; crate::backend::identity::tokens::TOKEN_BYTES];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }

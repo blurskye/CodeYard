@@ -198,8 +198,14 @@ native_operation!(super::postgres::secret_scanning::enqueue, super::sqlite::secr
     fn enqueue(pool: &DbPool, repo: i64, head: &str, actor: i64) -> Result<()>);
 native_operation!(super::postgres::secret_scanning::claim, super::sqlite::secret_scanning::claim,
     fn claim(pool: &DbPool) -> Result<Option<ScanJob>>);
+#[derive(Clone, Copy)]
+pub enum ScanCompletion { Completed, Failed, Retry }
+impl ScanCompletion {
+    pub(crate) fn status(&self) -> &'static str { match self { Self::Completed => "completed", Self::Failed => "failed", Self::Retry => "queued" } }
+}
+
 native_operation!(super::postgres::secret_scanning::finish, super::sqlite::secret_scanning::finish,
-    fn finish(pool: &DbPool, id: i64, attempt: i64, succeeded: bool) -> Result<()>);
+    fn finish(pool: &DbPool, id: i64, attempt: i64, completion: ScanCompletion) -> Result<()>);
 native_operation!(super::postgres::secret_scanning::history, super::sqlite::secret_scanning::history,
     fn history(pool: &DbPool, actor: i64, repo: i64) -> Result<Vec<ScanJob>>);
 native_operation!(super::postgres::secret_scanning::scanned, super::sqlite::secret_scanning::scanned,
