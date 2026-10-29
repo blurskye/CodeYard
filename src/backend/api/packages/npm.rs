@@ -115,6 +115,29 @@ fn valid_version(version: &str) -> bool {
     true
 }
 
+fn valid_tag(tag: &str) -> bool {
+    !tag.is_empty() && tag.len() <= 128
+        && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        && semver::VersionReq::parse(tag.trim_start_matches('v')).is_err()
+}
+
+fn version_metadata(namespace: &str, slug: &str, version: &db::packages::Version) -> Result<Value> {
+    if version.manifest.len() > db::packages::MAX_NPM_METADATA_BYTES {
+        return Err(Error::unavailable());
+    }
+    let mut metadata: Value = serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
+    metadata["dist"]["tarball"] = json!(format!(
+        "{}/api/packages/{}/npm/@{}/{}/-/{}-{}.tgz",
+        crate::backend::api::http::config::link_origin(),
+        crate::webui::encode_component(namespace),
+        crate::webui::encode_component(namespace),
+        crate::webui::encode_component(slug),
+        crate::webui::encode_component(slug),
+        crate::webui::encode_component(&version.name),
+    ));
+    Ok(metadata)
+}
+
 async fn dispatch(
     state: &AppState,
     namespace: &str,
@@ -147,22 +170,28 @@ async fn dispatch(
     .await?;
     let token = auth.as_ref().map(|auth| auth.token.id.into());
     if read {
+        let _slot = state.storage.try_acquire_download().ok_or_else(Error::unavailable)?;
         if rest.is_empty() {
             // Versions and tags are separate reads. A publish between them can move
             // `latest` to a version this read missed, so read again when it is absent.
             let (mut versions, mut tags) = (Map::new(), Map::new());
             for _ in 0..3 {
                 (versions, tags) = (Map::new(), Map::new());
-                let mut offset = 0;
+                let mut before = i64::MAX;
+                let mut bytes = 0usize;
                 loop {
                     let rows =
-                        db::packages::versions(&state.pool, package.id, token, false, offset, 100)
+                        db::packages::version_page(&state.pool, package.id, token, before, false)
                             .await
                             .map_err(Error::db)?;
                     let count = rows.len();
                     for version in rows {
-                        let metadata: Value = serde_json::from_str(&version.manifest)
-                            .map_err(|_| Error::unavailable())?;
+                        before = version.id;
+                        bytes = bytes.saturating_add(version.manifest.len() + version.name.len() + 1024);
+                        if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                            return Err(Error::unavailable());
+                        }
+                        let metadata = version_metadata(namespace, slug, &version)?;
                         if metadata["name"] != name {
                             continue;
                         }
@@ -170,6 +199,10 @@ async fn dispatch(
                             .await
                             .map_err(Error::db)?
                         {
+                            bytes = bytes.saturating_add(tag.len() + version.name.len() + 16);
+                            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                                return Err(Error::unavailable());
+                            }
                             tags.insert(tag, json!(version.name));
                         }
                         versions.insert(version.name, metadata);
@@ -177,7 +210,6 @@ async fn dispatch(
                     if count < 100 {
                         break;
                     }
-                    offset += 100;
                 }
                 if versions.is_empty() || tags.contains_key("latest") {
                     break;
@@ -194,9 +226,13 @@ async fn dispatch(
                 .and_then(|value| value.strip_suffix(".tgz"))
                 .filter(|value| valid_version(value))
                 .ok_or_else(Error::missing)?;
-            let version = db::packages::version(&state.pool, package.id, token, version)
+            let reference = version;
+            let version = db::packages::version(&state.pool, package.id, token, reference)
                 .await
                 .map_err(Error::db)?;
+            if version.name != reference {
+                return Err(Error::missing());
+            }
             let blob = db::packages::blob(&state.pool, package.id, token, &version.digest)
                 .await
                 .map_err(Error::db)?;
@@ -205,8 +241,10 @@ async fn dispatch(
         let version = db::packages::version(&state.pool, package.id, token, rest)
             .await
             .map_err(Error::db)?;
-        let metadata: Value =
-            serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
+        if valid_version(rest) && version.name != rest {
+            return Err(Error::missing());
+        }
+        let metadata = version_metadata(namespace, slug, &version)?;
         if metadata["name"] != name {
             return Err(Error::missing());
         }
@@ -245,6 +283,9 @@ async fn dispatch(
         .filter(|v| v.len() == 1)
         .ok_or_else(Error::invalid)?;
     let (version, metadata) = versions.iter().next().ok_or_else(Error::invalid)?;
+    if metadata.to_string().len() > db::packages::MAX_NPM_METADATA_BYTES {
+        return Err(Error::invalid());
+    }
     if !valid_version(version)
         || metadata["version"] != version.as_str()
         || metadata["name"] != name
@@ -283,12 +324,7 @@ async fn dispatch(
     let tags = input["dist-tags"].as_object().ok_or_else(Error::invalid)?;
     if tags.len() > 100
         || tags.iter().any(|(tag, target)| {
-            tag.is_empty()
-                || tag.len() > 128
-                || !tag
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                || target != version.as_str()
+            !valid_tag(tag) || target != version.as_str()
         })
     {
         return Err(Error::invalid());
@@ -299,8 +335,7 @@ async fn dispatch(
         .map_err(Error::db)?;
     let mut metadata = metadata.clone();
     let base = format!(
-        "{}/api/packages/{}/npm/{}",
-        crate::backend::api::http::config::link_origin(),
+        "/api/packages/{}/npm/{}",
         crate::webui::encode_component(namespace),
         if name.starts_with('@') {
             format!(

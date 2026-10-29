@@ -69,6 +69,10 @@ fn upload_response(status: StatusCode, name: &str, upload: &Upload) -> Result<Re
         header::RANGE,
         format!("0-{}", (upload.offset - 1).max(0)).parse().unwrap(),
     );
+    response.headers_mut().insert(
+        "oci-chunk-min-length",
+        "1048576".parse().unwrap(),
+    );
     Ok(response)
 }
 
@@ -127,7 +131,8 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
     let auth = tokens::authenticate(state, &headers, name, !read || resource == "uploads").await?;
     let (namespace, package_name) = name.split_once('/').ok_or_else(Error::invalid)?;
     let owner = owner(state, namespace).await?;
-    let create = method == Method::POST && resource == "uploads" && reference.is_empty();
+    let create = (method == Method::POST && resource == "uploads" && reference.is_empty())
+        || (method == Method::PUT && resource == "manifests");
     let package = package(
         state,
         &owner,
@@ -246,6 +251,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                     response(StatusCode::NO_CONTENT, None, None)
                 }
                 "PATCH" => {
+                    let _slot = super::upload_slot(state)?;
                     let upload = append(
                         state,
                         package.id,
@@ -253,6 +259,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                         upload,
                         &headers,
                         request.into_body(),
+                        false,
                     )
                     .await?;
                     upload_response(StatusCode::ACCEPTED, name, &upload)
@@ -294,6 +301,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             Ok(response)
         }
         ("manifests", "PUT") => {
+            let _slot = super::upload_slot(state)?;
             let token = write_token()?;
             if !valid_tag(reference) && !packages::valid_digest(reference) {
                 return Err(Error::invalid());
@@ -429,8 +437,8 @@ async fn append(
     upload: Upload,
     headers: &HeaderMap,
     body: Body,
+    final_chunk: bool,
 ) -> Result<Upload> {
-    let _slot = super::upload_slot(state)?;
     let bytes = to_bytes(body, MAX_OBJECT_BYTES as usize)
         .await
         .map_err(|_| {
@@ -466,6 +474,9 @@ async fn append(
             "Layer exceeds 100 MiB",
         ));
     }
+    if !final_chunk && bytes.len() < 1024 * 1024 {
+        return Err(Error(StatusCode::BAD_REQUEST, "SIZE_INVALID", "Upload chunks must be at least 1 MiB"));
+    }
     if bytes.is_empty() {
         return Ok(upload);
     }
@@ -498,31 +509,38 @@ async fn finish(
     if !packages::valid_digest(digest) {
         return Err(Error::invalid());
     }
+    let _slot = super::upload_slot(state)?;
     let current = db::packages::upload(&state.pool, package.id, token, &upload.id)
         .await
         .map_err(Error::db)?;
-    let upload = append(state, package.id, token, current, headers, body).await?;
+    let upload = append(state, package.id, token, current, headers, body, true).await?;
     let chunks: Vec<Blob> =
         serde_json::from_str(&upload.chunks).map_err(|_| Error::unavailable())?;
-    let mut bytes = Vec::with_capacity(upload.offset as usize);
-    for chunk in chunks {
-        bytes.extend(
-            packages::read(&state.storage, &chunk)
-                .await
-                .map_err(Error::db)?,
-        );
-    }
-    if packages::digest(&bytes) != digest {
-        return Err(Error(
-            StatusCode::BAD_REQUEST,
-            "DIGEST_INVALID",
-            "Blob digest does not match",
-        ));
-    }
-    let blob = packages::store(&state.pool, &state.storage, package.id, token, bytes)
-        .await
-        .map_err(Error::db)?;
-    db::packages::cancel_upload(&state.pool, package.id, token, &upload.id)
+    let blob = if chunks.len() == 1 && chunks[0].digest == digest {
+        db::packages::blob(&state.pool, package.id, Some(token.into()), digest)
+            .await
+            .map_err(Error::db)?
+    } else {
+        let mut bytes = Vec::with_capacity(upload.offset as usize);
+        for chunk in chunks {
+            bytes.extend(
+                packages::read(&state.storage, &chunk)
+                    .await
+                    .map_err(Error::db)?,
+            );
+        }
+        if packages::digest(&bytes) != digest {
+            return Err(Error(
+                StatusCode::BAD_REQUEST,
+                "DIGEST_INVALID",
+                "Blob digest does not match",
+            ));
+        }
+        packages::store(&state.pool, &state.storage, package.id, token, bytes)
+            .await
+            .map_err(Error::db)?
+    };
+    db::packages::finish_upload(&state.pool, package.id, token, &upload.id, upload.offset)
         .await
         .map_err(Error::db)?;
     response(
@@ -592,6 +610,24 @@ async fn manifest_blobs(
             .as_i64()
             .filter(|size| *size >= 0)
             .ok_or_else(Error::invalid)?;
+        let foreign = matches!(descriptor["mediaType"].as_str(),
+            Some("application/vnd.docker.image.rootfs.foreign.diff.tar.gzip"
+                | "application/vnd.oci.image.layer.nondistributable.v1.tar"
+                | "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip"
+                | "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd"));
+        if !index && foreign {
+            let urls = descriptor["urls"].as_array().filter(|urls| !urls.is_empty())
+                .ok_or_else(Error::invalid)?;
+            for url in urls {
+                let url = url.as_str().and_then(|url| url::Url::parse(url).ok())
+                    .filter(|url| matches!(url.scheme(), "http" | "https")
+                        && url.host_str().is_some() && url.username().is_empty()
+                        && url.password().is_none())
+                    .ok_or_else(Error::invalid)?;
+                let _ = url;
+            }
+            continue;
+        }
         let blob = db::packages::blob(&state.pool, package, Some(token.into()), digest)
             .await
             .map_err(Error::db)?;

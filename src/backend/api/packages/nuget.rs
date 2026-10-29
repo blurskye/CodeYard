@@ -247,6 +247,11 @@ async fn dispatch(
         }
     }
     let auth = authenticate(state, &headers, !read).await?;
+    let _metadata_slot = if read {
+        Some(state.storage.try_acquire_download().ok_or_else(Error::unavailable)?)
+    } else {
+        None
+    };
     let owner = super::owner(state, namespace).await?;
     let base = root(namespace);
     if path == "index.json" && read {
@@ -336,9 +341,6 @@ async fn dispatch(
             data.push(json!({"id":catalog["id"],"version":latest.name,"description":catalog["description"],"title":catalog["title"],"authors":catalog["authors"].as_str().unwrap_or("").split(',').map(str::trim).collect::<Vec<_>>(),"tags":catalog["tags"],"totalDownloads":downloads,"registration":format!("{base}/registration/{}/index.json",package.name),"versions":versions.iter().map(|v| json!({"version":v.name,"downloads":v.downloads,"@id":format!("{base}/registration/{}/{}.json",package.name,v.name)})).collect::<Vec<_>>()}));
         }
         data.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
-        if data.is_empty() && auth.is_none() {
-            return Err(Error::required());
-        }
         let total = data.len();
         let data: Vec<_> = data
             .into_iter()
@@ -356,7 +358,8 @@ async fn dispatch(
     let token = auth.as_ref().map(|a| a.token.id.into());
     if parts[0] == "flatcontainer" {
         if parts.len() == 3 && parts[2] == "index.json" {
-            let versions = versions(state, &package, auth.as_ref()).await?;
+            let mut versions = super::all_version_fields(state, package.id, auth.as_ref(), true).await?;
+            versions.sort_by(|a, b| compare(&a.name, &b.name));
             return Ok(Json(
                 json!({"versions":versions.iter().map(|v| &v.name).collect::<Vec<_>>()}),
             )
@@ -372,7 +375,10 @@ async fn dispatch(
         let catalog = metadata(&version)?;
         if parts[3] == format!("{id}.nuspec") {
             return Ok((
-                [(header::CONTENT_TYPE, "application/xml")],
+                [
+                    (header::CONTENT_TYPE, "application/xml"),
+                    (header::CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox"),
+                ],
                 catalog["nuspec"]
                     .as_str()
                     .ok_or_else(Error::unavailable)?

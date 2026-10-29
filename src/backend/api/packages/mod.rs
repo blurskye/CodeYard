@@ -250,20 +250,37 @@ async fn all_versions(
     package: i64,
     auth: Option<&Authentication>,
 ) -> Result<Vec<db::packages::Version>> {
+    all_version_fields(state, package, auth, false).await
+}
+
+async fn all_version_fields(
+    state: &AppState,
+    package: i64,
+    auth: Option<&Authentication>,
+    names_only: bool,
+) -> Result<Vec<db::packages::Version>> {
     let mut versions = Vec::new();
+    let mut before = i64::MAX;
+    let mut bytes = 0usize;
     loop {
-        let page = db::packages::versions(
+        let page = db::packages::version_page(
             &state.pool,
             package,
             auth.map(|a| a.token.id.into()),
-            false,
-            versions.len() as i64,
-            100,
+            before,
+            names_only,
         )
         .await
         .map_err(Error::db)?;
         let done = page.len() < 100;
-        versions.extend(page);
+        for version in page {
+            bytes = bytes.saturating_add(version.manifest.len() + version.name.len() + 512);
+            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                return Err(Error::unavailable());
+            }
+            before = version.id;
+            versions.push(version);
+        }
         if done {
             return Ok(versions);
         }

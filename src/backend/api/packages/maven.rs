@@ -219,6 +219,10 @@ fn dispatch(
                 response
                     .headers_mut()
                     .insert(header::CONTENT_TYPE, "application/xml".parse().unwrap());
+                response.headers_mut().insert(
+                    header::CONTENT_SECURITY_POLICY,
+                    "default-src 'none'; sandbox".parse().unwrap(),
+                );
             }
             return Ok(response);
         }
