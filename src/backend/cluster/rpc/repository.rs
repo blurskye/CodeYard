@@ -248,10 +248,20 @@ impl RpcHandler {
         if primary_here {
             let copy = copy_path(&self.context.repos_path, uuid);
             if !primary.exists() && copy.exists() {
-                // Promotion changes the row before the periodic replica pass relocates Git.
-                if tokio::fs::rename(&copy, &primary).await.is_err() && !primary.exists() {
-                    return Err(unavailable());
-                }
+                // Promotion changes the row before periodic relocation. Never move a
+                // mirror underneath an admitted reader, including a second authorization
+                // pass which already owns a read guard. Refuse briefly instead of nesting
+                // the same mutex or waiting behind a long clone.
+                let primary_guard = tokio::time::timeout(std::time::Duration::from_millis(1), crate::backend::git::locks::lock(&primary)).await.map_err(|_| unavailable())?;
+                let mirror_guard = tokio::time::timeout(std::time::Duration::from_millis(1), crate::backend::git::locks::lock(&copy)).await.map_err(|_| unavailable())?;
+                let current = db::repositories::records::get_repository_by_id(pool, repo.id).await.map_err(|_| unavailable())?.ok_or_else(unavailable)?;
+                if current.storage_node_id != Some(self.context.node_id) { return Err(RepoError::storage_node_unavailable()); }
+                let target = primary.clone();
+                tokio::task::spawn_blocking(move || {
+                    let (_primary, _mirror) = (primary_guard, mirror_guard);
+                    if !target.exists() { std::fs::rename(&copy, &target)?; }
+                    Ok::<_, std::io::Error>(())
+                }).await.map_err(|_| unavailable())?.map_err(|_| unavailable())?;
             }
             return Ok((Some(repo.id), primary));
         }

@@ -459,12 +459,16 @@ async fn move_directory(pool: &DbPool, repository: i64, node: i64, primary: bool
     if !primary {
         anyhow::ensure!(db::cluster::replica_applied_version(pool, repository, node).await?.is_some(), "copy assignment changed before relocation");
     }
-    anyhow::ensure!(!tokio::fs::try_exists(to).await?, "relocation target already exists");
-    if let Some(parent) = to.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-    tokio::fs::rename(from, to).await?;
-    Ok(())
+    let from = from.to_owned();
+    let to = to.to_owned();
+    tokio::task::spawn_blocking(move || {
+        let (_primary, _mirror) = (_primary, _mirror);
+        anyhow::ensure!(!to.try_exists()?, "relocation target already exists");
+        if let Some(parent) = to.parent() { std::fs::create_dir_all(parent)?; }
+        std::fs::rename(from, to)?;
+        Ok::<_, anyhow::Error>(())
+    }).await?
+
 }
 
 /// Copies that are running, at most `PARALLEL`. Each one brings a copy up to its primary. A
