@@ -16,9 +16,32 @@ async fn role_exists(c: &mut PgConnection, id: i64) -> Result<bool> {
 pub async fn can_manage_security(pool: &PgPool, actor: i64, org: i64) -> Result<bool> {
     manages_security(&mut *pool.acquire().await?, actor, org).await
 }
-/// Whether `actor` holds the organization's security-manager role, directly or through a team.
+fn security_role_rows() -> &'static str {
+    "SELECT 1 FROM organizations o JOIN org_memberships m ON m.org_id=o.id JOIN users u ON u.id=m.user_id
+     WHERE o.id=$2 AND u.id=$1 AND m.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password
+     AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=o.id AND b.user_id=u.id)
+     AND (m.role='owner' OR EXISTS(
+         SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level=1
+         WHERE a.org_id=o.id AND a.role_id=$3 AND (
+             (a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(
+                 SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id
+                 WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret')
+                 AND tm.user_id=u.id AND tm.role IN ('member','maintainer')
+             ))
+         )
+     ))"
+}
+
+/// Role membership remains meaningful for reads when organization writes are suspended.
+pub(crate) async fn holds_security_role(c: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS({})", security_role_rows()))
+        .bind(actor).bind(org).bind(crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID).fetch_one(c).await?)
+}
+
+/// Writes additionally require an operational organization.
 pub(crate) async fn manages_security(c: &mut PgConnection, actor: i64, org: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations o JOIN org_memberships m ON m.org_id=o.id JOIN users u ON u.id=m.user_id WHERE o.id=$2 AND u.id=$1 AND m.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=o.id AND b.user_id=u.id) AND EXISTS(SELECT 1 FROM org_memberships owner JOIN users active ON active.id=owner.user_id WHERE owner.org_id=o.id AND owner.role='owner' AND NOT active.is_banned AND NOT active.must_change_password) AND (m.role='owner' OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level=1 WHERE a.org_id=o.id AND a.role_id=$3 AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret') AND tm.user_id=u.id AND tm.role IN ('member','maintainer')))))))").bind(actor).bind(org).bind(crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID).fetch_one(c).await?)
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS({} AND EXISTS(SELECT 1 FROM org_memberships owner JOIN users active ON active.id=owner.user_id WHERE owner.org_id=o.id AND owner.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))", security_role_rows()))
+        .bind(actor).bind(org).bind(crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID).fetch_one(c).await?)
 }
 pub async fn catalog(
     pool: &PgPool,
