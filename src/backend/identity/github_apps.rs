@@ -418,6 +418,8 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
     match parts.get(3).copied() {
         None => Some(if write { "administration" } else { "metadata" }),
         Some("statuses") => Some("statuses"),
+        Some("autolinks") => Some("administration"),
+        Some("dependency-graph") => Some("contents"),
         // GitHub files these read-only summaries under repository metadata.
         Some("languages" | "contributors" | "stats") if !write => Some("metadata"),
         // Only structural subresources determine authority, never an owner/repo/ref name.
