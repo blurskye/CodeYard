@@ -310,7 +310,7 @@ pub(crate) async fn list(
         .unwrap_or(1)
         .max(1);
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match releases::list(&ctx.state.pool, viewer, &owner, &name, page, PER_PAGE).await {
+    match releases::list(&ctx.state.pool, viewer, repo.id, page, PER_PAGE).await {
         Ok(listing) => {
             let items = listing
                 .releases
@@ -354,7 +354,7 @@ pub(crate) async fn detail(
         Err(response) => return response,
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match releases::detail_by_tag(&ctx.state.pool, viewer, &owner, &name, &tag).await {
+    match releases::detail_by_tag(&ctx.state.pool, viewer, repo.id, &tag).await {
         Ok(found) => {
             let base = repo.base();
             let release = release_item(&found.release);
@@ -829,6 +829,10 @@ pub(crate) async fn download(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
+    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded,
+        Err(response) => return response,
+    };
     let Some((tag, asset)) = rest.rsplit_once('/') else {
         return ctx.error(StatusCode::NOT_FOUND, "Asset not found.");
     };
@@ -837,8 +841,7 @@ pub(crate) async fn download(
         &ctx.state.pool,
         &ctx.state.storage,
         viewer,
-        &owner,
-        &name,
+        loaded.repository.id,
         tag,
         asset,
         method != axum::http::Method::HEAD,

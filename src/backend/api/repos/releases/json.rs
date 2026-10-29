@@ -166,14 +166,11 @@ pub(super) async fn list(
         .map(|user| user.id);
     let (offset, limit) = json_page(query.page, query.per_page)?;
     let page = (offset / limit + 1) as i64;
-    let listing = releases::list(&state.pool, viewer, &owner, &name, page, limit as i64)
+    let listing = releases::list(&state.pool, viewer, super::super::access::find_repository(&state.pool, &owner, &name).await?.id, page, limit as i64)
         .await
         .map_err(json_error)?;
     let origin = public_origin();
-    let ids: Vec<i64> = listing.releases.iter().map(|row| row.release.id).collect();
-    let assets = db::releases::list_releases_assets(&state.pool, &ids)
-        .await
-        .map_err(|_| json_error(ReleaseError::Unavailable))?;
+    let assets = listing.assets;
     let mut grouped = std::collections::HashMap::<i64, Vec<ReleaseAsset>>::new();
     for asset in assets {
         grouped.entry(asset.release_id).or_default().push(asset);
@@ -194,7 +191,7 @@ pub(super) async fn get_one(
     let viewer = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);
-    let found = releases::detail_by_id(&state.pool, viewer, &owner, &name, id)
+    let found = releases::detail_by_id(&state.pool, viewer, super::super::access::find_repository(&state.pool, &owner, &name).await?.id, id)
         .await
         .map_err(json_error)?;
     Ok(Json(release_response(
@@ -213,7 +210,7 @@ pub(super) async fn get_by_tag(
     let viewer = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);
-    let found = releases::detail_by_tag(&state.pool, viewer, &owner, &name, &tag)
+    let found = releases::detail_by_tag(&state.pool, viewer, super::super::access::find_repository(&state.pool, &owner, &name).await?.id, &tag)
         .await
         .map_err(json_error)?;
     Ok(Json(release_response(
@@ -269,7 +266,7 @@ pub(super) async fn create(
     )
     .await
     .map_err(json_error)?;
-    let found = releases::detail_by_id(&state.pool, Some(actor.id), &owner, &name, release.id)
+    let found = releases::detail_by_id(&state.pool, Some(actor.id), release.repo_id, release.id)
         .await
         .map_err(json_error)?;
     Ok((
@@ -293,7 +290,7 @@ pub(super) async fn update(
     let actor = get_current_user(&state.pool, &headers).await?;
     // A release keeps its tag and target. Echoing the current values back is accepted.
     if request.tag_name.is_some() || request.target_commitish.is_some() {
-        let current = releases::detail_by_id(&state.pool, Some(actor.id), &owner, &name, id)
+        let current = releases::detail_by_id(&state.pool, Some(actor.id), super::super::access::find_repository(&state.pool, &owner, &name).await?.id, id)
             .await
             .map_err(json_error)?;
         let same =
@@ -339,7 +336,7 @@ pub(super) async fn update(
     )
     .await
     .map_err(json_error)?;
-    let found = releases::detail_by_id(&state.pool, Some(actor.id), &owner, &name, release.id)
+    let found = releases::detail_by_id(&state.pool, Some(actor.id), release.repo_id, release.id)
         .await
         .map_err(json_error)?;
     Ok(Json(release_response(

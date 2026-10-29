@@ -102,6 +102,7 @@ pub struct ReleasesPage {
     pub repository: Repository,
     pub can_write: bool,
     pub releases: Vec<ReleaseRow>,
+    pub assets: Vec<ReleaseAsset>,
     pub total: i64,
 }
 
@@ -124,19 +125,6 @@ pub struct FormChoices {
 pub struct ReleaseSummary {
     pub count: i64,
     pub latest: Option<Release>,
-}
-
-async fn readable(
-    pool: &db::DbPool,
-    viewer: Option<i64>,
-    owner: &str,
-    name: &str,
-) -> Result<Repository, ReleaseError> {
-    let repository = db::repositories::records::get_repository(pool, owner, name)
-        .await
-        .map_err(|_| ReleaseError::Unavailable)?
-        .ok_or(AccessError::NotFound)?;
-    Ok(access::check_read(pool, repository.id, viewer).await?)
 }
 
 async fn writable(
@@ -254,8 +242,7 @@ fn validate_tag(tag: &str) -> Result<(), ReleaseError> {
 pub async fn list(
     pool: &db::DbPool,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     page: i64,
     per_page: i64,
 ) -> Result<ReleasesPage, ReleaseError> {
@@ -264,19 +251,15 @@ pub async fn list(
         .filter(|_| page > 0 && (1..=100).contains(&per_page))
         .and_then(|page| page.checked_mul(per_page))
         .ok_or(ReleaseError::Invalid("Release pagination is out of range"))?;
-    let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await?;
-    let releases = db::releases::list_releases(pool, repository.id, can_write, per_page, offset)
-        .await
-        .map_err(unavailable)?;
-    let total = db::releases::count_releases(pool, repository.id, can_write)
-        .await
-        .map_err(unavailable)?;
+    let snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id,
+        db::releases::ReleaseSelection::Page { limit: per_page, offset }).await.map_err(write_error)?;
+    let can_write = can_write(pool, viewer, repo_id).await?;
     Ok(ReleasesPage {
-        repository,
+        repository: snapshot.repository,
         can_write,
-        releases,
-        total,
+        releases: snapshot.releases,
+        assets: snapshot.assets,
+        total: snapshot.total,
     })
 }
 
@@ -284,52 +267,37 @@ pub async fn list(
 pub async fn detail_by_tag(
     pool: &db::DbPool,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     tag: &str,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await?;
-    let release = db::releases::get_release_by_tag(pool, repository.id, tag)
-        .await
-        .map_err(unavailable)?;
-    visible_detail(pool, repository, can_write, release).await
+    visible_detail(pool, viewer, repo_id, db::releases::ReleaseSelection::Tag(tag)).await
 }
 
 /// One release by its number, for the JSON API. A draft is hidden from everyone but writers.
 pub async fn detail_by_id(
     pool: &db::DbPool,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     release_id: i64,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await?;
-    let release = db::releases::get_release(pool, repository.id, release_id)
-        .await
-        .map_err(unavailable)?;
-    visible_detail(pool, repository, can_write, release).await
+    visible_detail(pool, viewer, repo_id, db::releases::ReleaseSelection::Id(release_id)).await
 }
 
 async fn visible_detail(
     pool: &db::DbPool,
-    repository: Repository,
-    can_write: bool,
-    release: Option<ReleaseRow>,
+    viewer: Option<i64>,
+    repo_id: i64,
+    selection: db::releases::ReleaseSelection<'_>,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    let release = release.ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write {
-        return Err(ReleaseError::NotFound);
-    }
-    let assets = db::releases::list_release_assets(pool, release.release.id)
-        .await
-        .map_err(unavailable)?;
+    let mut snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id, selection)
+        .await.map_err(write_error)?;
+    let release = snapshot.releases.pop().ok_or(ReleaseError::NotFound)?;
+    let can_write = can_write(pool, viewer, repo_id).await?;
     Ok(ReleaseDetail {
-        repository,
+        repository: snapshot.repository,
         can_write,
         release,
-        assets,
+        assets: snapshot.assets,
     })
 }
 
@@ -872,23 +840,14 @@ pub async fn download(
     pool: &db::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     tag: &str,
     asset_name: &str,
     count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let release = db::releases::get_release_by_tag(pool, repository.id, tag)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
-        return Err(ReleaseError::NotFound);
-    }
-    let asset = db::releases::get_release_asset_by_name(pool, release.release.id, asset_name)
-        .await
-        .map_err(unavailable)?
+    let snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id,
+        db::releases::ReleaseSelection::Tag(tag)).await.map_err(write_error)?;
+    let asset = snapshot.assets.into_iter().find(|asset| asset.name == asset_name)
         .ok_or(ReleaseError::NotFound)?;
     open_asset(pool, store, asset, count).await
 }
@@ -898,23 +857,14 @@ pub async fn download_by_id(
     pool: &db::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     asset_id: i64,
     count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let asset = db::releases::get_repository_release_asset(pool, repository.id, asset_id)
-        .await
-        .map_err(unavailable)?
+    let snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id,
+        db::releases::ReleaseSelection::Asset(asset_id)).await.map_err(write_error)?;
+    let asset = snapshot.assets.into_iter().find(|asset| asset.id == asset_id)
         .ok_or(ReleaseError::NotFound)?;
-    let release = db::releases::get_release(pool, repository.id, asset.release_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
-        return Err(ReleaseError::NotFound);
-    }
     open_asset(pool, store, asset, count).await
 }
 
