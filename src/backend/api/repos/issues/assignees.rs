@@ -94,6 +94,7 @@ pub(crate) async fn native_assign(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
+    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let username = field(&form, "username");
     // The assignee, when this request newly assigned them.
@@ -162,6 +163,7 @@ pub(crate) async fn native_unassign(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
+    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     // A name that is no user, or is not assigned, leaves the item as it is and records nothing.
     let outcome = db::assignees::unassign_user(

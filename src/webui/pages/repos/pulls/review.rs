@@ -351,7 +351,7 @@ pub(in crate::webui::pages::repos) fn review_changes(
                         }
                     }
                 }
-                if pending_comments > 0 {
+                if pending_review.is_some() {
                     details { class: "native-menu collaboration-review-discard",
                         summary { class: "btn btn-secondary", "Discard review" }
                         // Cancel reloads the Files changed page, which closes the dialog without JavaScript.
@@ -555,7 +555,7 @@ fn reviewer_options(
                         if pending {
                             {picker_option(
                                 format!("{requests}/{}/remove", encode_component(name)),
-                                &repo.csrf,
+                                (repo, None),
                                 None,
                                 true,
                                 rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
@@ -563,7 +563,7 @@ fn reviewer_options(
                         } else {
                             {picker_option(
                                 requests.to_owned(),
-                                &repo.csrf,
+                                (repo, None),
                                 Some(("username", name.clone())),
                                 false,
                                 rsx! { Avatar { name: name.clone(), size: 20 } "{name}" },
@@ -574,6 +574,7 @@ fn reviewer_options(
             }
             form { method: "post", action: requests.to_owned(), class: "collaboration-request-form",
                 {csrf(&repo.csrf)}
+                input { r#type: "hidden", name: "repository_id", value: "{repo.chrome.id}" }
                 label { r#for: "reviewer-username", "Request a review from" }
                 div { class: "collaboration-request-row",
                     DraftInput { id: "reviewer-username", name: "username", initial_value: typed.to_owned(), required: true, class: "collaboration-input" }
@@ -695,7 +696,7 @@ fn LineComposer(
     rsx! {
         form { method: "post", action: format!("{url}/comments{view}"), class: "collaboration-form-fields collaboration-line-composer",
             {csrf(&repo.csrf)}
-            input { r#type: "hidden", name: "path", value: target.path.clone() }
+            input { r#type: "hidden", name: "path_json", value: serde_json::to_string(&target.path).unwrap_or_default() }
             input { r#type: "hidden", name: "side", value: target.side.clone() }
             input { r#type: "hidden", name: "line", value: target.line.clone() }
             if !reply && !target.line.is_empty() {

@@ -184,7 +184,7 @@ pub fn diff_page(
         base,
         references,
         split,
-        review: open.then_some(pending_comments > 0),
+        review: (open && !repo.is_archived).then_some(pending_review.is_some()),
         code_scanning,
     };
     // Approving and requesting changes need a vote, and the author of a pull request cannot cast one
@@ -228,8 +228,8 @@ pub fn diff_page(
                 }
                 div { class: "collaboration-diff-toolbar",
                     {view_toggle(&format!("{url}/diff"), split)}
-                    if repo.signed_in && (open || pending_comments > 0) {
-                        {review::review_changes(repo, &url, head, open, author, vote, review, pending_comments, pending_review, references, split)}
+                    if repo.signed_in && ((open && !repo.is_archived) || pending_review.is_some()) {
+                        {review::review_changes(repo, &url, head, open && !repo.is_archived, author, vote, review, pending_comments, pending_review, references, split)}
                     }
                 }
                 // A review refused after the pull request closed has no form to return to, so its text
@@ -364,7 +364,7 @@ fn file_cards(
                 // The Viewed button sits in the file's header and submits this form by id.
                 form { id: format!("viewed-form-{index}"), class: "collaboration-viewed-form", method: "post", action: if split { format!("{}?view=split", marks.action) } else { marks.action.clone() },
                     {csrf(&marks.csrf)}
-                    input { r#type: "hidden", name: "path", value: file.filename.clone() }
+                    input { r#type: "hidden", name: "path_json", value: serde_json::to_string(&file.filename).unwrap_or_default() }
                     input { r#type: "hidden", name: "expected_head", value: marks.head.clone() }
                     input { r#type: "hidden", name: "expected_base", value: marks.base.clone() }
                     input { r#type: "hidden", name: "index", value: index.to_string() }
@@ -471,6 +471,7 @@ fn ViewedBox(
 ) -> Element {
     let mut marked = use_signal(|| viewed);
     let mut pending = use_signal(|| false);
+    let uncertain = use_signal(|| false);
     // A refreshed diff, or another file reusing this position, starts from the server's mark.
     use_effect(use_reactive(
         (&viewed, &path, &head, &base),
@@ -478,7 +479,7 @@ fn ViewedBox(
     ));
     rsx! {
         button { r#type: "submit", class: "collaboration-viewed", role: "checkbox", form: form_id,
-            disabled: pending(),
+            disabled: pending() || uncertain(),
             name: "viewed", value: if marked() { "no" } else { "yes" },
             aria_checked: if marked() { "true" } else { "false" },
             onclick: move |event| {
@@ -490,13 +491,14 @@ fn ViewedBox(
                 browser::set_mark(&file_id, next);
                 #[cfg(target_arch = "wasm32")]
                 {
-                    spawn(save_mark(action.clone(), csrf.clone(), (path.clone(), head.clone(), base.clone()), next, marked, pending, file_id.clone()));
+                    spawn(save_mark(action.clone(), csrf.clone(), (path.clone(), head.clone(), base.clone()), next, marked, pending, uncertain, file_id.clone()));
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 let _ = (&action, &csrf, &path, &head, &base);
             },
             "Viewed"
         }
+        if uncertain() { span { role: "status", a { href: "", "Save could not be confirmed. Reload to check Viewed state." } } }
     }
 }
 
@@ -509,26 +511,42 @@ async fn save_mark(
     viewed: bool,
     mut marked: Signal<bool>,
     mut pending: Signal<bool>,
+    mut uncertain: Signal<bool>,
     file_id: String,
 ) {
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     serializer
         .append_pair("csrf_token", &csrf)
-        .append_pair("path", &path)
+        .append_pair("path_json", &serde_json::to_string(&path).unwrap_or_default())
         .append_pair("expected_head", &head)
         .append_pair("expected_base", &base)
         .append_pair("background", "yes")
         .append_pair("viewed", if viewed { "yes" } else { "no" });
+    let controller = web_sys::AbortController::new().ok();
+    let signal = controller.as_ref().map(web_sys::AbortController::signal);
     let request = gloo_net::http::Request::post(&action)
+        .abort_signal(signal.as_ref())
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", "application/json")
         .credentials(web_sys::RequestCredentials::SameOrigin)
         .body(serializer.finish());
     let saved = match request {
-        Ok(request) => request.send().await.is_ok_and(|response| response.ok()),
+        Ok(request) => {
+            let request = request.send();
+            let timeout = gloo_timers::future::TimeoutFuture::new(15_000);
+            futures_util::pin_mut!(request, timeout);
+            match futures_util::future::select(request, timeout).await {
+                futures_util::future::Either::Left((response, _)) => response.is_ok_and(|response| response.status() == 204 && !response.redirected()),
+                futures_util::future::Either::Right(_) => {
+                    if let Some(controller) = controller { controller.abort(); }
+                    false
+                }
+            }
+        },
         Err(_) => false,
     };
     if !saved {
+        uncertain.set(true);
         marked.set(!viewed);
         browser::set_mark(&file_id, !viewed);
     }
@@ -605,6 +623,13 @@ fn row_index(rows: &[PatchRow<'_>], side: &str, line: i32) -> Option<usize> {
     }
 }
 
+fn thread_row_index(rows: &[PatchRow<'_>], thread: &Thread) -> Option<usize> {
+    if thread.root.conversation.as_ref().is_some_and(|conversation| conversation.outdated) {
+        return None;
+    }
+    thread.line.and_then(|line| row_index(rows, &thread.side, line))
+}
+
 /// One file's patch. A conversation whose line is no longer in the patch shows above it.
 fn file_body(
     lines: Option<&Lines<'_>>,
@@ -621,10 +646,7 @@ fn file_body(
     let mut top: Vec<&Thread> = Vec::new();
     let (on_file, here) = file_conversations(file, threads, composer);
     for thread in on_file {
-        match thread
-            .line
-            .and_then(|line| row_index(&rows, &thread.side, line))
-        {
+        match thread_row_index(&rows, thread) {
             Some(index) => under[index].push(thread),
             None => top.push(thread),
         }
@@ -783,10 +805,7 @@ fn split_file_body(
     let mut top: Vec<&Thread> = Vec::new();
     let (on_file, here) = file_conversations(file, threads, composer);
     for thread in on_file {
-        match thread
-            .line
-            .and_then(|line| row_index(&rows, &thread.side, line))
-        {
+        match thread_row_index(&rows, thread) {
             Some(row) => under[pair_of[row]].push(thread),
             None => top.push(thread),
         }
@@ -800,7 +819,7 @@ fn split_file_body(
             {lines.annotations_above(file,&rows)}
             {lines.above_patch(&top, composer, composer_top)}
         }
-        div { class: "collaboration-split patch-lines",
+        div { class: "collaboration-split patch-lines", style: format!("--patch-digits:{}", patch_gutter_digits(&rows)),
             for (index, pair) in pairs.iter().enumerate() {
                 {split_row(lines, &file.filename, &rows, *pair)}
                 if let Some(lines) = lines {

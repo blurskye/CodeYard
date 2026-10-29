@@ -993,7 +993,7 @@ pub(crate) async fn native_create(
         }) {
             if !template.form.is_empty() {
                 let answers: Vec<Vec<String>> = (0..template.form.len())
-                    .map(|index| repeated(&pairs, &format!("form_{index}")))
+                    .map(|index| repeated(&pairs, &format!("form_{index}")).into_iter().map(|value| value.replace("\r\n", "\n")).collect())
                     .collect();
                 missing_answer = first_missing_answer(&template.form, &answers).map(str::to_owned);
                 draft.body = compose_form_body(&template.form, &answers);

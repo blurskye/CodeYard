@@ -465,6 +465,8 @@ pub struct PinnedComment {
 /// One page of discussion comments and reviews, oldest first. `page` counts from 1.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommentPage {
+    #[serde(default)]
+    pub can_triage: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_management: Option<Box<IssueManagement>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

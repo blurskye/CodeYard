@@ -606,6 +606,7 @@ pub(crate) async fn native_set_item_milestone(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
+    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let choice = field(&form, "milestone_number");
     let chosen = match choice.trim() {
