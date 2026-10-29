@@ -1,5 +1,5 @@
 use super::models::{EmailSettings, OutboxMessage};
-use crate::backend::db::email::{EmailLink, NewEmailSettings, RESEND_SECONDS};
+use crate::backend::db::email::{delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS};
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -160,6 +160,10 @@ pub async fn claim_due_email(
     Ok(message)
 }
 
+pub async fn delivery_allowed(pool: &PgPool, id: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(&delivery_allowed_sql(true)).bind(id).fetch_one(pool).await?)
+}
+
 pub async fn mark_email_sent(pool: &PgPool, id: i64) -> Result<()> {
     sqlx::query(
         "UPDATE email_outbox SET sent_at = NOW(), last_error = NULL, body_text = '' WHERE id = $1",
@@ -235,8 +239,18 @@ pub async fn notification_email_address(pool: &PgPool, user_id: i64) -> Result<O
     .await?)
 }
 
+// Parent existence locks precede issuance locks, including when the issuance is replaced.
+// Key share remains compatible with token consumers updating the account's non-key fields.
+pub(super) async fn lock_link_recipient(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, user: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR KEY SHARE")
+        .bind(user).fetch_optional(&mut **tx).await?.is_some())
+}
+
 pub async fn save_email_token(pool: &PgPool, link: &EmailLink<'_>) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    if !lock_link_recipient(&mut tx, link.user_id).await? {
+        return Ok(false);
+    }
     // A link issued less than RESEND_SECONDS ago expires later than now + ttl - RESEND_SECONDS.
     let saved = sqlx::query(
         "INSERT INTO email_tokens(user_id,purpose,email,token_hash,expires_at)
@@ -260,24 +274,22 @@ pub async fn save_email_token(pool: &PgPool, link: &EmailLink<'_>) -> Result<boo
         == 1;
     // The mail carries this token, so it is queued only together with it.
     if saved {
-        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text) VALUES ($1,$2,$3)")
-            .bind(link.email)
-            .bind(link.subject)
-            .bind(link.body_text)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query("DELETE FROM email_outbox WHERE link_user_id=$1 AND link_purpose=$2 AND sent_at IS NULL")
+            .bind(link.user_id).bind(link.purpose).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,link_user_id,link_purpose,link_token_hash) VALUES ($1,$2,$3,$4,$5,$6)")
+            .bind(link.email).bind(link.subject).bind(link.body_text)
+            .bind(link.user_id).bind(link.purpose).bind(link.token_hash)
+            .execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(saved)
 }
 
 pub async fn email_token_is_valid(pool: &PgPool, purpose: &str, token_hash: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar(
-        "SELECT EXISTS(
-            SELECT 1 FROM email_tokens t JOIN users u ON u.id = t.user_id
-            WHERE t.purpose = $1 AND t.token_hash = $2 AND t.expires_at > NOW()
-              AND u.email = t.email AND NOT u.is_banned)",
-    )
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM email_tokens t JOIN users u ON u.id=t.user_id WHERE t.purpose=$1 AND t.token_hash=$2 AND {})",
+        primary_link_condition(true),
+    ))
     .bind(purpose)
     .bind(token_hash)
     .fetch_one(pool)
@@ -286,15 +298,25 @@ pub async fn email_token_is_valid(pool: &PgPool, purpose: &str, token_hash: &str
 
 pub async fn verify_email_token(pool: &PgPool, token_hash: &str) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;
+    let user: Option<i64> = sqlx::query_scalar("SELECT user_id FROM email_tokens WHERE purpose='verify' AND token_hash=$1")
+        .bind(token_hash).fetch_optional(&mut *tx).await?;
+    let Some(user) = user else { return Ok(None) };
+    // Consumers retain the parent before taking the issuance, like issuers and account deletion.
+    if sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
+        .bind(user).fetch_optional(&mut *tx).await?.is_none()
+    {
+        return Ok(None);
+    }
     let taken: Option<(i64, String)> = sqlx::query_as(
         "DELETE FROM email_tokens
-         WHERE purpose = 'verify' AND token_hash = $1 AND expires_at > NOW()
+         WHERE purpose = 'verify' AND token_hash = $1 AND user_id=$2 AND expires_at > NOW()
            AND EXISTS (SELECT 1 FROM users u
                        WHERE u.id = email_tokens.user_id AND u.email = email_tokens.email
                          AND NOT u.is_banned)
          RETURNING user_id, email::text",
     )
     .bind(token_hash)
+    .bind(user)
     .fetch_optional(&mut *tx)
     .await?;
     let Some((user_id, email)) = taken else {

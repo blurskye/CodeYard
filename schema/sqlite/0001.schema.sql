@@ -1214,8 +1214,13 @@ CREATE TABLE email_outbox (
     sent_at TEXT,
     organization_invitation_id INTEGER REFERENCES organization_invitations(id) ON DELETE SET NULL,
     -- A notification email is sent only while its recipient can still read the notification.
-    notification_id INTEGER REFERENCES notifications(id) ON DELETE CASCADE
+    notification_id INTEGER REFERENCES notifications(id) ON DELETE CASCADE,
+    link_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE CHECK (link_user_id IS NULL OR typeof(link_user_id)='integer'),
+    link_purpose TEXT CHECK (link_purpose IN ('verify','reset','secondary')),
+    link_token_hash TEXT CHECK (length(link_token_hash)=64),
+    CHECK ((link_user_id IS NULL)=(link_purpose IS NULL) AND (link_user_id IS NULL)=(link_token_hash IS NULL))
 );
+CREATE INDEX email_outbox_link ON email_outbox(link_user_id,link_purpose,sent_at) WHERE link_user_id IS NOT NULL;
 
 CREATE TABLE email_tokens (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (typeof(user_id)='integer'),

@@ -1,5 +1,5 @@
 use super::models::{EmailSettings, OutboxMessage};
-use crate::backend::db::email::{EmailLink, NewEmailSettings, RESEND_SECONDS};
+use crate::backend::db::email::{delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS};
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -152,6 +152,10 @@ pub async fn claim_due_email(
     Ok(message)
 }
 
+pub async fn delivery_allowed(pool: &SqlitePool, id: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(&delivery_allowed_sql(false)).bind(id).fetch_one(pool).await?)
+}
+
 pub async fn mark_email_sent(pool: &SqlitePool, id: i64) -> Result<()> {
     sqlx::query("UPDATE email_outbox SET sent_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), last_error = NULL, body_text = '' WHERE id = ?1")
         .bind(id)
@@ -224,8 +228,16 @@ pub async fn notification_email_address(pool: &SqlitePool, user_id: i64) -> Resu
     .await?)
 }
 
+pub(super) async fn lock_link_recipient(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, user: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")
+        .bind(user).fetch_one(&mut **tx).await?)
+}
+
 pub async fn save_email_token(pool: &SqlitePool, link: &EmailLink<'_>) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !lock_link_recipient(&mut tx, link.user_id).await? {
+        return Ok(false);
+    }
     // A link issued less than RESEND_SECONDS ago expires later than now + ttl - RESEND_SECONDS.
     let saved = sqlx::query(
         "INSERT INTO email_tokens(user_id,purpose,email,token_hash,expires_at)
@@ -249,12 +261,12 @@ pub async fn save_email_token(pool: &SqlitePool, link: &EmailLink<'_>) -> Result
         == 1;
     // The mail carries this token, so it is queued only together with it.
     if saved {
-        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text) VALUES (?1,?2,?3)")
-            .bind(link.email)
-            .bind(link.subject)
-            .bind(link.body_text)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query("DELETE FROM email_outbox WHERE link_user_id=?1 AND link_purpose=?2 AND sent_at IS NULL")
+            .bind(link.user_id).bind(link.purpose).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,link_user_id,link_purpose,link_token_hash) VALUES (?1,?2,?3,?4,?5,?6)")
+            .bind(link.email).bind(link.subject).bind(link.body_text)
+            .bind(link.user_id).bind(link.purpose).bind(link.token_hash)
+            .execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(saved)
@@ -265,13 +277,10 @@ pub async fn email_token_is_valid(
     purpose: &str,
     token_hash: &str,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar(
-        "SELECT EXISTS(
-            SELECT 1 FROM email_tokens t JOIN users u ON u.id = t.user_id
-            WHERE t.purpose = ?1 AND t.token_hash = ?2
-              AND t.expires_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now')
-              AND u.email = t.email AND NOT u.is_banned)",
-    )
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM email_tokens t JOIN users u ON u.id=t.user_id WHERE t.purpose=?1 AND t.token_hash=?2 AND {})",
+        primary_link_condition(false),
+    ))
     .bind(purpose)
     .bind(token_hash)
     .fetch_one(pool)

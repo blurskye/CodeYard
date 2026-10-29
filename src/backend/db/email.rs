@@ -10,6 +10,23 @@ use anyhow::Result;
 /// requests cannot flood a mailbox.
 pub(in crate::backend::db) const RESEND_SECONDS: i64 = 60;
 
+pub(in crate::backend::db) fn primary_link_condition(pg: bool) -> String {
+    let now = if pg { "clock_timestamp()" } else { "strftime('%Y-%m-%dT%H:%M:%f000Z','now')" };
+    format!("u.email=t.email AND NOT u.is_banned AND t.expires_at>{now}")
+}
+
+pub(in crate::backend::db) fn secondary_link_condition(pg: bool) -> String {
+    let now = if pg { "clock_timestamp()" } else { "strftime('%Y-%m-%dT%H:%M:%f000Z','now')" };
+    format!("NOT u.is_banned AND NOT e.verified AND e.verification_expires_at>{now}")
+}
+
+pub(in crate::backend::db) fn delivery_allowed_sql(pg: bool) -> String {
+    let id = if pg { "$1" } else { "?1" };
+    let primary = primary_link_condition(pg);
+    let secondary = secondary_link_condition(pg);
+    format!("SELECT EXISTS(SELECT 1 FROM email_outbox o WHERE o.id={id} AND o.sent_at IS NULL AND (o.link_user_id IS NULL OR EXISTS(SELECT 1 FROM users u WHERE u.id=o.link_user_id AND (EXISTS(SELECT 1 FROM email_tokens t WHERE t.user_id=u.id AND t.purpose=o.link_purpose AND t.token_hash=o.link_token_hash AND t.email=o.to_address AND {primary}) OR (o.link_purpose='secondary' AND EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND lower(e.email)=lower(o.to_address) AND e.verification_hash=o.link_token_hash AND {secondary}))))))")
+}
+
 /// A link mail: the hash of its token and the message that carries the token. Both are saved
 /// in one transaction.
 pub struct EmailLink<'a> {
@@ -74,6 +91,12 @@ native_operation!(crate::backend::db::postgres::email::claim_due_email,
     /// different messages.
     fn claim_due_email(pool: &DbPool, max_attempts: i32, lease_seconds: i64) -> Result<Option<OutboxMessage>>);
 
+native_operation!(crate::backend::db::postgres::email::delivery_allowed,
+    crate::backend::db::sqlite::email::delivery_allowed,
+    /// Rechecks a claimed message before SMTP. Link mail must still match its live issuance;
+    /// notification readability remains owned by notifications.
+    fn delivery_allowed(pool: &DbPool, id: i64) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::email::mark_email_sent,
     crate::backend::db::sqlite::email::mark_email_sent,
     /// Marks the message sent and empties its body, which may hold a link that still works.
@@ -107,8 +130,8 @@ native_operation!(crate::backend::db::postgres::email::save_email_token,
     crate::backend::db::sqlite::email::save_email_token,
     /// Stores the hash of a link mailed to the user, for `purpose` 'verify' or 'reset', and queues
     /// the mail in the same transaction. It replaces the user's earlier link of that kind, unless
-    /// that one went to the same address less than `RESEND_SECONDS` ago. False when the earlier
-    /// link stays and nothing is queued.
+    /// that one went to the same address less than `RESEND_SECONDS` ago. Superseded unsent mail
+    /// is withdrawn atomically. False when nothing is queued.
     fn save_email_token(pool: &DbPool, link: &EmailLink<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::email::email_token_is_valid,
