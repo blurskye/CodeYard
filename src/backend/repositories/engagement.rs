@@ -105,7 +105,7 @@ pub async fn change(
     kind: Engagement,
     enabled: bool,
 ) -> Result<i32, EngagementError> {
-    let repository = access::check_read(pool, repo_id, Some(actor))
+    access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
     let user = db::users::accounts::get_user_by_id(pool, actor)
@@ -154,7 +154,7 @@ pub async fn change(
         )
         .await;
     }
-    if let Some(recipient) = repository
+    if let Some(recipient) = updated
         .personal_owner_id()
         .filter(|_| enabled && changed)
     {
@@ -163,20 +163,20 @@ pub async fn change(
             .ok()
             .flatten()
         {
-            let title = format!("{} {verb} {}/{}", user.username, owner, repository.name);
+            let title = format!("{} {verb} {}/{}", user.username, owner, updated.name);
             let body = match kind {
                 Engagement::Star => format!("Total stars: {count}"),
                 Engagement::Watch => format!("Total watchers: {count}"),
             };
             let metadata = match kind {
                 Engagement::Star => {
-                    json!({"repo_owner": owner, "repo_name": repository.name, "stars_count": count, "subject": format!("{owner}/{}", repository.name)})
+                    json!({"repo_owner": owner, "repo_name": updated.name, "stars_count": count, "subject": format!("{owner}/{}", updated.name)})
                 }
                 Engagement::Watch => {
-                    json!({"repo_owner": owner, "repo_name": repository.name, "watchers_count": count, "subject": format!("{owner}/{}", repository.name)})
+                    json!({"repo_owner": owner, "repo_name": updated.name, "watchers_count": count, "subject": format!("{owner}/{}", updated.name)})
                 }
             };
-            let link = format!("/{}/{}", owner, repository.name);
+            let link = crate::webui::repository_path(&owner, &updated.name);
             let notice = NotificationRequest {
                 user_id: recipient,
                 actor_id: Some(actor),

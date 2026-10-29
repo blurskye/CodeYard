@@ -60,7 +60,7 @@ async fn page(
         .map(|value| value.parse::<usize>())
         .transpose()
     {
-        Ok(value) if value.is_none_or(|p| (1..=33334).contains(&p)) => value.unwrap_or(1),
+        Ok(value) if value.is_none_or(|p| (1..=(1_000_000 / ANNOTATIONS_PER_PAGE + 1)).contains(&p)) => value.unwrap_or(1),
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid annotation page."),
     };
     let run = match checks::run(&ctx.state.pool, loaded.repository.id, id).await {
@@ -72,8 +72,10 @@ async fn page(
         Ok(Some(suite)) => suite,
         _ => return chrome::unavailable(&ctx),
     };
+    // Eight rows leave room for the run output even at six-byte JSON escaping per character.
+    const ANNOTATIONS_PER_PAGE: usize = 8;
     let annotations =
-        match checks::annotations(&ctx.state.pool, id, ((page - 1) * 30) as i64, 31).await {
+        match checks::annotations(&ctx.state.pool, id, ((page - 1) * ANNOTATIONS_PER_PAGE) as i64, (ANNOTATIONS_PER_PAGE + 1) as i64).await {
             Ok(annotations) => annotations,
             Err(_) => return chrome::unavailable(&ctx),
         };
@@ -95,11 +97,11 @@ async fn page(
         details_url: data.details_url,
         total,
         page,
-        has_more: annotations.len() > 30,
+        has_more: annotations.len() > ANNOTATIONS_PER_PAGE,
         can_rerequest,
         annotations: annotations
             .into_iter()
-            .take(30)
+            .take(ANNOTATIONS_PER_PAGE)
             .map(|a| view::Annotation {
                 path: a.path.clone(),
                 location: format!("lines {}–{}", a.start_line, a.end_line),
@@ -110,6 +112,9 @@ async fn page(
             })
             .collect(),
     };
+    if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+        return ctx.error(status, "Repository not found.");
+    }
     ctx.page_model(
         "Check run",
         Page::Repositories(RepoPage::Check {

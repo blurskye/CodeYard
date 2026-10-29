@@ -60,14 +60,15 @@ pub async fn fork_repo(
         full_name: format!("{}/{}", owner, source_repo.name),
     };
 
+    let topics = repository_topics(&pool, &[forked_repo.id]).await?
+        .remove(&forked_repo.id).unwrap_or_default();
     Ok((
         StatusCode::CREATED,
         Json(ForkResponse {
-            // A fork starts without the source's topics.
             repo: RepoResponse::new(
                 &forked_repo,
                 &user.username,
-                Vec::new(),
+                topics,
                 Some(forked_from_info),
             ),
             message: format!(
@@ -166,6 +167,15 @@ pub async fn list_forks(
         .collect::<Vec<_>>();
     let mut owners = repository_owners(&state.pool, &ids).await?;
     let mut topics = repository_topics(&state.pool, &ids).await?;
+    // Enrichment may have observed topics written after a privacy or membership change.
+    let viewer = crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
+    let mut readable = std::collections::HashSet::new();
+    for ids in ids.chunks(100) {
+        readable.extend(db::repositories::access::readable_repository_ids(
+            &state.pool, viewer.as_ref().map(|user| user.id), ids,
+        ).await.map_err(|_| repository_unavailable())?);
+    }
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     let owner = owners.remove(&repository.id).expect("validated owner");
     let parent_info = ForkParent {
         id: repository.id,
@@ -176,6 +186,7 @@ pub async fn list_forks(
 
     let mut responses = Vec::with_capacity(visible_forks.len());
     for fork in visible_forks {
+        if !readable.contains(&fork.id) { continue; }
         let fork_owner = owners.remove(&fork.id).expect("validated owner");
         let topics = topics.remove(&fork.id).unwrap_or_default();
         responses.push(RepoResponse::new(

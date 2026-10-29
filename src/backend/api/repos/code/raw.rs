@@ -239,6 +239,9 @@ pub async fn raw_page(
     OriginalUri(uri): OriginalUri,
     Path(params): Path<HashMap<String, String>>,
 ) -> Response {
+    if headers.contains_key(header::AUTHORIZATION) {
+        return token_raw_page(state, headers, method, &params).await;
+    }
     let head = method == Method::HEAD;
     let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) } {
         Ok(range) => range,
@@ -288,6 +291,58 @@ pub async fn raw_page(
             crate::backend::api::repos::chrome::store_error(&ctx, Some(&loaded.chrome), error)
         }
     }
+}
+
+/// REST contents documents advertise this same native URL. Bearer clients retain their
+/// repository-scoped token instead of being downgraded to anonymous browser visitors.
+async fn token_raw_page(state: Arc<AppState>, headers: HeaderMap, method: Method, params: &HashMap<String, String>) -> Response {
+    let (repository, authentication) = match crate::backend::api::github::repository(
+        &state, &headers, &params["owner"], &params["repo"], false,
+    ).await {
+        Ok(value) => value,
+        Err(error) => return error.into_response(),
+    };
+    let Some(authentication) = authentication else { return StatusCode::UNAUTHORIZED.into_response(); };
+    let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(authentication.token.id);
+    if credential.authorize(&state.pool, &repository, false).await.is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let store = repo_store(&repository, state.cluster.as_ref());
+    let refs = match store.refs().await {
+        Ok(refs) => refs,
+        Err(error) => return raw_store_error(error).into_response(),
+    };
+    let names = refs.keys().flat_map(|name| {
+        let short = name.strip_prefix("refs/heads/").or_else(|| name.strip_prefix("refs/tags/"));
+        std::iter::once(name.clone()).chain(short.map(str::to_owned))
+    }).collect::<Vec<_>>();
+    use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
+    let Some(resolved) = resolve_repo_ref_path(&split_path(&params["ref_path"]), &names, true) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let head = method == Method::HEAD;
+    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { requested_range(&headers) } {
+        Ok(range) => range,
+        Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
+    };
+    let permit = if head { None } else {
+        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads).await else {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        };
+        Some(permit)
+    };
+    let blob = match store.blob_range(&resolved.reference, &resolved.path, range).await {
+        Ok(blob) => blob,
+        Err(error) => return raw_store_error(error).into_response(),
+    };
+    let current = match crate::backend::repositories::access::current_repository(&state.pool, repository.id).await {
+        Ok(current) => current,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    if credential.authorize(&state.pool, &current, false).await.is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    raw_response(&resolved.path, blob, partial, permit)
 }
 
 #[cfg(test)]

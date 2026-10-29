@@ -317,16 +317,23 @@ async fn preview_at(
     if pending_cr && target.is_none() {
         line += 1;
     }
-    let chunk = store
+    let mut chunk = store
         .blob_range(
             reference,
             path,
             BlobRange::Window {
                 offset: start,
-                length: PREVIEW_BYTES,
+                length: PREVIEW_BYTES + 1,
             },
         )
         .await?;
+    if chunk.bytes.len() > PREVIEW_BYTES as usize {
+        let boundary = PREVIEW_BYTES as usize;
+        // Keep a CRLF pair together, rather than rendering the next LF as an empty line.
+        if chunk.bytes[boundary - 1] != b'\r' || chunk.bytes[boundary] != b'\n' {
+            chunk.bytes.truncate(boundary);
+        }
+    }
     Ok((chunk, line))
 }
 
@@ -438,7 +445,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
             None
         },
         previous: if start > 0 && !binary {
-            Some(start.saturating_sub(256 * 1024))
+            Some(start.saturating_sub(PREVIEW_BYTES))
         } else {
             None
         },

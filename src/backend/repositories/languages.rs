@@ -8,13 +8,15 @@ use anyhow::Result;
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex, Weak},
     time::Duration,
 };
 
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(60);
 type RefreshRequest = (HashSet<String>, Option<Option<i64>>);
 static REFRESHES: LazyLock<Mutex<HashMap<PathBuf, Option<RefreshRequest>>>> =
+    LazyLock::new(Default::default);
+static COMPUTATIONS: LazyLock<Mutex<HashMap<i64, Weak<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(Default::default);
 
 pub async fn stored(pool: &DbPool, repo_id: i64) -> Result<Vec<LanguageStat>> {
@@ -38,7 +40,16 @@ pub async fn compute_and_store(
     repository: &db::models::Repository,
     branch: &str,
 ) -> Result<Vec<LanguageStat>, RepoError> {
+    let computation = {
+        let mut computations = COMPUTATIONS.lock().unwrap_or_else(|error| error.into_inner());
+        computations.retain(|_, lock| lock.strong_count() != 0);
+        let lock = computations.get(&repository.id).and_then(Weak::upgrade)
+            .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
+        computations.insert(repository.id, Arc::downgrade(&lock));
+        lock
+    };
     tokio::time::timeout(REFRESH_TIMEOUT, async {
+        let _computation = computation.lock().await;
         let Some(source) = db::repository_stats::language_source(pool, repository.id).await? else {
             return Ok(Vec::new());
         };

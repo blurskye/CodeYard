@@ -266,6 +266,9 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     } else if !page.path.is_empty() {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository is empty."));
     }
+    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+        .await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(ctx.page_model(
         &format!("{}/{}", loaded.chrome.owner, loaded.chrome.name),
         crate::webui::app::Page::Repositories(view::page::Page::Tree {
@@ -284,21 +287,12 @@ async fn about_languages(
     store: &RepoStore,
     branch: &str,
 ) -> Vec<LanguageShare> {
-    let stored = repo_languages::stored(&state.pool, loaded.repository.id)
-        .await
-        .unwrap_or_default();
-    let languages = if stored.is_empty() {
-        match repo_languages::compute_and_store(&state.pool, store, &loaded.repository, branch)
-            .await
-        {
-            Ok(languages) => languages,
-            Err(error) => {
-                tracing::warn!(repo_id = loaded.repository.id, %error, "could not compute the language bar");
-                Vec::new()
-            }
+    let languages = match repo_languages::compute_and_store(&state.pool, store, &loaded.repository, branch).await {
+        Ok(languages) => languages,
+        Err(error) => {
+            tracing::warn!(repo_id = loaded.repository.id, %error, "could not compute the language bar");
+            Vec::new()
         }
-    } else {
-        stored
     };
     languages
         .into_iter()
