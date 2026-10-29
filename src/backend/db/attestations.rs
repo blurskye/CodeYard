@@ -4,6 +4,7 @@ use anyhow::Result;
 use std::collections::BTreeSet;
 
 pub const MAX_BUNDLE_BYTES: usize = 1024 * 1024;
+pub const MAX_RESPONSE_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -46,6 +47,13 @@ pub struct Attestation {
     pub bundle: String,
     pub predicate_type: String,
     pub initiator: String,
+}
+
+/// Retain the first over-budget row as cursor lookahead, never the entire requested collection.
+pub(crate) fn append_page(rows: &mut Vec<Attestation>, bytes: &mut usize, row: Attestation) -> bool {
+    *bytes += row.bundle.len() + 256;
+    rows.push(row);
+    *bytes <= MAX_RESPONSE_BUNDLE_BYTES
 }
 
 /// A listing row without its bundle: `subjects` is a JSON array of digests.

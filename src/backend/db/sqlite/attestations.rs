@@ -31,8 +31,12 @@ pub async fn create(
     .await?;
     let id = sqlx::query_scalar("INSERT INTO artifact_attestations(repo_id,bundle_hash,predicate_type,initiator,created_at) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(repo_id,bundle_hash) DO UPDATE SET bundle_hash=excluded.bundle_hash RETURNING id")
         .bind(repo).bind(&bundle.hash).bind(&bundle.predicate).bind(initiator).bind(super::time::encode(super::time::now())).fetch_one(&mut *tx).await?;
-    for digest in &bundle.subjects {
-        sqlx::query("INSERT INTO attestation_subjects(attestation_id,digest) VALUES(?1,?2) ON CONFLICT DO NOTHING").bind(id).bind(digest).execute(&mut *tx).await?;
+    let subjects: Vec<_> = bundle.subjects.iter().collect();
+    for subjects in subjects.chunks(400) {
+        let mut insert = sqlx::QueryBuilder::<sqlx::Sqlite>::new("INSERT INTO attestation_subjects(attestation_id,digest) ");
+        insert.push_values(subjects, |mut row, digest| { row.push_bind(id).push_bind(*digest); });
+        insert.push(" ON CONFLICT DO NOTHING");
+        insert.build().execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(id)
@@ -43,8 +47,16 @@ fn condition() -> String {
 }
 
 pub async fn list(pool: &SqlitePool, filter: &Filter<'_>) -> Result<Vec<Attestation>> {
-    Ok(sqlx::query_as(&format!("SELECT a.id,a.repo_id,(SELECT b.bundle FROM attestation_bundles b WHERE b.hash=a.bundle_hash) AS bundle,a.predicate_type,a.initiator {} AND a.id>?6 AND a.id<?7 ORDER BY a.id {} LIMIT ?8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" }))
-        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests.map(serde_json::to_string).transpose()?).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).fetch_all(pool).await?)
+    use futures_util::TryStreamExt;
+    let sql = format!("SELECT a.id,a.repo_id,(SELECT b.bundle FROM attestation_bundles b WHERE b.hash=a.bundle_hash) AS bundle,a.predicate_type,a.initiator {} AND a.id>?6 AND a.id<?7 ORDER BY a.id {} LIMIT ?8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" });
+    let mut stream = sqlx::query_as::<_, Attestation>(&sql)
+        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests.map(serde_json::to_string).transpose()?).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).fetch(pool);
+    let mut rows = Vec::new();
+    let mut bytes = 0;
+    while let Some(row) = stream.try_next().await? {
+        if !crate::backend::db::attestations::append_page(&mut rows, &mut bytes, row) { break; }
+    }
+    Ok(rows)
 }
 
 pub async fn summaries(pool: &SqlitePool, filter: &Filter<'_>) -> Result<Vec<Summary>> {
