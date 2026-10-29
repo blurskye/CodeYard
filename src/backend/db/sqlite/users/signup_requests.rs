@@ -92,7 +92,7 @@ pub async fn approve_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_private_reviewer(&mut tx, &reviewer).await?;
+    require_reviewer(&mut tx, &reviewer).await?;
 
     let signup_request =
         sqlx::query_as::<_, SignupRequest>("SELECT * FROM signup_requests WHERE id = ?1")
@@ -149,7 +149,7 @@ pub async fn reject_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_private_reviewer(&mut tx, &reviewer).await?;
+    require_reviewer(&mut tx, &reviewer).await?;
     let rejected = sqlx::query_as::<_, (String, Option<String>)>(
         "UPDATE signup_requests SET status = 'rejected', reviewed_by = ?1, reviewed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND status = 'pending' RETURNING username, email",
     )
@@ -167,17 +167,17 @@ pub async fn reject_signup_request(
     Ok(request)
 }
 
-async fn require_private_reviewer(
+async fn require_reviewer(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: &AdministratorActor,
 ) -> Result<()> {
-    let private = sqlx::query_scalar::<_, bool>(
-        "SELECT setup_completed AND node_mode='private' FROM node_configuration WHERE id=1",
+    let configured = sqlx::query_scalar::<_, bool>(
+        "SELECT setup_completed FROM node_configuration WHERE id=1",
     )
     .fetch_optional(&mut **tx)
     .await?
     .unwrap_or(false);
-    if !private || !super::transitions::active_admin_session(tx, actor).await? {
+    if !configured || !super::transitions::active_admin_session(tx, actor).await? {
         return Err(ReviewError::Denied.into());
     }
     Ok(())
