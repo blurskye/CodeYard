@@ -1683,7 +1683,7 @@ CREATE TABLE actions_blob_parts (
 );
 CREATE TRIGGER actions_blob_delete AFTER DELETE ON actions_blob_parts BEGIN
     INSERT INTO pending_object_deletions(object_key,delete_after)
-    VALUES(OLD.object_key,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour'))
+    VALUES(OLD.object_key,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+7 days'))
     ON CONFLICT(object_key) DO NOTHING;
 END;
 

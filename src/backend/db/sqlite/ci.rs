@@ -842,8 +842,11 @@ pub(crate) async fn stop_ci_runs(tx: &mut Transaction<'_, Sqlite>, run_ids: &[i6
     for run in &queued {
         finish_in_tx(tx, run, "cancelled", Some(ACCESS_LOST_MESSAGE)).await?;
     }
-    // Runtime tokens and blob grants end with the access of these runs. Results
-    // authentication and downloads check them.
+    // Revoke job PATs as well as runtime capabilities in this authority transition.
+    sqlx::query("DELETE FROM personal_access_tokens WHERE id IN (SELECT token_id FROM actions_github_tokens WHERE run_id IN (SELECT value FROM json_each(?1)))")
+        .bind(&ids)
+        .execute(&mut **tx)
+        .await?;
     sqlx::query(
         "DELETE FROM actions_runtime_tokens WHERE run_id IN (SELECT value FROM json_each(?1))",
     )

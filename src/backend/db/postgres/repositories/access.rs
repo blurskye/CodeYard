@@ -184,6 +184,9 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
     if archived && !include_archived {
         return Ok(None);
     }
+    // Transfers lock the owning and ancestor organizations as one ordered set.
+    let _: Vec<i64> = sqlx::query_scalar("WITH RECURSIVE family AS (SELECT id,owner_org_id,forked_from_id FROM repositories WHERE id=$1 UNION SELECT r.id,r.owner_org_id,r.forked_from_id FROM repositories r JOIN family f ON r.id=f.forked_from_id) SELECT id FROM organizations WHERE id IN (SELECT owner_org_id FROM family) ORDER BY id FOR SHARE")
+        .bind(repo_id).fetch_all(&mut *connection).await?;
     let organization = match (owner_kind.as_str(), owner_user_id, owner_org_id) {
         ("user", Some(_), None) => false,
         ("org", None, Some(org_id)) => {
@@ -316,6 +319,11 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
     .fetch_optional(&mut *connection)
     .await?;
 
+    // Retain the installation supplying App-derived authority until the effect commits.
+    // Recheck its bounds in the subsequent projection after any revocation lock wait.
+    let _: Vec<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id WHERE a.bot_id=$1 AND (i.user_id=$2 OR i.org_id=$3) ORDER BY i.id FOR SHARE OF i")
+        .bind(user_id).bind(owner_user_id).bind(owner_org_id)
+        .fetch_all(&mut *connection).await?;
     let access = user_repo_access_in_transaction(connection, user_id, repo_id).await?;
     Ok(Some(LockedRepositoryAccess {
         access,

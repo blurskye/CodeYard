@@ -1818,7 +1818,7 @@ CREATE TABLE IF NOT EXISTS actions_blob_parts (
 CREATE OR REPLACE FUNCTION actions_blob_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO pending_object_deletions(object_key,delete_after)
-    VALUES(OLD.object_key,NOW()+INTERVAL '1 hour') ON CONFLICT(object_key) DO NOTHING;
+    VALUES(OLD.object_key,clock_timestamp()+INTERVAL '7 days') ON CONFLICT(object_key) DO NOTHING;
     RETURN OLD;
 END;
 $$;

@@ -182,7 +182,8 @@ pub(super) async fn save_in_transaction(
             }
         }
     }
-    let mut previous: Vec<OrgInvitation> = sqlx::query_as("SELECT * FROM organization_invitations WHERE org_id=?1 AND ((?2 IS NOT NULL AND user_id=?2) OR (?3 IS NOT NULL AND email=?3)) LIMIT 2")
+    let recipient = RECIPIENT.replace("?1", "?2");
+    let mut previous: Vec<OrgInvitation> = sqlx::query_as(&format!("SELECT i.* FROM organization_invitations i WHERE i.org_id=?1 AND ((?2 IS NOT NULL AND {recipient}) OR (?3 IS NOT NULL AND i.email=?3)) ORDER BY i.id LIMIT 2"))
         .bind(org).bind(target).bind(&input.email).fetch_all(&mut *tx).await?;
     if previous.len() > 1 {
         return Ok(Conflict);
@@ -407,7 +408,7 @@ pub async fn accept_organization_invitation(
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3) AND {LIVE} ORDER BY i.id LIMIT 1");
+    let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3) AND {LIVE} AND NOT EXISTS(SELECT 1 FROM organization_member_history h WHERE h.org_id=i.org_id AND h.user_id=?1 AND h.removed_at>=i.created_at) ORDER BY i.id LIMIT 1");
     let Some(invitation): Option<OrgInvitation> = sqlx::query_as(&sql)
         .bind(actor)
         .bind(org)

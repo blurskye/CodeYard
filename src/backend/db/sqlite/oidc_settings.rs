@@ -152,7 +152,7 @@ pub async fn token_settings(pool: &SqlitePool, repo: i64) -> Result<TokenSetting
             if let Some(value) = property.value.filter(PropertyValue::present) {
                 let value = match value {
                     PropertyValue::String(s) => s,
-                    PropertyValue::Strings(v) => v.join(","),
+                    PropertyValue::Strings(v) => serde_json::to_string(&v)?,
                 };
                 properties.insert(format!("repo_property_{}", property.property_name), value);
             }

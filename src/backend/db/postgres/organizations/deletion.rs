@@ -102,6 +102,8 @@ pub async fn delete_organization_repository(
     .await?;
     let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=$1 ORDER BY a.file_id")
         .bind(repo).fetch_all(&mut *tx).await?;
+    sqlx::query("UPDATE packages SET visibility='private' WHERE repo_id=$1 AND EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2 AND is_private)")
+        .bind(repo).bind(org).execute(&mut *tx).await?;
     let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL RETURNING *")
         .bind(repo).bind(org).fetch_optional(&mut *tx).await?;
     let Some(deleted) = deleted else {

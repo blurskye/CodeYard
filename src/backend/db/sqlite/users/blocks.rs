@@ -80,11 +80,15 @@ pub async fn change_block(
         tx.commit().await?;
         return Ok(());
     }
-    sqlx::query("INSERT INTO user_blocks(user_id,blocked_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
+    let inserted = sqlx::query("INSERT INTO user_blocks(user_id,blocked_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
         .bind(user)
         .bind(target)
         .execute(&mut *tx)
-        .await?;
+        .await?.rows_affected();
+    if inserted == 0 {
+        tx.commit().await?;
+        return Ok(());
+    }
     sqlx::query("DELETE FROM follows WHERE (follower_id=?1 AND following_id=?2) OR (follower_id=?2 AND following_id=?1)").bind(user).bind(target).execute(&mut *tx).await?;
     let repositories: Vec<(i64,i64)> = sqlx::query_as("SELECT id,owner_user_id FROM repositories WHERE owner_kind='user' AND owner_user_id IN (?1,?2) ORDER BY id").bind(user).bind(target).fetch_all(&mut *tx).await?;
     for (repo, owner) in repositories {
@@ -102,6 +106,8 @@ pub async fn change_block(
         for table in ["pr_assignees", "pr_reviewers"] {
             sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id=?1)")).bind(repo).bind(actor).execute(&mut *tx).await?;
         }
+        sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE repo_id=?1 AND invitee_id=?2 AND state='pending'")
+            .bind(repo).bind(actor).execute(&mut *tx).await?;
         crate::backend::db::sqlite::ci::stop_actor_repo_ci_runs(&mut tx, actor, repo).await?;
     }
     sqlx::query("DELETE FROM notifications WHERE (user_id=?1 AND actor_id=?2) OR (user_id=?2 AND actor_id=?1)").bind(user).bind(target).execute(&mut *tx).await?;
