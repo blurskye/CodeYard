@@ -31,7 +31,7 @@ pub use forms::{
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use markdown::EMOJI;
 pub use markdown::{
-    document_html, escape_html, markdown_tab_class, outline_of_html, parse_markdown, LinkBase,
+    document_html, escape_html, markdown_tab_class, markdown_text, outline_of_html, parse_markdown, LinkBase,
     Markdown, OutlineEntry, RepoMarkdown,
 };
 pub use markdown_preview::body_preview;

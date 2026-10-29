@@ -52,7 +52,12 @@ where
     F: Fn(Vec<db::models::Repository>) -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<std::collections::HashSet<i64>>>,
 {
-    let found = references::candidates(texts, document, (owner, name));
+    let sources: Vec<String> = texts.iter().map(|text| (*text).to_owned()).collect();
+    let current = (owner.to_owned(), name.to_owned());
+    let found = tokio::task::spawn_blocking(move || {
+        let texts: Vec<&str> = sources.iter().map(String::as_str).collect();
+        references::candidates(&texts, document, (&current.0, &current.1))
+    }).await?;
     let mut records = vec![repository.clone()];
     let mut names = Vec::new();
     for (owner, name) in found.repositories {

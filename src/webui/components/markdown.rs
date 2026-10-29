@@ -1302,6 +1302,40 @@ fn blockquote_open(kind: Option<BlockQuoteKind>) -> String {
     )
 }
 
+/// The visible words of a comment, without Markdown or allowed HTML tags.
+pub fn markdown_text(text: &str) -> String {
+    if text.len() > MAX_SOURCE_BYTES {
+        let mut end = MAX_PLAIN_TEXT_BYTES.min(text.len());
+        while !text.is_char_boundary(end) { end -= 1; }
+        return text[..end].to_owned();
+    }
+    let mut out = String::new();
+    for event in Parser::new_ext(text, markdown_options(false)) {
+        match event {
+            Event::Text(text) | Event::Code(text) | Event::InlineMath(text) | Event::DisplayMath(text) => out.push_str(&text),
+            Event::Html(html) | Event::InlineHtml(html) => {
+                for piece in pieces(&html) {
+                    match piece {
+                        Piece::Text(text) => out.push_str(&decode_references(text).0),
+                        Piece::Literal(text) => out.push_str(text),
+                        Piece::Open { name: "br" | "hr", .. } | Piece::Close { name: "p" | "div" | "li" | "tr" | "pre" | "blockquote", .. } => out.push('\n'),
+                        Piece::Open { name: "img", attrs, .. } => {
+                            if let Some((_, alt)) = attrs.iter().find(|(name, _)| name == "alt") { out.push_str(&decode_references(alt).0); }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Event::SoftBreak | Event::HardBreak | Event::Rule | Event::End(TagEnd::Item | TagEnd::TableHead | TagEnd::TableRow) => { if !out.ends_with('\n') { out.push('\n'); } }
+            Event::End(TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::BlockQuote(_) | TagEnd::CodeBlock) => { if !out.ends_with("\n\n") { out.push_str("\n\n"); } }
+            Event::End(TagEnd::TableCell) => out.push('\t'),
+            Event::TaskListMarker(checked) => out.push_str(if checked { "[x] " } else { "[ ] " }),
+            _ => {}
+        }
+    }
+    out.trim().to_owned()
+}
+
 /// Markdown for comments, descriptions and previews: every source line break shows.
 pub fn parse_markdown(text: &str, references: &References) -> String {
     bounded_markdown(text, false, references).unwrap_or_else(|| plain_text_preview(text))
