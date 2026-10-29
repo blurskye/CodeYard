@@ -162,23 +162,31 @@ pub(crate) async fn check_namespace(
     Ok(())
 }
 
-pub(crate) async fn local_key(
-    path: &std::path::Path,
-) -> anyhow::Result<crate::backend::cluster::NodeKey> {
-    let directory = path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Repository identity directory missing"))?
-        .to_owned();
-    tokio::task::spawn_blocking(move || crate::backend::cluster::load_or_create(&directory)).await?
+static LOCAL_SIGNER: std::sync::OnceLock<crate::backend::cluster::NodeKey> = std::sync::OnceLock::new();
+
+/// Configured once before serving; repository paths never select a forge signing identity.
+pub(crate) fn configure_local_identity(state_dir: &std::path::Path, repos: &std::path::Path) -> anyhow::Result<()> {
+    let key = crate::backend::cluster::identity::release_key(state_dir, repos)?;
+    if let Some(current) = LOCAL_SIGNER.get() {
+        anyhow::ensure!(current.public_hex() == key.public_hex(), "Release identity already configured");
+    } else {
+        LOCAL_SIGNER.set(key).map_err(|_| anyhow::anyhow!("Release identity already configured"))?;
+    }
+    Ok(())
+}
+
+fn local_key() -> anyhow::Result<crate::backend::cluster::NodeKey> {
+    LOCAL_SIGNER.get().cloned().ok_or_else(|| anyhow::anyhow!("Release identity not configured"))
 }
 
 pub(crate) async fn verify_local(
     attestation: &Attestation,
-    path: &std::path::Path,
 ) -> Result<records::Publication, RepoError> {
-    let key = local_key(path)
-        .await
-        .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
+    let key = local_key().map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
+    verify_with_key(attestation, &key)
+}
+
+fn verify_with_key(attestation: &Attestation, key: &crate::backend::cluster::NodeKey) -> Result<records::Publication, RepoError> {
     records::Publication::verify(attestation, &key.public_hex()).map_err(|_| {
         RepoError::new(
             ErrorKind::Invalid,
@@ -237,9 +245,7 @@ pub(crate) async fn candidate(
         .map_err(super::unavailable)?;
     let key = match cluster {
         Some(context) => context.key.clone(),
-        None => local_key(std::path::Path::new(&repository.disk_path))
-            .await
-            .map_err(super::unavailable)?,
+        None => local_key().map_err(super::unavailable)?,
     };
     Attestation::sign(&statement, &key)
         .map(Some)
@@ -252,8 +258,12 @@ mod tests {
     #[tokio::test]
     async fn local_publication_requires_the_persisted_forge_identity() {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("repo.git");
-        let key = local_key(&path).await.unwrap();
+        let repos = root.path().join("repos");
+        let state = root.path().join("state");
+        let legacy = crate::backend::cluster::load_or_create(&repos).unwrap();
+        let key = crate::backend::cluster::identity::release_key(&state, &repos).unwrap();
+        assert_eq!(legacy.public_hex(), key.public_hex());
+        assert!(state.join("release.key").is_file());
         let statement = Statement::new(
             1,
             "https://forge.example/alice/repo",
@@ -264,11 +274,10 @@ mod tests {
         )
         .unwrap();
         let valid = Attestation::sign(&statement, &key).unwrap();
-        assert!(verify_local(&valid, &path).await.is_ok());
+        assert!(verify_with_key(&valid, &key).is_ok());
         let forged =
             Attestation::sign(&statement, &crate::backend::cluster::NodeKey::generate()).unwrap();
-        let error = verify_local(&forged, &path)
-            .await
+        let error = verify_with_key(&forged, &key)
             .err()
             .expect("unknown signing identity must fail");
         assert_eq!(error.kind, ErrorKind::Invalid);

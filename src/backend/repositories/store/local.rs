@@ -2947,7 +2947,6 @@ impl LocalStore {
                 } else if store.node_id.flatten().is_none() {
                     crate::backend::repositories::releases::immutable::verify_local(
                         attestation,
-                        store.path(),
                     )
                     .await?
                 } else {
