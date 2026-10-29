@@ -340,6 +340,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::advance_c
     /// Advances the version that contributor proofs are keyed to. Pushes call it after the refs move.
     fn advance_contribution_version(pool: &DbPool, repo_id: i64) -> Result<()>);
 
+native_operation!(crate::backend::db::postgres::repositories::records::update_repo_size_at,
+    crate::backend::db::sqlite::repositories::records::update_repo_size_at,
+    fn update_repo_size_at(pool: &DbPool, repo_id: i64, size: i64, node: Option<i64>) -> Result<()>);
+
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_size,
     crate::backend::db::sqlite::repositories::records::update_repo_size,
     fn update_repo_size(pool: &DbPool, repo_id: i64, size: i64) -> Result<()>);

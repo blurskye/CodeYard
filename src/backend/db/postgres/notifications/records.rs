@@ -41,6 +41,10 @@ pub async fn create_notification(
             NotificationSuppressed
         );
     }
+    if input.kind == "repository_forked" {
+        let fork = input.metadata["fork_repository_id"].as_i64().ok_or(NotificationSuppressed)?;
+        anyhow::ensure!(lock_notification_scope_readable(&mut tx, input.user_id, fork).await?, NotificationSuppressed);
+    }
     if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
         let _: Option<i64> =
             sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")

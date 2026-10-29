@@ -516,11 +516,19 @@ pub async fn advance_contribution_version(pool: &PgPool, repo_id: i64) -> Result
 }
 
 pub async fn update_repo_size(pool: &PgPool, repo_id: i64, size: i64) -> Result<()> {
+    update_repo_size_checked(pool, repo_id, size, None).await
+}
+pub async fn update_repo_size_at(pool: &PgPool, repo_id: i64, size: i64, node: Option<i64>) -> Result<()> {
+    update_repo_size_checked(pool, repo_id, size, Some(node)).await
+}
+async fn update_repo_size_checked(pool: &PgPool, repo_id: i64, size: i64, node: Option<Option<i64>>) -> Result<()> {
     let mut tx = pool.begin().await?;
     let changed =
-        sqlx::query("UPDATE repositories SET size_bytes=$1 WHERE id=$2 AND size_bytes<>$1")
+        sqlx::query("UPDATE repositories SET size_bytes=$1 WHERE id=$2 AND size_bytes<>$1 AND (NOT $3 OR storage_node_id IS NOT DISTINCT FROM $4)")
             .bind(size)
             .bind(repo_id)
+            .bind(node.is_some())
+            .bind(node.flatten())
             .execute(&mut *tx)
             .await?
             .rows_affected();

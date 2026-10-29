@@ -1581,7 +1581,8 @@ pub fn fork(
     forkee_owner: &str,
 ) -> Value {
     json!({
-        "forkee": repository(forkee, forkee_owner),
+        // Source-scoped deliveries do not confer access to a private destination owner.
+        "forkee": if forkee.is_private { Value::Null } else { repository(forkee, forkee_owner) },
         "repository": repository(repo, owner),
         "sender": person(forker),
     })
