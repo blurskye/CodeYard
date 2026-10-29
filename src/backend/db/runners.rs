@@ -93,9 +93,7 @@ impl GroupInput {
     }
     pub fn validate(&self) -> Result<()> {
         anyhow::ensure!(
-            self.name.as_ref().is_none_or(|name| !name.trim().is_empty()
-                && name.len() <= 100
-                && !name.chars().any(char::is_control)),
+            self.name.as_ref().is_none_or(|name| valid_group_name(name)),
             Refusal::Invalid("name")
         );
         anyhow::ensure!(
@@ -180,14 +178,18 @@ pub enum Labels {
 pub(crate) fn jit_node_name(id: i64, hash: &str) -> String {
     format!("jit-{id}-{}", hash.chars().take(32).collect::<String>())
 }
+pub fn valid_group_name(name: &str) -> bool {
+    !name.trim().is_empty() && name.len() <= 100 && !name.chars().any(char::is_control)
+}
+pub fn valid_label(label: &str) -> bool {
+    !label.is_empty() && label.len() <= 128
+        && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+}
 pub fn normalize_labels(labels: &[String]) -> Result<Vec<String>> {
     anyhow::ensure!(labels.len() <= 100, Refusal::Invalid("labels"));
     let mut labels: Vec<_> = labels.iter().map(|s| s.to_ascii_lowercase()).collect();
     anyhow::ensure!(
-        labels.iter().all(|s| !s.is_empty()
-            && s.len() <= 128
-            && s.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))),
+        labels.iter().all(|label| valid_label(label)),
         Refusal::Invalid("labels")
     );
     labels.retain(|label| label != "self-hosted");

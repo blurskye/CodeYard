@@ -158,7 +158,8 @@ fn default_podman_socket() -> String {
             .join("podman/podman.sock")
             .to_string_lossy()
             .into_owned(),
-        _ => "/run/user/1000/podman/podman.sock".into(),
+        // SAFETY: geteuid has no pointer arguments or preconditions.
+        _ => format!("/run/user/{}/podman/podman.sock", unsafe { libc::geteuid() }),
     }
 }
 
@@ -230,7 +231,7 @@ fn parse_platform_map(raw: &str) -> Result<BTreeMap<String, String>> {
             .context("CI_ACT_PLATFORM_MAP entries look like label=image")?;
         let label = label.trim().to_ascii_lowercase();
         ensure!(
-            !label.is_empty() && !label.contains(char::is_whitespace) && !image.trim().is_empty(),
+            crate::backend::db::runners::valid_label(&label) && !image.trim().is_empty(),
             "CI_ACT_PLATFORM_MAP entries look like label=image"
         );
         map.insert(label, image.trim().to_owned());
