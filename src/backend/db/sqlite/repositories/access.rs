@@ -97,7 +97,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     AND EXISTS(SELECT 1 FROM org_memberships member WHERE member.org_id=a.org_id
                         AND member.user_id=u.id AND member.role IN ('owner','admin','member'))
                     AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(
-                        SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id
+                        SELECT 1 FROM teams t JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                         WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret')
                             AND tm.user_id=u.id AND tm.role IN ('member','maintainer'))))),0),
             COALESCE((
@@ -105,7 +106,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     WHEN 'member' THEN COALESCE((
                         SELECT MAX(a.permission) FROM team_repo_access a
                         JOIN teams t ON t.id = a.team_id AND t.org_id = m.org_id
-                        JOIN effective_team_memberships tm ON tm.team_id = t.id
+                        JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                             AND tm.user_id = u.id AND tm.role IN ('member','maintainer')
                         WHERE a.repo_id = r.id AND a.permission BETWEEN 1 AND 5
                             AND t.privacy IN ('visible','secret')

@@ -2038,14 +2038,37 @@ CREATE TABLE team_invitations (
 CREATE INDEX team_invitations_invitation ON team_invitations(invitation_id);
 CREATE INDEX teams_parent ON teams(parent_team_id,id);
 
-CREATE VIEW team_ancestors AS
-WITH RECURSIVE ancestors(team_id,ancestor_id) AS (
-    SELECT id,id FROM teams WHERE privacy IN ('visible','secret')
-    UNION
-    SELECT a.team_id,p.id FROM ancestors a JOIN teams t ON t.id=a.ancestor_id
-    JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id
-    WHERE t.privacy='visible' AND p.privacy='visible'
-) SELECT team_id,ancestor_id FROM ancestors;
+-- Reads must never expand unrelated tenants' hierarchies. Maintain the indexed closure
+-- on hierarchy writes, which already serialize through organization authority.
+CREATE TABLE team_ancestors (
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    ancestor_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    PRIMARY KEY(team_id,ancestor_id)
+);
+CREATE INDEX team_ancestors_ancestor ON team_ancestors(ancestor_id,team_id);
+CREATE FUNCTION refresh_team_ancestors() RETURNS TRIGGER LANGUAGE plpgsql AS $$
+BEGIN
+    DELETE FROM team_ancestors WHERE team_id IN (
+        WITH RECURSIVE subtree(id) AS (
+            SELECT NEW.id UNION SELECT t.id FROM teams t JOIN subtree s ON t.parent_team_id=s.id
+        ) SELECT id FROM subtree
+    );
+    INSERT INTO team_ancestors(team_id,ancestor_id)
+    WITH RECURSIVE subtree(id) AS (
+        SELECT NEW.id UNION SELECT t.id FROM teams t JOIN subtree s ON t.parent_team_id=s.id
+    ), paths(team_id,ancestor_id) AS (
+        SELECT t.id,t.id FROM teams t JOIN subtree s ON s.id=t.id WHERE t.privacy IN ('visible','secret')
+        UNION
+        SELECT a.team_id,p.id FROM paths a JOIN teams t ON t.id=a.ancestor_id
+        JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id
+        WHERE t.privacy='visible' AND p.privacy='visible'
+    ) SELECT team_id,ancestor_id FROM paths;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER team_ancestors_insert AFTER INSERT ON teams FOR EACH ROW EXECUTE FUNCTION refresh_team_ancestors();
+CREATE TRIGGER team_ancestors_update AFTER UPDATE OF parent_team_id,privacy,org_id ON teams
+    FOR EACH ROW WHEN (OLD.parent_team_id IS DISTINCT FROM NEW.parent_team_id OR OLD.privacy IS DISTINCT FROM NEW.privacy OR OLD.org_id IS DISTINCT FROM NEW.org_id)
+    EXECUTE FUNCTION refresh_team_ancestors();
 
 CREATE VIEW effective_team_memberships AS
 SELECT MIN(tm.id) AS id,a.ancestor_id AS team_id,tm.user_id,

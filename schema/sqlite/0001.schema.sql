@@ -1899,14 +1899,38 @@ CREATE TABLE team_invitations (
 CREATE INDEX team_invitations_invitation ON team_invitations(invitation_id);
 CREATE INDEX teams_parent ON teams(parent_team_id,id);
 
-CREATE VIEW team_ancestors AS
-WITH RECURSIVE ancestors(team_id,ancestor_id) AS (
-    SELECT id,id FROM teams WHERE privacy IN ('visible','secret')
-    UNION
-    SELECT a.team_id,p.id FROM ancestors a JOIN teams t ON t.id=a.ancestor_id
-    JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id
-    WHERE t.privacy='visible' AND p.privacy='visible'
-) SELECT team_id,ancestor_id FROM ancestors;
+-- Hierarchy writes maintain the closure; reads seek the relevant teams or memberships.
+CREATE TABLE team_ancestors (
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    ancestor_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    PRIMARY KEY(team_id,ancestor_id)
+);
+CREATE INDEX team_ancestors_ancestor ON team_ancestors(ancestor_id,team_id);
+CREATE TRIGGER team_ancestors_insert AFTER INSERT ON teams BEGIN
+    INSERT INTO team_ancestors(team_id,ancestor_id)
+        SELECT NEW.id,NEW.id WHERE NEW.privacy IN ('visible','secret');
+    INSERT INTO team_ancestors(team_id,ancestor_id)
+        SELECT NEW.id,a.ancestor_id FROM teams p JOIN team_ancestors a ON a.team_id=p.id
+        WHERE p.id=NEW.parent_team_id AND p.org_id=NEW.org_id AND p.privacy='visible' AND NEW.privacy='visible';
+END;
+CREATE TRIGGER team_ancestors_update AFTER UPDATE OF parent_team_id,privacy,org_id ON teams
+WHEN OLD.parent_team_id IS NOT NEW.parent_team_id OR OLD.privacy IS NOT NEW.privacy OR OLD.org_id IS NOT NEW.org_id BEGIN
+    DELETE FROM team_ancestors WHERE team_id IN (
+        WITH RECURSIVE subtree(id) AS (
+            SELECT NEW.id UNION SELECT t.id FROM teams t JOIN subtree s ON t.parent_team_id=s.id
+        ) SELECT id FROM subtree
+    );
+    INSERT INTO team_ancestors(team_id,ancestor_id)
+    WITH RECURSIVE subtree(id) AS (
+        SELECT NEW.id UNION SELECT t.id FROM teams t JOIN subtree s ON t.parent_team_id=s.id
+    ), paths(team_id,ancestor_id) AS (
+        SELECT t.id,t.id FROM teams t JOIN subtree s ON s.id=t.id WHERE t.privacy IN ('visible','secret')
+        UNION
+        SELECT a.team_id,p.id FROM paths a JOIN teams t ON t.id=a.ancestor_id
+        JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id
+        WHERE t.privacy='visible' AND p.privacy='visible'
+    ) SELECT team_id,ancestor_id FROM paths;
+END;
 
 CREATE VIEW effective_team_memberships AS
 SELECT MIN(tm.id) AS id,a.ancestor_id AS team_id,tm.user_id,
