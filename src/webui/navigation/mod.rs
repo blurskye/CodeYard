@@ -137,7 +137,10 @@ pub fn NavLink(
     // Transitional static/error documents have no Router. They still get useful
     // ordinary anchors instead of a panic or an inert link.
     let router = dioxus_router::try_router();
-    if let Some(router) = router.filter(|_| safe_page_target(&href) && !href.contains('#')) {
+    // Dioxus route parameters are UTF-8. Byte-only Git paths use ordinary navigation,
+    // preserving the original URI for SSR rather than decoding it into another filename.
+    let byte_path = crate::git_paths::from_url(href.split(['?', '#']).next().unwrap_or("")).is_some_and(|path| path.contains('\0'));
+    if let Some(router) = router.filter(|_| safe_page_target(&href) && !href.contains('#') && !byte_path) {
         let aria_current = aria_current.or_else(|| {
             (mark_current && router.full_route_string() == href).then(|| "page".to_owned())
         });

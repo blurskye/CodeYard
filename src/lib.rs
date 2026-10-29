@@ -9,6 +9,7 @@
 pub mod backend;
 pub mod webui;
 pub mod media;
+pub mod git_paths;
 
 #[cfg(all(target_arch = "wasm32", not(feature = "web")))]
 compile_error!("Build the browser with --no-default-features --features web.");

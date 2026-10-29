@@ -55,10 +55,7 @@ pub fn split_path(path: &str) -> Vec<String> {
 
 /// Encode each filename/ref segment, keeping only actual path separators.
 pub fn encode_path(path: &str) -> String {
-    path.split('/')
-        .map(crate::webui::encode_component)
-        .collect::<Vec<_>>()
-        .join("/")
+    crate::git_paths::url(path)
 }
 
 /// Whether a file's path names Markdown. The blob view shows such a file as a document, and the
