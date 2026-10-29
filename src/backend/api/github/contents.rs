@@ -117,7 +117,9 @@ pub(super) fn entry(
         repo_url(owner, repo),
         if kind == "dir" { "trees" } else { "blobs" }
     );
-    let download = (kind == "file").then(|| crate::webui::pages::repos::ref_path::file_url(&base, "raw", reference, path));
+    // REST clients can follow this URL with the same bearer credential. Native raw URLs
+    // remain available for browser-session downloads.
+    let download = (kind == "file").then(|| format!("{url}&raw=1"));
     json!({
         "type": kind, "name": path.rsplit('/').next().unwrap_or(path), "path": path,
         "sha": sha, "size": size, "url": url, "html_url": html, "git_url": git_url,
@@ -190,7 +192,7 @@ async fn readme(
 
 async fn read(
     State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
+    mut headers: HeaderMap,
     Path(params): Path<HashMap<String, String>>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Response> {
@@ -198,6 +200,9 @@ async fn read(
     let (repo, _) = repository(&state, &headers, owner, name, false).await?;
     let reference = query.get("ref").unwrap_or(&repo.default_branch);
     let path = params.get("path").map(String::as_str).unwrap_or("");
+    if query.get("raw").is_some_and(|value| value == "1") {
+        headers.insert(header::ACCEPT, axum::http::HeaderValue::from_static("application/vnd.github.raw"));
+    }
     let store = repo_store(&repo, state.cluster.as_ref());
     // Pin both file and directory reads so a moving branch cannot mix revisions.
     let revision = store.commit(reference).await.map_err(store_error)?.sha;
