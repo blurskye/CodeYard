@@ -95,13 +95,15 @@ pub struct UpsertBranchProtectionRuleRequest {
 pub(in crate::backend::api::repos) async fn rule_response(
     pool: &db::DbPool,
     rule: db::models::BranchProtectionRule,
+    actor: i64,
 ) -> Result<BranchProtectionRuleResponse, (StatusCode, Json<ApiError>)> {
-    Ok(rule_responses(pool, vec![rule]).await?.remove(0))
+    Ok(rule_responses(pool, vec![rule], actor).await?.remove(0))
 }
 
 pub(in crate::backend::api::repos) async fn rule_responses(
     pool: &db::DbPool,
     rules: Vec<db::models::BranchProtectionRule>,
+    actor: i64,
 ) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
     let mut ids: Vec<_> = rules
         .iter()
@@ -133,7 +135,10 @@ pub(in crate::backend::api::repos) async fn rule_responses(
             .await
             .map_err(|_| storage_unavailable())?
         {
-            teams.insert((rule.repo_id, team.team.id), team.team.slug);
+            if db::organizations::teams::get_team_by_id(pool, actor, team.team.id)
+                .await.map_err(|_| storage_unavailable())?.is_some() {
+                teams.insert((rule.repo_id, team.team.id), team.team.slug);
+            }
         }
     }
     let names = |ids: &[i64]| ids.iter().filter_map(|id| users.get(id)).cloned().collect();
@@ -185,7 +190,7 @@ pub async fn list_branch_protection_rules(
             .await
             .map_err(|_| storage_unavailable())?;
 
-    Ok(Json(rule_responses(&state.pool, rules).await?))
+    Ok(Json(rule_responses(&state.pool, rules, user.id).await?))
 }
 
 pub async fn upsert_branch_protection_rule(
@@ -199,7 +204,7 @@ pub async fn upsert_branch_protection_rule(
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
     let rule = save_rule(&state.pool, actor.id, &repository, req).await?;
-    Ok(Json(rule_response(&state.pool, rule).await?))
+    Ok(Json(rule_response(&state.pool, rule, actor.id).await?))
 }
 
 /// Checks one rule and saves it. The JSON API and the settings form both save through this, so

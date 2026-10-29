@@ -300,7 +300,7 @@ async fn update(
         repo_url(&owner, &name),
         crate::webui::encode_component(&branch)
     );
-    Ok(Json(document(&state, &rule, &url).await?))
+    Ok(Json(document(&state, &rule, &url, actor.id).await?))
 }
 
 async fn reviews(

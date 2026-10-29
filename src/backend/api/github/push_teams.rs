@@ -23,13 +23,17 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) async fn documents(state: &AppState, rule: &BranchProtectionRule) -> Result<Vec<Value>> {
+pub(super) async fn documents(state: &AppState, rule: &BranchProtectionRule, actor: i64) -> Result<Vec<Value>> {
     let rows =
         db::repositories::push_teams::by_ids(&state.pool, rule.repo_id, &rule.push_team_allowances)
             .await
             .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for row in rows {
+        if db::organizations::teams::get_team_by_id(&state.pool, actor, row.team.id)
+            .await.map_err(Error::unavailable)?.is_none() {
+            continue;
+        }
         values.push(super::teams::summary(state, &row.team, &row.org_slug, row.permission).await?);
     }
     Ok(values)
@@ -85,7 +89,7 @@ async fn teams(
         .await
         .map_err(write_error)?;
     }
-    Ok(Json(documents(&state, &rule).await?).into_response())
+    Ok(Json(documents(&state, &rule, actor).await?).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
