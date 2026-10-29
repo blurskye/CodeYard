@@ -55,6 +55,7 @@ pub fn authorize_operation(
         Operation::GitTree { .. } => ("GitTree", false),
         Operation::GitTag { .. } => ("GitTag", false),
         Operation::GitObjectKind { .. } => ("GitObjectKind", false),
+        Operation::IntroducedBlobs { .. } => ("IntroducedBlobs", false),
         Operation::WriteGitObject { .. } => ("WriteGitObject", false),
         Operation::ImportGit { .. } => ("ImportGit", false),
         Operation::CancelImport => ("CancelImport", false),
@@ -585,6 +586,7 @@ impl RpcHandler {
             } => encode_json(&store.git_tree(&revision, recursive).await?, raw_json, &mut output)?,
             Operation::GitTag { sha, raw_json } => encode_json(&store.git_tag(&sha).await?, raw_json, &mut output)?,
             Operation::GitObjectKind { sha } => json!(store.git_object_kind(&sha)),
+            Operation::IntroducedBlobs { sha } => encode_json(&store.introduced_blobs(&sha).await?, true, &mut output)?,
             Operation::UpdateReference {
                 reference,
                 sha,

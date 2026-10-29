@@ -78,6 +78,9 @@ pub enum Operation {
     GitObjectKind {
         sha: String,
     },
+    IntroducedBlobs {
+        sha: String,
+    },
     UpdateReference {
         reference: String,
         sha: String,
@@ -432,6 +435,7 @@ impl Operation {
             | Self::GitTree { .. }
             | Self::GitTag { .. }
             | Self::GitObjectKind { .. }
+            | Self::IntroducedBlobs { .. }
             | Self::SidebarTrees { .. }
             | Self::TemplateTexts { .. }
             | Self::Blob { .. }

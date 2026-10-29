@@ -154,6 +154,13 @@ impl RepoStore {
         }
     }
 
+    pub async fn introduced_blobs(&self, sha: &str) -> Result<Vec<git::objects::TreeObjectEntry>, RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.introduced_blobs(sha).await,
+            Backend::Remote(remote) => remote.call(Operation::IntroducedBlobs { sha: sha.into() }, b"").await,
+        }
+    }
+
     pub async fn git_object_kind(&self, sha: &str) -> Result<String, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.git_object_kind(sha).await,

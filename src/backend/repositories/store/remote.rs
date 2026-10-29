@@ -99,6 +99,7 @@ impl RemoteStore {
             &operation,
             Operation::FilePaths { .. }
                 | Operation::GitTree { .. }
+                | Operation::IntroducedBlobs { .. }
                 | Operation::GitTag { .. }
                 | Operation::TemplateTexts { .. }
                 | Operation::CommitsBetween { .. }
