@@ -62,8 +62,10 @@ async fn item_document(
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
             if let Some(id) = item.issue_id {
+                let auth = auth::authenticate(state, headers, false).await?;
                 super::super::issues::document(
                     &state.pool,
+                    super::super::issues::Reader::Request(state, auth.as_ref()),
                     &repo,
                     &owner,
                     db::assignees::AssignedItem::Issue(id),
