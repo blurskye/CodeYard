@@ -21,19 +21,25 @@ pub async fn list(
 
 pub async fn save(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     previous: Option<&str>,
     name: &str,
     value: Option<&str>,
 ) -> Result<(), VariableError> {
     validate(name, value.unwrap_or_default())?;
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !super::discussions::lock_admin_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
+    }
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await
+            .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { VariableError::Denied } else { VariableError::Authority(error) })?;
     }
     let old: Option<String> = if let Some(previous) = previous {
         Some(
@@ -80,16 +86,22 @@ pub async fn save(
 
 pub async fn delete(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     name: &str,
 ) -> Result<(), VariableError> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if !super::discussions::lock_admin_authority(&mut tx, actor, repo)
         .await
         .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
+    }
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor, &credential).await
+            .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { VariableError::Denied } else { VariableError::Authority(error) })?;
     }
     let result = sqlx::query("DELETE FROM repo_actions_variables WHERE repo_id=?1 AND name=?2")
         .bind(repo)

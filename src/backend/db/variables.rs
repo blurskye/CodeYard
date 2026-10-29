@@ -80,11 +80,11 @@ native_operation!(crate::backend::db::postgres::variables::list,
 
 native_operation!(crate::backend::db::postgres::variables::save,
     crate::backend::db::sqlite::variables::save,
-    fn save(pool: &DbPool, actor: i64, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
+    fn save(pool: &DbPool, actor: impl Into<super::users::accounts::AccountActor>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::delete,
     crate::backend::db::sqlite::variables::delete,
-    fn delete(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<(), VariableError>);
+    fn delete(pool: &DbPool, actor: impl Into<super::users::accounts::AccountActor>, repo: i64, name: &str) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::for_run,
     crate::backend::db::sqlite::variables::for_run,

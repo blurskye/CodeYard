@@ -34,6 +34,9 @@ pub async fn upsert_branch_protection_rule(
         .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(credential) = input.credential.as_ref() {
+        super::super::users::transitions::require_account(&mut tx, input.actor_id, credential).await?;
+    }
     let previous: Option<String> = sqlx::query_scalar(
         "SELECT github_settings FROM branch_protection_rules WHERE repo_id=?1 AND pattern=?2",
     )
@@ -160,16 +163,21 @@ pub async fn upsert_branch_protection_rule(
 
 pub async fn delete_branch_protection_rule(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id,)
             .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(credential) = authority.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor_id, &credential).await?;
+    }
     let result =
         sqlx::query("DELETE FROM branch_protection_rules WHERE repo_id = ?1 AND pattern = ?2")
             .bind(repo_id)

@@ -34,6 +34,9 @@ pub async fn upsert_branch_protection_rule(
         .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(credential) = input.credential.as_ref() {
+        super::super::users::transitions::require_account(&mut tx, input.actor_id, credential).await?;
+    }
     let previous: Option<String> = sqlx::query_scalar("SELECT github_settings FROM branch_protection_rules WHERE repo_id=$1 AND pattern=$2 FOR UPDATE").bind(input.repo_id).bind(input.pattern).fetch_optional(&mut *tx).await?;
     let previous: crate::backend::db::models::BranchProtectionSettings = previous
         .map(|value| serde_json::from_str(&value))
@@ -154,10 +157,12 @@ pub async fn upsert_branch_protection_rule(
 
 pub async fn delete_branch_protection_rule(
     pool: &PgPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_admin_authority(
@@ -165,6 +170,9 @@ pub async fn delete_branch_protection_rule(
         ).await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(credential) = authority.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor_id, &credential).await?;
+    }
     let result =
         sqlx::query("DELETE FROM branch_protection_rules WHERE repo_id = $1 AND pattern = $2")
             .bind(repo_id)

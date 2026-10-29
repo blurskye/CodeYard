@@ -44,6 +44,7 @@ pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWrite
 /// an omitted setting means.
 pub struct BranchProtectionRuleUpsert<'a> {
     pub actor_id: i64,
+    pub credential: Option<crate::backend::db::users::accounts::AccountCredential<'a>>,
     pub repo_id: i64,
     pub pattern: &'a str,
     pub require_pull_request: bool,
@@ -69,6 +70,7 @@ impl Default for BranchProtectionRuleUpsert<'_> {
     fn default() -> Self {
         Self {
             actor_id: 0,
+            credential: None,
             repo_id: 0,
             pattern: "",
             require_pull_request: true,
@@ -437,7 +439,7 @@ native_operation!(crate::backend::db::postgres::repositories::protection::delete
     crate::backend::db::sqlite::repositories::protection::delete_branch_protection_rule,
     fn delete_branch_protection_rule(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool>);

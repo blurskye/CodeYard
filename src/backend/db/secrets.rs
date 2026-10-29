@@ -67,6 +67,7 @@ pub enum SecretsError {
 
 impl SecretsError {
     pub(crate) fn authority(error: anyhow::Error) -> Self {
+        if error.is::<super::users::accounts::AccountRestricted>() { return Self::Denied; }
         // Anyhow downcasts also recognize contextual errors; retain typed denial
         // and driver sources without displaying SQL, keys or helper context.
         let error = match error.downcast::<Self>() {
@@ -163,7 +164,7 @@ pub async fn create_or_update_secret(
     repo_id: i64,
     name: &str,
     value: &str,
-    created_by_id: Option<i64>,
+    created_by_id: Option<impl Into<super::users::accounts::AccountActor>>,
 ) -> Result<bool, SecretsError> {
     create_or_update_secret_for(
         pool,
@@ -182,8 +183,9 @@ pub async fn create_or_update_secret_for(
     repository: (i64, SecretKind),
     name: &str,
     value: &str,
-    created_by_id: Option<i64>,
+    created_by_id: Option<impl Into<super::users::accounts::AccountActor>>,
 ) -> Result<bool, SecretsError> {
+    let created_by_id = created_by_id.map(Into::into);
     // Secret names are case-insensitive, as on GitHub, so every writer stores them uppercase.
     let name = &name.to_ascii_uppercase();
     validate_repository_secret(name, value)?;
@@ -223,15 +225,16 @@ pub async fn list_secrets(
 
 pub async fn delete_secret(
     pool: &DbPool,
-    actor_id: i64,
+    actor_id: impl Into<super::users::accounts::AccountActor>,
     repo_id: i64,
     name: &str,
 ) -> Result<bool, SecretsError> {
     // An upgrade keeps an old lowercase name whose uppercase form was taken, so the exact name
     // is deleted first.
     let upper = name.to_ascii_uppercase();
+    let actor_id = actor_id.into();
     Ok(
-        delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, name).await?
+        delete_secret_for(pool, SecretKind::Actions, actor_id.clone(), repo_id, name).await?
             || (upper != name
                 && delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, &upper).await?),
     )
@@ -258,7 +261,7 @@ native_operation!(crate::backend::db::postgres::secrets::list_secrets,
 
 native_operation!(crate::backend::db::postgres::secrets::delete_secret,
     crate::backend::db::sqlite::secrets::delete_secret,
-    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str) -> Result<bool, SecretsError>);
+    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: impl Into<super::users::accounts::AccountActor>, repo_id: i64, name: &str) -> Result<bool, SecretsError>);
 
 // A claim with no encryption key must not silently omit configured secrets.
 native_operation!(crate::backend::db::postgres::secrets::repository_has_secrets,

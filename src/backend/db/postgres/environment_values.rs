@@ -6,10 +6,12 @@ use sqlx::{PgConnection as Connection, PgPool as Pool};
 
 async fn authorize(
     connection: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     admin: bool,
 ) -> Result<(), ValueError> {
+    let authority = actor.into();
+    let actor = authority.user_id();
     let allowed = if admin {
         super::discussions::lock_admin_authority(connection, actor, repo).await
     } else {
@@ -17,6 +19,10 @@ async fn authorize(
     }
     .map_err(ValueError::Authority)?;
     if allowed {
+        if let Some(credential) = authority.credential() {
+            super::users::transitions::require_account(connection, actor, &credential).await
+                .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { ValueError::Denied } else { ValueError::Authority(error) })?;
+        }
         Ok(())
     } else {
         Err(ValueError::Denied)
@@ -76,7 +82,7 @@ async fn lock_environment(
     id.map(|_| ()).ok_or(ValueError::NotFound)
 }
 
-pub async fn create(pool: &Pool, actor: i64, repo: i64, name: &str) -> Result<(), ValueError> {
+pub async fn create(pool: &Pool, actor: impl Into<crate::backend::db::users::accounts::AccountActor>, repo: i64, name: &str) -> Result<(), ValueError> {
     let key = environment_values::environment_key(name)?;
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, repo, true).await?;
@@ -117,7 +123,7 @@ pub async fn list(
 pub async fn save(
     pool: &Pool,
     encryptor: Option<&SecretEncryptor>,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     environment: &str,
     input: &Save<'_>,
@@ -179,7 +185,7 @@ pub async fn save(
 
 pub async fn delete(
     pool: &Pool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo: i64,
     environment: &str,
     kind: Kind,

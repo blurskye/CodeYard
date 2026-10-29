@@ -10,9 +10,10 @@ pub async fn create_or_update_secret(
     (repo_id, kind): (i64, SecretKind),
     name: &str,
     value: &str,
-    created_by_id: Option<i64>,
+    created_by_id: Option<crate::backend::db::users::accounts::AccountActor>,
 ) -> Result<bool, SecretsError> {
-    let actor_id = created_by_id.ok_or(SecretsError::Denied)?;
+    let authority = created_by_id.ok_or(SecretsError::Denied)?;
+    let actor_id = authority.user_id();
     let (encrypted_value, nonce) = encryptor.encrypt(value.as_bytes())?;
     let mut tx = pool.begin().await?;
     // The repository row is locked exclusively, so two writes cannot both count the same
@@ -22,6 +23,9 @@ pub async fn create_or_update_secret(
         .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
+    }
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor_id, &credential).await.map_err(SecretsError::authority)?;
     }
     let table = kind.secrets_table();
     let exists: bool = sqlx::query_scalar(&format!(
@@ -155,16 +159,21 @@ pub async fn list_secrets(
 pub async fn delete_secret(
     pool: &PgPool,
     kind: SecretKind,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::users::accounts::AccountActor>,
     repo_id: i64,
     name: &str,
 ) -> Result<bool, SecretsError> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id();
     let mut tx = pool.begin().await?;
     if !super::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
         .await
         .map_err(SecretsError::authority)?
     {
         return Err(SecretsError::Denied);
+    }
+    if let Some(credential) = authority.credential() {
+        super::users::transitions::require_account(&mut tx, actor_id, &credential).await.map_err(SecretsError::authority)?;
     }
     let result = sqlx::query(&format!(
         "DELETE FROM {} WHERE repo_id = $1 AND name = $2",

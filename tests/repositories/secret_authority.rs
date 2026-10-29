@@ -331,7 +331,7 @@ async fn contract(pg: bool) {
                 repo,
                 "MISSING_ACTOR",
                 VALUE,
-                None,
+                None::<i64>,
             )
             .await,
         );
