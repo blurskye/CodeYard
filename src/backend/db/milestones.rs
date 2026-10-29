@@ -24,9 +24,9 @@ pub enum MilestoneWriteRefusal {
 }
 
 pub struct MilestoneInput<'a> {
-    pub title: &'a str,
-    pub description: Option<&'a str>,
-    pub due_on: Option<chrono::DateTime<chrono::Utc>>,
+    pub title: Option<&'a str>,
+    pub description: Option<Option<&'a str>>,
+    pub due_on: Option<Option<chrono::DateTime<chrono::Utc>>>,
     pub state: Option<&'a str>,
 }
 
@@ -42,7 +42,7 @@ pub(crate) fn due_on(day: Option<&str>) -> Result<Option<chrono::DateTime<chrono
 
 native_operation!(crate::backend::db::postgres::milestones::save_milestone,
     crate::backend::db::sqlite::milestones::save_milestone,
-    fn save_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
+    fn save_milestone(pool: &DbPool, actor_id: impl Into<crate::backend::db::users::tokens::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
 
 native_operation!(crate::backend::db::postgres::milestones::create_milestone,
     crate::backend::db::sqlite::milestones::create_milestone,
@@ -75,7 +75,12 @@ native_operation!(crate::backend::db::postgres::milestones::set_milestone_state,
 // Deletes the milestone and clears it from every issue that named it.
 native_operation!(crate::backend::db::postgres::milestones::delete_milestone,
     crate::backend::db::sqlite::milestones::delete_milestone,
-    fn delete_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
+    fn delete_milestone(pool: &DbPool, actor_id: impl Into<crate::backend::db::users::tokens::Actor>, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
+
+native_operation!(crate::backend::db::postgres::milestones::read_milestones,
+    crate::backend::db::sqlite::milestones::read_milestones,
+    /// Read authority and milestone payloads share a single statement snapshot.
+    fn read_milestones(pool: &DbPool, viewer: Option<i64>, repo: i64, number: Option<i32>, state: Option<&str>, sort: &str, limit: i64, offset: i64) -> Result<Vec<MilestoneSummary>>);
 
 native_operation!(crate::backend::db::postgres::milestones::get_milestone,
     crate::backend::db::sqlite::milestones::get_milestone,

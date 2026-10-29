@@ -157,13 +157,14 @@ pub async fn list_repo_labels_page(
 /// start from the repository's issues and pull requests, which are indexed by repository.
 pub async fn list_milestone_labels(
     pool: &SqlitePool,
+    viewer: Option<i64>,
     repo_id: i64,
     milestone_id: i64,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Label>> {
-    Ok(sqlx::query_as("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4")
-        .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=?1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=?2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=?2)) ORDER BY lower(l.name),l.id LIMIT ?3 OFFSET ?4", super::repositories::access::readable_condition()))
+        .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
 pub async fn list_label_usage(pool: &SqlitePool, repo_id: i64) -> Result<Vec<(i64, i64)>> {
