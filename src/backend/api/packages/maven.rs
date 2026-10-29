@@ -110,6 +110,11 @@ fn artifact(path: &str) -> Option<Artifact> {
     let mut relative = parts[2..parts.len() - 1].join("/");
     relative.push('/');
     relative.push_str(&filename);
+    // package_files indexes the complete relative path on both database engines.
+    // Reject unsupported paths before dispatch can persist their bytes.
+    if relative.len() > 1024 {
+        return None;
+    }
     Some(Artifact {
         owner: parts[0].clone(),
         repo: parts[1].clone(),
