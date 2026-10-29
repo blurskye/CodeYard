@@ -229,15 +229,22 @@ async fn list_on_issue(
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Names {
-    Object { labels: Vec<String> },
-    Array(Vec<String>),
+    Object { labels: Vec<LabelName> },
+    Array(Vec<LabelName>),
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LabelName {
+    String(String),
+    Object { name: String },
 }
 
 async fn change(
     state: Arc<AppState>,
     headers: HeaderMap,
     p: Params,
-    names: Vec<String>,
+    names: Vec<LabelName>,
     replace: bool,
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
@@ -246,21 +253,12 @@ async fn change(
     if names.len() > db::labels::MAX_ISSUE_LABELS {
         return Err(Error::invalid("Too many labels"));
     }
-    let mut ids = Vec::new();
-    for name in names {
-        ids.push(
-            find(&state.pool, repo.id, &name)
-                .await
-                .map_err(|error| {
-                    if error.0 == StatusCode::NOT_FOUND {
-                        Error::invalid("Label does not exist")
-                    } else {
-                        error
-                    }
-                })?
-                .id,
-        );
-    }
+    let catalog = db::labels::list_repo_labels(&state.pool, repo.id).await.map_err(Error::unavailable)?;
+    let ids = names.into_iter().map(|entry| {
+        let (LabelName::String(name) | LabelName::Object { name }) = entry;
+        catalog.iter().find(|label| label.name.eq_ignore_ascii_case(&name)).map(|label| label.id)
+            .ok_or_else(|| Error::invalid("Label does not exist"))
+    }).collect::<Result<Vec<_>>>()?;
     let labels = save_labels(&state.pool, actor.id, repo.id, item, &ids, replace).await?;
     Ok(Json(
         labels

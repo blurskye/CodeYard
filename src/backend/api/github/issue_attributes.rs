@@ -88,7 +88,6 @@ async fn list(
 }
 #[derive(Deserialize)]
 struct Input {
-    #[serde(default)]
     issue_field_values: Vec<ValueInput>,
 }
 async fn save(
@@ -103,9 +102,6 @@ async fn save(
     let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let input: Input = serde_json::from_slice(&body)
         .map_err(|_| Error::validation("IssueFieldValue", "issue_field_values", "invalid"))?;
-    if method == Method::PUT && input.issue_field_values.iter().any(|v| v.value.is_array()) {
-        return Err(Error::validation("IssueFieldValue", "value", "invalid"));
-    }
     db::issue_attributes::set_values(
         &state.pool,
         repo.id,

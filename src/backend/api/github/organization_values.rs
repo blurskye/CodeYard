@@ -323,7 +323,7 @@ async fn update_variable(
     let value = body
         .value
         .as_deref()
-        .or_else(|| body.name.is_none().then_some(""));
+        .or_else(|| (body.name.is_none() && body.visibility.is_none() && body.selected_repository_ids.is_none()).then_some(""));
     let name = body
         .name
         .as_deref()
