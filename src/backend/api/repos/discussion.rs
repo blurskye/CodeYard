@@ -141,13 +141,8 @@ pub(crate) async fn repository(
     owner: &str,
     name: &str,
 ) -> ResultPage<RepositoryData> {
-    let record = db::repositories::records::get_repository(&ctx.state.pool, owner, name)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
-    check_repo_read_access(&ctx.state.pool, &record, &ctx.headers)
-        .await
-        .map_err(|failure| api_error(ctx, failure))?;
+    let loaded = crate::backend::api::repos::chrome::load_database(ctx, owner, name).await?;
+    let record = loaded.repository;
     let can_write = match &ctx.user {
         Some(user) => {
             crate::backend::repositories::access::can_write(&ctx.state.pool, user, &record)
@@ -166,9 +161,7 @@ pub(crate) async fn repository(
     };
     // Reuse the Code page's authorized projection, including visibility, real
     // engagement counts and actor-scoped actions. Never serialize the DB record.
-    let chrome = crate::backend::api::repos::chrome::load_database(ctx, owner, name)
-        .await?
-        .chrome;
+    let chrome = loaded.chrome;
     Ok(RepositoryData {
         record,
         view: view::Repository {
@@ -1129,7 +1122,13 @@ pub(crate) async fn render_detail(
         }
         _ => Vec::new(),
     };
-    super::access::check_repo_read_access(&ctx.state.pool, &repo.record, &ctx.headers)
+    if kind == Kind::Issue {
+        db::issues::get_issue_by_id(&ctx.state.pool, value.id).await
+            .map_err(|_| unavailable(ctx))?
+            .filter(|issue| issue.repo_id == repo.record.id)
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+    }
+    check_repo_read_access(&ctx.state.pool, &repo.record, &ctx.headers)
         .await
         .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(with_status(

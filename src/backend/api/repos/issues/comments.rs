@@ -107,6 +107,11 @@ pub async fn list_issue_comments(
         responses.push(CommentResponse::new(entry.comment, author));
     }
 
+    db::issues::get_issue_by_id(&state.pool, issue.id).await
+        .map_err(|_| storage_unavailable())?
+        .filter(|issue| issue.repo_id == repository.id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ApiError::new("not_found", "Issue not found"))))?;
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(responses))
 }
 

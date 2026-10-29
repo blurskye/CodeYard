@@ -226,19 +226,15 @@ pub fn free_branch_name(username: &str, refs: &HashMap<String, String>) -> Strin
         end -= 1;
     }
     let username = &username[..end];
+    // Usernames have no path separators. Each occupied branch (or directory of branches)
+    // therefore excludes at most one candidate, and all candidates share this one index.
+    let occupied: std::collections::HashSet<&str> = refs.keys()
+        .filter_map(|reference| reference.strip_prefix("refs/heads/"))
+        .map(|branch| branch.split('/').next().unwrap_or(branch))
+        .collect();
     (1..)
         .map(|number| format!("{username}-patch-{number}"))
-        .find(|name| {
-            let reference = format!("refs/heads/{name}");
-            // A name also conflicts with a branch that lives under it as a directory.
-            !refs.contains_key(&reference)
-                && !refs
-                    .keys()
-                    .any(|existing| {
-                        existing.strip_prefix(&reference).is_some_and(|tail| tail.starts_with('/'))
-                            || reference.strip_prefix(existing).is_some_and(|tail| tail.starts_with('/'))
-                    })
-        })
+        .find(|name| !occupied.contains(name.as_str()))
         .unwrap_or_default()
 }
 

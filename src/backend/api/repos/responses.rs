@@ -208,6 +208,8 @@ pub(crate) fn repo_store_error(
         (
             if missing {
                 StatusCode::NOT_FOUND
+            } else if error.kind == ErrorKind::Conflict {
+                StatusCode::CONFLICT
             } else if error.kind == ErrorKind::Unavailable {
                 // Unreachable storage is a service failure, whatever the caller falls back to.
                 StatusCode::SERVICE_UNAVAILABLE

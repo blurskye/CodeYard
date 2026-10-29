@@ -44,8 +44,11 @@ pub async fn list_repos(
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut owners = repository_owners(&state.pool, &ids).await?;
     let mut topics = repository_topics(&state.pool, &ids).await?;
+    let readable = db::repositories::access::readable_repository_ids(&state.pool, None, &ids)
+        .await.map_err(|_| access_error(AccessError::Unavailable))?;
     let mut responses = Vec::with_capacity(repos.len());
     for repository in repos {
+        if !readable.contains(&repository.id) { continue; }
         let owner = owners.remove(&repository.id).expect("validated owner");
         let topics = topics.remove(&repository.id).unwrap_or_default();
         responses.push(RepoResponse::new(&repository, &owner, topics, None));
