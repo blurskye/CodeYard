@@ -52,12 +52,12 @@ pub struct PullRequest {
 
 impl PullRequest {
     /// The commit that a diff or commit list starts from. A stacked layer keeps the base it was
-    /// built on. An ordinary open pull request compares with its current base, so upstream
+    /// built on. An ordinary pull request compares with its current base, so upstream
     /// commits that reached the base later are not shown as its own changes.
     pub fn diff_base(&self) -> &str {
-        match (self.stack_id, self.state.as_str(), self.fork_sha.as_deref()) {
-            (None, "open", _) => &self.base_sha,
-            (_, _, Some(fork)) => fork,
+        match (self.stack_id, self.fork_sha.as_deref()) {
+            (None, _) => &self.base_sha,
+            (_, Some(fork)) => fork,
             _ => &self.base_sha,
         }
     }

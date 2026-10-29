@@ -398,7 +398,7 @@ impl Definition {
         validated.validate_owner(owner)?;
         // Pushes record evaluate-mode verdicts as rule suites, but ref admission does not
         // enforce these policies yet; never claim they are active.
-        if validated.enforcement == Enforcement::Active && !validated.rules.is_empty() {
+        if validated.enforcement == Enforcement::Active && (!validated.rules.is_empty() || validated.conditions.as_ref().and_then(|conditions| conditions.repository_name.as_ref()).is_some_and(|names| names.protected)) {
             return Err(invalid(
                 "enforcement",
                 "Nonempty rulesets can be disabled or evaluated until native ref admission enforces them",

@@ -128,7 +128,7 @@ impl Filter {
                 words.push(word);
             }
         }
-        filter.query = Some(words.join(" "));
+        filter.query = (!words.is_empty()).then(|| words.join(" "));
         Ok(filter)
     }
     pub(crate) fn statement(&self, postgres: bool, readable: &str) -> Result<Statement> {
@@ -188,9 +188,10 @@ fn search_expression(sql: &mut Statement, expr: &Expr) -> Result<String> {
         Expr::Not(e) => format!("NOT ({})", search_expression(sql, e)?),
         Expr::Term(key, value) => match (key.as_str(), value.as_str()) {
             ("text", _) => format!(
-                "({} OR {})",
+                "({} OR {} OR EXISTS(SELECT 1 FROM discussion_comments c WHERE c.discussion_id=i.id AND {}))",
                 sql.matches("i.title", value),
-                sql.matches("i.body", value)
+                sql.matches("i.body", value),
+                sql.matches("c.body", value)
             ),
             ("repo", _) => {
                 let p = sql.bind(value);
