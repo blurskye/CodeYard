@@ -394,7 +394,13 @@ impl JobTokens {
     }
 }
 
-/// Run the selected workflow, returning whether all jobs succeeded.
+pub const CANCELLED_EXIT_CODE: i32 = 130;
+
+#[derive(Debug, thiserror::Error)]
+#[error("The workflow was cancelled")]
+pub struct Cancelled;
+
+/// Run the selected workflow, returning whether all jobs succeeded; cancellation is typed.
 pub async fn run(mut options: Options) -> Result<bool> {
     let secrets = environment_file(options.secret_file.as_deref())?;
     let masker = Masker::default();
@@ -618,7 +624,9 @@ async fn run_workflow(
         .execute(raw, contexts, env, String::new(), String::new())
         .await;
     signal.abort();
-    Ok(result?.result == "success")
+    let result = result?;
+    if result.result == "cancelled" { return Err(Cancelled.into()); }
+    Ok(result.result == "success")
 }
 
 #[derive(Clone)]
@@ -1090,7 +1098,7 @@ impl WorkflowRun {
         id.clone(), Value::from_json(&serde_json::json!({"result": result.result, "outputs": result.outputs}))
     )).collect()));
             Ok(JobResult {
-                result: if *cancel.borrow() {
+                result: if *cancel.borrow() || results.values().any(|result| result.result == "cancelled") {
                     "cancelled"
                 } else if successful {
                     "success"

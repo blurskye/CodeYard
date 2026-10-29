@@ -734,7 +734,11 @@ async fn run_workflows(
         };
         let (status, sent) = tokio::join!(running, sending);
         sent?;
-        if !status?.success() {
+        let status = status?;
+        if native && status.code() == Some(codeyard_actions::runner::CANCELLED_EXIT_CODE) {
+            return Err(Stopped::Cancelled.into());
+        }
+        if !status.success() {
             return Ok(false);
         }
     }
