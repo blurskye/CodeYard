@@ -13,11 +13,10 @@ pub async fn record(
         super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         ImportRefusal::Denied
     );
-    let mut rows = Vec::new();
     for (name, email) in authors {
-        let row = sqlx::query_as("INSERT INTO repository_import_authors(repo_id,author_name,author_email) VALUES($1,$2,$3) ON CONFLICT(repo_id,author_name,author_email) DO UPDATE SET author_name=excluded.author_name RETURNING *").bind(repo).bind(name).bind(email).fetch_one(&mut *tx).await?;
-        rows.push(row);
+        sqlx::query("INSERT INTO repository_import_authors(repo_id,author_name,author_email) VALUES($1,$2,$3) ON CONFLICT(repo_id,author_name,author_email) DO NOTHING").bind(repo).bind(name).bind(email).execute(&mut *tx).await?;
     }
+    let rows = sqlx::query_as("SELECT * FROM repository_import_authors WHERE repo_id=$1 ORDER BY id").bind(repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }

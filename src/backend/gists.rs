@@ -51,6 +51,11 @@ pub fn text_preview(bytes: &[u8], limit: usize) -> Option<&str> {
     Some(&text[..length])
 }
 
+/// Database-only operations need a published gist, not an available Git storage node.
+pub async fn metadata(pool: &db::DbPool, id: &str) -> Result<db::gists::Gist> {
+    db::gists::get(pool, id).await?.filter(|gist| gist.ready).ok_or_else(|| GistRefusal::Missing.into())
+}
+
 pub async fn load(state: &AppState, id: &str, revision: Option<&str>) -> Result<LoadedGist> {
     let gist = db::gists::get(&state.pool, id)
         .await?
