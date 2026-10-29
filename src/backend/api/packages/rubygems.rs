@@ -39,6 +39,7 @@ async fn run(state: &AppState, owner: &str, path: &str, request: Request) -> Res
         )
         .await,
         anonymous,
+        super::RegistryFormat::Standard,
     )
 }
 

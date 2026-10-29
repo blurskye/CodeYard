@@ -33,34 +33,11 @@ async fn handle(
     Path((owner, path)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    match tokio::time::timeout(
+    let anonymous = !request.headers().contains_key(header::AUTHORIZATION);
+    super::finish(tokio::time::timeout(
         Duration::from_secs(120),
         dispatch(&state, &owner, &path, request),
-    )
-    .await
-    {
-        Ok(Ok(mut response)) => {
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-            response
-        }
-        result => {
-            let error = match result {
-                Ok(Err(error)) => error,
-                _ => Error::unavailable(),
-            };
-            let mut response =
-                (error.0, Json(json!({"error":error.1,"reason":error.2}))).into_response();
-            if error.0 == StatusCode::UNAUTHORIZED {
-                response.headers_mut().insert(
-                    header::WWW_AUTHENTICATE,
-                    "Basic realm=\"Codeyard packages\"".parse().unwrap(),
-                );
-            }
-            response
-        }
-    }
+    ).await, anonymous, super::RegistryFormat::Npm)
 }
 
 /// Packages are scoped to their owner, as on GitHub: `@owner/name`. An unscoped name would
@@ -72,7 +49,7 @@ fn package_name<'a>(owner: &str, value: &'a str) -> Result<(&'a str, &'a str)> {
         return Err(Error::missing());
     }
     let (name, rest) = rest.split_once('/').unwrap_or((rest, ""));
-    if !packages::valid_name(name) || name.contains('/') {
+    if !crate::backend::npm::package_name(&format!("@{scope}/{name}")) {
         return Err(Error::invalid());
     }
     Ok((name, rest))

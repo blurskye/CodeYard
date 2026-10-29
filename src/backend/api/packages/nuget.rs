@@ -42,6 +42,7 @@ async fn handle(
         )
         .await,
         anonymous,
+        super::RegistryFormat::Standard,
     )
 }
 

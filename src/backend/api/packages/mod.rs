@@ -24,7 +24,6 @@ use axum::{
     response::{IntoResponse, Response},
     Json, Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -49,20 +48,6 @@ impl Error {
             "UNAUTHORIZED",
             "Authentication required",
         )
-    }
-
-    fn registry_response(self) -> Response {
-        let mut response = (self.0, Json(json!({"message":self.2}))).into_response();
-        response
-            .headers_mut()
-            .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-        if self.0 == StatusCode::UNAUTHORIZED {
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                "Basic realm=\"Codeyard Packages\"".parse().unwrap(),
-            );
-        }
-        response
     }
 
     fn invalid() -> Self {
@@ -157,12 +142,7 @@ async fn authenticate(
             .get(..6)
             .is_some_and(|v| v.eq_ignore_ascii_case("basic "))
         {
-            if headers.get_all(header::AUTHORIZATION).iter().count() != 1 {
-                return Err(Error::invalid());
-            }
-            let bytes = STANDARD.decode(&value[6..]).map_err(|_| Error::invalid())?;
-            let value = std::str::from_utf8(&bytes).map_err(|_| Error::invalid())?;
-            let (_, token) = value.split_once(':').ok_or_else(Error::invalid)?;
+            let (_, token) = super::http::credentials::basic(headers).ok_or_else(Error::invalid)?;
             normalized.insert(
                 header::AUTHORIZATION,
                 format!("Bearer {token}")
@@ -318,25 +298,35 @@ async fn owner_packages(
     }
 }
 
+enum RegistryFormat { Standard, Npm }
+
 fn finish(
     result: std::result::Result<Result<Response>, tokio::time::error::Elapsed>,
     anonymous: bool,
+    format: RegistryFormat,
 ) -> Response {
-    match result {
-        Ok(Ok(mut response)) => {
-            response
-                .headers_mut()
-                .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    let mut response = match result {
+        Ok(Ok(response)) => response,
+        result => {
+            // Private and unknown resources challenge alike, without an existence oracle.
+            let error = match result {
+                Ok(Err(error)) if anonymous && error.0 == StatusCode::NOT_FOUND => Error::required(),
+                Ok(Err(error)) => error,
+                _ => Error::unavailable(),
+            };
+            let body = match format {
+                RegistryFormat::Standard => json!({"message":error.2}),
+                RegistryFormat::Npm => json!({"error":error.1,"reason":error.2}),
+            };
+            let mut response = (error.0, Json(body)).into_response();
+            if error.0 == StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(header::WWW_AUTHENTICATE, "Basic realm=\"Codeyard Packages\"".parse().unwrap());
+            }
             response
         }
-        // Challenge private and unknown resources alike so Basic-auth clients can retry.
-        // Authenticated outsiders still receive 404, with no resource-existence disclosure.
-        Ok(Err(error)) if anonymous && error.0 == StatusCode::NOT_FOUND => {
-            Error::required().registry_response()
-        }
-        Ok(Err(error)) => error.registry_response(),
-        Err(_) => Error::unavailable().registry_response(),
-    }
+    };
+    response.headers_mut().insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
 }
 
 pub fn router() -> Router<Arc<AppState>> {

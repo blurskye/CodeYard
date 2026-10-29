@@ -162,6 +162,7 @@ pub(crate) fn route(
             )
             .await,
             anonymous,
+            super::RegistryFormat::Standard,
         )
     })
 }
