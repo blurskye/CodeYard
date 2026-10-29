@@ -28,10 +28,11 @@ async fn selected(
     actor: i64,
     org: Option<i64>,
     ids: &[i64],
+    allow_deleted: bool,
 ) -> Result<bool> {
     for id in ids {
-        let owned = sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE id=$1 AND (($3::bigint IS NULL AND owner_kind='user' AND owner_user_id=$2) OR (owner_kind='org' AND owner_org_id=$3)) FOR SHARE").bind(id).bind(actor).bind(org).fetch_optional(&mut *connection).await?;
-        if owned.is_none() {
+        let owned: Option<bool> = sqlx::query_scalar("SELECT COALESCE((($3::bigint IS NULL AND owner_kind='user' AND owner_user_id=$2) OR (owner_kind='org' AND owner_org_id=$3)),false) FROM repositories WHERE id=$1 FOR SHARE").bind(id).bind(actor).bind(org).fetch_optional(&mut *connection).await?;
+        if owned != Some(true) && !(allow_deleted && owned.is_none()) {
             return Ok(false);
         }
     }
@@ -63,7 +64,7 @@ pub async fn create(
     anyhow::ensure!(
         ids.len() <= 100
             && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == ids.len()
-            && selected(&mut tx, actor, org, ids).await?
+            && selected(&mut tx, actor, org, ids, false).await?
             && (!ids.is_empty() || options.org_metadata_only)
             && (!options.org_metadata_only || (org.is_some() && ids.is_empty())),
         ExportRefusal::Invalid
@@ -112,7 +113,7 @@ pub async fn by_guid(pool: &PgPool, actor: i64, guid: &str) -> Result<Option<Rep
         None
     };
     if let Some(row) = &row {
-        if !selected(&mut tx, actor, row.owner_org_id, &row.repository_ids()?).await? {
+        if !selected(&mut tx, actor, row.owner_org_id, &row.repository_ids()?, row.state == "exported").await? {
             return Ok(None);
         }
     }
