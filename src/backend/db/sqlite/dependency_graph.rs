@@ -62,6 +62,13 @@ pub async fn snapshots(
         .collect()
 }
 
+/// The latest submitted revision is one coherent stored inventory, not per-correlator tips.
+pub async fn latest_snapshots(pool: &SqlitePool, repo: i64, reference: &str) -> Result<Vec<Snapshot>, GraphError> {
+    let rows: Vec<String> = sqlx::query_scalar("WITH revision AS (SELECT sha FROM dependency_snapshots WHERE repo_id=?1 AND reference=?2 ORDER BY scanned DESC,id DESC LIMIT 1), ranked AS (SELECT body,ROW_NUMBER() OVER(PARTITION BY detector,correlator ORDER BY scanned DESC,id DESC) AS position FROM dependency_snapshots WHERE repo_id=?1 AND reference=?2 AND sha=(SELECT sha FROM revision)) SELECT body FROM ranked WHERE position=1 ORDER BY body")
+        .bind(repo).bind(reference).fetch_all(pool).await?;
+    rows.into_iter().map(|body| serde_json::from_str(&body).map_err(GraphError::Stored)).collect()
+}
+
 pub async fn save_report(
     pool: &SqlitePool,
     repo: i64,

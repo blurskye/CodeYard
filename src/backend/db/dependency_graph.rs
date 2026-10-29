@@ -39,6 +39,11 @@ native_operation!(super::postgres::dependency_graph::snapshots,
     fn snapshots(pool: &DbPool, repo: i64, reference: Option<&str>, sha: Option<&str>)
     -> Result<Vec<Snapshot>, GraphError>);
 
+native_operation!(super::postgres::dependency_graph::latest_snapshots,
+    super::sqlite::dependency_graph::latest_snapshots,
+    fn latest_snapshots(pool: &DbPool, repo: i64, reference: &str)
+    -> Result<Vec<Snapshot>, GraphError>);
+
 native_operation!(super::postgres::dependency_graph::save_report,
     super::sqlite::dependency_graph::save_report,
     fn save_report(pool: &DbPool, repo: i64, id: &str, body: &str)
