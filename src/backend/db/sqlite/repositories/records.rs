@@ -119,18 +119,23 @@ pub async fn list_user_repositories(pool: &SqlitePool, user_id: i64) -> Result<V
     Ok(repos)
 }
 
-/// How many repositories `user_id` owns that a profile lists. Private ones are counted only when
-/// `include_private` is set, which is the owner's own view.
+fn personal_repository_condition() -> &'static str {
+    "NOT is_gist AND owner_kind='user' AND owner_user_id=?1 AND (NOT is_private OR EXISTS(
+        SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.id=?1 AND s.id=?2
+        AND julianday(s.expires_at)>julianday('now') AND NOT u.is_banned AND NOT u.must_change_password))"
+}
+
+/// Private personal repositories require their owner's original live session.
 pub async fn count_user_repositories(
     pool: &SqlitePool,
     user_id: i64,
-    include_private: bool,
+    owner_session: Option<&str>,
 ) -> Result<i64> {
     Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM repositories WHERE owner_kind = 'user' AND owner_user_id = ?1 AND NOT is_gist AND (?2 OR is_private = false)",
+        &format!("SELECT COUNT(*) FROM repositories WHERE {}", personal_repository_condition()),
     )
     .bind(user_id)
-    .bind(include_private)
+    .bind(owner_session)
     .fetch_one(pool)
     .await?)
 }
@@ -185,18 +190,18 @@ pub async fn list_shared_repositories(
 pub async fn list_user_repository_page(
     pool: &SqlitePool,
     user: i64,
-    include_private: bool,
+    owner_session: Option<&str>,
     text: &str,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Repository>, i64)> {
-    let condition = "NOT is_gist AND owner_kind='user' AND owner_user_id=?1 AND (?2 OR NOT is_private) AND (name REGEXP ?3 OR COALESCE(description,'') REGEXP ?3)";
+    let condition = format!("{} AND (name REGEXP ?3 OR COALESCE(description,'') REGEXP ?3)", personal_repository_condition());
     let needle = super::super::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
     ))
     .bind(user)
-    .bind(include_private)
+    .bind(owner_session)
     .bind(&needle)
     .fetch_one(pool)
     .await?;
@@ -204,7 +209,7 @@ pub async fn list_user_repository_page(
         "SELECT * FROM repositories WHERE {condition} ORDER BY name,id LIMIT ?4 OFFSET ?5"
     ))
     .bind(user)
-    .bind(include_private)
+    .bind(owner_session)
     .bind(&needle)
     .bind(limit.clamp(1, 100))
     .bind(offset.max(0))

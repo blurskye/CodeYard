@@ -118,7 +118,7 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
         }
         for q in queries {
             let (owned, count) =
-                records::list_user_repository_page(f.pool(), owner, false, q, 30, 0)
+                records::list_user_repository_page(f.pool(), owner, None, q, 30, 0)
                     .await
                     .unwrap();
             assert_eq!(count, 1, "owned {pg} {q}");
@@ -142,7 +142,7 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
         }
         for q in ["missing", "100.*", "100%Xliteral"] {
             assert_eq!(
-                records::list_user_repository_page(f.pool(), owner, false, q, 30, 0)
+                records::list_user_repository_page(f.pool(), owner, None, q, 30, 0)
                     .await
                     .unwrap()
                     .1,

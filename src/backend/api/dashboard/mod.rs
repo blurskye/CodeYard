@@ -63,7 +63,7 @@ async fn new_issue_page(
     let (own, own_count) = match db::repositories::records::list_user_repository_page(
         &ctx.state.pool,
         user.id,
-        true,
+        ctx.session_id.as_deref(),
         query,
         30,
         offset,

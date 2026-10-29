@@ -46,7 +46,7 @@ pub(super) async fn home(
     let (own, repository_count) = match db::repositories::records::list_user_repository_page(
         &ctx.state.pool,
         user.id,
-        true,
+        ctx.session_id.as_deref(),
         &find,
         PAGE_SIZE,
         offset,
