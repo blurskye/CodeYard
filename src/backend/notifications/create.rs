@@ -165,10 +165,10 @@ pub async fn create_and_broadcast_notification(
             unread_count: 0,
         })
         .await;
-    // Follows and stars are not worth an email.
+    // Repeated low-value social toggles are not worth an email.
     if !matches!(
         notification.kind.as_str(),
-        "user_followed" | "repository_starred" | "organization_invitation"
+        "user_followed" | "repository_starred" | "repository_watched" | "organization_invitation"
     ) {
         crate::backend::email::notify_user(pool, &notification).await;
     }

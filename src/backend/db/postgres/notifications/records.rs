@@ -41,7 +41,7 @@ pub async fn create_notification(
             NotificationSuppressed
         );
     }
-    if matches!(input.kind, "user_followed" | "repository_starred") {
+    if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
         let _: Option<i64> =
             sqlx::query_scalar("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
                 .bind(input.user_id)

@@ -48,7 +48,7 @@ pub async fn create_notification(
         .await?;
         anyhow::ensure!(readable, NotificationSuppressed);
     }
-    if matches!(input.kind, "user_followed" | "repository_starred") {
+    if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
         let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=?1 AND actor_id=?2 AND kind=?3 AND (?3='user_followed' OR repo_id=?4) AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))")
             .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);

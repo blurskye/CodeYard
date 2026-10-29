@@ -40,7 +40,7 @@ pub async fn readable_repository_ids(
     repo_ids: &[i64],
 ) -> Result<Vec<i64>> {
     anyhow::ensure!(repo_ids.len() <= 100, "Repository page exceeds its limit");
-    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id IN (SELECT value FROM json_each(?2)) AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
+    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id IN (SELECT value FROM json_each(?2)) AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND NOT u.is_banned AND NOT u.must_change_password AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
         .bind(user_id).bind(serde_json::to_string(repo_ids)?).fetch_all(pool).await?)
 }
 
@@ -129,7 +129,7 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
 /// personal repositories of a site admin, and the access projection for everything else.
 pub(crate) fn readable_condition() -> String {
     format!(
-        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
+        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
     )
 }
 
