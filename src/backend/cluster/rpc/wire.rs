@@ -151,6 +151,8 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "is_zero")]
         offset: usize,
         limit: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     /// Commits that changed `path`, as `git log -- <path>` lists them.
     PathCommits {
@@ -249,6 +251,8 @@ pub enum Operation {
     Contributors,
     CommitStatistics {
         branch: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        raw_json: bool,
     },
     CodeFrequency {
         branch: String,
@@ -688,6 +692,7 @@ mod tests {
             text: "needle".into(),
             offset: 0,
             limit: 5,
+            raw_json: false,
         };
         assert_eq!(
             serde_json::to_value(&operation).unwrap(),

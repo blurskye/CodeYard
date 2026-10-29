@@ -395,7 +395,7 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
     assert_eq!(token_uses(&db.pool, &ticket).await, 3);
 
     // An invite is only good until it expires.
-    let expired = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address));
+    let expired = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address)).unwrap();
     db::cluster::create_join_token(
         &db.pool,
         NewJoinToken {
@@ -506,7 +506,7 @@ async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
     assert_refused(try_echo(&stranger, &core.address).await);
 
     // The pairing door is open to strangers, but only a real secret opens the cluster.
-    let forged = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address));
+    let forged = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address)).unwrap();
     let error = join(&forged, &stranger, "intruder", None)
         .await
         .unwrap_err();

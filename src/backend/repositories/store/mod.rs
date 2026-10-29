@@ -812,6 +812,7 @@ impl RepoStore {
                             text: text.into(),
                             offset,
                             limit,
+                            raw_json: true,
                         },
                         b"",
                     )
@@ -1284,6 +1285,7 @@ impl RepoStore {
                     .call(
                         Operation::CommitStatistics {
                             branch: branch.into(),
+                            raw_json: true,
                         },
                         b"",
                     )

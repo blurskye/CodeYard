@@ -113,7 +113,7 @@ pub async fn ticket(pool: &db::DbPool, context: Option<&NodeContext>) -> Result<
             .as_deref()
             .context("runner core address is unavailable")?,
     )?;
-    Ok(JoinTicket::new(core.key.public_key(), address))
+    JoinTicket::new(core.key.public_key(), address)
 }
 
 #[cfg(test)]
@@ -129,7 +129,7 @@ mod tests {
                 tcp: vec!["127.0.0.1:1".parse().unwrap()],
                 ..Default::default()
             },
-        );
+        ).unwrap();
         let config = JitConfig {
             ticket: ticket.encode(),
             node_name: "runner-42".into(),

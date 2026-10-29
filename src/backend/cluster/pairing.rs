@@ -140,14 +140,19 @@ struct TicketBody {
 
 impl JoinTicket {
     /// A ticket for the core node `node`, with a fresh random secret.
-    pub fn new(node: PublicKey, address: NodeAddress) -> Self {
+    pub fn new(node: PublicKey, address: NodeAddress) -> Result<Self> {
         let mut secret = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut secret);
-        Self {
-            node,
-            address,
-            secret,
-        }
+        let ticket = Self { node, address, secret };
+        ticket.validate()?;
+        Ok(ticket)
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(!self.address.is_empty(), "that join ticket has no address to connect to");
+        self.address.endpoint_addr(self.node)?;
+        ensure!(self.encode().len() <= MAX_TICKET_LEN, "too many advertised addresses for a join ticket (maximum {MAX_TICKET_LEN} bytes)");
+        Ok(())
     }
 
     pub fn secret_hash(&self) -> String {
@@ -185,17 +190,9 @@ impl JoinTicket {
             relays: body.relays,
             tcp: body.tcp,
         };
-        ensure!(
-            !address.is_empty(),
-            "that join ticket has no address to connect to"
-        );
-        // Fail now, not in the middle of connecting, if the relay entries are unusable.
-        address.endpoint_addr(node)?;
-        Ok(Self {
-            node,
-            address,
-            secret,
-        })
+        let ticket = Self { node, address, secret };
+        ticket.validate()?;
+        Ok(ticket)
     }
 }
 
@@ -217,18 +214,10 @@ pub async fn create_invite(
     options: &InviteOptions,
 ) -> Result<JoinTicket> {
     ensure!(
-        !address.is_empty(),
-        "this node has no address to put in a ticket"
-    );
-    ensure!(
         !options.expires_in.is_zero() && options.expires_in <= MAX_INVITE_LIFETIME,
         "an invite can be valid for at most 365d"
     );
-    let ticket = JoinTicket::new(node, address);
-    ensure!(
-        ticket.encode().len() <= MAX_TICKET_LEN,
-        "too many advertised addresses for a join ticket (maximum {MAX_TICKET_LEN} bytes)"
-    );
+    let ticket = JoinTicket::new(node, address)?;
     db::cluster::create_join_token(
         pool,
         NewJoinToken {
@@ -670,7 +659,7 @@ mod tests {
     #[test]
     fn ticket_round_trips_with_address_and_secret() {
         let node = NodeKey::generate().public_key();
-        let ticket = JoinTicket::new(node, address());
+        let ticket = JoinTicket::new(node, address()).unwrap();
         let text = ticket.encode();
         assert!(text.starts_with("codeyard-join-v1."));
         assert!(!text.contains(['+', '/', '=', ' ', '\n']));
@@ -686,8 +675,8 @@ mod tests {
     #[test]
     fn every_ticket_has_its_own_secret() {
         let node = NodeKey::generate().public_key();
-        let first = JoinTicket::new(node, address());
-        let second = JoinTicket::new(node, address());
+        let first = JoinTicket::new(node, address()).unwrap();
+        let second = JoinTicket::new(node, address()).unwrap();
         assert_ne!(first.encode(), second.encode());
         assert_ne!(first.secret_hash(), second.secret_hash());
     }
@@ -695,7 +684,7 @@ mod tests {
     #[test]
     fn damaged_or_foreign_tickets_are_rejected() {
         let node = NodeKey::generate().public_key();
-        let good = JoinTicket::new(node, address()).encode();
+        let good = JoinTicket::new(node, address()).unwrap().encode();
         let payload = good.strip_prefix(TICKET_PREFIX).unwrap();
         let encode = |json: String| format!("{TICKET_PREFIX}{}", URL_SAFE_NO_PAD.encode(json));
         let key = node.to_string();
@@ -729,7 +718,7 @@ mod tests {
 
     #[test]
     fn debug_output_hides_the_secret() {
-        let ticket = JoinTicket::new(NodeKey::generate().public_key(), address());
+        let ticket = JoinTicket::new(NodeKey::generate().public_key(), address()).unwrap();
         let shown = format!("{ticket:?}");
         assert!(!shown.contains(&hex::encode(ticket.secret)));
         assert!(!shown.contains("secret"));

@@ -462,6 +462,8 @@ pub async fn bump_write_version(
     node_id: Option<Option<i64>>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await?;
+    sqlx::query("SET LOCAL statement_timeout = '30s'").execute(&mut *tx).await?;
     // The row lock orders this against `promote_repository`, which locks the same row.
     let held_by: Option<Option<i64>> =
         sqlx::query_scalar("SELECT storage_node_id FROM repositories WHERE id = $1 FOR UPDATE")

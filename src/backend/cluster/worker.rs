@@ -166,7 +166,7 @@ mod tests {
         let (_, peers) = worker_context(root.path(), settings).await.unwrap();
         assert_eq!(peers.len(), 1);
         let ticket =
-            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone());
+            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone()).unwrap();
         save_core(root.path(), &ticket).unwrap();
         let peer: CorePeer =
             serde_json::from_slice(&std::fs::read(root.path().join("cluster-peer.json")).unwrap())
@@ -177,7 +177,7 @@ mod tests {
         let replacement = super::super::JoinTicket::new(
             super::super::NodeKey::generate().public_key(),
             ticket.address.clone(),
-        );
+        ).unwrap();
         save_core(root.path(), &replacement).unwrap();
         use std::io::Read;
         let mut previous = Vec::new();

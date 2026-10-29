@@ -104,6 +104,8 @@ impl RemoteStore {
                 | Operation::CommitPage { .. }
                 | Operation::PathCommits { .. }
                 | Operation::ComparisonFrom { .. }
+                | Operation::SearchCode { raw_json: true, .. }
+                | Operation::CommitStatistics { raw_json: true, .. }
         );
         let (reply, body) = self.exchange(operation, body).await?;
         let value = reply.result.map_err(|failure| match failure {

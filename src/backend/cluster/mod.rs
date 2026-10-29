@@ -872,7 +872,7 @@ mod tests {
                 addrs: vec!["127.0.0.1:7444".parse().unwrap()],
                 ..Default::default()
             },
-        );
+        ).unwrap();
         let found = settings(&[
             ("NODE_NAME", "w1"),
             ("CLUSTER_NODES_FILE", file.to_str().unwrap()),

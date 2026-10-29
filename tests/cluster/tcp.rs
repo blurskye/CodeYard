@@ -297,7 +297,7 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
             tcp: vec![address_of(&core)],
             ..Default::default()
         },
-    );
+    ).unwrap();
     let error = cluster::join(&forged, &stranger, &Relay::Off, "intruder", None)
         .await
         .unwrap_err();

@@ -741,7 +741,8 @@ impl RpcHandler {
                 text,
                 offset,
                 limit,
-            } => json!(store.search_code(&git_ref, &text, offset, limit)),
+                raw_json,
+            } => encode_json(&store.search_code(&git_ref, &text, offset, limit), raw_json, &mut output)?,
             Operation::PathCommits {
                 git_ref,
                 path,
@@ -879,7 +880,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Contributors => json!(store.contributors()),
-            Operation::CommitStatistics { branch } => json!(store.commit_statistics(&branch)),
+            Operation::CommitStatistics { branch, raw_json } => encode_json(&store.commit_statistics(&branch), raw_json, &mut output)?,
             Operation::CodeFrequency { branch } => json!(store.code_frequency(&branch)),
             Operation::IsAncestor {
                 ancestor,
