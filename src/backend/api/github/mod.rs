@@ -129,16 +129,35 @@ use std::{collections::HashMap, sync::Arc};
 pub(super) struct Error(StatusCode, String, Option<Value>);
 pub(super) type Result<T> = std::result::Result<T, Error>;
 
+/// Preserve Axum's transport/syntax/data classification inside the GitHub envelope.
+pub(super) fn json_error(error: axum::extract::rejection::JsonRejection) -> Error {
+    Error::new(error.status(), error.body_text())
+}
+
+pub(super) fn json_bytes_error(error: axum::Error) -> Error {
+    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
+    while let Some(error) = source {
+        if error.is::<http_body_util::LengthLimitError>() { return Error::new(StatusCode::PAYLOAD_TOO_LARGE, "Request body is too large"); }
+        source = error.source();
+    }
+    Error::new(StatusCode::BAD_REQUEST, "Failed to read request body")
+}
+
+/// Byte-buffered endpoints intentionally keep their optional-body and media-type policies.
+pub(super) fn json_parse_error(error: serde_json::Error) -> Error {
+    let status = if error.is_data() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::BAD_REQUEST };
+    Error::new(status, error.to_string())
+}
+
 impl Error {
     pub(super) fn graphql(self) -> async_graphql::Error {
-        use async_graphql::ErrorExtensions;
         let kind = match self.0 {
             StatusCode::NOT_FOUND => "NOT_FOUND",
             StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => "FORBIDDEN",
             StatusCode::SERVICE_UNAVAILABLE => "INTERNAL",
             _ => "UNPROCESSABLE",
         };
-        async_graphql::Error::new(self.1).extend_with(|_, e| e.set("type", kind))
+        super::graphql::error(self.1, kind)
     }
 
     fn new(status: StatusCode, message: impl Into<String>) -> Self {
