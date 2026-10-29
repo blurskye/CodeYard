@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const MAX_STATE_BYTES: usize = 8 * 1024 * 1024;
+/// Leave room for the authenticated operation envelope inside the 8 MiB queue RPC frame.
+pub const MAX_STATE_BYTES: usize = 7 * 1024 * 1024;
 pub const MAX_STEP_NUMBER: u32 = 10_000;
 
 #[derive(Clone, Serialize, Deserialize)]
