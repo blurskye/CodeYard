@@ -3323,7 +3323,7 @@ async fn a_repository_at_the_ref_limit_refuses_new_branches_and_tags() {
         f.repo.reference(&name, f.first, false, "fill").unwrap();
     }
     let path = std::path::Path::new(f.store.location());
-    let held = crate::backend::git::branches_and_tags_in_use(path).unwrap();
+    let held = crate::backend::git::published_refs_in_use(path).unwrap();
     assert_eq!(held.count, MAX_REPOSITORY_REFS);
 
     let error = f

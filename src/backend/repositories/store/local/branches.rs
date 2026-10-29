@@ -54,7 +54,7 @@ impl LocalStore {
             ));
         }
         // The new name counts against the ref-name budget in place of the old one.
-        let mut held = self.blocking(git::branches_and_tags_in_use).await?;
+        let mut held = self.blocking(git::published_refs_in_use).await?;
         held.count = held.count.saturating_sub(1);
         held.bytes = held.bytes.saturating_sub(git::ref_listing_bytes(&old_ref));
         super::ensure_ref_room(held, &[&new_ref])?;

@@ -91,7 +91,7 @@ impl LocalStore {
             self.git_object_kind(sha).await?;
         }
         // The imported names must fit the same count and byte limits as any other branch or tag.
-        let held = self.blocking(git::branches_and_tags_in_use).await?;
+        let held = self.blocking(git::published_refs_in_use).await?;
         let created: Vec<&str> = import
             .refs
             .keys()

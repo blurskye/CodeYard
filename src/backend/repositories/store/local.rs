@@ -459,7 +459,7 @@ impl LocalStore {
 
     /// Refuses a new branch or tag once the repository is at the limit.
     async fn ensure_room_for_ref(&self, reference: &str) -> Result<(), RepoError> {
-        let held = self.blocking(git::branches_and_tags_in_use).await?;
+        let held = self.blocking(git::published_refs_in_use).await?;
         ensure_ref_room(held, &[reference])
     }
 
