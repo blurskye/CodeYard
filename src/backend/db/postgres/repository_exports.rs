@@ -52,6 +52,13 @@ async fn scoped(
     Ok(row)
 }
 
+/// Export enumeration is pinned by a descending ID cursor, never a shifting offset.
+pub async fn discussion_ids(pool: &PgPool, repo: i64, pulls: bool, before: i64, limit: i64) -> Result<Vec<i64>> {
+    anyhow::ensure!(before > 0 && (1..=100).contains(&limit), ExportRefusal::Invalid);
+    let table = if pulls { "pull_requests" } else { "issues" };
+    Ok(sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE repo_id=$1 AND id<$2 ORDER BY id DESC LIMIT $3")).bind(repo).bind(before).bind(limit).fetch_all(pool).await?)
+}
+
 pub async fn create(
     pool: &PgPool,
     actor: i64,
