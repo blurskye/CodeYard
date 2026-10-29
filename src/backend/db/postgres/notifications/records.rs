@@ -196,6 +196,7 @@ async fn notification_scopes(
     Ok(NotificationScopes {
         high_water: notification_high_water(connection, user_id).await?,
         readable: std::collections::BTreeMap::new(),
+        classic_token: false,
     })
 }
 
@@ -440,10 +441,11 @@ async fn decide_scopes(
     ).bind(user_id).bind(&retained).fetch_all(&mut *connection).await?;
     let readable = scope_readable_condition();
     let decisions: Vec<(i64, bool)> = sqlx::query_as(&format!(
-        "SELECT r.id, ({readable}) FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=ANY($2)"
+        "SELECT r.id, (({readable}) AND (NOT $3 OR NOT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=r.owner_org_id AND NOT p.classic_allowed))) FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=ANY($2)"
     ))
     .bind(user_id)
     .bind(retained)
+    .bind(scopes.classic_token)
     .fetch_all(connection)
     .await?;
     for id in ids {
@@ -916,6 +918,9 @@ async fn notification_inbox_once(
         return Ok(None);
     };
     let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    if let NotificationCredential::Token(token) = credential {
+        scopes.classic_token = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)").bind(token).fetch_one(&mut *tx).await?;
+    }
     let mut next_cursor = None;
     let wants_counts = matches!(action, NotificationInboxAction::List { .. });
     // Thread lookups and subscription changes do not report the unread badge, so they skip

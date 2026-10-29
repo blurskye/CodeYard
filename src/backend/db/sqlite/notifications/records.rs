@@ -187,6 +187,7 @@ async fn decide_scopes(
     Ok(NotificationScopes {
         high_water: notification_high_water(connection, user_id).await?,
         readable: decided.into_iter().collect(),
+        classic_token: false,
     })
 }
 
@@ -769,7 +770,16 @@ pub async fn notification_inbox_with_credential(
         tx.rollback().await?;
         return Ok(None);
     };
-    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    if let NotificationCredential::Token(token) = credential {
+        scopes.classic_token = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)").bind(token).fetch_one(&mut *tx).await?;
+        if scopes.classic_token {
+            let denied: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT r.id FROM notifications n JOIN repositories r ON r.id=n.scope_repository_id JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE n.user_id=$1 AND NOT p.classic_allowed").bind(user_id).fetch_all(&mut *tx).await?;
+            for id in denied {
+                scopes.readable.insert(id, false);
+            }
+        }
+    }
     let mut next_cursor = None;
     let wants_counts = matches!(action, NotificationInboxAction::List { .. });
     // Thread lookups and subscription changes do not report the unread badge, so they skip
