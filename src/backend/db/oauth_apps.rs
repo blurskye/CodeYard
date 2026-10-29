@@ -58,7 +58,7 @@ native_operation!(crate::backend::db::postgres::oauth_apps::application,
     fn application(pool: &DbPool, client_id: &str) -> Result<Option<Application>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::applications,
     crate::backend::db::sqlite::oauth_apps::applications,
-    fn applications(pool: &DbPool, actor: i64) -> Result<Vec<Application>>);
+    fn applications(pool: &DbPool, actor: i64, session: &str) -> Result<Vec<Application>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::save_grant,
     crate::backend::db::sqlite::oauth_apps::save_grant,
     fn save_grant(pool: &DbPool, grant: &Grant) -> Result<()>);

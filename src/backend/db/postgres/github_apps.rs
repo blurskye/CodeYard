@@ -75,10 +75,10 @@ pub async fn app_by_id(pool: &PgPool, id: i64) -> Result<Option<App>> {
         .fetch_optional(pool)
         .await?)
 }
-pub async fn apps(pool: &PgPool, actor: i64) -> Result<Vec<App>> {
+pub async fn apps(pool: &PgPool, actor: i64, session: &str) -> Result<Vec<App>> {
     Ok(
-        sqlx::query_as("SELECT * FROM github_apps WHERE owner_id=$1 ORDER BY id")
-            .bind(actor)
+        sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN sessions s ON s.user_id=u.id WHERE a.owner_id=$1 AND s.id=$2 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password ORDER BY a.id")
+            .bind(actor).bind(session)
             .fetch_all(pool)
             .await?,
     )
@@ -204,9 +204,27 @@ pub async fn installation_repositories(
 pub async fn managed_installations(
     pool: &PgPool,
     actor: i64,
+    session: &str,
 ) -> Result<Vec<crate::backend::db::github_apps::ManagedInstallation>> {
-    Ok(sqlx::query_as("SELECT i.id,a.name AS app_name,COALESCE(account.username,o.name) AS account_name,i.all_repos FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users u ON u.id=$1 LEFT JOIN users account ON account.id=i.user_id LEFT JOIN organizations o ON o.id=i.org_id WHERE NOT u.is_banned AND NOT u.must_change_password AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=u.id AND m.role='owner')) ORDER BY i.id").bind(actor).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT i.id,a.name AS app_name,COALESCE(account.username,o.name) AS account_name,i.all_repos FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users u ON u.id=$1 LEFT JOIN users account ON account.id=i.user_id LEFT JOIN organizations o ON o.id=i.org_id WHERE NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM sessions s WHERE s.user_id=u.id AND s.id=$2 AND s.expires_at>clock_timestamp()) AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=u.id AND m.role='owner')) ORDER BY i.id").bind(actor).bind(session).fetch_all(pool).await?)
 }
+pub async fn rotate_credentials(pool: &PgPool, actor: i64, session: &str, slug: &str, public_key: &str, secret_hash: &str) -> Result<Option<String>> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::require_account(&mut tx, actor, &crate::backend::db::users::accounts::AccountCredential::Session(session)).await?;
+    let app: Option<(i64, String)> = sqlx::query_as("SELECT id,client_id FROM github_apps WHERE owner_id=$1 AND slug=$2")
+        .bind(actor).bind(slug).fetch_optional(&mut *tx).await?;
+    let Some((id, client)) = app else { return Ok(None) };
+    let client_changed = sqlx::query("UPDATE oauth_applications SET secret_hash=$2 WHERE client_id=$1 AND owner_id=$3")
+        .bind(&client).bind(secret_hash).bind(actor).execute(&mut *tx).await?.rows_affected();
+    let key_changed = sqlx::query("UPDATE github_apps SET public_key=$2 WHERE id=$1 AND owner_id=$3 AND client_id=$4")
+        .bind(id).bind(public_key).bind(actor).bind(&client).execute(&mut *tx).await?.rows_affected();
+    anyhow::ensure!(client_changed == 1 && key_changed == 1, "App credentials changed concurrently");
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id) VALUES($1,'github_app.credentials.rotate','github_app',$2)")
+        .bind(actor).bind(id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(client))
+}
+
 pub async fn uninstall(pool: &PgPool, actor: i64, session: &str, id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;

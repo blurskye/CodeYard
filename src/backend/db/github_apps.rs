@@ -69,7 +69,7 @@ native_operation!(crate::backend::db::postgres::github_apps::app_issuer, crate::
 native_operation!(crate::backend::db::postgres::github_apps::app_by_id, crate::backend::db::sqlite::github_apps::app_by_id,
     fn app_by_id(pool: &DbPool, id: i64) -> Result<Option<App>>);
 native_operation!(crate::backend::db::postgres::github_apps::apps, crate::backend::db::sqlite::github_apps::apps,
-    fn apps(pool: &DbPool, actor: i64) -> Result<Vec<App>>);
+    fn apps(pool: &DbPool, actor: i64, session: &str) -> Result<Vec<App>>);
 native_operation!(crate::backend::db::postgres::github_apps::install, crate::backend::db::sqlite::github_apps::install,
     fn install(pool: &DbPool, actor: i64, session: &str, app: i64, user: Option<i64>, org: Option<i64>, repos: Option<&[i64]>) -> Result<Option<Installation>>);
 /// Which installations a listing reads. Each `None` leaves its filter out; `actor` keeps the
@@ -100,7 +100,9 @@ pub struct ManagedInstallation {
     pub all_repos: bool,
 }
 native_operation!(crate::backend::db::postgres::github_apps::managed_installations,crate::backend::db::sqlite::github_apps::managed_installations,
-    fn managed_installations(pool:&DbPool,actor:i64)->Result<Vec<ManagedInstallation>>);
+    fn managed_installations(pool:&DbPool,actor:i64,session:&str)->Result<Vec<ManagedInstallation>>);
+native_operation!(crate::backend::db::postgres::github_apps::rotate_credentials,crate::backend::db::sqlite::github_apps::rotate_credentials,
+    fn rotate_credentials(pool: &DbPool, actor: i64, session: &str, slug: &str, public_key: &str, secret_hash: &str) -> Result<Option<String>>);
 native_operation!(crate::backend::db::postgres::github_apps::uninstall,crate::backend::db::sqlite::github_apps::uninstall,
     fn uninstall(pool:&DbPool,actor:i64,session:&str,id:i64)->Result<bool>);
 native_operation!(crate::backend::db::postgres::github_apps::change_installation, crate::backend::db::sqlite::github_apps::change_installation,

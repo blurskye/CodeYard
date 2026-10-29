@@ -366,7 +366,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(app.status, StatusCode::OK, "{}", app.text());
-    let applications = db::oauth_apps::applications(f.pool(), actor).await.unwrap();
+    let applications = db::oauth_apps::applications(f.pool(), actor, &user.session).await.unwrap();
     assert_eq!(applications.len(), 1);
     assert!(app.text().contains(&applications[0].client_id));
     let (status, page) = user.page("/settings/applications").await;

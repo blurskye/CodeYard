@@ -41,10 +41,10 @@ pub async fn application(pool: &PgPool, client_id: &str) -> Result<Option<Applic
     )
 }
 
-pub async fn applications(pool: &PgPool, actor: i64) -> Result<Vec<Application>> {
+pub async fn applications(pool: &PgPool, actor: i64, session: &str) -> Result<Vec<Application>> {
     Ok(
-        sqlx::query_as("SELECT * FROM oauth_applications WHERE owner_id=$1 ORDER BY id")
-            .bind(actor)
+        sqlx::query_as("SELECT a.* FROM oauth_applications a JOIN users u ON u.id=a.owner_id JOIN sessions s ON s.user_id=u.id WHERE a.owner_id=$1 AND s.id=$2 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password ORDER BY a.id")
+            .bind(actor).bind(session)
             .fetch_all(pool)
             .await?,
     )
