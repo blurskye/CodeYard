@@ -504,7 +504,7 @@ pub async fn list_primary_repositories(
     node_id: i64,
 ) -> Result<Vec<PrimaryReplicaRow>> {
     Ok(sqlx::query_as(
-        "SELECT r.id, r.disk_path, rr.node_id, rr.applied_version, r.size_bytes
+        "SELECT r.id, r.disk_path, rr.node_id, rr.applied_version, r.size_bytes, rr.synced_at IS NOT NULL
          FROM repositories r
          LEFT JOIN repository_replicas rr ON rr.repository_id = r.id
          WHERE r.storage_node_id = $1
@@ -516,7 +516,7 @@ pub async fn list_primary_repositories(
 }
 
 pub async fn pending_replica_bytes(pool: &PgPool) -> Result<Vec<(i64, i64)>> {
-    Ok(sqlx::query_as("SELECT rr.node_id, SUM(GREATEST(r.size_bytes,1))::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 GROUP BY rr.node_id")
+    Ok(sqlx::query_as("SELECT rr.node_id, SUM(GREATEST(r.size_bytes,1))::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
         .fetch_all(pool).await?)
 }
 
@@ -639,7 +639,7 @@ pub async fn set_applied_version(
         return Ok(false);
     }
     let updated = sqlx::query(
-        "UPDATE repository_replicas SET applied_version = $3, synced_at = NOW()
+        "UPDATE repository_replicas SET applied_version = $3, synced_at = CASE WHEN $3 >= 0 THEN NOW() ELSE synced_at END
          WHERE repository_id = $1 AND node_id = $2",
     )
     .bind(repo_id)
@@ -825,7 +825,7 @@ async fn move_primary(
         .execute(&mut *conn)
         .await?;
     sqlx::query(
-        "INSERT INTO repository_replicas (repository_id, node_id) VALUES ($1, $2)
+        "INSERT INTO repository_replicas (repository_id, node_id, synced_at) VALUES ($1, $2, NOW())
          ON CONFLICT DO NOTHING",
     )
     .bind(repo_id)

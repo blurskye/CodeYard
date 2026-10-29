@@ -310,10 +310,11 @@ struct Primary {
 /// The database lists one row per copy; rows of one repository are next to each other.
 fn group_primaries(rows: Vec<db::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
     let mut primaries: Vec<Primary> = Vec::new();
-    for (repository_id, disk_path, node, applied_version, size) in rows {
+    for (repository_id, disk_path, node, applied_version, size, completed) in rows {
         let copy = node.map(|node| plan::Holder {
             node,
             version: applied_version.unwrap_or(-1),
+            completed,
         });
         match primaries.last_mut() {
             Some(last) if last.repository_id == repository_id => last.copies.extend(copy),
@@ -353,7 +354,7 @@ async fn assign(
     }
     for primary in primaries {
         // Reconsider this repository's pending reservations against all the other copies.
-        for copy in primary.copies.iter().filter(|copy| copy.version < 0) {
+        for copy in primary.copies.iter().filter(|copy| copy.version < 0 && !copy.completed) {
             if let Some(candidate) = storage.iter_mut().find(|node| node.id == copy.node) {
                 candidate.disk_free = candidate
                     .disk_free
@@ -364,7 +365,7 @@ async fn assign(
         for holder in primary
             .copies
             .iter()
-            .filter(|copy| copy.version < 0 && !change.remove.contains(&copy.node))
+            .filter(|copy| copy.version < 0 && !copy.completed && !change.remove.contains(&copy.node))
             .map(|copy| copy.node)
             .chain(change.add.iter().copied())
         {
@@ -395,7 +396,7 @@ async fn place_and_start(
     let mut held = db::cluster::list_held_replicas(context.database()?, node).await?;
     let live: HashSet<_> = held.iter().map(|row| row.repository_id).collect();
     retry.failures.retain(|repository, _| live.contains(repository));
-    let failed = locate(&context.repos_path, node, primaries, &held, copying).await;
+    let failed = locate(context.database()?, &context.repos_path, node, primaries, &held, copying).await;
     held.retain(|row| !failed.contains(&row.repository_id));
     copying.start(context, &held, retry);
     Ok(())
@@ -453,7 +454,7 @@ async fn connected(path: &Path) -> Result<bool> {
 /// Puts each directory where its role says: a repository this node is primary of moves
 /// from `mirrors` to the primary location, and a copy whose primary moved away keeps its
 /// directory as a copy. A directory moves only into a free place, and nothing is deleted.
-async fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], copying: &Copying) -> HashSet<i64> {
+async fn locate(pool: &DbPool, repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], copying: &Copying) -> HashSet<i64> {
     let mut failed = HashSet::new();
     for primary in primaries {
         let Ok(uuid) = rpc::repository_uuid(&primary.disk_path) else {
@@ -464,7 +465,7 @@ async fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldRepl
         }
         let (copy, place) = (copy_path(repos, uuid), crate::backend::repositories::store::primary_path(repos, uuid));
         if tokio::fs::try_exists(&copy).await.unwrap_or(true) && !tokio::fs::try_exists(&place).await.unwrap_or(false) {
-            if let Err(error) = move_directory(&copy, &place).await {
+            if let Err(error) = move_directory(pool, primary.repository_id, node, true, &copy, &place).await {
                 warn!(repository=primary.repository_id, %error, "could not relocate a primary directory");
                 failed.insert(primary.repository_id);
             }
@@ -482,7 +483,7 @@ async fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldRepl
             let moved = if tokio::fs::try_exists(&copy).await.unwrap_or(true) {
                 Err(anyhow::anyhow!("both primary and mirror directories exist; refusing to copy ambiguous storage"))
             } else {
-                move_directory(&place, &copy).await
+                move_directory(pool, row.repository_id, node, false, &place, &copy).await
             };
             if let Err(error) = moved {
                 warn!(repository=row.repository_id, %error, "could not relocate a former primary; copy deferred");
@@ -493,7 +494,16 @@ async fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldRepl
     failed
 }
 
-async fn move_directory(from: &Path, to: &Path) -> Result<()> {
+async fn move_directory(pool: &DbPool, repository: i64, node: i64, primary: bool, from: &Path, to: &Path) -> Result<()> {
+    let (primary_path, mirror_path) = if primary { (to, from) } else { (from, to) };
+    let _primary = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(primary_path)).await?;
+    let _mirror = tokio::time::timeout(Duration::from_millis(1), crate::backend::git::locks::lock(mirror_path)).await?;
+    let row = db::repositories::records::get_repository_by_id(pool, repository).await?.context("repository was deleted before relocation")?;
+    anyhow::ensure!(row.storage_node_id.is_some() && (row.storage_node_id == Some(node)) == primary, "repository placement changed before relocation");
+    if !primary {
+        anyhow::ensure!(db::cluster::replica_applied_version(pool, repository, node).await?.is_some(), "copy assignment changed before relocation");
+    }
+    anyhow::ensure!(!tokio::fs::try_exists(to).await?, "relocation target already exists");
     if let Some(parent) = to.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }

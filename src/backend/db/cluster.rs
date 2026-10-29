@@ -46,8 +46,8 @@ pub struct DeclaredMember {
     pub roles: Vec<String>,
 }
 
-/// A primary repository and one optional copy: id, path, holder, applied version, size.
-pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64);
+/// A primary and optional copy: id, path, holder, applied version, size, ever completed.
+pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64, bool);
 
 pub struct NewJoinToken<'a> {
     /// Hex SHA-256 of the invite secret; the secret itself is never stored.

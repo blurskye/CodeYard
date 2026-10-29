@@ -6,11 +6,13 @@ use crate::backend::{
     db::models::{ClusterNode, ReplicaSetting},
 };
 
-/// A node that holds a copy. A negative version means it has not copied any data.
+/// A holder's readiness and allocation history. Negative versions cannot serve reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Holder {
     pub node: i64,
     pub version: i64,
+    /// Previously completed bytes remain allocated during an incremental refresh.
+    pub completed: bool,
 }
 
 /// The copies to add and to remove for one repository.
@@ -45,6 +47,7 @@ pub fn plan(
             .map_or(-1, |copy| copy.version)
     };
     let applied = |id: i64| version(id) >= 0;
+    let completed = |id: i64| copies.iter().any(|copy| copy.node == id && copy.completed);
     let held: Vec<i64> = copies.iter().map(|copy| copy.node).collect();
     let mut kept: Vec<i64> = held
         .iter()
@@ -53,7 +56,7 @@ pub fn plan(
             id != primary
                 && storage.iter().any(|node| {
                     node.id == id
-                        && (applied(id) || node.disk_free.is_some_and(|free| free >= size))
+                        && (completed(id) || applied(id) || node.disk_free.is_some_and(|free| free >= size))
                 })
         })
         .collect();
@@ -158,6 +161,7 @@ mod tests {
         Holder {
             node,
             version: if applied { 0 } else { -1 },
+            completed: applied,
         }
     }
 
@@ -274,10 +278,12 @@ mod tests {
                 Holder {
                     node: 2,
                     version: 10,
+                    completed: true,
                 },
                 Holder {
                     node: 3,
                     version: 1,
+                    completed: true,
                 },
             ];
             assert!(plan(ReplicaSetting::Copies(2), 1, &storage, &copies)
