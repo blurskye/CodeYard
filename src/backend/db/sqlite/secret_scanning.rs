@@ -456,7 +456,7 @@ pub async fn finish(pool: &SqlitePool, id: i64, attempt: i64, succeeded: bool) -
 }
 
 pub async fn history(pool: &SqlitePool, actor: i64, repo: i64) -> Result<Vec<ScanJob>> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, repo).await?;
     let jobs = sqlx::query_as(
         "SELECT * FROM secret_scanning_jobs WHERE repo_id=$1 ORDER BY id DESC LIMIT 100",
