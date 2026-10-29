@@ -86,12 +86,16 @@ fn native_builds_hidden_bundles_and_nonregular_entries_require_manual_review() {
     Archive::verify(&metadata, &bytes, None).unwrap();
 }
 #[test]
-fn all_three_lock_versions_update_actual_manifest_and_lock() {
+fn all_lock_versions_read_but_only_modern_locks_update() {
     for version in 1..=3 {
         let old = published(json!({"name":"foo","version":"1.2.3"}));
         let new = published(json!({"name":"foo","version":"1.2.4"}));
         let parsed = lock(version, &old);
         assert_eq!(parsed.queries(), vec![("foo".into(), "1.2.3".into())]);
+        if version == 1 {
+            assert!(parsed.patch("node_modules/foo", &old, &new).is_err());
+            continue;
+        }
         let patch = parsed.patch("node_modules/foo", &old, &new).unwrap();
         let manifest: Value = serde_json::from_slice(&patch.manifest).unwrap();
         assert_eq!(manifest["dependencies"]["foo"], "^1.2.4");
@@ -113,7 +117,8 @@ fn formatted_output_is_bounded_before_allocating_an_expanded_document() {
 fn registry_urls_and_package_names_are_not_arbitrary_targets() {
     assert!(package_name("@scope/pkg"));
     assert!(package_name("foo-bar"));
-    for name in ["../x", "Foo", "@scope/a/b", "_private", ""] {
+    assert!(package_name("Foo"));
+    for name in ["../x", "@scope/a/b", "_private", ""] {
         assert!(!package_name(name));
     }
     for url in [
