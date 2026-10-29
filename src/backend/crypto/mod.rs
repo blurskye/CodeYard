@@ -68,6 +68,22 @@ impl SecretEncryptor {
         Ok((ciphertext, nonce_bytes))
     }
 
+    pub fn generate_sealed_box_key(&self) -> Result<(Vec<u8>, [u8; 12]), SecretError> {
+        let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
+        self.encrypt(&key.to_bytes())
+    }
+
+    pub fn sealed_box_key(
+        &self,
+        ciphertext: &[u8],
+        nonce: &[u8],
+    ) -> Result<crypto_box::SecretKey, SecretError> {
+        let bytes: [u8; 32] = self.decrypt(ciphertext, nonce)?
+            .try_into()
+            .map_err(|_| SecretError::DecryptionFailed)?;
+        Ok(crypto_box::SecretKey::from(bytes))
+    }
+
     pub fn decrypt(&self, ciphertext: &[u8], nonce: &[u8]) -> Result<Vec<u8>, SecretError> {
         if nonce.len() != 12 {
             return Err(SecretError::InvalidNonce);

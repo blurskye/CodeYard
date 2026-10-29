@@ -84,6 +84,11 @@ pub(crate) fn repository_settings_error(
             "validation_error",
             "Website must be an http or https address of at most 255 characters without spaces.",
         ),
+        None if matches!(error.downcast_ref::<crate::backend::db::secrets::SecretsError>(), Some(crate::backend::db::secrets::SecretsError::TotalTooLarge | crate::backend::db::secrets::SecretsError::TooManySecrets)) => (
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "Delivered Actions secrets exceed the CI delivery budget",
+        ),
         None => (
             StatusCode::SERVICE_UNAVAILABLE,
             "unavailable",

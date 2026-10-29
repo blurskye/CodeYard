@@ -36,11 +36,11 @@ pub(crate) fn authority(error: anyhow::Error) -> VariableError {
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), VariableError> {
-    super::secrets::validate_repository_secret(name, "").map_err(|_| VariableError::InvalidName)?;
-    if value.len() > 48 * 1024 || value.contains('\0') {
-        return Err(VariableError::InvalidValue);
-    }
-    Ok(())
+    use codeyard_actions::values::InvalidValue;
+    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+        InvalidValue::Name | InvalidValue::ReservedName => VariableError::InvalidName,
+        InvalidValue::Nul | InvalidValue::TooLarge => VariableError::InvalidValue,
+    })
 }
 
 pub fn validate_all(variables: &[(String, String)]) -> Result<(), VariableError> {

@@ -80,7 +80,7 @@ pub(super) fn error(error: ValueError) -> Error {
         ValueError::Repository => {
             Error::validation("ActionsValue", "selected_repository_ids", "invalid")
         }
-        ValueError::InvalidValue | ValueError::Visibility | ValueError::Limit => {
+        ValueError::InvalidValue | ValueError::Visibility | ValueError::Limit | ValueError::SecretsSize => {
             Error::invalid(error.to_string())
         }
         _ => Error::unavailable(error),

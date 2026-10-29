@@ -25,8 +25,7 @@ impl SecretKind {
     }
 }
 
-pub const MAX_SECRET_NAME_BYTES: usize = 255;
-pub const MAX_SECRET_VALUE_BYTES: usize = 48 * 1024;
+pub use codeyard_actions::values::{MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES, MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES};
 /// Most repository secrets one CI claim carries.
 pub const MAX_REPOSITORY_SECRETS: usize = 100;
 /// Names and values of one claim together. A claim is one RPC reply of at most 8 MiB, and
@@ -90,27 +89,13 @@ impl SecretsError {
 }
 
 pub fn validate_repository_secret(name: &str, value: &str) -> Result<(), SecretsError> {
-    let mut bytes = name.bytes();
-    let first = bytes.next().ok_or(SecretsError::InvalidName)?;
-    if name.len() > MAX_SECRET_NAME_BYTES
-        || !(first.is_ascii_alphabetic() || first == b'_')
-        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-    {
-        return Err(SecretsError::InvalidName);
-    }
-    if name
-        .get(.."GITHUB_".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GITHUB_"))
-    {
-        return Err(SecretsError::ReservedName);
-    }
-    if value.as_bytes().contains(&0) {
-        return Err(SecretsError::ValueContainsNul);
-    }
-    if value.len() > MAX_SECRET_VALUE_BYTES {
-        return Err(SecretsError::ValueTooLarge);
-    }
-    Ok(())
+    use codeyard_actions::values::InvalidValue;
+    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+        InvalidValue::Name => SecretsError::InvalidName,
+        InvalidValue::ReservedName => SecretsError::ReservedName,
+        InvalidValue::Nul => SecretsError::ValueContainsNul,
+        InvalidValue::TooLarge => SecretsError::ValueTooLarge,
+    })
 }
 
 /// Checks the whole set that one CI claim carries: each secret, then the count and the
@@ -123,6 +108,12 @@ pub fn validate_repository_secrets(secrets: &[(String, String)]) -> Result<(), S
 /// The RPC byte bound is unchanged.
 pub fn validate_workflow_secrets(secrets: &[(String, String)]) -> Result<(), SecretsError> {
     validate_secret_set(secrets, MAX_REPOSITORY_SECRETS * 2)
+}
+
+pub(crate) fn ensure_workflow_budget(count: i64, bytes: i64) -> Result<(), SecretsError> {
+    if count > (MAX_REPOSITORY_SECRETS * 2) as i64 { return Err(SecretsError::TooManySecrets); }
+    if bytes > MAX_REPOSITORY_SECRETS_BYTES as i64 { return Err(SecretsError::TotalTooLarge); }
+    Ok(())
 }
 
 fn validate_secret_set(secrets: &[(String, String)], limit: usize) -> Result<(), SecretsError> {
@@ -167,6 +158,7 @@ pub async fn create_or_update_secret(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
+    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     create_or_update_secret_for(
         pool,
@@ -175,6 +167,7 @@ pub async fn create_or_update_secret(
         name,
         value,
         created_by_id,
+        credential,
     )
     .await
 }
@@ -186,6 +179,7 @@ pub async fn create_or_update_secret_for(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
+    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // Secret names are case-insensitive, as on GitHub, so every writer stores them uppercase.
     let name = &name.to_ascii_uppercase();
@@ -199,6 +193,7 @@ pub async fn create_or_update_secret_for(
                 name,
                 value,
                 created_by_id,
+                credential,
             )
             .await
         }
@@ -210,6 +205,7 @@ pub async fn create_or_update_secret_for(
                 name,
                 value,
                 created_by_id,
+                credential,
             )
             .await
         }
@@ -229,14 +225,15 @@ pub async fn delete_secret(
     actor_id: i64,
     repo_id: i64,
     name: &str,
+    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // An upgrade keeps an old lowercase name whose uppercase form was taken, so the exact name
     // is deleted first.
     let upper = name.to_ascii_uppercase();
     Ok(
-        delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, name).await?
+        delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, name, credential).await?
             || (upper != name
-                && delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, &upper).await?),
+                && delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, &upper, credential).await?),
     )
 }
 
@@ -248,6 +245,7 @@ native_operation!(crate::backend::db::postgres::secrets::repository_secret_key,
     encryptor: &SecretEncryptor,
     actor_id: i64,
     repo_id: i64,
+    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError>);
 
 native_operation!(crate::backend::db::postgres::secrets::list_secrets,
@@ -261,7 +259,7 @@ native_operation!(crate::backend::db::postgres::secrets::list_secrets,
 
 native_operation!(crate::backend::db::postgres::secrets::delete_secret,
     crate::backend::db::sqlite::secrets::delete_secret,
-    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str) -> Result<bool, SecretsError>);
+    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str, credential: &super::users::accounts::AccountCredential<'_>) -> Result<bool, SecretsError>);
 
 // A claim with no encryption key must not silently omit configured secrets.
 native_operation!(crate::backend::db::postgres::secrets::repository_has_secrets,

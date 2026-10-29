@@ -209,6 +209,7 @@ async fn public_key(
         encryptor,
         auth.user.id,
         repo.id,
+        &auth.credential(),
     )
     .await
     .map_err(super::action_secrets::error)?;
@@ -240,6 +241,7 @@ async fn save_secret(
         encryptor,
         auth.user.id,
         repo.id,
+        &auth.credential(),
     )
     .await
     .map_err(super::action_secrets::error)?;

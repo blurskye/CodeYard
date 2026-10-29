@@ -24,17 +24,8 @@ fn valid(values: &BTreeMap<String, String>, budget: usize) -> bool {
     let mut names = BTreeSet::new();
     values.len() <= 100
         && values.iter().all(|(name, value)| {
-            let mut bytes = name.bytes();
-            let first = bytes
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_');
-            first
-                && name.len() <= 255
-                && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-                && !name.to_ascii_uppercase().starts_with("GITHUB_")
+            crate::values::validate(name, value).is_ok()
                 && names.insert(name.to_ascii_uppercase())
-                && value.len() <= 48 * 1024
-                && !value.contains('\0')
         })
         && values
             .iter()

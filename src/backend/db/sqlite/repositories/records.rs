@@ -410,6 +410,9 @@ async fn patch_core(
     apply_merge_methods(&mut tx, repo_id, changes.merge_methods).await?;
     let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE(?2,name),description=CASE WHEN ?3 THEN ?4 ELSE description END,website=CASE WHEN ?5 THEN ?6 ELSE website END,is_private=?7,is_archived=?8,is_template=COALESCE(?9,is_template),default_branch=COALESCE(?10,default_branch),updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND NOT is_archived RETURNING *")
         .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
+    if private != previous.is_private {
+        super::super::secrets::delivery_budget(&mut tx, repo_id).await?;
+    }
     tx.commit().await?;
     Ok(updated)
 }
@@ -789,6 +792,7 @@ async fn transfer_repository_inner(
         super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
         super::super::runners::remove_repository_runners(&mut tx, repo_id).await?;
     }
+    super::super::secrets::delivery_budget(&mut tx, repo_id).await?;
     tx.commit().await?;
     Ok(result)
 }
