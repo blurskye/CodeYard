@@ -74,7 +74,6 @@ fn act_workflow_name(definition: &Value, workflow: &str) -> String {
 
 const IDLE_POLL: Duration = Duration::from_secs(3);
 const HEARTBEAT: Duration = Duration::from_secs(10);
-const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Without an acknowledged heartbeat for this long, a run is cancelled before the core's stale
 /// cutoff. The margin covers claim preparation before the first heartbeat, and cleanup.
 const LOST_HEARTBEAT_CANCEL: Duration = Duration::from_secs(45);
@@ -289,9 +288,7 @@ async fn execute(
             wait = HEARTBEAT;
             let lease = tokio::time::sleep_until((last_ack + LOST_HEARTBEAT_CANCEL).into());
             let reply = tokio::select! {
-                reply = tokio::time::timeout(HEARTBEAT_TIMEOUT, service.queue.heartbeat(worker, run.id)) => {
-                    reply.unwrap_or_else(|_| Err(anyhow::anyhow!("heartbeat timed out")))
-                }
+                reply = service.queue.heartbeat(worker, run.id) => reply,
                 _ = heartbeat_stop.changed(), if !shutdown => {
                     shutdown = true;
                     let _ = cancel_tx.send(true);
@@ -306,9 +303,11 @@ async fn execute(
             };
             match reply {
                 Ok(Some(false)) => last_ack = Instant::now(),
-                Ok(Some(true)) | Ok(None) => {
+                Ok(Some(true)) => {
+                    last_ack = Instant::now();
                     let _ = cancel_tx.send(true);
                 }
+                Ok(None) => { let _ = cancel_tx.send(true); }
                 Err(error) => warn!(%error, "CI heartbeat failed"),
             }
         }
@@ -318,7 +317,7 @@ async fn execute(
         let mut names = Vec::new();
         let result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names).await;
         let shutting_down = *stop.borrow();
-        let (mut status, mut message) = match &result {
+        let (status, message) = match &result {
             Ok(true) => ("success", None),
             Ok(false) => ("failed", Some("A workflow job failed".to_owned())),
             Err(error) => match error.downcast_ref::<Stopped>() {
@@ -354,27 +353,19 @@ async fn execute(
                 }
             },
         };
-        // Finish even if the engine never recovers. The durable record keeps the slot
-        // from accepting more work until recovery has removed its containers.
-        // The first removal always runs, even when the worker is stopping; only the retries wait on stop.
-        let reuse_slot = tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, async {
-            let mut delay = Duration::from_secs(1);
-            while let Err(error) = ownership.remove_containers().await {
-                warn!(%error, run = %run.run_id, "could not remove CI containers");
-                tokio::select! {
-                    _ = tokio::time::sleep(delay) => {}
-                    _ = stop.wait_for(|stopped| *stopped) => return false,
-                }
-                delay = (delay * 2).min(FINISH_RETRY_MAX);
+        // A live container is still executing this run. Retain its workflow concurrency
+        // lease and heartbeat until recovery confirms removal, not merely for this slot.
+        let mut delay = Duration::from_secs(1);
+        loop {
+            match tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, ownership.remove_containers()).await {
+                Ok(Ok(())) => break,
+                _ => warn!(run = %run.run_id, "CI container removal pending; retaining the run lease"),
             }
-            true
-        })
-        .await
-        .unwrap_or(false);
-        if !reuse_slot && !*stop.borrow() {
-            status = "failed";
-            message =
-                Some("CI container cleanup failed; the worker slot is waiting for recovery".into());
+            tokio::select! {
+                _ = tokio::time::sleep(delay) => {}
+                _ = stop.wait_for(|stopped| *stopped) => return false,
+            }
+            delay = (delay * 2).min(FINISH_RETRY_MAX);
         }
         drop(names);
         record_result(
@@ -389,26 +380,9 @@ async fn execute(
         // Recording the result must not wait for the blocking directory cleanup. Shutdown
         // retains that cleanup even when the blocking pool is busy.
         let _ = cleanup.await;
-        if !reuse_slot {
-            let mut delay = IDLE_POLL;
-            loop {
-                tokio::select! {
-                    result = tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, ownership.remove_containers()) => {
-                        if matches!(result, Ok(Ok(()))) {
-                            break;
-                        }
-                    }
-                    _ = stop.wait_for(|stopped| *stopped) => return false,
-                }
-                tokio::select! {
-                    _ = tokio::time::sleep(delay) => {}
-                    _ = stop.wait_for(|stopped| *stopped) => return false,
-                }
-                delay = (delay * 2).min(FINISH_RETRY_MAX);
-            }
-        }
         if let Err(error) = ownership.remove_workspace().await {
             warn!(%error, run = %run.run_id, "could not remove CI workspace; recovery will retry");
+            return false;
         }
         true
     };
@@ -684,17 +658,6 @@ async fn run_workflows(
                 let masker = masker.clone();
                 async move {
                     if let Some(job) = completed {
-                        let prefix = format!("{job}/");
-                        if let Some(tokens) = claim.github_tokens.workflows.get(workflow) {
-                            for child in tokens
-                                .keys()
-                                .map(|id| format!("{workflow}:{id}"))
-                                .filter(|id| id.starts_with(&prefix))
-                            {
-                                deliver(|| service.queue.finish_job(worker, run.id, &child))
-                                    .await?;
-                            }
-                        }
                         return deliver(|| service.queue.finish_job(worker, run.id, &job)).await;
                     }
                     if let Some(event) = progress {

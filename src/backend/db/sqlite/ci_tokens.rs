@@ -71,7 +71,7 @@ pub(crate) async fn may_cancel(
 }
 
 pub async fn finish_job(pool: &SqlitePool, run_id: i64, worker: &str, job: &str) -> Result<()> {
-    sqlx::query("UPDATE actions_github_tokens SET revoked_at=COALESCE(revoked_at,CAST(strftime('%s','now') AS INTEGER)) WHERE run_id=$1 AND job=$3 AND EXISTS(SELECT 1 FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running')")
+    sqlx::query("UPDATE actions_github_tokens SET revoked_at=COALESCE(revoked_at,CAST(strftime('%s','now') AS INTEGER)) WHERE run_id=$1 AND (job=$3 OR substr(job,1,length($3)+1)=$3 || '/') AND EXISTS(SELECT 1 FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running')")
         .bind(run_id).bind(worker).bind(job).execute(pool).await?;
     Ok(())
 }

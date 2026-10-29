@@ -354,6 +354,10 @@ fn matrix_metadata(matrix: &Value, masker: &Masker) -> Option<Matrix> {
 struct JobTokens {
     tokens: BTreeMap<String, String>,
     completion_secret: String,
+    #[serde(skip)]
+    nested: bool,
+    #[serde(skip)]
+    completions: Arc<std::sync::Mutex<BTreeMap<String, usize>>>,
     #[serde(default)]
     oidc_url: String,
     #[serde(default)]
@@ -362,7 +366,7 @@ struct JobTokens {
 
 impl JobTokens {
     fn progress(&self, id: &str, variant: usize) -> Option<Progress> {
-        (!self.completion_secret.is_empty()).then(|| Progress {
+        (!self.nested && !self.completion_secret.is_empty()).then(|| Progress {
             nonce: Arc::from(self.completion_secret.as_str()),
             job: id.to_owned(),
             variant: variant.try_into().expect("matrix index is bounded"),
@@ -370,9 +374,21 @@ impl JobTokens {
             active: Default::default(),
         })
     }
+    fn reserve_calls(&self, prefix: &str, count: usize) {
+        let mut completions = self.completions.lock().unwrap_or_else(|error| error.into_inner());
+        for id in self.tokens.keys().filter(|id| id.starts_with(prefix)) {
+            *completions.entry(id.clone()).or_insert(1) += count.saturating_sub(1);
+        }
+    }
     fn completed(&self, id: &str) {
         if !self.completion_secret.is_empty() {
-            println!("::codeyard-job-completed::{}:{id}", self.completion_secret);
+            let mut completions = self.completions.lock().unwrap_or_else(|error| error.into_inner());
+            let remaining = completions.entry(id.to_owned()).or_insert(1);
+            if *remaining == 0 { return; }
+            *remaining -= 1;
+            if *remaining == 0 {
+                println!("::codeyard-job-completed::{}:{id}", self.completion_secret);
+            }
         }
     }
 }
@@ -859,6 +875,9 @@ impl WorkflowRun {
                 let fail_fast = plans.first().is_none_or(|job| job.fail_fast);
                 let called = plans.first().is_some_and(|job| job.call.is_some());
                 let total = plans.len();
+                if called {
+                    tokens.reserve_calls(&format!("{token_id}/"), variants.map_or(total, |variants| variants.len()));
+                }
                 let mut plans = plans.into_iter().enumerate().filter(|(index, _)| {
                     variants.is_none_or(|variants| variants.contains(&(*index as u32)))
                 });
@@ -930,7 +949,7 @@ impl WorkflowRun {
                         nested_options.job_state_file = None;
                         execution.options = Arc::new(nested_options);
                         let mut nested_tokens = (**tokens).clone();
-                        nested_tokens.completion_secret.clear();
+                        nested_tokens.nested = true;
                         execution.tokens = Arc::new(nested_tokens);
                         let called_prefix = format!("{token_id}/");
                         tasks.spawn(async move {
@@ -1062,9 +1081,7 @@ impl WorkflowRun {
                 successful &= aggregate.result == "success" || aggregate.result == "skipped";
                 saved.jobs.insert(id.clone(), aggregate.clone());
                 save_job_state(options, &mut saved, masker)?;
-                if token_prefix.is_empty() {
-                    tokens.completed(&token_id);
-                }
+                tokens.completed(&token_id);
                 results.insert(id, aggregate);
             }
             contexts.values.insert("jobs".into(), Value::Object(results.iter().map(|(id, result)| (

@@ -396,10 +396,27 @@ pub async fn list_workflows_for_ref(
     tokio::task::spawn_blocking(move || {
         // Cancellation must not release capacity while YAML is still being parsed or dropped.
         let (_permit, _payload) = (permit, payload);
+        struct Budget(usize);
+        impl std::io::Write for Budget {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self.0.checked_sub(bytes.len())
+                    .ok_or_else(|| std::io::Error::other("Workflow definitions exceed size limit"))?;
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        }
+        let mut budget = Budget(WORKFLOW_CACHE_BYTES - 2);
         let mut workflows = Vec::new();
         for file in files {
             match parse_workflow_definition(&file.path, &file.content) {
-                Ok(workflow) => workflows.push(workflow),
+                Ok(workflow) => {
+                    if !workflows.is_empty() {
+                        std::io::Write::write_all(&mut budget, b",")?;
+                    }
+                    serde_json::to_writer(&mut budget, &workflow)
+                        .context("Workflow definitions exceed size limit")?;
+                    workflows.push(workflow);
+                }
                 Err(error) => {
                     warn!(
                         "failed to parse workflow file {} at {}: {}",
@@ -410,9 +427,7 @@ pub async fn list_workflows_for_ref(
         }
 
         workflows.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
-        let bytes = serde_json::to_vec(&workflows)
-            .expect("workflow definitions serialize")
-            .len();
+        let bytes = WORKFLOW_CACHE_BYTES - budget.0;
         if bytes <= WORKFLOW_CACHE_BYTES {
             let mut cache = WORKFLOW_CACHE
                 .lock()
@@ -431,10 +446,10 @@ pub async fn list_workflows_for_ref(
                 definitions: workflows.clone(),
             });
         }
-        workflows
+        Ok(workflows)
     })
     .await
-    .context("workflow discovery task failed")
+    .context("workflow discovery task failed")?
 }
 
 fn parse_workflow_yaml(content: &str) -> Result<Value> {
