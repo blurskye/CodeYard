@@ -394,8 +394,8 @@ pub async fn list_admin_activity_points(
         ), storage_events(day,bytes) AS (
             SELECT date(recorded_at),max(size_bytes-COALESCE(previous,0),0) FROM repo_storage_events,window_start
                 WHERE recorded_at>=moment
-            UNION ALL SELECT date(uploaded_at),file_size FROM upload_rate_limit,window_start
-                WHERE uploaded_at>=moment
+            UNION ALL SELECT date(confirmed_at),file_size FROM upload_rate_limit,window_start
+                WHERE confirmed_at>=moment
         ), storage_daily AS (SELECT day,SUM(bytes) AS daily FROM storage_events GROUP BY day)
         SELECT d.day,COALESCE(c.commits,0) AS commits,COALESCE(c.pulls_opened,0) AS pulls_opened,
             COALESCE(c.pulls_merged,0) AS pulls_merged,COALESCE(c.issues_opened,0) AS issues_opened,

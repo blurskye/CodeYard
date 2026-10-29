@@ -547,11 +547,11 @@ pub async fn list_admin_activity_points(
         ),
         file_storage_daily AS (
             SELECT
-                DATE(ul.uploaded_at) AS day,
+                DATE(ul.confirmed_at) AS day,
                 COALESCE(SUM(ul.file_size), 0)::BIGINT AS daily_file_storage_bytes
             FROM upload_rate_limit ul
-            WHERE ul.uploaded_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-            GROUP BY DATE(ul.uploaded_at)
+            WHERE ul.confirmed_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+            GROUP BY DATE(ul.confirmed_at)
         ),
         storage_daily AS (
             SELECT
