@@ -29,7 +29,9 @@ async fn load_audit(
     actor: &str,
     page: usize,
 ) -> Result<AdminAudit, Response> {
-    require_account(ctx, true)?;
+    let user = require_account(ctx, true)?;
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
+        .ok_or_else(|| ctx.error(StatusCode::FORBIDDEN, "Administrator session required."))?;
     let pool = &ctx.state.pool;
     let unavailable = || {
         ctx.error(
@@ -37,21 +39,15 @@ async fn load_audit(
             "Unable to load the audit log.",
         )
     };
-    let total = db::audit::count_audit_entries(pool, action, actor)
-        .await
-        .map_err(|_| unavailable())? as usize;
+    let (total, entries) = db::audit::page(
+        pool, (user.id, session).into(), action, actor,
+        i64::try_from(page).unwrap_or(i64::MAX), AUDIT_ENTRIES_PER_PAGE as i64,
+    ).await.map_err(|_| unavailable())?
+        .ok_or_else(|| ctx.error(StatusCode::FORBIDDEN, "Administrator session required."))?;
+    let total = total as usize;
     let pages = total.div_ceil(AUDIT_ENTRIES_PER_PAGE).max(1);
     let page = page.clamp(1, pages);
-    let entries = db::audit::list_audit_entries(
-        pool,
-        action,
-        actor,
-        AUDIT_ENTRIES_PER_PAGE as i64,
-        ((page - 1) * AUDIT_ENTRIES_PER_PAGE) as i64,
-    )
-    .await
-    .map_err(|_| unavailable())?
-    .into_iter()
+    let entries = entries.into_iter()
     .map(|entry| AuditEntry {
         id: entry.id,
         actor: entry.actor.unwrap_or_default(),
