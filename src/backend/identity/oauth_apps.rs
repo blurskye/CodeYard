@@ -212,7 +212,7 @@ pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool) -> anyhow::Res
         if bounds.personal().is_some() {
             return Ok(true);
         }
-        return Ok(super::github_apps::allows(
+        return Ok(!gist && super::github_apps::allows(
             &bounds.permissions,
             "contents",
             false,
