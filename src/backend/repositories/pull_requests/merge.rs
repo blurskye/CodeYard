@@ -46,6 +46,10 @@ pub struct MergeRequest {
     pub commit_message: Option<String>,
     #[serde(default)]
     pub author_email: Option<String>,
+    /// The token the request came with, so publication can check its workflows permission.
+    /// `None` for a browser session. Never read from a request body.
+    #[serde(skip)]
+    pub token: Option<i64>,
 }
 
 /// The default merge headline and body, also offered to clients editing the message.
@@ -971,6 +975,7 @@ pub struct PreparedMerge {
     layers: Vec<db::models::PullRequest>,
     merge: StoreMerge,
     merge_sha: String,
+    token: Option<i64>,
     async_request: Option<(String, i64)>,
 }
 
@@ -990,6 +995,7 @@ pub async fn prepare_pull_request_merge(
     (owner, repo, number): (String, String, i32),
     request: MergeRequest,
 ) -> Result<PreparedMerge, OperationError> {
+    let token = request.token;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
@@ -1208,6 +1214,7 @@ pub async fn prepare_pull_request_merge(
         layers,
         merge,
         merge_sha,
+        token,
         async_request: None,
     })
 }
@@ -1260,6 +1267,7 @@ pub async fn publish_prepared_merge(
         layers,
         merge,
         merge_sha,
+        token,
         async_request,
     } = prepared;
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
@@ -1333,6 +1341,7 @@ pub async fn publish_prepared_merge(
                 &merge.base,
                 &merge_sha,
                 merge.method,
+                token,
             )
             .await
     } else {
@@ -1349,6 +1358,7 @@ pub async fn publish_prepared_merge(
                 &merge.base_branch,
                 &merge.base,
                 &merge_sha,
+                token,
             )
             .await
     };

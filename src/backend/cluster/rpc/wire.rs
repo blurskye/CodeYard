@@ -277,6 +277,8 @@ pub enum Operation {
     MergeUpstream {
         source: Uuid,
         branch: String,
+        #[serde(default)]
+        token: Option<i64>,
     },
     CreateBranch {
         name: String,
@@ -362,6 +364,8 @@ pub enum Operation {
         base: String,
         result: String,
         method: MergeMethod,
+        #[serde(default)]
+        token: Option<i64>,
     },
     /// Publishes a stacked merge commit. Each head is `(head branch or pull ref, commit)`.
     PublishStackedMerge {
@@ -369,6 +373,8 @@ pub enum Operation {
         base_branch: String,
         base: String,
         result: String,
+        #[serde(default)]
+        token: Option<i64>,
     },
     /// Builds the commits of a restack: `from..head` replayed onto `onto`.
     PrepareRestack {

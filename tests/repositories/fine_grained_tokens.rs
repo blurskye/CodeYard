@@ -310,6 +310,53 @@ async fn contract(pg: bool) {
             "{repo} {service}"
         );
     }
+    // Merges carry the token to publication: without the workflows permission a merge may
+    // leave the workflow files alone but not change them, even through a detached commit.
+    let base = "/api/v3/repos/alice/private";
+    let (status, _, seed) = call(
+        &router,
+        "PUT",
+        &format!("{base}/contents/README.md"),
+        &selected,
+        json!({"message":"Seed","content":"c2VlZA=="}),
+    )
+    .await;
+    assert_eq!(status, 201, "{seed}");
+    let main = seed["commit"]["sha"].clone();
+    let main_tree = seed["commit"]["tree"]["sha"].clone();
+    let mut heads = Vec::new();
+    for path in [".github/workflows/ci.yml", "docs/notes.md"] {
+        let (status, _, tree) = call(
+            &router,
+            "POST",
+            &format!("{base}/git/trees"),
+            &selected,
+            json!({"base_tree":main_tree,"tree":[{"path":path,"mode":"100644","type":"blob","content":"on: push\n"}]}),
+        )
+        .await;
+        assert_eq!(status, 201, "{tree}");
+        let (status, _, commit) = call(
+            &router,
+            "POST",
+            &format!("{base}/git/commits"),
+            &selected,
+            json!({"message":"Change","tree":tree["sha"],"parents":[main]}),
+        )
+        .await;
+        assert_eq!(status, 201, "{commit}");
+        heads.push(commit["sha"].clone());
+    }
+    for (head, expected) in [(&heads[0], 403), (&heads[1], 201)] {
+        let (status, _, body) = call(
+            &router,
+            "POST",
+            &format!("{base}/merges"),
+            &selected,
+            json!({"base":"main","head":head}),
+        )
+        .await;
+        assert_eq!(status, expected, "{body}");
+    }
     // Every use is recorded on the token, as for classic tokens.
     assert_eq!(
         f.scalar(

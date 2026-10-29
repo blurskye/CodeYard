@@ -3358,6 +3358,41 @@ async fn releases_contract(pg: bool) {
         &large,
     );
     assert_eq!(large["size"], 4 * 1024 * 1024 + 1);
+    // A token revoked while its upload body is arriving publishes nothing.
+    let client = Client::login(&router, f.pool(), alice).await;
+    let doomed = tokens::create(
+        f.pool(),
+        alice,
+        Some(&client.session),
+        TokenInput {
+            name: "doomed",
+            scope: "write",
+            expires_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (pool, session, token_id) = (f.pool().clone(), client.session.clone(), doomed.token.id);
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        assert!(db::users::tokens::delete_token(&pool, alice, &session, token_id)
+            .await
+            .unwrap());
+        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"late\n"))
+    }));
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("{base}/{id}/assets?name=late.txt"))
+                .header("authorization", format!("Bearer {}", doomed.value))
+                .header("content-type", "text/plain")
+                .body(body)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     checked(
         &router,
         "repos/update-release-asset",

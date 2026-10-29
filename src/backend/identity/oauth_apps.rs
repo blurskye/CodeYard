@@ -157,24 +157,6 @@ pub fn verify_challenge(challenge: &str, verifier: &str) -> bool {
 /// OAuth permissions complement, rather than replace, the account's live access rules.
 pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
     let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
-    // These publishers cannot yet prove an unchanged workflow tree from just their actor ID.
-    if write
-        && !has_scope(scopes, "workflow")
-        && matches!(
-            parts.as_slice(),
-            ["repos", _, _, "merges" | "merge-upstream"]
-                | [
-                    "repos",
-                    _,
-                    _,
-                    "pulls",
-                    _,
-                    "merge" | "merge-async" | "update-branch"
-                ]
-        )
-    {
-        return false;
-    }
     match parts.as_slice() {
         [""] | ["user"] => !write,
         ["repos", _, _, "code-scanning", "default-setup", ..] => has_scope(scopes, "repo"),
@@ -242,9 +224,13 @@ pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool) -> anyhow::Res
         .is_none_or(|token| has_scope(&token.scopes, scope)))
 }
 
-/// Whether a token may publish workflow files. App installations use their `workflows`
-/// permission, and OAuth tokens need the `workflow` scope.
+/// Whether a token may change workflow files. Apps and fine-grained tokens use their
+/// `workflows` permission and OAuth tokens need the `workflow` scope. A job token never may,
+/// as GitHub's GITHUB_TOKEN cannot be given the workflows permission.
 pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bool> {
+    if db::ci_tokens::get(pool, token_id).await?.is_some() {
+        return Ok(false);
+    }
     if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
         return Ok(super::github_apps::allows(
             &bounds.permissions,
@@ -356,10 +342,11 @@ mod tests {
         );
         assert_eq!(scopes("offline_access"), Some(String::new()));
         assert_eq!(scopes("admin:enterprise"), None);
-        assert!(!allows("repo", "/repos/a/b/pulls/1/merge", true));
-        assert!(!allows("repo", "/repos/a/b/pulls/1/update-branch", true));
-        assert!(!allows("repo", "/repos/a/b/merges", true));
-        assert!(!allows("repo", "/repos/a/b/merge-upstream", true));
+        // The workflow scope is checked against the published trees, not the route.
+        assert!(allows("repo", "/repos/a/b/pulls/1/merge", true));
+        assert!(allows("repo", "/repos/a/b/pulls/1/update-branch", true));
+        assert!(allows("repo", "/repos/a/b/merges", true));
+        assert!(allows("repo", "/repos/a/b/merge-upstream", true));
         assert!(allows("repo,workflow", "/repos/a/b/merge-upstream", true));
         assert!(allows("repo,workflow", "/repos/a/b/pulls/1/merge", true));
         assert!(!allows("read:org", "/orgs/private/repos", false));

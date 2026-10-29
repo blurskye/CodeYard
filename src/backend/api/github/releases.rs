@@ -196,8 +196,16 @@ async fn generate_notes(
     Ok(Json(payloads::release_notes(&notes)))
 }
 
-/// A new tag queues push workflows, so a credential without the workflow grant may only
-/// release tags that already exist.
+/// Whether a release may create its missing tag. A new tag queues push workflows, so a
+/// credential without the workflows permission may only release existing tags. A job's
+/// own events start no workflows, so a job token may create them.
+async fn may_create_tag(state: &AppState, auth: &auth::Authentication) -> Result<bool> {
+    Ok(auth.is_job()
+        || crate::backend::identity::oauth_apps::allows_workflows(&state.pool, auth.token.id)
+            .await
+            .map_err(Error::unavailable)?)
+}
+
 async fn create(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -206,8 +214,8 @@ async fn create(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    // A new tag needs the workflow grant. The release code refuses it where the tag is made.
-    let new_tag_denied = !auth::workflow_grant(&state, &auth).await?;
+    // The release code refuses a new tag where the tag is made.
+    let new_tag_denied = !may_create_tag(&state, &auth).await?;
     let actor = auth.user;
     let latest = match input.make_latest.as_deref() {
         Some("false") => false,
@@ -293,8 +301,8 @@ async fn update(
     let current = releases::detail_by_id(&state.pool, Some(auth.user.id), &owner, &name, id)
         .await
         .map_err(release_error)?;
-    // Publishing a draft creates its tag when the tag is missing, which needs the workflow grant.
-    let new_tag_denied = !auth::workflow_grant(&state, &auth).await?;
+    // Publishing a draft creates its tag when the tag is missing.
+    let new_tag_denied = !may_create_tag(&state, &auth).await?;
     let actor = auth.user;
     if input
         .tag_name
@@ -348,8 +356,8 @@ async fn upload(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, request.headers(), &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    crate::backend::repositories::access::check_write(&state.pool, repo.id, actor.id)
+    let auth = auth.ok_or_else(auth::required)?;
+    crate::backend::repositories::access::check_write(&state.pool, repo.id, auth.user.id)
         .await
         .map_err(|error| release_error(ReleaseError::Access(error)))?;
     let content_type = request
@@ -371,6 +379,8 @@ async fn upload(
     .map_err(Error::unavailable)?
     .map_err(|_| Error::invalid("Asset exceeds 100 MiB"))?
     .to_vec();
+    auth.require_live(&state.pool).await?;
+    let actor = auth.user;
     let asset = releases::upload_asset(
         &state.pool,
         &state.storage,

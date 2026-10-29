@@ -1,24 +1,39 @@
-//! OAuth pushes without workflow permission may not change the workflows they publish.
-use super::repository::peel_to_commit_checked;
+//! Credentials without the workflows permission may not change the workflows they publish.
+use super::repository::{peel_revision, tree_entry};
 use anyhow::{ensure, Result};
 use git2::{ErrorCode, ObjectType, Oid, Repository};
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::{BTreeSet, HashSet},
+    path::Path,
+};
 
 /// A workflow directory larger than this is refused rather than listed in server memory.
 const MAX_WORKFLOW_TREE_BYTES: usize = 256 * 1024;
-/// How many distinct workflow entries the branches may vouch for in one check.
-const MAX_KNOWN_WORKFLOWS: usize = 100_000;
+/// How many branch tips one check reads while looking for already published workflows.
+const MAX_VOUCHING_BRANCHES: usize = 10_000;
 
-/// The entries of `.github/workflows` at commit `sha`, as name, object and mode.
-fn workflows(repo: &Repository, sha: &str) -> Result<BTreeSet<(Vec<u8>, Oid, i32)>> {
+type Entry = (Vec<u8>, Oid, i32);
+
+/// The entries of `.github/workflows` at `sha`, as name, object and mode. A tag naming a
+/// tree or blob publishes no workflow. Every tree on the way is size-checked before it is read.
+fn workflows(repo: &Repository, sha: &str) -> Result<BTreeSet<Entry>> {
     if sha.bytes().all(|b| b == b'0') {
         return Ok(BTreeSet::new());
     }
-    let tree = peel_to_commit_checked(repo, sha)?.tree()?;
-    let entry = match tree.get_path(Path::new(".github/workflows")) {
+    let (oid, ObjectType::Commit) = peel_revision(repo, sha)? else {
+        return Ok(BTreeSet::new());
+    };
+    let commit = repo.find_commit(oid)?;
+    let entry = match tree_entry(repo, &commit, ".github/workflows") {
         Ok(entry) => entry,
-        Err(error) if error.code() == ErrorCode::NotFound => return Ok(BTreeSet::new()),
-        Err(error) => return Err(error.into()),
+        Err(error)
+            if error
+                .downcast_ref::<git2::Error>()
+                .is_some_and(|error| error.code() == ErrorCode::NotFound) =>
+        {
+            return Ok(BTreeSet::new())
+        }
+        Err(error) => return Err(error),
     };
     if entry.kind() != Some(ObjectType::Tree) {
         return Ok(BTreeSet::from([(Vec::new(), entry.id(), entry.filemode())]));
@@ -35,25 +50,34 @@ fn workflows(repo: &Repository, sha: &str) -> Result<BTreeSet<(Vec<u8>, Oid, i32
         .collect())
 }
 
-/// The workflow entries that some branch already has.
-fn on_branches(repo: &Repository) -> Result<BTreeSet<(Vec<u8>, Oid, i32)>> {
-    let mut known = BTreeSet::new();
+/// Whether existing branches already have every entry in `wanted`. The scan stops once they
+/// are all found, reads each distinct tip once, and past its budget answers no.
+fn on_branches(repo: &Repository, wanted: &BTreeSet<Entry>) -> Result<bool> {
+    let mut missing = wanted.clone();
+    let mut seen = HashSet::new();
     for reference in repo.references_glob("refs/heads/*")? {
         let Some(tip) = reference?.target() else {
             continue;
         };
-        // A branch that does not name a readable commit adds nothing it could vouch for.
-        if let Ok(found) = workflows(repo, &tip.to_string()) {
-            known.extend(found);
+        if !seen.insert(tip) {
+            continue;
         }
-        // Past the budget the rest are not consulted, so the push may be refused, never allowed.
-        if known.len() >= MAX_KNOWN_WORKFLOWS {
-            break;
+        if seen.len() > MAX_VOUCHING_BRANCHES {
+            return Ok(false);
+        }
+        // A branch that does not name a readable commit vouches for nothing.
+        if let Ok(found) = workflows(repo, &tip.to_string()) {
+            missing.retain(|entry| !found.contains(entry));
+            if missing.is_empty() {
+                return Ok(true);
+            }
         }
     }
-    Ok(known)
+    Ok(missing.is_empty())
 }
 
+/// Refuses `updates` (old and new commit of each ref) that add, change or delete a workflow
+/// file, unless an existing branch already has that exact file, as GitHub allows.
 pub(crate) fn check_workflows(
     path: &Path,
     quarantine: Option<&Path>,
@@ -67,30 +91,28 @@ pub(crate) fn check_workflows(
                 .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
         )?;
     }
-    let mut known = None;
+    let mut wanted = BTreeSet::new();
     for (old, new) in updates {
         if new.bytes().all(|b| b == b'0') {
             continue;
         }
+        let before = workflows(&repo, old)?;
         let after = workflows(&repo, new)?;
-        // A new branch changes no workflow file when a branch already has each of its files.
-        let unchanged = if !old.bytes().all(|b| b == b'0') {
-            workflows(&repo, old)? == after
-        } else if after.is_empty() {
-            true
-        } else {
-            if known.is_none() {
-                known = Some(on_branches(&repo)?);
-            }
-            known.as_ref().is_some_and(|known| after.is_subset(known))
-        };
-        ensure!(
-            unchanged,
-            "OAuth token requires the workflow scope to update workflows"
-        );
+        let deleted = before
+            .iter()
+            .any(|(name, ..)| !after.iter().any(|(kept, ..)| kept == name));
+        ensure!(!deleted, WORKFLOW_DENIED);
+        wanted.extend(after.difference(&before).cloned());
     }
+    ensure!(
+        wanted.is_empty() || on_branches(&repo, &wanted)?,
+        WORKFLOW_DENIED
+    );
     Ok(())
 }
+
+pub(crate) const WORKFLOW_DENIED: &str =
+    "Refusing to create, update or delete workflow files without the workflows permission";
 
 #[cfg(test)]
 mod tests {
@@ -166,6 +188,11 @@ mod tests {
         )
         .unwrap();
         assert!(check_workflows(root.path(), None, &[(zero.clone(), workflow.clone())]).is_ok());
+        // An existing branch may also take files that a branch already has.
+        assert!(check_workflows(root.path(), None, &[(workflow.clone(), both.clone())]).is_ok());
+        assert!(check_workflows(root.path(), None, &[(both.clone(), workflow.clone())]).is_err());
+        // A tag naming a blob publishes no workflow.
+        assert!(check_workflows(root.path(), None, &[(zero.clone(), blob.to_string())]).is_ok());
         assert!(check_workflows(root.path(), None, &[(workflow, zero)]).is_ok());
     }
 }

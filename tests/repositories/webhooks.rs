@@ -847,6 +847,7 @@ async fn server_ref_events(pg: bool, url: &str) {
             &first.sha,
             &merged,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();

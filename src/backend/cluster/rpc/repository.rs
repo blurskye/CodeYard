@@ -894,7 +894,11 @@ impl RpcHandler {
                 &old,
                 &new
             )),
-            Operation::MergeUpstream { source, branch } => {
+            Operation::MergeUpstream {
+                source,
+                branch,
+                token,
+            } => {
                 let (source_id, _) = self.check_repository(source, false, false).await?;
                 let from = store_at(&self.primary_path(source), self.context.node_id)?;
                 json!(store.merge_upstream_as(
@@ -905,7 +909,8 @@ impl RpcHandler {
                         source_id.ok_or_else(|| invalid("repository unavailable"))?,
                         &from
                     ),
-                    &branch
+                    &branch,
+                    token
                 ))
             }
             Operation::CreateBranch { name, sha } => json!(store.create_branch_as(
@@ -1055,6 +1060,7 @@ impl RpcHandler {
                         &request.base,
                         &result,
                         request.method,
+                        None,
                     )
                     .await
                 {
@@ -1095,6 +1101,7 @@ impl RpcHandler {
                 base,
                 result,
                 method,
+                token,
             } => json!(store.publish_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -1104,13 +1111,15 @@ impl RpcHandler {
                 &head,
                 &base,
                 &result,
-                method
+                method,
+                token
             )),
             Operation::PublishStackedMerge {
                 heads,
                 base_branch,
                 base,
                 result,
+                token,
             } => json!(store.publish_stacked_merge_as(
                 pool,
                 repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -1119,6 +1128,7 @@ impl RpcHandler {
                 &base_branch,
                 &base,
                 &result,
+                token,
             )),
             Operation::PrepareRestack {
                 from,

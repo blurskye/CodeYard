@@ -1,10 +1,7 @@
 use super::*;
-use crate::backend::{
-    identity::oauth_apps,
-    repositories::{
-        git_sessions::validation::ZERO_SHA,
-        imports::{GitImport, ImportCredential, MAX_IMPORT_PACK_BYTES},
-    },
+use crate::backend::repositories::{
+    git_sessions::validation::ZERO_SHA,
+    imports::{GitImport, ImportCredential, MAX_IMPORT_PACK_BYTES},
 };
 
 impl LocalStore {
@@ -156,19 +153,13 @@ impl LocalStore {
         // An import publishes its commits like a push, so a token without the workflow
         // permission cannot add workflow files this way either.
         if let ImportCredential::Token(token) = &import.credential {
-            if !oauth_apps::allows_workflows(pool, *token)
-                .await
-                .map_err(|_| RepoError::authority_unavailable())?
-            {
-                let updates: Vec<(String, String)> = import
-                    .refs
-                    .values()
-                    .map(|sha| (ZERO_SHA.to_owned(), sha.clone()))
-                    .collect();
-                self.blocking(move |path| git::oauth::check_workflows(path, None, &updates))
-                    .await
-                    .map_err(|_| RepoError::write_denied())?;
-            }
+            let updates = import
+                .refs
+                .values()
+                .map(|sha| (ZERO_SHA.to_owned(), sha.clone()))
+                .collect();
+            self.check_workflow_grant(pool, Some(*token), updates, None)
+                .await?;
         }
         let mut refs = self.mirror_refs().await?;
         refs.extend(import.refs.clone());

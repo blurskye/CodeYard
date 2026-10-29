@@ -44,6 +44,11 @@ async fn start(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(super::super::auth::required)?;
+    // The merge moves the base branch, so the credential needs contents write as well as the
+    // pull request grant the route asked for.
+    auth.repository_scope(&state.pool, repo.id, "contents", true)
+        .await
+        .map_err(super::super::auth::scope_error)?;
     if !access::can_write(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -130,6 +135,7 @@ async fn start(
         commit_title: input.commit_title,
         commit_message: input.commit_message,
         author_email: None,
+        token: Some(auth.token.id),
     };
     match native::start(
         &state,

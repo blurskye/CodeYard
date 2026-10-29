@@ -167,6 +167,7 @@ impl LocalStore {
         actor: i64,
         source: (i64, &LocalStore),
         branch: &str,
+        token: Option<i64>,
     ) -> Result<super::super::UpstreamMerge, RepoError> {
         use super::super::{UpstreamMerge, UpstreamMergeType};
         let reference =
@@ -232,6 +233,13 @@ impl LocalStore {
             )
             .await?;
         self.upstream_authority(pool, repo, actor, source).await?;
+        self.check_workflow_grant(
+            pool,
+            token,
+            vec![(old.clone(), target.clone())],
+            Some(prepared.path().to_owned()),
+        )
+        .await?;
         publication
             .scope(git::repository::publish_pull_branch_update(
                 self.path(),

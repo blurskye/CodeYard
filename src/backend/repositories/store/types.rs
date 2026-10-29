@@ -169,6 +169,9 @@ pub struct PullBranchUpdate {
     pub base: String,
     pub name: String,
     pub email: String,
+    /// The token the request came with, for the workflows permission; `None` for a session.
+    #[serde(default)]
+    pub token: Option<i64>,
 }
 
 /// Merge `head_branch` into `base_branch`, as approved when the branches were at
@@ -227,6 +230,9 @@ pub struct BranchMergePublication {
     pub head_branch: Option<String>,
     pub head: String,
     pub result: String,
+    /// The token the request came with, for the workflows permission; `None` for a session.
+    #[serde(default)]
+    pub token: Option<i64>,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.

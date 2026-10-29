@@ -105,6 +105,17 @@ impl Authentication {
             .ok_or_else(required)
     }
 
+    /// Checks that the token still works, for a request whose body took long to arrive after
+    /// it authenticated: a token revoked meanwhile must not publish that body.
+    pub async fn require_live(&self, pool: &db::DbPool) -> Result<()> {
+        db::users::tokens::token_user(pool, self.token.id, true)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|user| user.id == self.user.id)
+            .map(|_| ())
+            .ok_or_else(|| Error::new(StatusCode::UNAUTHORIZED, "Bad credentials"))
+    }
+
     pub fn require_write(&self) -> Result<()> {
         if self.token.scope == "write" {
             Ok(())
@@ -170,28 +181,6 @@ pub(super) fn scope_error(error: ScopeError) -> Error {
         ScopeError::Denied => Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token"),
         ScopeError::Unavailable => Error::unavailable(()),
     }
-}
-
-/// Whether the credential may publish refs that queue workflows: an App needs the workflows
-/// permission and an OAuth token the workflow scope. Other tokens carry the user's own rights.
-pub(super) async fn workflow_grant(state: &AppState, auth: &Authentication) -> Result<bool> {
-    if let Some(bounds) =
-        crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
-            .await
-            .map_err(Error::unavailable)?
-    {
-        return Ok(crate::backend::identity::github_apps::allows(
-            &bounds.permissions,
-            "workflows",
-            true,
-        ));
-    }
-    Ok(db::oauth_apps::token(&state.pool, auth.token.id)
-        .await
-        .map_err(Error::unavailable)?
-        .is_none_or(|token| {
-            crate::backend::identity::oauth_apps::has_scope(&token.scopes, "workflow")
-        }))
 }
 
 pub(super) fn credential(headers: &HeaderMap) -> Option<&str> {

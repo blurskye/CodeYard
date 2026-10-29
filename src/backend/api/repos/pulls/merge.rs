@@ -160,6 +160,7 @@ pub(crate) async fn native_merge(
                 .get("commit_message")
                 .filter(|value| !value.is_empty())
                 .cloned(),
+            token: None,
         },
     )
     .await

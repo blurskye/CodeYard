@@ -8,7 +8,6 @@ use crate::backend::{
         self,
         deployments::{self, Deployment, Filter, NewDeployment, NewStatus, Refusal, Status},
     },
-    identity::oauth_apps,
     repositories::{
         access,
         merges::{self, BranchMerge},
@@ -129,7 +128,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let (actor, token) = (auth.user, auth.token.id);
+    let (actor, token) = (&auth.user, auth.token.id);
     access::check_write(&state.pool, repo.id, actor.id)
         .await
         .map_err(|error| match error {
@@ -188,17 +187,11 @@ async fn create(
                 .await
                 .map_err(store_error)?
             {
-                // The merge may publish workflow files, so it needs the same credential
-                // permission as a direct merge.
-                if !oauth_apps::allows_workflows(&state.pool, token)
+                // The merge moves the branch like a direct merge, so the credential needs
+                // contents write, and publication checks its workflows permission.
+                auth.repository_scope(&state.pool, repo.id, "contents", true)
                     .await
-                    .map_err(Error::unavailable)?
-                {
-                    return Err(Error::new(
-                        StatusCode::FORBIDDEN,
-                        "Resource not accessible by token",
-                    ));
-                }
+                    .map_err(auth::scope_error)?;
                 merges::merge_branch(
                     &state.pool,
                     state.cluster.as_ref(),
@@ -212,6 +205,7 @@ async fn create(
                         message: None,
                         expected_base: Some(&sha),
                         expected_head: Some(default),
+                        token: Some(token),
                     },
                 )
                 .await
@@ -226,7 +220,7 @@ async fn create(
     let value = document(&state, &saved, &owner, &name).await?;
     let deployment = value.clone();
     let snapshot = repo.clone();
-    let sender = payloads::Person::of(&actor);
+    let sender = payloads::Person::of(actor);
     webhooks::emit(&state.pool, &repo, webhooks::events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": payloads::repository(&snapshot, owner), "sender": payloads::person(&sender)})).await;
     Ok((
         StatusCode::CREATED,

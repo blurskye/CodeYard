@@ -556,6 +556,31 @@ impl LocalStore {
         Ok(change)
     }
 
+    /// A token without the workflows permission may publish only updates that leave every
+    /// workflow file as it is, or as a branch already has it. Session writes pass `None`.
+    async fn check_workflow_grant(
+        &self,
+        pool: &db::DbPool,
+        token: Option<i64>,
+        updates: Vec<(String, String)>,
+        quarantine: Option<PathBuf>,
+    ) -> Result<(), RepoError> {
+        let Some(token) = token else {
+            return Ok(());
+        };
+        if crate::backend::identity::oauth_apps::allows_workflows(pool, token)
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
+        {
+            return Ok(());
+        }
+        self.blocking(move |path| {
+            git::oauth::check_workflows(path, quarantine.as_deref(), &updates)
+        })
+        .await
+        .map_err(|_| RepoError::workflow_denied())
+    }
+
     pub(super) async fn git_tree(
         &self,
         revision: &str,
@@ -2106,6 +2131,13 @@ impl LocalStore {
         )
         .await?;
         live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
+        self.check_workflow_grant(
+            pool,
+            request.token,
+            vec![(request.head.clone(), prepared.head().to_owned())],
+            Some(prepared.path().to_owned()),
+        )
+        .await?;
         publication
             .scope(git::repository::publish_pull_branch_update(
                 self.path(),
@@ -2227,6 +2259,7 @@ impl LocalStore {
         result: &str,
         method: MergeMethod,
         via: WriteVia,
+        token: Option<i64>,
     ) -> Result<(), RepoError> {
         self.publish_merge_authorized(
             pool,
@@ -2238,6 +2271,7 @@ impl LocalStore {
             result,
             method,
             via,
+            token,
             None,
         )
         .await
@@ -2264,6 +2298,7 @@ impl LocalStore {
             &request.result,
             request.method,
             WriteVia::Merge,
+            Some(request.token_id),
             Some(request),
         )
         .await
@@ -2283,6 +2318,7 @@ impl LocalStore {
         result: &str,
         method: MergeMethod,
         via: WriteVia,
+        token: Option<i64>,
         authority: Option<&AsyncMergePublication>,
     ) -> Result<(), RepoError> {
         let publication = git::locks::publication(self.path())
@@ -2313,6 +2349,8 @@ impl LocalStore {
         }
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
+            .await?;
+        self.check_workflow_grant(pool, token, vec![(base.to_owned(), result.to_owned())], None)
             .await?;
         if let Some(authority) = authority {
             db::users::tokens::token_user(pool, authority.token_id, true)

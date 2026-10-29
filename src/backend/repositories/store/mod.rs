@@ -1473,11 +1473,12 @@ impl RepoStore {
         actor: i64,
         source: (i64, &RepoStore),
         branch: &str,
+        token: Option<i64>,
     ) -> Result<UpstreamMerge, RepoError> {
         match (&self.0, &source.1 .0) {
             (Backend::Local(local), Backend::Local(from)) => {
                 local
-                    .merge_upstream(pool, repo_id, actor, (source.0, from), branch)
+                    .merge_upstream(pool, repo_id, actor, (source.0, from), branch, token)
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
@@ -1487,6 +1488,7 @@ impl RepoStore {
                         Operation::MergeUpstream {
                             source: rpc::repository_uuid(&from.disk_path)?,
                             branch: branch.into(),
+                            token,
                         },
                         b"",
                     )
@@ -2063,6 +2065,7 @@ impl RepoStore {
                         &publication.result,
                         MergeMethod::Merge,
                         WriteVia::Direct,
+                        publication.token,
                     )
                     .await
             }
@@ -2097,6 +2100,7 @@ impl RepoStore {
         base: &str,
         result: &str,
         method: MergeMethod,
+        token: Option<i64>,
     ) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => {
@@ -2111,6 +2115,7 @@ impl RepoStore {
                         result,
                         method,
                         WriteVia::Merge,
+                        token,
                     )
                     .await
             }
@@ -2125,6 +2130,7 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             method,
+                            token,
                         },
                         b"",
                     )
@@ -2149,6 +2155,7 @@ impl RepoStore {
         base_branch: &str,
         base: &str,
         result: &str,
+        token: Option<i64>,
     ) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => {
@@ -2167,6 +2174,7 @@ impl RepoStore {
                         result,
                         MergeMethod::Merge,
                         WriteVia::Merge,
+                        token,
                     )
                     .await
             }
@@ -2179,6 +2187,7 @@ impl RepoStore {
                             base_branch: base_branch.into(),
                             base: base.into(),
                             result: result.into(),
+                            token,
                         },
                         b"",
                     )

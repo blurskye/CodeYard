@@ -58,6 +58,7 @@ pub(super) async fn merge_json(
             message: input.message.as_deref(),
             expected_base: input.expected_base.as_deref(),
             expected_head: input.expected_head.as_deref(),
+            token: None,
         },
     )
     .await
@@ -237,6 +238,7 @@ async fn submit(
                 message,
                 expected_base: Some(expected_base),
                 expected_head: Some(expected_head),
+                token: None,
             },
         )
         .await

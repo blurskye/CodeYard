@@ -237,6 +237,7 @@ async fn direct_branch_merges(
         head_branch: Some("direct-head".into()),
         head: head.into(),
         result: result.clone(),
+        token: None,
     };
     db::repositories::protection::upsert_branch_protection_rule(
         pool,
@@ -2299,6 +2300,7 @@ async fn remote_web_contract() {
             &workflow.sha,
             &prepared,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();
@@ -2376,7 +2378,8 @@ async fn remote_web_contract() {
             &merge.head,
             &merge.base,
             &merged,
-            MergeMethod::Merge
+            MergeMethod::Merge,
+            None
         )
         .await
         .is_err());
@@ -2519,6 +2522,7 @@ async fn remote_web_contract() {
         base: upstream.sha.clone(),
         name: "Tester".into(),
         email: "tester@example.invalid".into(),
+        token: None,
     };
     let updated = remote
         .update_pull_branch_as(
@@ -2698,6 +2702,7 @@ async fn remote_web_contract() {
             base: base.sha.clone(),
             name: "Tester".into(),
             email: "tester@example.invalid".into(),
+            token: None,
         };
         let updated = fork_store
             .update_pull_branch_as(

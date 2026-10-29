@@ -2280,6 +2280,7 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
             &request.base,
             &merged,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();
@@ -2298,7 +2299,8 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
             &request.head,
             &request.base,
             &merged,
-            MergeMethod::Merge
+            MergeMethod::Merge,
+            None
         )
         .await
         .is_err());
@@ -2554,6 +2556,7 @@ async fn publish_refuses_a_merge_method_turned_off_after_preparation() {
             &base,
             &merged,
             MergeMethod::Squash,
+            None,
         )
         .await
         .unwrap_err();
@@ -2950,6 +2953,7 @@ async fn every_ref_change_moves_the_write_version() {
             &base,
             &merged,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();
@@ -3152,6 +3156,7 @@ async fn a_store_for_the_old_primary_refuses_writes_after_promotion() {
             &base,
             &merged,
             MergeMethod::Merge,
+            None,
         )
         .await;
     assert_write_denied(result);

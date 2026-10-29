@@ -21,6 +21,9 @@ pub struct BranchMerge<'a> {
     pub message: Option<&'a str>,
     pub expected_base: Option<&'a str>,
     pub expected_head: Option<&'a str>,
+    /// The token the request came with, so publication can check its workflows permission.
+    /// `None` for a browser session.
+    pub token: Option<i64>,
 }
 
 fn moved() -> RefError {
@@ -137,6 +140,7 @@ pub async fn merge_branch(
                 head_branch,
                 head,
                 result: result.clone(),
+                token: input.token,
             },
         )
         .await

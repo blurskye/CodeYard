@@ -230,6 +230,7 @@ async fn contract(pg: bool) {
         base: upstream.clone(),
         name: "alice".into(),
         email: "alice@example.test".into(),
+        token: None,
     };
     // Publication must re-read native consent, even when an admitted caller retains a pinned request.
     let revoked = call(

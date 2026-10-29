@@ -422,9 +422,6 @@ pub(super) async fn resolve(
                 .ok_or_else(missing)?;
                 let repo = repository::by_id(current.repo_id, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
-                if matches!(field, "mergePullRequest" | "updatePullRequestBranch") {
-                    request.require_oauth_scope("workflow")?;
-                }
                 let owner = repository::owner(&repo, request).await?;
                 let metadata = super::metadata_mutations::prepare(&input, &repo, request).await?;
                 // Metadata has its own live native authority; do not run a structural PR edit
@@ -468,6 +465,7 @@ pub(super) async fn resolve(
                         actor,
                         (&owner, &repo.name, current.number),
                         expected,
+                        Some(request.auth.token.id),
                     )
                     .await
                     .map_err(pull_error)?;
@@ -507,6 +505,7 @@ pub(super) async fn resolve(
                             commit_title: optional_text(&input, "commitHeadline"),
                             commit_message: optional_text(&input, "commitBody"),
                             author_email: optional_text(&input, "authorEmail"),
+                            token: Some(request.auth.token.id),
                         },
                     )
                     .await

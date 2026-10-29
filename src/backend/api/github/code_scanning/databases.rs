@@ -220,6 +220,7 @@ pub(in crate::backend::api::github) async fn upload(
     .await
     .map_err(Error::unavailable)?
     .map_err(|_| Error::validation("CodeqlDatabase", "file", "invalid"))?;
+    auth.require_live(&state.pool).await?;
     let size = bytes.len() as i64;
     // Every upload counts, including one that replaces an earlier database.
     db::files::charge_upload(&state.pool, auth.user.id, UPLOAD_QUOTA, size)

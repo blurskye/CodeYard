@@ -54,7 +54,14 @@ async fn merge_pull(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::super::auth::required)?;
+    // The merge moves the base branch, so the credential needs contents write as well as the
+    // pull request grant the route asked for.
+    auth.repository_scope(&state.pool, repo.id, "contents", true)
+        .await
+        .map_err(super::super::auth::scope_error)?;
+    let token = auth.token.id;
+    let actor = auth.user;
     if !access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -118,6 +125,7 @@ async fn merge_pull(
             commit_title: input.commit_title,
             commit_message: input.commit_message,
             author_email: None,
+            token: Some(token),
         },
     )
     .await
@@ -138,8 +146,24 @@ async fn update_branch(
     Path((owner, name, number)): Path<(String, String, i32)>,
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>)> {
-    let (_, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = viewer.ok_or_else(super::super::auth::required)?.user;
+    let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
+    let auth = viewer.ok_or_else(super::super::auth::required)?;
+    // The update moves the head branch, which may live in a fork, so the credential needs
+    // contents write on the head repository.
+    let pull = db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+    auth.repository_scope(
+        &state.pool,
+        pull.head_repo_id.ok_or_else(|| Error::invalid("Head branch is unavailable"))?,
+        "contents",
+        true,
+    )
+    .await
+    .map_err(super::super::auth::scope_error)?;
+    let token = auth.token.id;
+    let actor = auth.user;
     let input: Option<UpdateBranch> = if body.is_empty() {
         None
     } else {
@@ -153,6 +177,7 @@ async fn update_branch(
         actor.id,
         (&owner, &name, number),
         input.expected_head_sha.as_deref(),
+        Some(token),
     )
     .await
     .map_err(super::mutations::operation_error)?;

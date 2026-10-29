@@ -101,6 +101,7 @@ async fn upstream(
             actor.id,
             (parent.id, &source),
             &input.branch,
+            Some(auth.token.id),
         )
         .await
         .map_err(store_error)?;

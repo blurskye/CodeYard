@@ -147,6 +147,15 @@ impl RepoError {
         }
     }
 
+    /// A credential without the workflows permission tried to change workflow files.
+    pub fn workflow_denied() -> Self {
+        Self {
+            kind: ErrorKind::Invalid,
+            reason: Some(RepoErrorReason::WriteDenied),
+            message: crate::backend::git::oauth::WORKFLOW_DENIED.into(),
+        }
+    }
+
     pub fn protected_branch() -> Self {
         Self {
             kind: ErrorKind::Invalid,

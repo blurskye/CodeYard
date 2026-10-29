@@ -36,6 +36,7 @@ pub async fn update_branch(
     actor_id: i64,
     locator: (&str, &str, i32),
     expected: Option<&str>,
+    token: Option<i64>,
 ) -> Result<String, OperationError> {
     let actor = super::actor(pool, actor_id).await?;
     let base = db::repositories::records::get_repository(pool, locator.0, locator.1)
@@ -113,6 +114,7 @@ pub async fn update_branch(
                 base: base_sha,
                 name: actor.username.clone(),
                 email: actor.commit_email(),
+                token,
             },
         )
         .await
