@@ -145,9 +145,11 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         Ok(user) => user,
         Err(response) => return response,
     };
-    let Ok(rows) = db::fine_grained_tokens::list(&ctx.state.pool, user.id).await else {
+    let before = ctx.query.get("before").and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
+    let Ok(rows) = db::fine_grained_tokens::list(&ctx.state.pool, user.id, before).await else {
         return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE);
     };
+    let next_before = (rows.len() == 100).then(|| rows.last().map(|row| row.token_id)).flatten();
     let mut names = HashMap::new();
     let mut tokens = Vec::new();
     for token in rows {
@@ -167,7 +169,7 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         .query
         .contains_key("deleted")
         .then_some("Token deleted.");
-    respond(&ctx, StatusCode::OK, View::List { tokens }, message)
+    respond(&ctx, StatusCode::OK, View::List { tokens, next_before }, message)
 }
 
 /// The organizations the user belongs to, which can own their tokens.
