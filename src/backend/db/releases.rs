@@ -113,7 +113,7 @@ impl ReleaseChanges {
             // Publishing a draft makes it the latest release unless the edit says otherwise.
             make_latest: self
                 .make_latest
-                .unwrap_or(current.is_latest || (current.is_draft && !is_draft)),
+                .unwrap_or(current.is_latest || (current.is_draft && !is_draft) || (!is_draft && current.is_prerelease && self.is_prerelease == Some(false))),
         }
     }
 }

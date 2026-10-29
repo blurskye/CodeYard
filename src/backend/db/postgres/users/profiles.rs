@@ -18,7 +18,7 @@ pub async fn account_statistics(
         (SELECT COUNT(*) FROM gists g JOIN repositories r ON r.id=g.repo_id WHERE r.owner_user_id=$1 AND g.ready AND NOT g.is_public) AS private_gists,
         (SELECT COUNT(*) FROM repositories WHERE owner_kind='user' AND owner_user_id=$1 AND is_private) AS owned_private_repos,
         (SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=$1 WHERE r.is_private AND {readable}) AS total_private_repos,
-        (SELECT CAST(COALESCE(SUM(size_bytes),0)/1024 AS BIGINT) FROM repositories WHERE owner_kind='user' AND owner_user_id=$1) AS disk_usage,
+        (SELECT CAST(FLOOR(COALESCE(SUM(size_bytes),0)/1024) AS BIGINT) FROM repositories WHERE owner_kind='user' AND owner_user_id=$1) AS disk_usage,
         (SELECT COUNT(DISTINCT a.user_id) FROM repo_access a JOIN repositories r ON r.id=a.repo_id WHERE r.owner_kind='user' AND r.owner_user_id=$1 AND r.is_private AND a.user_id<>$1 AND a.access_level>=1) AS collaborators"))
         .bind(user).fetch_one(pool).await?)
 }
@@ -58,7 +58,7 @@ pub async fn save_profile(
         .bind(user)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE user_profile_settings SET company=COALESCE($2,company),twitter_username=COALESCE($3,twitter_username),hireable=COALESCE($4,hireable),public_email=COALESCE($5,public_email),primary_visibility=COALESCE($6,CASE WHEN $5='' THEN 'private' WHEN lower($5)=(SELECT lower(email) FROM users WHERE id=$1) THEN 'public' ELSE primary_visibility END) WHERE user_id=$1")
+    sqlx::query("UPDATE user_profile_settings SET company=COALESCE($2,company),twitter_username=COALESCE($3,twitter_username),hireable=COALESCE($4,hireable),public_email=COALESCE($5,public_email),primary_visibility=COALESCE($6,primary_visibility) WHERE user_id=$1")
         .bind(user).bind(input.company).bind(input.twitter_username).bind(input.hireable).bind(input.email).bind(input.primary_visibility).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(result)
