@@ -12,11 +12,12 @@ use uuid::Uuid;
 
 /// Scope the run before applying its action-specific authorization.
 async fn readable_run(
-    ctx: &PageContext,
+    ctx: &mut PageContext,
     owner: &str,
     name: &str,
     run_id: &str,
 ) -> Result<(db::models::Repository, db::models::CiRun), Response> {
+    ctx.return_to = Some(Uuid::parse_str(run_id).map(|id| run_page(owner, name, id)).unwrap_or_else(|_| format!("/{}/{}/actions", crate::webui::encode_component(owner), crate::webui::encode_component(name))));
     let user = ctx.require_user()?;
     let run_id = Uuid::parse_str(run_id)
         .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Run identifier must be a UUID."))?;
@@ -51,11 +52,11 @@ pub(crate) async fn download_artifact(
     OriginalUri(uri): OriginalUri,
 ) -> Response {
     use axum::response::IntoResponse;
-    let ctx = match PageContext::load(state.clone(), headers.clone(), &uri).await {
+    let mut ctx = match PageContext::load(state.clone(), headers.clone(), &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
+    let (_, run) = match readable_run(&mut ctx, &owner, &name, &run_id).await {
         Ok(run) => run,
         Err(response) => return response,
     };
@@ -81,17 +82,15 @@ pub(crate) async fn delete_artifact(
     OriginalUri(uri): OriginalUri,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if let Err(response) = ctx.check_csrf(&form) {
-        return response;
-    }
-    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
+    let (_, run) = match readable_run(&mut ctx, &owner, &name, &run_id).await {
         Ok(run) => run,
         Err(response) => return response,
     };
+    if let Err(response) = ctx.check_csrf(&form) { return response; }
     let actor = ctx.user.as_ref().expect("readable run").id;
     match db::action_objects::delete_artifact(&ctx.state.pool, artifact, run.id, Some(actor)).await
     {
@@ -119,17 +118,15 @@ pub(crate) async fn cancel_run(
     OriginalUri(uri): OriginalUri,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if let Err(response) = ctx.check_csrf(&form) {
-        return response;
-    }
-    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
+    let (_, run) = match readable_run(&mut ctx, &owner, &name, &run_id).await {
         Ok(found) => found,
         Err(response) => return response,
     };
+    if let Err(response) = ctx.check_csrf(&form) { return response; }
     let actor = ctx
         .require_user()
         .expect("readable_run checked the user")
@@ -153,17 +150,15 @@ pub(crate) async fn rerun_run(
     OriginalUri(uri): OriginalUri,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    if let Err(response) = ctx.check_csrf(&form) {
-        return response;
-    }
-    let (_, run) = match readable_run(&ctx, &owner, &name, &run_id).await {
+    let (_, run) = match readable_run(&mut ctx, &owner, &name, &run_id).await {
         Ok(found) => found,
         Err(response) => return response,
     };
+    if let Err(response) = ctx.check_csrf(&form) { return response; }
     let actor = ctx
         .require_user()
         .expect("readable_run checked the user")

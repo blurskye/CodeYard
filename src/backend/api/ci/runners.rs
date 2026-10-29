@@ -84,25 +84,18 @@ async fn scope(ctx: &PageContext) -> Result<Scope, Response> {
         )),
     }
 }
+fn refusal_details(refusal: &Refusal) -> (StatusCode, String) {
+    match refusal {
+        Refusal::Denied => (StatusCode::FORBIDDEN, "Runner administration permission required".to_owned()),
+        Refusal::Missing => (StatusCode::NOT_FOUND, "Runner resource not found".to_owned()),
+        Refusal::Invalid(field) => (StatusCode::UNPROCESSABLE_ENTITY, format!("Check {field}.")),
+        Refusal::Conflict(message) => (StatusCode::CONFLICT, (*message).to_owned()),
+    }
+}
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    let (status, message) = match error.downcast_ref::<Refusal>() {
-        Some(Refusal::Denied) => (
-            StatusCode::FORBIDDEN,
-            "Runner administration permission required".to_owned(),
-        ),
-        Some(Refusal::Missing) => (
-            StatusCode::NOT_FOUND,
-            "Runner resource not found".to_owned(),
-        ),
-        Some(Refusal::Invalid(field)) => {
-            (StatusCode::UNPROCESSABLE_ENTITY, format!("Check {field}."))
-        }
-        Some(Refusal::Conflict(message)) => (StatusCode::CONFLICT, (*message).to_owned()),
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Runner settings are unavailable.".to_owned(),
-        ),
-    };
+    let (status, message) = error.downcast_ref::<Refusal>().map(refusal_details).unwrap_or_else(|| (
+        StatusCode::SERVICE_UNAVAILABLE, "Runner settings are unavailable.".to_owned(),
+    ));
     ctx.error(status, &message)
 }
 async fn show(State(s): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
@@ -312,10 +305,7 @@ async fn save(
         Ok(None) => ctx.redirect(&destination(scope)),
         Err(error) => {
             let (status, message) = match error.downcast_ref::<Refusal>() {
-                Some(Refusal::Invalid(field)) => {
-                    (StatusCode::UNPROCESSABLE_ENTITY, format!("Check {field}."))
-                }
-                Some(Refusal::Conflict(message)) => (StatusCode::CONFLICT, (*message).to_owned()),
+                Some(refusal @ (Refusal::Invalid(_) | Refusal::Conflict(_))) => refusal_details(refusal),
                 _ => return failure(&ctx, error),
             };
             let mut draft = form;
