@@ -52,6 +52,10 @@ pub async fn create_issue(
     .await
 }
 
+native_operation!(crate::backend::db::postgres::issues::issue_ids_by_numbers,
+    crate::backend::db::sqlite::issues::issue_ids_by_numbers,
+    fn issue_ids_by_numbers(pool: &DbPool, repo: i64, viewer: Option<i64>, numbers: &[i32]) -> Result<Vec<(i64, i32)>>);
+
 native_operation!(crate::backend::db::postgres::issues::get_issue,
     crate::backend::db::sqlite::issues::get_issue,
     fn get_issue(pool: &DbPool, repo_id: i64, number: i32) -> Result<Option<Issue>>);

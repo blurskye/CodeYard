@@ -142,6 +142,11 @@ pub async fn get_issue(pool: &SqlitePool, repo_id: i64, number: i32) -> Result<O
     Ok(issue)
 }
 
+pub async fn issue_ids_by_numbers(pool: &SqlitePool, repo: i64, viewer: Option<i64>, numbers: &[i32]) -> Result<Vec<(i64, i32)>> {
+    anyhow::ensure!(numbers.len() <= 500, "Too many issue numbers");
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?3 WHERE i.repo_id=?1 AND i.number IN (SELECT value FROM json_each(?2)) AND {} ORDER BY i.number,i.id", super::repositories::access::readable_condition())).bind(repo).bind(serde_json::to_string(numbers)?).bind(viewer).fetch_all(pool).await?)
+}
+
 pub async fn get_issues_by_ids(pool: &SqlitePool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>> {
     anyhow::ensure!(ids.len() <= 500, "Issue batch exceeds its limit");
     if ids.is_empty() {
