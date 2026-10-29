@@ -1,5 +1,5 @@
 use crate::backend::db::checks::{
-    Annotation, Credential, Filter, Preference, Refusal, Run, RunData, RunPatch, Suite,
+    Annotation, Credential, Filter, Preference, Refusal, Run, RunChange, RunData, RunPatch, Suite,
 };
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, Sqlite, SqlitePool, Transaction};
@@ -180,7 +180,7 @@ pub async fn create_suite(
     Ok(result)
 }
 
-async fn save(tx: &mut Transaction<'_, Sqlite>, run: &Run, input: &RunPatch) -> Result<()> {
+async fn save(tx: &mut Transaction<'_, Sqlite>, run: &Run, input: &RunPatch) -> Result<Suite> {
     sqlx::query(
         "UPDATE check_runs SET name=?2,status=?3,conclusion=?4,data=?5,updated_at=?6 WHERE id=?1",
     )
@@ -229,14 +229,9 @@ async fn save(tx: &mut Transaction<'_, Sqlite>, run: &Run, input: &RunPatch) -> 
     } else {
         None
     };
-    sqlx::query("UPDATE check_suites SET status=?2,conclusion=?3,updated_at=?4 WHERE id=?1")
-        .bind(run.suite_id)
-        .bind(status)
-        .bind(conclusion)
-        .bind(chrono::Utc::now())
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
+    Ok(sqlx::query_as("UPDATE check_suites SET status=?2,conclusion=?3,updated_at=?4 WHERE id=?1 RETURNING *")
+        .bind(run.suite_id).bind(status).bind(conclusion).bind(chrono::Utc::now())
+        .fetch_one(&mut **tx).await?)
 }
 pub async fn create_run(
     pool: &SqlitePool,
@@ -245,7 +240,7 @@ pub async fn create_run(
     sha: &str,
     branch: Option<&str>,
     input: &RunPatch,
-) -> Result<Run> {
+) -> Result<RunChange> {
     input.validate(true)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (publisher, app) = authority(&mut tx, credential, repo, false).await?;
@@ -253,13 +248,12 @@ pub async fn create_run(
     let mut run: Run = sqlx::query_as("INSERT INTO check_runs(repo_id,suite_id,name,data,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?5) RETURNING *")
         .bind(repo).bind(suite.id).bind(input.name.as_deref().ok_or(Refusal::Invalid)?).bind(Json(RunData::default())).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     input.apply(&mut run)?;
-    save(&mut tx, &run, input).await?;
+    let saved_suite = save(&mut tx, &run, input).await?;
+    let completed_suite = (suite.status != "completed" && saved_suite.status == "completed").then_some(saved_suite);
     let result = sqlx::query_as("SELECT * FROM check_runs WHERE id=?1")
-        .bind(run.id)
-        .fetch_one(&mut *tx)
-        .await?;
+        .bind(run.id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result)
+    Ok(RunChange { run: result, completed_suite })
 }
 pub async fn update_run(
     pool: &SqlitePool,
@@ -267,7 +261,7 @@ pub async fn update_run(
     repo: i64,
     id: i64,
     input: &RunPatch,
-) -> Result<Run> {
+) -> Result<RunChange> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let (publisher, _) = authority(&mut tx, credential, repo, false).await?;
     let suite: Suite = sqlx::query_as("SELECT s.* FROM check_suites s JOIN check_runs r ON r.suite_id=s.id WHERE r.id=?1 AND r.repo_id=?2")
@@ -278,13 +272,12 @@ pub async fn update_run(
         .fetch_one(&mut *tx)
         .await?;
     input.apply(&mut run)?;
-    save(&mut tx, &run, input).await?;
+    let saved_suite = save(&mut tx, &run, input).await?;
+    let completed_suite = (suite.status != "completed" && saved_suite.status == "completed").then_some(saved_suite);
     let result = sqlx::query_as("SELECT * FROM check_runs WHERE id=?1")
-        .bind(id)
-        .fetch_one(&mut *tx)
-        .await?;
+        .bind(id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result)
+    Ok(RunChange { run: result, completed_suite })
 }
 
 const RUNS: &str = " FROM check_runs r JOIN check_suites s ON s.id=r.suite_id WHERE r.repo_id=?1 AND (?2 IS NULL OR r.suite_id=?2) AND (?3 IS NULL OR s.head_sha=?3) AND (?4 IS NULL OR r.name=?4) AND (?5 IS NULL OR r.status=?5) AND (?6 IS NULL OR s.app_id=?6) AND (?7 OR NOT EXISTS(SELECT 1 FROM check_runs n WHERE n.suite_id=r.suite_id AND n.name=r.name AND n.id>r.id))";
@@ -322,7 +315,7 @@ pub async fn run_count(pool: &SqlitePool, repo: i64, filter: &Filter) -> Result<
         .fetch_one(pool)
         .await?)
 }
-const SUITES: &str = " FROM check_suites s WHERE s.repo_id=?1 AND (?2 IS NULL OR s.head_sha=?2) AND (?3 IS NULL OR s.app_id=?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM check_runs r WHERE r.suite_id=s.id AND r.name=?4))";
+const SUITES: &str = " FROM check_suites s WHERE s.repo_id=?1 AND (?2 IS NULL OR s.head_sha=?2) AND (?3 IS NULL OR CASE WHEN s.ci_run_id IS NOT NULL THEN 15368 ELSE s.app_id END=?3) AND (?4 IS NULL OR EXISTS(SELECT 1 FROM check_runs r WHERE r.suite_id=s.id AND r.name=?4))";
 pub async fn suites(
     pool: &SqlitePool,
     repo: i64,

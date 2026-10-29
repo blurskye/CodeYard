@@ -28,6 +28,13 @@ pub struct Suite {
     pub updated_at: DateTime<Utc>,
 }
 
+pub const ACTIONS_APP_ID: i64 = 15368;
+
+pub struct RunChange {
+    pub run: Run,
+    pub completed_suite: Option<Suite>,
+}
+
 #[derive(FromRow)]
 pub struct Run {
     pub id: i64,
@@ -316,9 +323,9 @@ native_operation!(crate::backend::db::postgres::checks::run, crate::backend::db:
 native_operation!(crate::backend::db::postgres::checks::create_suite, crate::backend::db::sqlite::checks::create_suite,
     fn create_suite(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>) -> Result<(Suite, bool)>);
 native_operation!(crate::backend::db::postgres::checks::create_run, crate::backend::db::sqlite::checks::create_run,
-    fn create_run(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>, input: &RunPatch) -> Result<Run>);
+    fn create_run(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>, input: &RunPatch) -> Result<RunChange>);
 native_operation!(crate::backend::db::postgres::checks::update_run, crate::backend::db::sqlite::checks::update_run,
-    fn update_run(pool: &DbPool, credential: Credential<'_>, repo: i64, id: i64, input: &RunPatch) -> Result<Run>);
+    fn update_run(pool: &DbPool, credential: Credential<'_>, repo: i64, id: i64, input: &RunPatch) -> Result<RunChange>);
 native_operation!(crate::backend::db::postgres::checks::runs, crate::backend::db::sqlite::checks::runs,
     fn runs(pool: &DbPool, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Run>>);
 native_operation!(crate::backend::db::postgres::checks::run_count, crate::backend::db::sqlite::checks::run_count,
