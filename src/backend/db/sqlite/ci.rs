@@ -226,7 +226,7 @@ async fn enqueue_ci_run_inner(
         .and(event_payload.and_then(|payload| payload["scheduled_minute"].as_i64()))
         .unwrap_or_else(|| chrono::Utc::now().timestamp().div_euclid(60));
     if let Some(cron) = scheduled {
-        let queued: Option<Option<i64>> = sqlx::query_scalar("SELECT run_id FROM ci_schedule_runs WHERE repo_id=$1 AND workflow_path=$2 AND cron=$3 AND minute=$4")
+        let queued: Option<Option<i64>> = sqlx::query_scalar("SELECT run_id FROM ci_schedule_runs WHERE repo_id=$1 AND workflow_path=$2 AND cron=$3 AND minute>=$4")
             .bind(input.repo_id).bind(input.workflow_path).bind(cron).bind(minute).fetch_optional(&mut *tx).await?;
         if let Some(run_id) = queued {
             // The occurrence stays queued even after its run was deleted.
@@ -403,7 +403,7 @@ async fn enqueue_ci_run_inner(
     .fetch_one(&mut *tx)
     .await?;
     if let Some(cron) = scheduled {
-        sqlx::query("INSERT INTO ci_schedule_runs(repo_id,workflow_path,cron,minute,run_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(repo_id,workflow_path,cron) DO UPDATE SET minute=excluded.minute,run_id=excluded.run_id")
+        sqlx::query("INSERT INTO ci_schedule_runs(repo_id,workflow_path,cron,minute,run_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(repo_id,workflow_path,cron) DO UPDATE SET minute=excluded.minute,run_id=excluded.run_id WHERE ci_schedule_runs.minute<excluded.minute")
             .bind(input.repo_id).bind(input.workflow_path).bind(cron).bind(minute).bind(run.id).execute(&mut *tx).await?;
     }
     let run: CiRun =
@@ -646,7 +646,7 @@ async fn claim_queued_run(
         .fetch_one(&mut *tx)
         .await?;
         if is_deployment(&run) {
-            sqlx::query("UPDATE ci_deployments SET status = 'in_progress', started_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE run_id = ?1 AND status = 'pending'")
+            sqlx::query("UPDATE ci_deployments SET status = 'in_progress', started_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE run_id = ?1 AND status IN ('pending','approved')")
                 .bind(run.id)
                 .execute(&mut *tx)
                 .await?;
@@ -962,9 +962,15 @@ async fn request_cancellation(
             .await?;
     let personal_admin = user.is_admin && repo.owner_kind == "user" && repo.owner_org_id.is_none();
     let workflow_authorized = match token_id {
-        Some(token) => super::ci_tokens::may_cancel(&mut tx, actor_id, run.repo_id, token).await?,
+        Some(token) => {
+            let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))")
+                .bind(token).bind(actor_id).fetch_one(&mut *tx).await?;
+            ensure!(live && super::fine_grained_tokens::repository_permission(&mut tx, token, actor_id, run.repo_id, "actions").await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+            super::ci_tokens::may_cancel(&mut tx, actor_id, run.repo_id, token).await?
+        }
         None => false,
     };
+    ensure!(user.username != crate::backend::db::ci_tokens::BOT || workflow_authorized, CiAdmissionRefusal::Denied("CI cancellation permission denied"));
     ensure!(
         workflow_authorized
             || crate::backend::db::ci::may_cancel_run(

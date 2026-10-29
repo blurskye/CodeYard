@@ -246,13 +246,13 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains(&format!("action=\"{cancel}\"")));
 
-    // A reader cannot re-run or cancel, and a writer who did not start the run cannot cancel it.
+    // Readers cannot re-run or cancel; any repository writer may cancel.
     let (status, page) = dave.form(&rerun, &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
     let (status, page) = dave.form(&cancel, &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
     let (status, page) = bob.form(&cancel, &[]).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
 
     // Another writer can re-run a manual commit displaced by an unrelated branch reset.
     {
