@@ -19,7 +19,7 @@ pub async fn finish(pool: &SqlitePool, uuid: &str, status: &str, details: &Value
     Ok(())
 }
 pub async fn recover(pool: &SqlitePool, node_id: Option<i64>, details: &Value) -> Result<u64> {
-    Ok(sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=?2,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE worker_node_id IS ?1 AND status='pending'").bind(node_id).bind(details).execute(pool).await?.rows_affected())
+    Ok(sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=?2,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE (worker_node_id IS NULL OR worker_node_id=?1) AND status='pending'").bind(node_id).bind(details).execute(pool).await?.rows_affected())
 }
 pub async fn prune(pool: &SqlitePool) -> Result<u64> {
     Ok(sqlx::query(
