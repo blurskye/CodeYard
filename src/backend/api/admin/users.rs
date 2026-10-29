@@ -89,37 +89,26 @@ fn users_path(listing: &Listing, saved: &str) -> String {
 
 async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUsers, Response> {
     let admin = require_account(ctx, true)?;
-    let (all, admins, banned) =
-        db::users::accounts::count_matching_users(&ctx.state.pool, listing.search)
-            .await
-            .map_err(|_| {
-                ctx.error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Unable to load the accounts.",
-                )
-            })?;
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let authority = (admin.id, session).into();
+    let snapshot = db::users::accounts::admin_users_page(
+        &ctx.state.pool, &authority, listing.search, listing.role, USERS_PER_PAGE as i64, listing.page,
+    ).await.map_err(|error| {
+        if error.is::<db::users::accounts::AccountRestricted>() {
+            ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
+        } else {
+            ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Unable to load the accounts.")
+        }
+    })?;
+    let (all, admins, banned) = snapshot.counts;
     let total = match listing.role {
         "admins" => admins,
         "banned" => banned,
         _ => all,
     } as usize;
     let pages = total.div_ceil(USERS_PER_PAGE).max(1);
-    let page = listing.page.clamp(1, pages);
-    let accounts: Vec<AccountMetadata> = db::users::accounts::list_admin_users(
-        &ctx.state.pool,
-        listing.search,
-        listing.role,
-        USERS_PER_PAGE as i64,
-        ((page - 1) * USERS_PER_PAGE) as i64,
-    )
-    .await
-    .map_err(|_| {
-        ctx.error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Unable to load the accounts.",
-        )
-    })?
-    .into_iter()
+    let page = snapshot.page;
+    let accounts: Vec<AccountMetadata> = snapshot.users.into_iter()
     .map(|user| AccountMetadata {
         id: user.id,
         username: user.username,
