@@ -8,6 +8,10 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+pub(super) fn page_size(value: Option<usize>) -> usize {
+    value.unwrap_or(30).clamp(1, 100)
+}
+
 /// Opaque, exclusive ID cursors for GitHub's before/after collections.
 #[derive(Default, Deserialize)]
 pub(super) struct Cursor {
@@ -43,7 +47,7 @@ impl Cursor {
         Ok((
             bound(&self.after, 0)?,
             bound(&self.before, i64::MAX)?,
-            self.per_page.unwrap_or(30).clamp(1, 100),
+            page_size(self.per_page),
         ))
     }
 
@@ -125,7 +129,7 @@ pub(super) struct Pagination {
 impl Pagination {
     pub fn window(&self) -> Result<(usize, usize)> {
         let page = self.page.unwrap_or(1);
-        let limit = self.per_page.unwrap_or(30).clamp(1, 100);
+        let limit = page_size(self.per_page);
         let offset = page
             .checked_sub(1)
             .and_then(|page| page.checked_mul(limit))

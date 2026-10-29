@@ -219,7 +219,7 @@ async fn list(
     Query(query): Query<Since>,
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::pagination::page_size(query.per_page);
     let mut orgs = discovery::list_organizations(
         &state.pool,
         None,

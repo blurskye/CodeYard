@@ -211,11 +211,7 @@ async fn list(
             if json {
                 error.into_response()
             } else {
-                let mut response = error.0.into_response();
-                response
-                    .headers_mut()
-                    .insert(header::CONTENT_LENGTH, "0".parse().unwrap());
-                response
+                super::super::empty(error.0)
             }
         }
     }

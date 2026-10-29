@@ -257,7 +257,7 @@ async fn star_history(
     }
     let page = Pagination {
         page: query.page,
-        per_page: Some(query.per_page.unwrap_or(30).min(30)),
+        per_page: Some(super::pagination::page_size(query.per_page).min(30)),
     };
     let (offset, limit) = page.window()?;
     let rows = db::repositories::engagement::list_star_history(

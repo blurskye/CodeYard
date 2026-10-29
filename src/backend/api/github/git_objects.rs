@@ -14,7 +14,6 @@ use axum::{
     routing::{get, post, MethodRouter},
     Json,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -121,9 +120,10 @@ async fn create_blob(
     .map_err(|error| Error::new(error.status(), "Invalid blob request"))?;
     let bytes = match input.encoding.as_deref().unwrap_or("utf-8") {
         "utf-8" => input.content.into_bytes(),
-        "base64" => STANDARD
-            .decode(input.content.split_whitespace().collect::<String>())
-            .map_err(|_| Error::invalid("Invalid base64 content"))?,
+        "base64" => crate::backend::repositories::files::decode_base64(&input.content, MAX_BLOB_WRITE_BYTES).map_err(|error| match error {
+            crate::backend::repositories::files::WriteFailure::TooLarge => Error::invalid("Blobs must not exceed 100 MiB"),
+            _ => Error::invalid("Invalid base64 content"),
+        })?,
         _ => return Err(Error::invalid("encoding must be utf-8 or base64")),
     };
     if bytes.len() > MAX_BLOB_WRITE_BYTES {

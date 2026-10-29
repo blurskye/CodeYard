@@ -194,6 +194,7 @@ fn validate(q: &Params, global: bool) -> Result<()> {
             "package",
             "manifest",
             "scope",
+            "has",
             "sort",
             "direction",
             "per_page",
@@ -218,6 +219,9 @@ fn validate(q: &Params, global: bool) -> Result<()> {
     if q.get("sort").is_some_and(|s| !sorts.contains(&s.as_str())) {
         return Err(Error::invalid("Invalid sort"));
     }
+    if q.get("has").is_some_and(|value| value != "patch") {
+        return Err(Error::invalid("Invalid patch availability filter"));
+    }
     if q.get("is_withdrawn")
         .is_some_and(|s| !matches!(s.as_str(), "true" | "false"))
     {
@@ -234,9 +238,10 @@ fn sort_key(v: &Value, sort: &str, global: bool) -> (String, String) {
             _ => "1",
         }
         .into(),
-        "published" => v["published_at"].as_str().unwrap_or("").into(),
-        "updated" => v["updated_at"].as_str().unwrap_or("").into(),
-        _ => v["created_at"].as_str().unwrap_or("").into(),
+        field => {
+            let field = match field { "published" => "published_at", "updated" => "updated_at", _ => "created_at" };
+            v[field].as_str().and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok()).map(|value| value.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)).unwrap_or_default()
+        },
     };
     let id = if global {
         v["ghsa_id"].as_str().unwrap_or("").to_owned()
@@ -254,13 +259,7 @@ fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Res
         .get("sort")
         .map_or(if global { "published" } else { "created" }, String::as_str);
     let ascending = q.get("direction").is_some_and(|s| s == "asc");
-    let limit = q
-        .get("per_page")
-        .map(|s| s.parse::<usize>())
-        .transpose()
-        .map_err(|_| Error::invalid("Invalid page size"))?
-        .unwrap_or(30)
-        .clamp(1, 100);
+    let limit = super::pagination::page_size(q.get("per_page").map(|s| s.parse::<usize>()).transpose().map_err(|_| Error::invalid("Invalid page size"))?);
     rows.sort_by_cached_key(|v| sort_key(v, sort, global));
     if !ascending {
         rows.reverse();
@@ -391,6 +390,9 @@ pub(crate) async fn document(
     )
 }
 fn alert_matches(v: &Value, q: &Params) -> bool {
+    if q.contains_key("has") && v["security_vulnerability"]["first_patched_version"].is_null() {
+        return false;
+    }
     [
         ("state", v["state"].as_str()),
         ("severity", v["security_advisory"]["severity"].as_str()),
@@ -456,13 +458,17 @@ async fn list(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
+        let mut repository_document = None;
         for row in rows {
             let mut doc = document(&state, &row, &owner, &repo.name).await?;
             if !alert_matches(&doc, &query) {
                 continue;
             }
             if org.is_some() {
-                doc["repository"] = repos::document(&state, &repo, Some(&actor)).await?;
+                if repository_document.is_none() {
+                    repository_document = Some(repos::document(&state, &repo, Some(&actor)).await?);
+                }
+                doc["repository"] = repository_document.as_ref().unwrap().clone();
             }
             documents.push(doc);
         }

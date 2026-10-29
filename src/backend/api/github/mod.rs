@@ -289,6 +289,10 @@ async fn get_repository(
     ))
 }
 
+pub(super) fn empty(status: StatusCode) -> Response {
+    (status, [(header::CONTENT_LENGTH, "0")]).into_response()
+}
+
 async fn missing() -> Error {
     Error::missing()
 }

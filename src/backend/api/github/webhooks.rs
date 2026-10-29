@@ -369,7 +369,7 @@ pub(super) fn delivery_page(
     {
         return Err(Error::validation("Hook", "status", "invalid"));
     }
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::pagination::page_size(query.per_page);
     let mut rows = rows
         .into_iter()
         .filter(|row| cursor.is_none_or(|cursor| row.id < cursor))

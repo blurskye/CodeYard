@@ -226,7 +226,7 @@ async fn list(
             Ok((cursor.at, cursor.id))
         })
         .transpose()?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::pagination::page_size(query.per_page);
     let options = Listing {
         state: query.state.as_deref(),
         sort,

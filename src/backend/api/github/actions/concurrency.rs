@@ -43,7 +43,7 @@ fn page(
     }
     let after = query.after.as_deref().map(decode).transpose()?;
     let before = query.before.as_deref().map(decode).transpose()?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = crate::backend::api::github::pagination::page_size(query.per_page);
     let mut groups: Vec<_> = groups
         .into_iter()
         .filter(|group| {

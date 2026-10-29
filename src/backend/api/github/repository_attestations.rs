@@ -126,7 +126,7 @@ async fn list(
     let page = store::Page {
         after,
         before,
-        limit: query.per_page.unwrap_or(30).clamp(1, 100) as i64,
+        limit: super::pagination::page_size(query.per_page) as i64,
         predicate_type: query.predicate_type.as_deref(),
     };
     let (rows, more) = store::list(&state.pool, Some(auth.user.id), repo.id, &digest, &page)

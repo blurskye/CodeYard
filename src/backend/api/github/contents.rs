@@ -335,15 +335,10 @@ async fn save(
             .content
             .as_deref()
             .ok_or_else(|| Error::invalid("content is required"))?;
-        if content.len() > MAX_EDITOR_BYTES.div_ceil(3) * 4 {
-            return Err(Error::new(
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "File exceeds 1 MiB",
-            ));
-        }
-        STANDARD
-            .decode(content)
-            .map_err(|_| Error::invalid("Invalid base64 content"))?
+        files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| match error {
+            files::WriteFailure::TooLarge => Error::new(StatusCode::PAYLOAD_TOO_LARGE, "File exceeds 1 MiB"),
+            _ => Error::invalid("Invalid base64 content"),
+        })?
     };
     let write = FileWrite {
         branch: branch.to_owned(),

@@ -888,62 +888,12 @@ pub(in crate::backend::api) async fn apply_metadata(
         }
     }
     if let Some(users) = metadata.assignees {
-        let mut added = Vec::new();
-        for name in db::assignees::list_assignees(&state.pool, item)
-            .await
-            .map_err(Error::unavailable)?
-        {
-            if !users
-                .iter()
-                .any(|user| user.username.eq_ignore_ascii_case(&name))
-                && db::assignees::unassign_user(&state.pool, actor.id, repo.id, item, &name)
-                    .await
-                    .map_err(assignment_error)?
-            {
-                db::timeline::record_for(&state.pool, repo.id, item, actor.id, "unassigned", &name)
-                    .await;
-            }
-        }
-        for user in users {
-            if db::assignees::assign_user(&state.pool, actor.id, repo.id, item, user.id)
-                .await
-                .map_err(assignment_error)?
-            {
-                added.push(user.id);
-                db::timeline::record_for(
-                    &state.pool,
-                    repo.id,
-                    item,
-                    actor.id,
-                    "assigned",
-                    &user.username,
-                )
-                .await;
-            }
-        }
+        use crate::backend::issues::assignments;
         let (owner, number, title) = detail;
-        let pull_request = matches!(item, AssignedItem::PullRequest(_));
-        let link = format!(
-            "/{owner}/{}/{}/{number}",
-            repo.name,
-            if pull_request { "pulls" } else { "issues" }
-        );
-        crate::backend::notifications::assignments::notify_assignees(
-            &state.pool,
-            &state.notification_broadcaster,
-            &crate::backend::notifications::assignments::Assignment {
-                actor,
-                repository: repo,
-                owner,
-                repo: &repo.name,
-                number,
-                pull_request,
-                title,
-                link: &link,
-            },
-            &added,
-        )
-        .await;
+        let target = assignments::Target { actor, repository: repo, owner, item, number, title };
+        let removed: Vec<_> = db::assignees::list_assignees(&state.pool, item).await.map_err(Error::unavailable)?.into_iter().filter(|name| !users.iter().any(|user| user.username == *name)).collect();
+        assignments::unassign(&state.pool, &target, &removed).await.map_err(assignment_error)?;
+        assignments::assign(&state.pool, &state.notification_broadcaster, &target, &users).await.map_err(assignment_error)?;
     }
     Ok(())
 }

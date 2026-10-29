@@ -19,7 +19,7 @@ use crate::backend::{
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, MethodRouter},
     Json,
@@ -335,7 +335,7 @@ async fn merged(
     } else {
         StatusCode::NOT_FOUND
     };
-    Ok((status, [(header::CONTENT_LENGTH, "0")]).into_response())
+    Ok(super::empty(status))
 }
 
 async fn commits(
