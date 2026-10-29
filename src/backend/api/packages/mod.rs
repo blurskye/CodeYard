@@ -275,23 +275,18 @@ async fn owner_packages(
     auth: Option<&Authentication>,
 ) -> Result<Vec<Package>> {
     let mut packages = Vec::new();
+    let mut before = i64::MAX;
+    let mut bytes = 0usize;
     loop {
-        let page = db::packages::list(
-            &state.pool,
-            auth.map(|a| a.token.id.into()),
-            db::packages::Listing {
-                owner: Some(owner),
-                repo: None,
-                kind: Some(kind),
-                visibility: None,
-                offset: packages.len() as i64,
-                limit: 100,
-            },
-        )
-        .await
-        .map_err(Error::db)?;
+        let page = db::packages::owner_page(&state.pool, auth.map(|a| a.token.id.into()), owner, kind, before)
+            .await.map_err(Error::db)?;
         let done = page.len() < 100;
-        packages.extend(page);
+        for package in page {
+            bytes = bytes.saturating_add(package.name.len() + 512);
+            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES { return Err(Error::unavailable()); }
+            before = package.id;
+            packages.push(package);
+        }
         if done {
             return Ok(packages);
         }

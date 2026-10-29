@@ -233,11 +233,15 @@ pub async fn find(
     Ok(result)
 }
 
-pub async fn list(
-    pool: &SqlitePool,
-    token: Option<Credential<'_>>,
-    query: Listing<'_>,
-) -> Result<Vec<Package>> {
+pub async fn list(pool: &SqlitePool, token: Option<Credential<'_>>, query: Listing<'_>) -> Result<Vec<Package>> {
+    listing(pool, token, query, None).await
+}
+
+pub async fn owner_page(pool: &SqlitePool, token: Option<Credential<'_>>, owner: &Owner, kind: &str, before: i64) -> Result<Vec<Package>> {
+    listing(pool, token, Listing { owner: Some(owner), repo: None, kind: Some(kind), visibility: None, offset: 0, limit: 100 }, Some(before)).await
+}
+
+async fn listing(pool: &SqlitePool, token: Option<Credential<'_>>, query: Listing<'_>, before: Option<i64>) -> Result<Vec<Package>> {
     let mut tx = begin(pool).await?;
     let actor = actor(&mut tx, token, Permission::Read).await?;
     let actor = match query.owner {
@@ -245,8 +249,8 @@ pub async fn list(
         None if actor.owner.is_some() => Actor::ANONYMOUS,
         None => actor,
     };
-    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1 IS NULL OR p.owner_kind=$1) AND ($2 IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3 IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4 IS NULL OR p.visibility=$4) AND ($6 IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9 IS NULL OR p.repo_id=$9) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition(actor.classic)))
-        .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query_as(&format!("SELECT p.* FROM packages p LEFT JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id=$5 WHERE ($1 IS NULL OR p.owner_kind=$1) AND ($2 IS NULL OR COALESCE(p.owner_user_id,p.owner_org_id)=$2) AND ($3 IS NULL OR p.package_type=$3) AND p.deleted_at IS NULL AND ($4 IS NULL OR p.visibility=$4) AND ($6 IS NULL OR (p.repo_id=$6 AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id))) AND ($9 IS NULL OR p.repo_id=$9) AND ($10 IS NULL OR p.id<$10) AND {} ORDER BY p.id DESC LIMIT $7 OFFSET $8",read_condition(actor.classic)))
+        .bind(query.owner.map(|o| o.kind.as_str())).bind(query.owner.map(|o| o.id)).bind(query.kind).bind(query.visibility).bind(actor.id).bind(actor.repo).bind(query.limit).bind(query.offset).bind(query.repo).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }

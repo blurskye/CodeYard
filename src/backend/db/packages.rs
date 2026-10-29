@@ -115,6 +115,8 @@ native_operation!(crate::backend::db::postgres::packages::maven_file,
 pub const MAX_NPM_METADATA_BYTES: usize = 64 * 1024;
 pub const MAX_METADATA_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
+native_operation!(crate::backend::db::postgres::packages::owner_page, crate::backend::db::sqlite::packages::owner_page,
+    fn owner_page(pool: &DbPool, token: Option<Credential<'_>>, owner: &Owner, kind: &str, before: i64) -> Result<Vec<Package>>);
 native_operation!(crate::backend::db::postgres::packages::version_page,
     crate::backend::db::sqlite::packages::version_page,
     fn version_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, before: i64, names_only: bool) -> Result<Vec<Version>>);
