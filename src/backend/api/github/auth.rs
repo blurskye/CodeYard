@@ -11,9 +11,36 @@ use crate::backend::{
 };
 use axum::http::{header, HeaderMap, Method, StatusCode};
 
+#[derive(Clone)]
 pub(in crate::backend::api) struct Authentication {
     pub token: PersonalAccessToken,
     pub user: User,
+}
+
+struct RequestContext {
+    authorization: Vec<axum::http::HeaderValue>,
+    authentication: tokio::sync::OnceCell<Option<Authentication>>,
+    public_only: std::sync::atomic::AtomicBool,
+}
+
+tokio::task_local! {
+    static REQUEST_CONTEXT: std::sync::Arc<RequestContext>;
+}
+
+/// Header-based adapters share one verified identity without letting a public-only audience
+/// borrow account authority. The scope is request-local and is not inherited by spawned tasks.
+pub(super) async fn request_context(request: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let context = RequestContext {
+        authorization: request.headers().get_all(header::AUTHORIZATION).iter().cloned().collect(),
+        authentication: tokio::sync::OnceCell::new(),
+        public_only: std::sync::atomic::AtomicBool::new(false),
+    };
+    REQUEST_CONTEXT.scope(std::sync::Arc::new(context), next.run(request)).await
+}
+
+fn context(headers: &HeaderMap) -> Option<std::sync::Arc<RequestContext>> {
+    let context = REQUEST_CONTEXT.try_with(std::sync::Arc::clone).ok()?;
+    context.authorization.iter().eq(headers.get_all(header::AUTHORIZATION).iter()).then_some(context)
 }
 
 #[derive(Debug)]
@@ -502,7 +529,12 @@ pub(super) async fn authorize_request(
     }
     .await;
     if anonymous.into_inner() {
-        request.headers_mut().remove(header::AUTHORIZATION);
+        if let Some(context) = context(request.headers()) {
+            context.public_only.store(true, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            // Keep a safe downgrade for routers that do not install the shared context.
+            request.headers_mut().remove(header::AUTHORIZATION);
+        }
     }
     let mut response = match checked {
         Ok(scopes) => {
@@ -768,13 +800,33 @@ pub(in crate::backend::api) async fn authenticate(
     headers: &HeaderMap,
     required_auth: bool,
 ) -> Result<Option<Authentication>> {
+    let identity = identity(state, headers, required_auth).await?;
+    if context(headers).is_some_and(|context| context.public_only.load(std::sync::atomic::Ordering::Relaxed)) {
+        return Ok(None);
+    }
+    Ok(identity)
+}
+
+/// For operations that explicitly apply repository-permission filtering themselves, keep
+/// verified identity independent of the default public-data audience.
+pub(super) async fn identity(state: &AppState, headers: &HeaderMap, required_auth: bool) -> Result<Option<Authentication>> {
+    let identity = if let Some(context) = context(headers) {
+        context.authentication.get_or_try_init(|| authenticate_uncached(state, headers)).await?.clone()
+    } else {
+        authenticate_uncached(state, headers).await?
+    };
+    if required_auth && identity.is_none() { return Err(required()); }
+    Ok(identity)
+}
+
+async fn authenticate_uncached(state: &AppState, headers: &HeaderMap) -> Result<Option<Authentication>> {
     let config = db::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::unavailable)?
         .filter(|config| config.setup_completed)
         .ok_or_else(Error::missing)?;
     if !headers.contains_key(header::AUTHORIZATION) {
-        return if required_auth || config.is_private() {
+        return if config.is_private() {
             Err(required())
         } else {
             Ok(None)

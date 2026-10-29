@@ -496,6 +496,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .layer(axum::middleware::from_fn(auth::authorize_request))
         .layer(axum::middleware::from_fn(rate_limits::enforce))
+        .layer(axum::middleware::from_fn(auth::request_context))
         .layer(axum::middleware::from_fn(
             super::http::middleware::bounded_form_body,
         ))
