@@ -15,6 +15,15 @@ use tokio::sync::Semaphore;
 use tracing::warn;
 
 pub(super) static PARSING_SLOTS: Semaphore = Semaphore::const_new(2);
+
+pub(super) async fn parse_definitions(definitions: &BTreeMap<String, Vec<u8>>) -> Result<BTreeMap<String, Value>> {
+    let permit = PARSING_SLOTS.acquire().await?;
+    let definitions = definitions.clone();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        definitions.into_iter().map(|(path, bytes)| Ok((path, parse_yaml(&bytes)?))).collect()
+    }).await?
+}
 static DISCOVERY_SLOTS: Semaphore = Semaphore::const_new(2);
 static DISCOVERY_PAYLOADS: Semaphore = Semaphore::const_new(4);
 // Let the store finish its address and replica fallback before discovery gives up.

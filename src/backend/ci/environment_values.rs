@@ -23,11 +23,11 @@ pub(super) async fn load(
     run: &CiRun,
     definitions: &BTreeMap<String, Vec<u8>>,
 ) -> Result<EnvironmentValues> {
+    let definitions = super::workflows::parse_definitions(definitions).await?;
     let mut result = EnvironmentValues::default();
     // Each definition's bindings use its own job IDs. The run's roots qualify them through their calls.
     let mut local = BTreeMap::new();
-    for (path, bytes) in definitions {
-        let workflow = super::workflows::parse_yaml(bytes)?;
+    for (path, workflow) in &definitions {
         let jobs = workflow
             .get("jobs")
             .and_then(serde_yaml::Value::as_mapping)
@@ -61,7 +61,7 @@ pub(super) async fn load(
     for root in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
         let mut bindings = BTreeMap::new();
         let mut visited = 0;
-        qualify(definitions, &local, root, "", &mut visited, &mut bindings)?;
+        qualify(&definitions, &local, root, "", &mut visited, &mut bindings)?;
         result.workflows.insert(root.to_owned(), bindings);
     }
     Ok(result)
@@ -70,17 +70,15 @@ pub(super) async fn load(
 /// Names each binding by the job ID the runner uses at that depth, such as `call/deploy`. A job
 /// in a called workflow must not inherit a binding that its name has at the root.
 fn qualify(
-    definitions: &BTreeMap<String, Vec<u8>>,
+    definitions: &BTreeMap<String, serde_yaml::Value>,
     local: &BTreeMap<String, BTreeMap<String, String>>,
     path: &str,
     prefix: &str,
     visited: &mut usize,
     out: &mut BTreeMap<String, String>,
 ) -> Result<()> {
-    let Some(bytes) = definitions.get(path) else {
-        return Ok(());
-    };
-    let workflow = super::workflows::parse_yaml(bytes)?;
+    ensure!(prefix.matches('/').count() < codeyard_actions::workflow::MAX_REUSABLE_LEVELS, "Called workflow nesting exceeds limit");
+    let Some(workflow) = definitions.get(path) else { return Ok(()); };
     let jobs = workflow
         .get("jobs")
         .and_then(serde_yaml::Value::as_mapping)
@@ -123,6 +121,7 @@ mod tests {
                 b"jobs:\n  deploy: {}\n  build: {}\n".to_vec(),
             ),
         ]);
+        let definitions = definitions.into_iter().map(|(path, bytes)| (path, super::super::workflows::parse_yaml(&bytes).unwrap())).collect();
         let local = BTreeMap::from([(
             "ci.yml".to_owned(),
             BTreeMap::from([("deploy".to_owned(), "production".to_owned())]),

@@ -157,12 +157,7 @@ pub(crate) async fn issue_selected(
         replay.is_none() || run.engine.as_deref() == Some("codeyard-actions"),
         "Partial re-runs require a native workflow"
     );
-    let permit = super::workflows::PARSING_SLOTS.acquire().await?;
-    let sources = definitions.clone();
-    let parsed = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        sources.into_iter().map(|(path, bytes)| Ok((path, super::workflows::parse_yaml(&bytes)?))).collect::<Result<BTreeMap<_, _>>>()
-    }).await??;
+    let parsed = super::workflows::parse_definitions(definitions).await?;
     fn policies_for(
         definitions: &BTreeMap<String, Value>,
         path: &str,
