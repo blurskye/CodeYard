@@ -220,6 +220,14 @@ async fn live_pull_head_write(
     {
         return Err(RepoError::write_denied());
     }
+    if let Some(token) = request.token {
+        for (repo, write) in [(base_id, false), (head_id, true)] {
+            if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repo, "contents", write).await
+                .map_err(|_| RepoError::authority_unavailable())? {
+                return Err(RepoError::write_denied());
+            }
+        }
+    }
     checked_branch_write(pool, &head, &user, branch, history).await?;
     Ok(head)
 }
@@ -2352,7 +2360,7 @@ impl LocalStore {
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
         if let Some(token) = token {
-            if !crate::backend::identity::tokens::repository_write(pool, token, actor, repo_id, "contents").await
+            if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repo_id, "contents", true).await
                 .map_err(|_| RepoError::authority_unavailable())? {
                 return Err(RepoError::write_denied());
             }

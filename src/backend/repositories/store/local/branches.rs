@@ -153,7 +153,7 @@ impl LocalStore {
             .map_err(|_| RepoError::authority_unavailable())?
             .is_empty();
         }
-        if !crate::backend::identity::tokens::repository_write(pool, token, actor, repo, if protected { "administration" } else { "contents" }).await
+        if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repo, if protected { "administration" } else { "contents" }, true).await
             .map_err(|_| RepoError::authority_unavailable())? {
             return Err(RepoError::write_denied());
         }
@@ -179,7 +179,7 @@ impl LocalStore {
         use super::super::{UpstreamMerge, UpstreamMergeType};
         let reference =
             git::branch_ref(branch).ok_or_else(|| super::super::invalid_ref("branch"))?;
-        self.upstream_authority(pool, repo, actor, source).await?;
+        self.upstream_authority(pool, repo, actor, source, token).await?;
         let target = git::repository::current_branch_head(source.1.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -187,7 +187,7 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        self.upstream_authority(pool, repo, actor, source).await?;
+        self.upstream_authority(pool, repo, actor, source, token).await?;
         let old = git::repository::current_branch_head(self.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -239,7 +239,7 @@ impl LocalStore {
                 Some(prepared.path()),
             )
             .await?;
-        self.upstream_authority(pool, repo, actor, source).await?;
+        self.upstream_authority(pool, repo, actor, source, token).await?;
         self.check_workflow_grant(
             pool,
             token,
@@ -288,6 +288,7 @@ impl LocalStore {
         repo: i64,
         actor: i64,
         source: (i64, &LocalStore),
+        token: Option<i64>,
     ) -> Result<(), RepoError> {
         let (repository, _) = access::check_write(pool, repo, actor)
             .await
@@ -308,6 +309,14 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        if let Some(token) = token {
+            for (repository, write) in [(source.0, false), (repo, true)] {
+                if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repository, "contents", write).await
+                    .map_err(|_| RepoError::authority_unavailable())? {
+                    return Err(RepoError::write_denied());
+                }
+            }
+        }
         live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await
     }
 }

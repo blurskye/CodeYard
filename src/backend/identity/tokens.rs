@@ -84,13 +84,20 @@ pub async fn activity_feed_user(
 }
 
 /// Recheck a retained token's account, organization policy and effective repository grant.
-pub(crate) async fn repository_write(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str) -> anyhow::Result<bool> {
-    if !tokens::token_user(pool, token, true).await?.is_some_and(|user| user.id == actor)
+pub(crate) async fn repository_scope(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str, write: bool) -> anyhow::Result<bool> {
+    if !tokens::token_user(pool, token, write).await?.is_some_and(|user| user.id == actor)
         || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo).await? {
         return Ok(false);
     }
     if let Some(authority) = super::github_apps::authority(pool, token).await? {
-        return authority.allows(pool, actor, repo, permission, true).await;
+        return authority.allows(pool, actor, repo, permission, write).await;
+    }
+    if let Some(job) = crate::backend::db::ci_tokens::get(pool, token).await? {
+        return Ok(job.repo_id == repo && super::github_apps::allows(&serde_json::from_str(&job.permissions)?, permission, write));
+    }
+    if let Some(oauth) = crate::backend::db::oauth_apps::token(pool, token).await? {
+        return Ok(super::oauth_apps::has_scope(&oauth.scopes, "repo") || (!write
+            && crate::backend::db::repositories::records::get_repository_by_id(pool, repo).await?.is_some_and(|repo| !repo.is_private)));
     }
     Ok(true)
 }
