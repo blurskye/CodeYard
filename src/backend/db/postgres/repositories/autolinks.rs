@@ -3,19 +3,26 @@ use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 async fn admin(
     tx: &mut Transaction<'_, Postgres>,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     write: bool,
 ) -> Result<()> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let allowed = if write {
         super::super::discussions::lock_repository_mutation_authority(tx, actor, repo).await?
     } else {
         super::super::discussions::lock_archive_authority(tx, actor, repo).await?
     };
     anyhow::ensure!(allowed, Refusal::Denied);
+    if write {
+        if let Some(token) = credential.token_id {
+            anyhow::ensure!(super::super::users::tokens::permits_write(&mut *tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
+        }
+    }
     Ok(())
 }
-pub async fn create(pool: &PgPool, actor: i64, repo: i64, input: &NewAutolink) -> Result<Autolink> {
+pub async fn create(pool: &PgPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64, input: &NewAutolink) -> Result<Autolink> {
     let mut tx = pool.begin().await?;
     admin(&mut tx, actor, repo, true).await?;
     let count: i64 =
@@ -64,7 +71,7 @@ pub async fn get(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<Autoli
     tx.commit().await?;
     Ok(row)
 }
-pub async fn remove(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<()> {
+pub async fn remove(pool: &PgPool, actor: impl Into<crate::backend::db::users::tokens::Actor>, repo: i64, id: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
     admin(&mut tx, actor, repo, true).await?;
     let removed = sqlx::query("DELETE FROM repository_autolinks WHERE repo_id=$1 AND id=$2")

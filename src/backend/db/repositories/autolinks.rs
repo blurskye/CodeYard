@@ -69,13 +69,13 @@ impl NewAutolink {
 }
 
 native_operation!(crate::backend::db::postgres::repositories::autolinks::create,crate::backend::db::sqlite::repositories::autolinks::create,
-    fn create(pool:&DbPool,actor:i64,repo:i64,input:&NewAutolink)->Result<Autolink>);
+    fn create(pool:&DbPool,actor:impl Into<super::super::users::tokens::Actor>,repo:i64,input:&NewAutolink)->Result<Autolink>);
 native_operation!(crate::backend::db::postgres::repositories::autolinks::list,crate::backend::db::sqlite::repositories::autolinks::list,
     fn list(pool:&DbPool,actor:i64,repo:i64,limit:i64,offset:i64)->Result<Vec<Autolink>>);
 native_operation!(crate::backend::db::postgres::repositories::autolinks::get,crate::backend::db::sqlite::repositories::autolinks::get,
     fn get(pool:&DbPool,actor:i64,repo:i64,id:i64)->Result<Autolink>);
 native_operation!(crate::backend::db::postgres::repositories::autolinks::remove,crate::backend::db::sqlite::repositories::autolinks::remove,
-    fn remove(pool:&DbPool,actor:i64,repo:i64,id:i64)->Result<()>);
+    fn remove(pool:&DbPool,actor:impl Into<super::super::users::tokens::Actor>,repo:i64,id:i64)->Result<()>);
 // Trusted Markdown callers have already authorized their repository; no target is resolved here.
 native_operation!(crate::backend::db::postgres::repositories::autolinks::for_rendering,crate::backend::db::sqlite::repositories::autolinks::for_rendering,
     fn for_rendering(pool:&DbPool,repo:i64)->Result<Vec<Autolink>>);
