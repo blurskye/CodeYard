@@ -17,10 +17,6 @@ use std::{collections::HashMap, path::Path};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
-#[derive(Debug, thiserror::Error)]
-#[error("the primary could not make an incremental pack")]
-struct IncrementalPackRejected;
-
 /// What the primary sends before its pack.
 #[derive(Deserialize)]
 struct Listing {
@@ -39,20 +35,14 @@ pub(super) async fn copy(
     mirror: &Path,
 ) -> Result<()> {
     // A copy Git cannot open has no refs to offer, so the primary sends everything.
-    let have = if super::opens(mirror).await? {
+    let have = if super::connected(mirror).await? {
         tips(mirror).await?
     } else {
         Vec::new()
     };
-    match fetch(context, primary, repository, mirror, &have).await {
-        // A tip the primary no longer has makes the incremental pack fail. Then the
-        // primary sends everything the copy needs. A busy primary is asked later instead.
-        Err(error) if error.is::<IncrementalPackRejected>() => {
-            tracing::debug!(%error, "incremental replica copy failed; copying everything");
-            fetch(context, primary, repository, mirror, &[]).await
-        }
-        result => result,
-    }
+    // The primary filters missing have tips before packing. Other failures must not trigger
+    // another, more expensive full pack with the same underlying failure.
+    fetch(context, primary, repository, mirror, &have).await
 }
 
 /// The distinct commits at the copy's refs. The primary leaves their history out of the pack.
@@ -101,24 +91,31 @@ async fn fetch(
             },
         )
         .await?;
-    if !status.success() && !have.is_empty() {
-        return Err(IncrementalPackRejected.into());
-    }
     ensure!(status.success(), "the primary could not make a pack");
     output.flush().await?;
     drop(output);
     let listing: Listing = serde_json::from_value(listing)?;
     let store =
         RepoStore::from_disk_path(mirror.to_str().context("replica copy path is not text")?);
+    let pool = context.database()?;
+    let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
+        .await?.context("replica repository was deleted")?;
+    let _installation = crate::backend::git::repository::locks::lock(&context.repos_path.join(format!("{repository}.git"))).await;
+    ensure!(crate::backend::db::cluster::set_applied_version(pool, row.id, context.node_id, primary, -1).await?, "replica assignment changed before installation");
     // `initialize` needs an empty path, so a directory Git cannot open is renamed aside first.
-    if !super::opens(mirror).await? {
+    if !super::connected(mirror).await? {
         if mirror.exists() {
             move_aside(mirror).await?;
         }
         store.initialize(None, "main").await?;
     }
     store.index_pack(pack.path(), false).await?;
-    store.set_refs(&listing.refs).await?;
+    if let Err(error) = store.set_refs(&listing.refs).await {
+        // An interrupted update-ref may leave a lock that never recovers through retries.
+        // This mirror is exclusively owned and already marked incomplete; rebuild it next time.
+        move_aside(mirror).await?;
+        return Err(error.into());
+    }
     if let Some(head) = listing.head {
         store.set_head_target(&head).await?;
     }
@@ -129,31 +126,26 @@ async fn fetch(
     Ok(())
 }
 
-/// Renames a copy that Git cannot open to the sibling `<name>.unusable-<millis>`. The renamed
-/// copy is removed once a complete replacement exists, by `remove_aside_copies`, or when
-/// surplus cleanup finds this node no longer holds the repository.
+/// Quarantines an unusable mirror under its own directory until a replacement is complete.
 async fn move_aside(mirror: &Path) -> Result<()> {
     let name = mirror
         .file_name()
         .context("replica copy has no name")?
         .to_string_lossy();
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_millis();
-    let aside = mirror.with_file_name(format!("{name}.unusable-{stamp}"));
+    let directory = mirror.parent().context("replica copy has no parent")?.join(".quarantines").join(name.as_ref());
+    tokio::fs::create_dir_all(&directory).await?;
+    let aside = directory.join(Uuid::new_v4().to_string());
     tokio::fs::rename(mirror, &aside).await?;
     Ok(())
 }
 
-/// Removes every sibling named `<name>.unusable-<digits>` of `mirror`. Other names, files and
-/// symlinks are left alone. A directory that cannot be removed is logged and left for the
-/// next copy.
+/// Cleans only this repository's quarantines; unrelated mirrors are never enumerated.
 async fn remove_aside_copies(mirror: &Path) {
     let (Some(directory), Some(name)) = (mirror.parent(), mirror.file_name()) else {
         return;
     };
-    let prefix = format!("{}.unusable-", name.to_string_lossy());
-    let mut entries = match tokio::fs::read_dir(directory).await {
+    let directory = directory.join(".quarantines").join(name);
+    let mut entries = match tokio::fs::read_dir(&directory).await {
         Ok(entries) => entries,
         Err(error) => {
             tracing::warn!(path = %directory.display(), %error, "could not list replica copies");
@@ -161,11 +153,7 @@ async fn remove_aside_copies(mirror: &Path) {
         }
     };
     while let Ok(Some(entry)) = entries.next_entry().await {
-        let file_name = entry.file_name();
-        let is_aside = file_name
-            .to_string_lossy()
-            .strip_prefix(&prefix)
-            .is_some_and(|stamp| !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()));
+        let is_aside = entry.file_name().to_str().is_some_and(|name| Uuid::parse_str(name).is_ok());
         // `DirEntry::file_type` does not follow symlinks.
         let is_directory = entry.file_type().await.is_ok_and(|kind| kind.is_dir());
         if is_aside && is_directory {
@@ -281,7 +269,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejected_incremental_pack_is_retried_without_have_tips() {
-        assert_eq!(failed_copy(true).await, 2);
+    async fn pack_failure_does_not_trigger_an_unrelated_full_retry() {
+        assert_eq!(failed_copy(true).await, 1);
     }
 }

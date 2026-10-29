@@ -392,8 +392,9 @@ async fn place_and_start(
     copying: &mut Copying,
 ) -> Result<()> {
     let node = context.node_id;
-    let held = db::cluster::list_held_replicas(context.database()?, node).await?;
-    locate(&context.repos_path, node, primaries, &held, copying);
+    let mut held = db::cluster::list_held_replicas(context.database()?, node).await?;
+    let failed = locate(&context.repos_path, node, primaries, &held, copying).await;
+    held.retain(|row| !failed.contains(&row.repository_id));
     copying.start(context, &held, retry);
     Ok(())
 }
@@ -422,7 +423,7 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
         let Ok(uuid) = rpc::repository_uuid(&row.disk_path) else {
             continue;
         };
-        let usable = match opens(&copy_path(repos, uuid)).await {
+        let usable = match connected(&copy_path(repos, uuid)).await {
             Ok(usable) => usable,
             Err(error) => {
                 warn!(repository = row.repository_id, %error, "could not read a replica copy");
@@ -447,10 +448,15 @@ async fn opens(mirror: &Path) -> Result<bool> {
     .context("the copy check stopped")?
 }
 
+async fn connected(path: &Path) -> Result<bool> {
+    Ok(opens(path).await? && mirror::check(path).await?.is_none())
+}
+
 /// Puts each directory where its role says: a repository this node is primary of moves
 /// from `mirrors` to the primary location, and a copy whose primary moved away keeps its
 /// directory as a copy. A directory moves only into a free place, and nothing is deleted.
-fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], copying: &Copying) {
+async fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], copying: &Copying) -> HashSet<i64> {
+    let mut failed = HashSet::new();
     for primary in primaries {
         let Ok(uuid) = rpc::repository_uuid(&primary.disk_path) else {
             continue;
@@ -459,8 +465,11 @@ fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], 
             continue;
         }
         let (copy, place) = (copy_path(repos, uuid), place_path(repos, uuid));
-        if copy.exists() && !place.exists() {
-            move_directory(&copy, &place);
+        if tokio::fs::try_exists(&copy).await.unwrap_or(true) && !tokio::fs::try_exists(&place).await.unwrap_or(false) {
+            if let Err(error) = move_directory(&copy, &place).await {
+                warn!(repository=primary.repository_id, %error, "could not relocate a primary directory");
+                failed.insert(primary.repository_id);
+            }
         }
     }
     for row in held.iter().filter(|row| row.primary_node_id != Some(node)) {
@@ -471,19 +480,27 @@ fn locate(repos: &Path, node: i64, primaries: &[Primary], held: &[HeldReplica], 
             continue;
         }
         let (copy, place) = (copy_path(repos, uuid), place_path(repos, uuid));
-        if place.exists() && !copy.exists() {
-            move_directory(&place, &copy);
+        if tokio::fs::try_exists(&place).await.unwrap_or(true) {
+            let moved = if tokio::fs::try_exists(&copy).await.unwrap_or(true) {
+                Err(anyhow::anyhow!("both primary and mirror directories exist; refusing to copy ambiguous storage"))
+            } else {
+                move_directory(&place, &copy).await
+            };
+            if let Err(error) = moved {
+                warn!(repository=row.repository_id, %error, "could not relocate a former primary; copy deferred");
+                failed.insert(row.repository_id);
+            }
         }
     }
+    failed
 }
 
-fn move_directory(from: &Path, to: &Path) {
+async fn move_directory(from: &Path, to: &Path) -> Result<()> {
     if let Some(parent) = to.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        tokio::fs::create_dir_all(parent).await?;
     }
-    if let Err(error) = std::fs::rename(from, to) {
-        warn!(path = %from.display(), %error, "could not move a repository directory");
-    }
+    tokio::fs::rename(from, to).await?;
+    Ok(())
 }
 
 /// Copies that are running, at most `PARALLEL`. Each one brings a copy up to its primary. A
@@ -614,35 +631,10 @@ async fn copy_one(context: &NodeContext, row: &HeldReplica, uuid: Uuid) -> Resul
         return Ok(());
     };
     if version > row.applied_version {
-        // Replacing refs takes several steps, so the copy stops counting as a usable version
-        // first. A crash part way leaves it unusable until the next copy completes it.
-        if row.applied_version >= 0
-            && !db::cluster::set_applied_version(
-                pool,
-                row.repository_id,
-                context.node_id,
-                primary,
-                -1,
-            )
-            .await?
-        {
-            return Ok(());
-        }
+        // Downloading the temporary pack cannot change the last usable copy. Transfer
+        // invalidates it only immediately before installation, after a complete download.
         let mirror = copy_path(&context.repos_path, uuid);
-        if let Err(error) = transfer::copy(context, primary, uuid, &mirror).await {
-            // A busy primary refuses before it sends anything, so the copy is as it was.
-            if busy(&error) && row.applied_version >= 0 {
-                db::cluster::set_applied_version(
-                    pool,
-                    row.repository_id,
-                    context.node_id,
-                    primary,
-                    row.applied_version,
-                )
-                .await?;
-            }
-            return Err(error);
-        }
+        transfer::copy(context, primary, uuid, &mirror).await?;
         // Finish packing before publishing a promotable version: a running maintenance
         // command still needs the mirror directory and prevents relocation.
         maintenance::after_copy(row.repository_id, &mirror).await;
