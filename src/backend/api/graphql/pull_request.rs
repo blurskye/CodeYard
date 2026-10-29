@@ -51,13 +51,18 @@ pub(super) async fn resolve(
             }))
         }
         "files" | "additions" | "deletions" | "changedFiles" => {
-            let diff = store
-                .diff_stats(pull.diff_base(), &pull.head_sha)
-                .await
-                .map_err(unavailable)?;
+            let mut diffs = request.diffs.lock().await;
+            let key = (repo.id, pull.diff_base().to_owned(), pull.head_sha.clone());
+            if !diffs.contains_key(&key) {
+                let diff = store.diff_stats(&key.1, &key.2).await.map_err(unavailable)?;
+                request.charge(diff.files.iter().map(|file| file.filename.len() + 128).sum())?;
+                diffs.insert(key.clone(), std::sync::Arc::new(diff));
+            }
+            let diff = diffs[&key].clone();
+            drop(diffs);
             Ok(match field {
                 "additions"=>json!(diff.additions),"deletions"=>json!(diff.deletions),"changedFiles"=>json!(diff.changed_files),
-                _=>connection::slice(args,diff.files.into_iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED","type_changed"=>"CHANGED",_=>"MODIFIED"}})).collect())?,
+                _=>connection::slice(args,diff.files.iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED","type_changed"=>"CHANGED",_=>"MODIFIED"}})).collect())?,
             })
         }
         "commits" => {
@@ -65,6 +70,7 @@ pub(super) async fn resolve(
                 .pull_request_commits(pull.diff_base(), &pull.head_sha)
                 .await
                 .map_err(unavailable)?;
+            for row in &rows { git::charge_commit(row, request)?; }
             let page = connection::Page::new(args, count as i64)?;
             let (offset, limit) = (page.offset as usize, page.limit as usize);
             // The store lists the oldest 250 commits. A page past them, such as `last: 1` for
@@ -72,19 +78,11 @@ pub(super) async fn resolve(
             let window: Vec<_> = if offset + limit <= rows.len() {
                 rows.into_iter().skip(offset).take(limit).collect()
             } else {
-                let newest = (count as usize).saturating_sub(offset);
-                if newest > 250 {
-                    return Err(async_graphql::Error::new(
-                        "Read commits past the first 250 from the end of the list",
-                    ));
-                }
-                // Newest first, from the head back to the page's offset.
-                let mut rows = store
-                    .commits_between(pull.diff_base(), &pull.head_sha, newest)
-                    .await
-                    .map_err(unavailable)?;
+                let newest_offset = (count as usize).saturating_sub(offset.saturating_add(limit));
+                let mut rows = store.commits_between_page(pull.diff_base(), &pull.head_sha, newest_offset, limit)
+                    .await.map_err(unavailable)?;
+                for row in &rows { git::charge_commit(row, request)?; }
                 rows.reverse();
-                rows.truncate(limit);
                 rows
             };
             let nodes = window

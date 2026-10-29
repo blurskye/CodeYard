@@ -147,6 +147,9 @@ pub(super) async fn mutation(
             payload["repository"] = repository::object(repo);
         }
         "transferIssue" => {
+            if input["createLabelsIfMissing"] == true {
+                return Err(Error::new("Creating labels during issue transfer is not supported"));
+            }
             let destination = super::mutations::id(input, "repositoryId", "R")?;
             let target = repository::by_id(destination, request).await?;
             request.authorize(target.id, "issues", true).await?;

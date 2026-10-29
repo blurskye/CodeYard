@@ -150,7 +150,7 @@ async fn apply(
     };
     // The linked issue's repository must be within the credential's reach before the change.
     document(state, Some(&auth), other).await?;
-    db::relationships::change(&state.pool, auth.user.id, repo.id, root, mutation)
+    db::relationships::change_with_token(&state.pool, auth.user.id, repo.id, root, mutation, Some(auth.token.id))
         .await
         .map_err(error)?;
     document(state, Some(&auth), other).await

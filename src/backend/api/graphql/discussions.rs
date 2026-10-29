@@ -161,11 +161,12 @@ async fn list(
         .await
         .map_err(operation)?;
     let page = connection::Page::new(ctx, if search { count.min(1000) } else { count })?;
-    let (_, rows) = store::list(pool, request.auth.user.id, filter, page.offset, page.limit)
-        .await
-        .map_err(operation)?;
+    let rows = if page.limit == 0 { Vec::new() } else {
+        store::list_rows(pool, request.auth.user.id, filter, page.offset, page.limit).await.map_err(operation)?
+    };
     let mut nodes = Vec::new();
     for d in rows {
+        request.charge(d.title.len().saturating_add(d.body.len()).saturating_mul(4))?;
         authorized(&d, request).await?;
         nodes.push(object(&d));
     }

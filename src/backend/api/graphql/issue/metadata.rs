@@ -26,24 +26,11 @@ pub(super) async fn resolve(
             .map(issue_type)
             .unwrap_or(Value::Null)),
         "subIssuesSummary" => {
-            // Counted from the sub-issues this viewer may list, so hidden children stay hidden.
             let (mut total, mut completed) = (0_i64, 0_i64);
-            loop {
-                let rows = db::relationships::list(
-                    pool,
-                    Some(request.auth.user.id),
-                    id,
-                    Kind::Children,
-                    total,
-                    100,
-                )
-                .await
-                .map_err(unavailable)?;
-                let done = rows.len() < 100;
-                total += rows.len() as i64;
-                completed += rows.iter().filter(|link| link.state == "closed").count() as i64;
-                if done {
-                    break;
+            for counts in db::relationships::summaries(pool, &[id]).await.map_err(unavailable)? {
+                if repository::optional_authority(counts.repo_id, "issues", request).await? {
+                    total += counts.total;
+                    completed += counts.completed;
                 }
             }
             Ok(
@@ -78,20 +65,37 @@ pub(super) async fn resolve(
                     break;
                 }
             }
+            let mut visible = std::collections::HashMap::new();
+            for link in &links {
+                request.charge(link.title.len())?;
+                if !visible.contains_key(&link.repo_id) {
+                    visible.insert(link.repo_id, repository::optional_authority(link.repo_id, "issues", request).await?);
+                }
+            }
+            links.retain(|link| visible[&link.repo_id]);
+            if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
+                let order = order.object()?;
+                if order.try_get("field")?.enum_name()? == "CREATED_AT" {
+                    links.sort_by(|a, b| a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)));
+                }
+                if order.try_get("direction")?.enum_name()? == "DESC" { links.reverse(); }
+            }
+            let page = if field == "parent" { None } else { Some(Page::new(ctx, links.len() as i64)?) };
+            let (offset, limit) = page.as_ref().map_or((0, 1), |page| (page.offset as usize, page.limit as usize));
             let mut nodes = Vec::new();
-            for link in links {
+            for link in links.into_iter().skip(offset).take(limit) {
                 let issue = db::issues::get_issue_by_id(pool, link.id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
                 repository::by_id(issue.repo_id, request).await?;
                 request.authorize(issue.repo_id, "issues", false).await?;
+                request.charge(issue.title.len().saturating_add(issue.body.len()).saturating_mul(4))?;
                 nodes.push(object(&issue));
             }
-            if field == "parent" {
-                Ok(nodes.into_iter().next().unwrap_or(Value::Null))
-            } else {
-                connection::slice(ctx, nodes)
+            match page {
+                None => Ok(nodes.into_iter().next().unwrap_or(Value::Null)),
+                Some(page) => Ok(page.finish(nodes)),
             }
         }
         _ => super::super::collaboration::resolve(ty, field, ctx, request, parent, repo).await,
@@ -143,7 +147,7 @@ pub(super) async fn list(
         query.push_str(&format!(" {key}:{}", quote(value)?));
         Ok(())
     };
-    for (arg, key) in [("baseRefName", "base"), ("headRefName", "head")] {
+    for (arg, key) in [("baseRefName", "exact-base"), ("headRefName", "exact-head")] {
         if let Some(value) = args.args.get(arg).filter(|v| !v.is_null()) {
             // `gh pr status` outside a clone asks for the head branch "", which no pull has.
             if value.string()?.is_empty() {
@@ -154,7 +158,7 @@ pub(super) async fn list(
     }
     if let Some(labels) = args.args.get("labels").filter(|v| !v.is_null()) {
         for value in labels.deserialize::<Vec<String>>()? {
-            add("label", &value)?;
+            add("exact-label", &value)?;
         }
     }
     if let Some(filter) = args.args.get("filterBy").filter(|v| !v.is_null()) {
@@ -163,19 +167,27 @@ pub(super) async fn list(
             ("assignee", "assignee"),
             ("createdBy", "author"),
             ("mentioned", "mentions"),
-            ("milestone", "milestone"),
+            ("milestone", "milestone-number"),
             ("milestoneNumber", "milestone-number"),
         ] {
             if let Some(value) = filter[name].as_str() {
-                add(key, value)?;
+                if value == "*" && matches!(name, "assignee" | "milestone" | "milestoneNumber") {
+                    add("-no", if name == "assignee" { "assignee" } else { "milestone" })?;
+                } else if name == "milestone" {
+                    let id = value.parse::<i64>().map_err(|_| Error::new("milestone must be a database ID or *"))?;
+                    let Some(milestone) = db::milestones::get_milestone_by_id(&request.state.pool, repo_id, id).await.map_err(unavailable)? else {
+                        return connection::slice(args, Vec::new());
+                    };
+                    add(key, &milestone.milestone.number.to_string())?;
+                } else { add(key, value)?; }
             }
         }
         if let Some(value) = filter["labels"].as_str() {
-            add("label", value)?;
+            add("exact-label", value)?;
         }
         if let Some(values) = filter["labels"].as_array() {
             for value in values {
-                add("label", value.as_str().ok_or_else(missing)?)?;
+                add("exact-label", value.as_str().ok_or_else(missing)?)?;
             }
         }
         if !filter["since"].is_null() {
