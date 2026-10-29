@@ -56,3 +56,31 @@ pub(crate) async fn repository(tx: &mut Transaction<'_, Postgres>, actor: &Actor
     }
     Ok(true)
 }
+
+pub(crate) async fn organization(tx: &mut Transaction<'_, Postgres>, actor: &Actor, org: i64, permission: &str, write: bool) -> Result<bool> {
+    if !live(tx, actor, write).await? { return Ok(false); }
+    let Some(id) = actor.token_id() else { return Ok(true); };
+    let _: Option<i64> = sqlx::query_scalar("SELECT token_id FROM fine_grained_tokens WHERE token_id=$1 FOR SHARE")
+        .bind(id).fetch_optional(&mut **tx).await?;
+    let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> = sqlx::query_as(super::fine_grained_tokens::BOUNDS)
+        .bind(id).fetch_optional(&mut **tx).await?;
+    if let Some(bounds) = bounds {
+        let permissions = serde_json::from_str(&bounds.permissions)?;
+        return Ok(bounds.active() && bounds.user_id == actor.user_id && bounds.owner_org_id == Some(org)
+            && crate::backend::identity::fine_grained::allows(&permissions, permission, write));
+    }
+    // App and workflow credentials have no supported organization administration grant.
+    let derived: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) OR EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1) OR EXISTS(SELECT 1 FROM oauth_app_tokens t JOIN github_apps a ON a.client_id=t.client_id WHERE t.token_id=$1)")
+        .bind(id).fetch_one(&mut **tx).await?;
+    if derived { return Ok(false); }
+    let oauth: Option<(String, String)> = sqlx::query_as("SELECT client_id,scopes FROM oauth_app_tokens WHERE token_id=$1 FOR SHARE")
+        .bind(id).fetch_optional(&mut **tx).await?;
+    if let Some((client, scopes)) = oauth {
+        let active: Option<i64> = sqlx::query_scalar("SELECT a.id FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=$1 AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF a")
+            .bind(&client).fetch_optional(&mut **tx).await?;
+        return Ok((active.is_some() || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
+            && crate::backend::identity::oauth_apps::allows(&scopes, &crate::backend::db::credentials::oauth_organization_path(permission), write));
+    }
+    Ok(!sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)")
+        .bind(org).fetch_one(&mut **tx).await?)
+}

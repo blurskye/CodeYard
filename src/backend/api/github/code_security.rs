@@ -59,7 +59,7 @@ async fn scope(
     headers: &HeaderMap,
     org: &str,
     write: bool,
-) -> Result<(i64, i64)> {
+) -> Result<(crate::backend::db::credentials::Actor, i64)> {
     let auth = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -67,7 +67,7 @@ async fn scope(
         auth.require_write()?;
     }
     let org = orgs::target(state, org).await?;
-    Ok((auth.user.id, org.id))
+    Ok((auth.database_actor(headers)?, org.id))
 }
 fn document(row: &records::Configuration, org: &str) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&row.settings).map_err(Error::unavailable)?;
@@ -102,7 +102,7 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (actor, id) = scope(&state, &headers, &org, false).await?;
-    let rows = records::list(&state.pool, actor, id)
+    let rows = records::list(&state.pool, actor.user_id, id)
         .await
         .map_err(failure)?;
     page(
@@ -119,7 +119,7 @@ async fn get_configuration(
     Path((org, id)): Path<(String, i64)>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let row = records::list(&state.pool, actor, owner)
+    let row = records::list(&state.pool, actor.user_id, owner)
         .await
         .map_err(failure)?
         .into_iter()
@@ -244,7 +244,7 @@ async fn defaults(
     Path(org): Path<String>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let rows = records::list(&state.pool, actor, owner)
+    let rows = records::list(&state.pool, actor.user_id, owner)
         .await
         .map_err(failure)?;
     let values=rows.iter().filter(|row|row.default_for_new_repos!="none").map(|row|Ok(json!({"default_for_new_repos":row.default_for_new_repos,"configuration":document(row,&org)?}))).collect::<Result<Vec<_>>>()?;
@@ -258,7 +258,7 @@ async fn repositories(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let rows = records::repositories(&state.pool, actor, owner, id)
+    let rows = records::repositories(&state.pool, actor.user_id, owner, id)
         .await
         .map_err(failure)?;
     page(

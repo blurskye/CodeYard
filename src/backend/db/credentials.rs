@@ -35,6 +35,21 @@ pub(crate) fn app_permission(permissions: &str, repositories: &str, repo: i64, p
         && crate::backend::identity::github_apps::allows(&permissions, permission, write))
 }
 
+pub(crate) fn oauth_organization_path(permission: &str) -> String {
+    let resource = match permission {
+        "members" => "members",
+        "organization_hooks" => "hooks",
+        "organization_secrets" => "actions/secrets",
+        "organization_actions_variables" => "actions/variables",
+        "organization_self_hosted_runners" => "actions/runners",
+        "organization_user_blocking" => "blocks",
+        "organization_custom_properties" => "properties",
+        "organization_projects" => "projectsV2",
+        _ => "settings",
+    };
+    format!("/orgs/organization/{resource}")
+}
+
 pub(crate) fn oauth_repository_path(permission: &str) -> String {
     let resource = match permission {
         "metadata" | "administration" => "",

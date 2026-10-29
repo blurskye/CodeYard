@@ -160,7 +160,7 @@ pub async fn set_policy(pool: &PgPool, actor: impl Into<Actor>, org: i64, policy
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = pool.begin().await?;
-    if !active_owner(&mut tx, actor, org).await? || !super::organizations::authority::owner_credential(&mut tx, &owner, org).await? {
+    if !active_owner(&mut tx, actor, org).await? || !super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
         return Ok(false);
     }
     sqlx::query("INSERT INTO organization_token_policies(org_id,fine_grained_allowed,fine_grained_approval,classic_allowed,max_lifetime_days) VALUES($1,$2,$3,$4,$5) ON CONFLICT(org_id) DO UPDATE SET fine_grained_allowed=excluded.fine_grained_allowed,fine_grained_approval=excluded.fine_grained_approval,classic_allowed=excluded.classic_allowed,max_lifetime_days=excluded.max_lifetime_days")
@@ -186,7 +186,7 @@ pub async fn review(
     let owner = reviewer.into();
     let reviewer = owner.user_id;
     let mut tx = pool.begin().await?;
-    if !active_owner(&mut tx, reviewer, org).await? || !super::organizations::authority::owner_credential(&mut tx, &owner, org).await? {
+    if !active_owner(&mut tx, reviewer, org).await? || !super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
         return Ok(0);
     }
     let mut changed = 0;

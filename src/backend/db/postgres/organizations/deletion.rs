@@ -14,7 +14,7 @@ pub async fn delete_organization(
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
-    if role != OrgRole::Owner || !owner_credential(&mut tx, &owner, org).await? {
+    if role != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
         return Ok(Denied);
     }
     // The row lock keeps a concurrent repository insert from referencing the organization mid-delete.
@@ -95,7 +95,7 @@ pub async fn delete_organization_repository(
     let mut tx = begin(pool).await?;
     // Deletion locks the organization before fork ancestors; exclude notification reads.
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner || !owner_credential(&mut tx, &owner, org).await? {
+    if require_org!(tx, actor, org) != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
         return Ok(Denied);
     }
     crate::backend::db::postgres::repositories::records::lock_fork_ancestors(

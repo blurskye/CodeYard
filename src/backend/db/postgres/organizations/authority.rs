@@ -1,5 +1,4 @@
 use crate::backend::db::{
-    credentials::Actor,
     models::{AccessLevel, OrgRole, Repository, Team},
     organizations::*,
 };
@@ -114,25 +113,6 @@ pub(super) async fn membership_role(
     .fetch_optional(connection)
     .await?)
 }
-/// Called after the owner/account locks, and before any effects.
-pub(in crate::backend::db::postgres) async fn owner_credential(
-    tx: &mut Transaction<'_, Postgres>, actor: &Actor, org: i64,
-) -> Result<bool> {
-    if !super::super::credentials::live(tx, actor, true).await? { return Ok(false); }
-    let Some(id) = actor.token_id() else { return Ok(true); };
-            let _: Option<i64> = sqlx::query_scalar("SELECT token_id FROM fine_grained_tokens WHERE token_id=$1 FOR SHARE")
-                .bind(id).fetch_optional(&mut **tx).await?;
-            let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> = sqlx::query_as(super::super::fine_grained_tokens::BOUNDS)
-                .bind(id).fetch_optional(&mut **tx).await?;
-            if let Some(bounds) = bounds {
-                let permissions: serde_json::Value = serde_json::from_str(&bounds.permissions)?;
-                return Ok(bounds.active() && bounds.user_id == actor.user_id && bounds.owner_org_id == Some(org)
-                    && matches!(permissions["organization_administration"].as_str(), Some("write" | "admin")));
-            }
-            Ok(!sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$2 AND NOT classic_allowed) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
-                .bind(id).bind(org).fetch_one(&mut **tx).await?)
-}
-
 pub(in crate::backend::db::postgres) async fn authority(
     connection: &mut PgConnection,
     actor: i64,
