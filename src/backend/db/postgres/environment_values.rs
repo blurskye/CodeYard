@@ -91,17 +91,29 @@ pub async fn create(pool: &Pool, actor: impl Into<crate::backend::db::users::acc
     Ok(())
 }
 
-pub async fn environments(pool: &Pool, actor: i64, repo: i64) -> Result<Vec<String>, ValueError> {
+pub async fn environments(pool: &Pool, actor: i64, repo: i64, offset: i64) -> Result<Vec<String>, ValueError> {
     let mut tx = pool.begin().await?;
     authorize_read(&mut tx, actor, repo, true).await?;
     let names = sqlx::query_scalar(
-        "SELECT name FROM deployment_environments WHERE repo_id=$1 ORDER BY name_key",
+        "SELECT name FROM deployment_environments WHERE repo_id=$1 ORDER BY name_key LIMIT $2 OFFSET $3",
     )
     .bind(repo)
+    .bind((environment_values::ENVIRONMENTS_PER_PAGE + 1) as i64)
+    .bind(offset.max(0))
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(names)
+}
+
+pub async fn environment(pool: &Pool, actor: i64, repo: i64, name: &str) -> Result<Option<String>, ValueError> {
+    let key = environment_values::environment_key(name)?;
+    let mut tx = pool.begin().await?;
+    authorize_read(&mut tx, actor, repo, true).await?;
+    let name = sqlx::query_scalar("SELECT name FROM deployment_environments WHERE repo_id=$1 AND name_key=$2")
+        .bind(repo).bind(key).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(name)
 }
 
 pub async fn list(

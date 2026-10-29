@@ -69,9 +69,13 @@ pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
 native_operation!(crate::backend::db::postgres::environment_values::create,
     crate::backend::db::sqlite::environment_values::create,
     fn create(pool: &DbPool, actor: impl Into<super::users::accounts::AccountActor>, repo: i64, name: &str) -> Result<(), ValueError>);
+pub const ENVIRONMENTS_PER_PAGE: usize = 50;
 native_operation!(crate::backend::db::postgres::environment_values::environments,
     crate::backend::db::sqlite::environment_values::environments,
-    fn environments(pool: &DbPool, actor: i64, repo: i64) -> Result<Vec<String>, ValueError>);
+    fn environments(pool: &DbPool, actor: i64, repo: i64, offset: i64) -> Result<Vec<String>, ValueError>);
+native_operation!(crate::backend::db::postgres::environment_values::environment,
+    crate::backend::db::sqlite::environment_values::environment,
+    fn environment(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<Option<String>, ValueError>);
 native_operation!(crate::backend::db::postgres::environment_values::list,
     crate::backend::db::sqlite::environment_values::list,
     fn list(pool: &DbPool, actor: i64, repo: i64, environment: &str, kind: Kind) -> Result<Vec<EnvironmentValue>, ValueError>);
