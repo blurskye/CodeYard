@@ -93,7 +93,8 @@ async fn rules(
         let (offset, limit) = page.window()?;
         return Ok((page.headers(&uri, rules.len() > offset + limit)?, Json(json!({"total_count":rules.len(),"custom_deployment_protection_rules":rules.iter().skip(offset).take(limit).map(document).collect::<Vec<_>>()}))).into_response());
     }
-    let actor = authentication.ok_or_else(auth::required)?.user.id;
+    let authentication = authentication.ok_or_else(auth::required)?;
+    let actor = (authentication.user.id, authentication.token.id);
     if request.method() == Method::DELETE {
         protection::disable(
             &state.pool,

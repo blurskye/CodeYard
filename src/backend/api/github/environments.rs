@@ -156,7 +156,7 @@ async fn environment(
     } else {
         let (repo, auth) = administer(&state, &headers, &params, true).await?;
         if method == Method::DELETE {
-            environments::delete(&state.pool, auth.user.id, repo.id, name)
+            environments::delete(&state.pool, (auth.user.id, auth.token.id), repo.id, name)
                 .await
                 .map_err(write_error)?;
             return Ok(StatusCode::NO_CONTENT.into_response());
