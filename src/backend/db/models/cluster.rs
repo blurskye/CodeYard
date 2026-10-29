@@ -40,12 +40,16 @@ impl ClusterNode {
 
     /// Active and reporting in when read from the database.
     pub fn is_online(&self) -> bool {
-        self.status == "active"
-            && self.last_seen.is_some_and(|seen| {
-                let age = self.observed_at - seen;
-                age >= chrono::Duration::zero() && age <= chrono::Duration::seconds(60)
-            })
+        heartbeat_online(&self.status, self.last_seen, self.observed_at)
     }
+}
+
+/// One database-clock predicate for node and runner presentation alike.
+pub fn heartbeat_online(status: &str, last_seen: Option<DateTime<Utc>>, observed_at: DateTime<Utc>) -> bool {
+    status == "active" && last_seen.is_some_and(|seen| {
+        let age = observed_at - seen;
+        age >= chrono::Duration::zero() && age <= chrono::Duration::seconds(60)
+    })
 }
 
 /// An invite as an operator sees it. The secret and its hash are never listed.

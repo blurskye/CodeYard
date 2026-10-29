@@ -67,6 +67,23 @@ pub struct Runner {
     pub busy: bool,
     pub version: Option<String>,
 }
+#[derive(sqlx::FromRow)]
+pub(crate) struct RunnerProjection {
+    #[sqlx(flatten)]
+    pub runner: Runner,
+    pub node_status: Option<String>,
+    pub node_last_seen: Option<chrono::DateTime<chrono::Utc>>,
+    pub observed_at: chrono::DateTime<chrono::Utc>,
+}
+impl RunnerProjection {
+    pub fn into_runner(mut self) -> Runner {
+        self.runner.online = super::models::cluster::heartbeat_online(
+            self.node_status.as_deref().unwrap_or(""), self.node_last_seen, self.observed_at,
+        );
+        self.runner
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GroupInput {
     pub name: Option<String>,

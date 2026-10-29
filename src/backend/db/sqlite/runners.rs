@@ -286,14 +286,14 @@ pub async fn group_runners(
     tx.commit().await?;
     Ok(())
 }
-const RUNNERS:&str="SELECT a.*,COALESCE(n.status='active' AND n.last_seen>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-60 seconds'),false) AS online,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id WHERE a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 ORDER BY a.id";
+const RUNNERS:&str="SELECT a.*,false AS online,n.status AS node_status,n.last_seen AS node_last_seen,strftime('%Y-%m-%dT%H:%M:%f000Z','now') AS observed_at,EXISTS(SELECT 1 FROM ci_runs c WHERE c.status='running' AND c.worker LIKE n.public_key || '/%') AS busy,n.version FROM action_runners a LEFT JOIN nodes n ON n.id=a.node_id WHERE a.org_id IS NOT DISTINCT FROM ?1 AND a.repo_id IS NOT DISTINCT FROM ?2 ORDER BY a.id";
 async fn runner_rows(c: &mut Connection, scope: Scope) -> Result<Vec<Runner>> {
     let (org, repo) = scope.ids();
-    Ok(sqlx::query_as(RUNNERS)
+    Ok(sqlx::query_as::<_, crate::backend::db::runners::RunnerProjection>(RUNNERS)
         .bind(org)
         .bind(repo)
         .fetch_all(c)
-        .await?)
+        .await?.into_iter().map(|row| row.into_runner()).collect())
 }
 pub async fn list_runners(pool: &Pool, actor: i64, scope: Scope) -> Result<Vec<Runner>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
