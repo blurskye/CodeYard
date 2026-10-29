@@ -1518,7 +1518,10 @@ async fn mutate(
             change(
                 pool,
                 &ctx.state.notification_broadcaster,
-                actor.id,
+                db::users::accounts::AccountActor::Session {
+                    user_id: actor.id,
+                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                },
                 repository.id,
                 kind,
                 !action.starts_with("un"),
@@ -1534,7 +1537,10 @@ async fn mutate(
                 .collect();
             crate::backend::repositories::engagement::set_level(
                 pool,
-                actor.id,
+                db::users::accounts::AccountActor::Session {
+                    user_id: actor.id,
+                    session: crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                },
                 repository.id,
                 &field(form, "level"),
                 &events,
