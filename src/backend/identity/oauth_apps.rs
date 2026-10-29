@@ -117,7 +117,9 @@ pub fn scopes(value: &str) -> Option<String> {
 }
 
 pub fn has_scope(scopes: &str, scope: &str) -> bool {
-    scopes.split(',').any(|s| s == scope)
+    scopes.split(',').any(|granted| granted == scope
+        || (scope == "read:org" && granted == "write:org")
+        || (matches!(scope, "read:user" | "user:email" | "user:follow") && granted == "user"))
 }
 
 pub fn write_scope(scopes: &str) -> bool {

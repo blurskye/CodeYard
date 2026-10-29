@@ -120,7 +120,7 @@ fn conduct_text(text: &str) -> String {
             .join("\n"),
     )
 }
-fn contributor_covenant(text: &str) -> bool {
+pub(crate) fn contributor_covenant(text: &str) -> bool {
     let text = conduct_text(text);
     [
         include_str!("templates/conduct/contributor-covenant-14.txt"),
