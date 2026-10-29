@@ -180,7 +180,7 @@ pub(super) async fn create(
         ctx.user.as_ref().expect("protected account").id,
         credential(&ctx),
         domain::CreateGist {
-            description: editor.description.clone(),
+            description: native_text(editor.description.clone(), ""),
             is_public: editor.public,
             files,
         },
@@ -234,6 +234,7 @@ pub(super) async fn edit(
             return render_editor(&ctx, status, editor);
         }
     };
+    input.description = input.description.map(|description| native_text(description, &loaded.gist.description));
     // Browsers submit textareas with CRLF; keep each file's own line breaks.
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
     for (name, change) in input.files.iter_mut() {
@@ -304,6 +305,10 @@ async fn detail_error(
         Err(_) => ctx.error(status, &message),
     }
 }
+async fn ready_gist(ctx: &PageContext, id: &str) -> anyhow::Result<db::gists::Gist> {
+    db::gists::get(&ctx.state.pool, id).await?.filter(|gist| gist.ready).ok_or_else(|| db::gists::GistRefusal::Missing.into())
+}
+
 pub(super) async fn star(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -316,15 +321,15 @@ pub(super) async fn star(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let loaded = match domain::load(&ctx.state, &id, None).await {
-        Ok(loaded) => loaded,
+    let gist = match ready_gist(&ctx, &id).await {
+        Ok(gist) => gist,
         Err(failure) => return error(&ctx, failure),
     };
     match db::gists::star(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        loaded.repository.id,
+        gist.repo_id,
         field(&form, "add") == "yes",
     )
     .await
@@ -393,8 +398,8 @@ pub(super) async fn comment(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let loaded = match domain::load(&ctx.state, &id, None).await {
-        Ok(loaded) => loaded,
+    let gist = match ready_gist(&ctx, &id).await {
+        Ok(gist) => gist,
         Err(failure) => return error(&ctx, failure),
     };
     let body = field(&form, "body");
@@ -402,16 +407,15 @@ pub(super) async fn comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        loaded.repository.id,
+        gist.repo_id,
         body,
     )
     .await
     {
-        Ok(comment) => ctx.redirect(&format!(
-            "/gists/{id}?comments_page={}#comment-{}",
-            loaded.gist.comments as usize / PAGE_SIZE + 1,
-            comment.id
-        )),
+        Ok(comment) => match db::gists::comment_position(&ctx.state.pool, gist.repo_id, comment.id).await {
+            Ok(position) => ctx.redirect(&format!("/gists/{id}?comments_page={}#comment-{}", position.saturating_sub(1) as usize / PAGE_SIZE + 1, comment.id)),
+            Err(failure) => error(&ctx, failure),
+        },
         Err(failure) => {
             detail_error(
                 &ctx,
@@ -438,8 +442,8 @@ pub(super) async fn edit_comment(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let loaded = match domain::load(&ctx.state, &id, None).await {
-        Ok(loaded) => loaded,
+    let gist = match ready_gist(&ctx, &id).await {
+        Ok(gist) => gist,
         Err(failure) => return error(&ctx, failure),
     };
     let body = field(&form, "body");
@@ -447,7 +451,7 @@ pub(super) async fn edit_comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        loaded.repository.id,
+        gist.repo_id,
         comment,
         Some(body),
     )
@@ -483,22 +487,22 @@ pub(super) async fn delete_comment(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let loaded = match domain::load(&ctx.state, &id, None).await {
-        Ok(loaded) => loaded,
+    let gist = match ready_gist(&ctx, &id).await {
+        Ok(gist) => gist,
         Err(failure) => return error(&ctx, failure),
     };
     match db::gists::change_comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        loaded.repository.id,
+        gist.repo_id,
         comment,
         None,
     )
     .await
     {
         Ok(_) => {
-            let last = loaded.gist.comments.saturating_sub(2) as usize / PAGE_SIZE + 1;
+            let last = gist.comments.saturating_sub(2) as usize / PAGE_SIZE + 1;
             let page = number(&ctx, "comments_page")
                 .expect("protected pagination")
                 .min(last);

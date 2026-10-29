@@ -64,10 +64,9 @@ async fn process(
     if refs.is_empty() {
         return Err(Unsupported("No default commit exists yet").into());
     }
-    let sha = refs
-        .get(&format!("refs/heads/{}", repository.default_branch))
-        .context("The default branch is missing")?
-        .clone();
+    let stored = store.info().await?.default_branch;
+    let branch = super::super::reads::default_branch(&refs, &stored, &repository.default_branch);
+    let sha = refs.get(&format!("refs/heads/{branch}")).context("The default branch is missing")?.clone();
     // A proposal must use the shared scanner's current pinned inventory, never its own scan.
     records::complete_scan(pool, job, &sha).await?;
     if job.updates_actor_id.is_some() {
