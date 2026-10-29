@@ -178,8 +178,25 @@ struct List {
     sha: Option<String>,
     path: Option<String>,
     author: Option<String>,
+    committer: Option<String>,
     since: Option<chrono::DateTime<chrono::Utc>>,
     until: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+async fn identity_emails(pool: &db::DbPool, value: Option<&str>) -> Result<Option<Vec<String>>> {
+    match value.map(str::trim) {
+        None | Some("") => Ok(Some(Vec::new())),
+        Some(address) if address.contains('@') => Ok(Some(vec![address.to_owned()])),
+        Some(username) => {
+            let Some(user) = db::users::accounts::get_user_by_username(pool, username)
+                .await.map_err(Error::unavailable)? else { return Ok(None) };
+            let mut emails = db::users::emails::list_emails(pool, user.id).await.map_err(Error::unavailable)?
+                .into_iter().filter(|address| address.verified).map(|address| address.email).collect::<Vec<_>>();
+            emails.extend(user.email.clone().filter(|_| user.email_verified));
+            emails.push(user.noreply_email());
+            Ok(Some(emails))
+        }
+    }
 }
 
 async fn list(
@@ -196,33 +213,18 @@ async fn list(
     };
     let (offset, limit) = page.window()?;
     // GitHub matches an address exactly, and a username through the account's addresses.
-    let author_emails = match query.author.as_deref().map(str::trim) {
-        None | Some("") => Vec::new(),
-        Some(address) if address.contains('@') => vec![address.to_owned()],
-        Some(username) => {
-            let Some(user) = db::users::get_user_by_username(&state.pool, username)
-                .await
-                .map_err(Error::unavailable)?
-            else {
-                return page.response(&uri, Vec::new(), false);
-            };
-            let mut emails = db::users::emails::list_emails(&state.pool, user.id)
-                .await
-                .map_err(Error::unavailable)?
-                .into_iter()
-                .filter(|address| address.verified)
-                .map(|address| address.email)
-                .collect::<Vec<_>>();
-            emails.extend(user.email.clone().filter(|_| user.email_verified));
-            emails.push(user.noreply_email());
-            emails
-        }
+    let Some(author_emails) = identity_emails(&state.pool, query.author.as_deref()).await? else {
+        return page.response(&uri, Vec::new(), false);
+    };
+    let Some(committer_emails) = identity_emails(&state.pool, query.committer.as_deref()).await? else {
+        return page.response(&uri, Vec::new(), false);
     };
     let store = repo_store(&repo, state.cluster.as_ref());
     let filter = CommitFilter {
         since: query.since.map(|time| time.timestamp()),
         until: query.until.map(|time| time.timestamp()),
         author_emails,
+        committer_emails,
         ..CommitFilter::default()
     };
     let reference = query.sha.as_deref().unwrap_or(&repo.default_branch);
