@@ -28,7 +28,7 @@ async fn compatible_on(
     old: Option<&Definition>,
     input: &DefinitionInput,
 ) -> Result<()> {
-    if let Some(old) = old {
+    if let Some(old) = old.filter(|old| !input.same_value_rules(&old.fields)) {
         let mut after = 0;
         loop {
             let rows:Vec<(i64,String)>=sqlx::query_as("SELECT repo_id,value FROM repository_property_values WHERE org_id=$1 AND definition_id=$2 AND repo_id>$3 ORDER BY repo_id LIMIT 500").bind(org).bind(old.id).bind(after).fetch_all(&mut *c).await?;
@@ -41,7 +41,7 @@ async fn compatible_on(
             }
         }
     }
-    if input.needs_explicit_value() {
+    if input.needs_explicit_value() && old.is_none_or(|old| !old.fields.needs_explicit_value()) {
         let missing:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND NOT EXISTS(SELECT 1 FROM repository_property_values v WHERE v.repo_id=r.id AND v.org_id=$1 AND v.definition_id=$2))").bind(org).bind(old.map(|old|old.id)).fetch_one(c).await?;
         ensure!(
             !missing,

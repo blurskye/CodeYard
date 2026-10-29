@@ -148,6 +148,11 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
 }
 impl DefinitionInput {
+    pub(crate) fn same_value_rules(&self, other: &Self) -> bool {
+        self.value_type == other.value_type && self.allowed_values == other.allowed_values
+            && self.required == other.required && self.require_explicit_values == other.require_explicit_values
+    }
+
     pub fn validate(&self) -> Result<()> {
         ensure!(
             valid_name(&self.property_name),
