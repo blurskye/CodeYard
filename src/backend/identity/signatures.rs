@@ -25,17 +25,51 @@ pub struct Signed<'a> {
 
 /// The `verification` object of commit and tag documents.
 pub async fn verification(pool: &DbPool, signed: Signed<'_>) -> Result<Value> {
-    let reason = check(pool, signed).await?;
+    let (reason, verified_at) = recorded_check(pool, signed).await?;
     let verified = reason == "valid";
     Ok(json!({
         "verified": verified, "reason": reason,
         "signature": signed.signature, "payload": signed.payload.map(String::from_utf8_lossy),
-        "verified_at": verified.then(|| chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
+        "verified_at": verified_at.map(|at| at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
     }))
 }
 
 /// GitHub's verification reason; `valid` is the only verified one.
 pub async fn check(pool: &DbPool, signed: Signed<'_>) -> Result<&'static str> {
+    Ok(recorded_check(pool, signed).await?.0)
+}
+
+fn input_hash(signed: Signed<'_>) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let signature = signed.signature?;
+    if signature.len() > MAX_SIGNATURE { return None; }
+    let payload = signed.payload?;
+    let mut hash = Sha256::new();
+    hash.update(b"codeyard.signature-verification.v1\0");
+    // Length framing binds the exact signature, signed bytes and asserted identity.
+    for part in [signature.as_bytes(), payload, signed.email.unwrap_or_default().as_bytes()] {
+        hash.update((part.len() as u64).to_be_bytes());
+        hash.update(part);
+    }
+    Some(hex::encode(hash.finalize()))
+}
+
+async fn recorded_check(pool: &DbPool, signed: Signed<'_>) -> Result<(&'static str, Option<chrono::DateTime<chrono::Utc>>)> {
+    let input = input_hash(signed);
+    if let Some(input) = &input {
+        if let Some(at) = db::signature_verifications::verified_at(pool, input).await? {
+            return Ok(("valid", Some(at)));
+        }
+    }
+    let reason = check_current(pool, signed).await?;
+    let at = match (reason, input) {
+        ("valid", Some(input)) => Some(db::signature_verifications::record_verified(pool, &input).await?),
+        _ => None,
+    };
+    Ok((reason, at))
+}
+
+async fn check_current(pool: &DbPool, signed: Signed<'_>) -> Result<&'static str> {
     let Some(signature) = signed.signature else {
         return Ok("unsigned");
     };
