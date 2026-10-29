@@ -114,7 +114,8 @@ async fn card(
     owner: &Owner,
     package: &Package,
 ) -> Result<view::Package, Response> {
-    let versions = db::packages::version_count(&ctx.state.pool, package.id)
+    let session = ctx.user.as_ref().and_then(|_| session::extract_session_id(&ctx.headers));
+    let versions = db::packages::version_count(&ctx.state.pool, package.id, session.as_deref().map(Credential::Session))
         .await
         .map_err(|error| failure(ctx, error))?;
     let updated = chrono::DateTime::from_timestamp(package.updated_at, 0)
@@ -139,7 +140,7 @@ fn version_card(base: &str, version: &db::packages::Version, tags: Vec<String>) 
         name: version.name.clone(),
         digest: version.digest.clone(),
         tags,
-        href: format!("{base}/versions/{}", version.id),
+        href: if version.deleted_at.is_some() { format!("{base}/settings") } else { format!("{base}/versions/{}", version.id) },
         created: chrono::DateTime::from_timestamp(version.created_at, 0)
             .unwrap_or_default()
             .format("%b %e, %Y")
@@ -267,14 +268,14 @@ async fn model(
         let card = card(ctx, owner, &package).await?;
         let mut rows = Vec::new();
         for version in versions {
-            let tags = db::packages::tags(&ctx.state.pool, version.id)
+            let tags = db::packages::tags(&ctx.state.pool, package.id, credential, version.id)
                 .await
                 .map_err(|error| failure(ctx, error))?;
             rows.push(version_card(&card.href, &version, tags));
         }
         let selected_view = if params.contains_key("version") {
             if let Some(version) = &selected {
-                let tags = db::packages::tags(&ctx.state.pool, version.id)
+                let tags = db::packages::tags(&ctx.state.pool, package.id, credential, version.id)
                     .await
                     .map_err(|error| failure(ctx, error))?;
                 Some(version_card(&card.href, version, tags))

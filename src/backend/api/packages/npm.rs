@@ -195,7 +195,7 @@ async fn dispatch(
                         if metadata["name"] != name {
                             continue;
                         }
-                        for tag in db::packages::tags(&state.pool, version.id)
+                        for tag in db::packages::tags(&state.pool, package.id, token, version.id)
                             .await
                             .map_err(Error::db)?
                         {

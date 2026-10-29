@@ -195,6 +195,11 @@ fn dispatch(
                 .await
                 .map_err(Error::db)?;
             if let Some(algorithm) = &artifact.checksum {
+                let length = match algorithm.as_str() { "sha1" => 40, "sha256" => 64, "sha512" => 128, _ => 32 };
+                if request.method() == Method::HEAD {
+                    return Ok(([(header::CONTENT_TYPE, "text/plain"), (header::CONTENT_LENGTH, &length.to_string())], "").into_response());
+                }
+                let _slot = state.storage.try_acquire_download().ok_or_else(Error::unavailable)?;
                 let bytes = packages::read(&state.storage, &blob)
                     .await
                     .map_err(Error::db)?;
