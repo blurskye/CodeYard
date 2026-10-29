@@ -626,6 +626,8 @@ async fn personal(
         Need::Organization(key) => {
             let org = organization(segments.get(1).copied().unwrap_or_default()).await?;
             grant.organization(org.id, key, write)
+                && (!(write && key == "organization_custom_properties" && segments.get(3) == Some(&"schema"))
+                    || grant.permissions.get(key).and_then(serde_json::Value::as_str) == Some("admin"))
         }
         Need::CreateRepository => {
             let owner = match segments.as_slice() {
