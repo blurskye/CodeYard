@@ -5,6 +5,7 @@ mod commands;
 mod containers;
 mod environment_values;
 mod matchers;
+mod output;
 mod process;
 pub(crate) use process::{read_lines, output as capture_output};
 mod reusable;
@@ -356,6 +357,8 @@ struct JobTokens {
     tokens: BTreeMap<String, String>,
     completion_secret: String,
     #[serde(skip)]
+    output: Option<output::Output>,
+    #[serde(skip)]
     nested: bool,
     #[serde(skip)]
     completions: Arc<std::sync::Mutex<BTreeMap<String, usize>>>,
@@ -369,6 +372,7 @@ impl JobTokens {
     fn progress(&self, id: &str, variant: usize) -> Option<Progress> {
         (!self.nested && !self.completion_secret.is_empty()).then(|| Progress {
             nonce: Arc::from(self.completion_secret.as_str()),
+            output: self.output.clone(),
             job: id.to_owned(),
             variant: variant.try_into().expect("matrix index is bounded"),
             step: Arc::new(std::sync::atomic::AtomicU32::new(0)),
@@ -388,7 +392,9 @@ impl JobTokens {
             if *remaining == 0 { return; }
             *remaining -= 1;
             if *remaining == 0 {
-                println!("::codeyard-job-completed::{}:{id}", self.completion_secret);
+                if let Some(output) = &self.output {
+                    output.line(format!("::codeyard-job-completed::{}:{id}", self.completion_secret), true);
+                }
             }
         }
     }
@@ -432,7 +438,8 @@ pub async fn run(mut options: Options) -> Result<bool> {
         environment_values,
     )
     .await;
-    result.map_err(|error| anyhow::anyhow!(masker.mask(&format!("{error:#}"))))
+    result.map_err(|error| if error.is::<Cancelled>() { error }
+        else { anyhow::anyhow!(masker.mask(&format!("{error:#}"))) })
 }
 
 async fn run_workflow(
@@ -598,6 +605,9 @@ async fn run_workflow(
     contexts.values.insert("env".into(), object(&env));
     let options = Arc::new(options.clone());
     let (cancel_tx, cancel) = watch::channel(false);
+    let (output, output_task) = output::Output::start(cancel_tx.clone())?;
+    let mut tokens = tokens;
+    tokens.output = Some(output.clone());
     let signal = tokio::spawn(async move {
         #[cfg(unix)]
         {
@@ -627,6 +637,9 @@ async fn run_workflow(
         .execute(raw, contexts, env, String::new(), String::new())
         .await;
     signal.abort();
+    let flushed = output.flush().await;
+    output_task.abort();
+    flushed?;
     let result = result?;
     if result.result == "cancelled" { return Err(Cancelled.into()); }
     Ok(result.result == "success")
@@ -790,7 +803,7 @@ impl WorkflowRun {
                 let expanded = match expanded {
                     Ok(expanded) => expanded,
                     Err(error) => {
-                        Log { prefix: format!("{name_prefix}{id}"), masker: masker.clone(), progress: None }
+                        Log { prefix: format!("{name_prefix}{id}"), masker: masker.clone(), progress: None, output: tokens.output.clone() }
                             .line(&format!("Job expansion failed: {error:#}"));
                         let result = JobResult { result: "failure".into(), outputs: BTreeMap::new() };
                         saved.jobs.insert(id.clone(), result.clone());
@@ -953,6 +966,7 @@ impl WorkflowRun {
                             prefix: format!("{workflow_name}/{name}"),
                             masker: job_masker.clone(),
                             progress: tokens.progress(&id, index),
+                            output: tokens.output.clone(),
                         };
                         let cancel = matrix_cancel.clone();
                         let mut execution = self.clone();

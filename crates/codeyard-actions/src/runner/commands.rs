@@ -149,6 +149,7 @@ impl Masker {
 #[derive(Clone)]
 pub(super) struct Progress {
     pub nonce: Arc<str>,
+    pub output: Option<super::output::Output>,
     pub job: String,
     pub variant: u32,
     pub step: Arc<AtomicU32>,
@@ -163,17 +164,17 @@ impl Progress {
                 .as_millis(),
         )
         .expect("system clock is out of range");
+        let essential = !matches!(update, Update::Log { .. });
         let event = Event {
             job: self.job.clone(),
             variant: self.variant,
             at_ms,
             update,
         };
-        println!(
-            "::codeyard-progress::{}:{}",
-            self.nonce,
-            serde_json::to_string(&event).expect("runner progress is serializable")
-        );
+        if let Some(output) = &self.output {
+            output.line(format!("::codeyard-progress::{}:{}", self.nonce,
+                serde_json::to_string(&event).expect("runner progress is serializable")), essential);
+        }
     }
 }
 /// The longest prefix of `text` within `max` bytes, cut on a character boundary.
@@ -190,6 +191,7 @@ pub(super) struct Log {
     pub prefix: String,
     pub masker: Masker,
     pub progress: Option<Progress>,
+    pub output: Option<super::output::Output>,
 }
 
 impl Log {
@@ -267,8 +269,8 @@ impl Log {
                         break;
                     }
                 }
-            } else {
-                println!("[{prefix}] {line}");
+            } else if let Some(output) = &self.output {
+                output.line(format!("[{prefix}] {line}"), false);
             }
         }
     }
