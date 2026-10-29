@@ -18,12 +18,25 @@ pub struct IssueMetadata<'a> {
     pub issue_type: Option<i64>,
 }
 
+impl IssueMetadata<'_> {
+    pub(crate) fn unique_assignees(&self) -> Result<Vec<i64>> {
+        let mut ids = Vec::new();
+        for &id in self.assignees {
+            if !ids.contains(&id) {
+                anyhow::ensure!(ids.len() < crate::backend::db::assignees::MAX_ASSIGNEES as usize, crate::backend::db::assignees::AssignmentRefusal::TooMany);
+                ids.push(id);
+            }
+        }
+        Ok(ids)
+    }
+}
+
 native_operation!(crate::backend::db::postgres::issues::create_issue_with_metadata,
     crate::backend::db::sqlite::issues::create_issue_with_metadata,
     fn create_issue_with_metadata(
     pool: &DbPool,
     repo_id: i64,
-    author_id: i64,
+    author_id: impl Into<crate::backend::db::users::tokens::Actor>,
     title: &str,
     body: &str,
     metadata: IssueMetadata<'_>,
