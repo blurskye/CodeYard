@@ -344,7 +344,7 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     let mut child = command.spawn()?;
-    let mut group = process::ProcessGroup(child.id());
+    let mut group = process::ProcessGroup::new(child.id(), std::time::Duration::ZERO);
     let mut reader = tokio::io::BufReader::new(
         child
             .stdout
@@ -369,7 +369,7 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
             child.wait().await?.success(),
             "Git could not list the commits to squash"
         );
-        group.0 = None;
+        group.disarm();
         Ok::<_, anyhow::Error>(())
     };
     tokio::time::timeout(COMMAND_TIMEOUT, read).await??;

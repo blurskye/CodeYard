@@ -1,5 +1,6 @@
 //! Child process lifetime following actions/runner's `Runner.Sdk/ProcessInvoker.cs`.
 use super::commands::{Commands, Log};
+use crate::process::ProcessGroup;
 use anyhow::{Context, Result};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncReadExt, BufReader};
@@ -24,24 +25,6 @@ pub(crate) async fn read_lines(
     }
 }
 
-struct ProcessGroup(Option<u32>);
-impl ProcessGroup {
-    fn terminate(&mut self) {
-        if let Some(id) = self.0.take() {
-            #[cfg(unix)]
-            // Each child starts a new process group, so grandchildren cannot survive cancellation.
-            unsafe {
-                libc::kill(-(id as i32), libc::SIGKILL);
-            }
-        }
-    }
-}
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        self.terminate();
-    }
-}
-
 pub(crate) async fn output(
     command: &mut Command,
     timeout: Duration,
@@ -54,7 +37,7 @@ pub(crate) async fn output(
     #[cfg(unix)]
     command.process_group(0);
     let mut child = command.spawn().context("Unable to start process")?;
-    let mut group = ProcessGroup(child.id());
+    let mut group = ProcessGroup::new(child.id(), Duration::ZERO);
     let stdout = child.stdout.take().context("No stdout")?;
     let stderr = child.stderr.take().context("No stderr")?;
     async fn capture(reader: impl AsyncRead + Unpin) -> Result<Vec<u8>> {
@@ -70,7 +53,7 @@ pub(crate) async fn output(
         )?;
         Ok::<_, anyhow::Error>(std::process::Output { status, stdout, stderr })
     }).await.context("The operation has timed out.").and_then(|result| result);
-    group.terminate();
+    group.kill();
     if result.is_err() {
         let _ = child.kill().await;
         let _ = child.wait().await;
@@ -97,7 +80,7 @@ pub(super) async fn execute(
     #[cfg(unix)]
     command.process_group(0);
     let mut child = command.spawn().context("Unable to start process")?;
-    let mut group = ProcessGroup(Some(child.id().context("Process has no id")?));
+    let mut group = ProcessGroup::new(Some(child.id().context("Process has no id")?), Duration::ZERO);
     let (tx, mut rx) = mpsc::channel(128);
     let stdout = tokio::spawn(read_lines(
         child.stdout.take().context("No stdout")?,
@@ -126,7 +109,7 @@ pub(super) async fn execute(
                 stdout.abort(); stderr.abort();
                 return Ok(false);
             }
-            result = child.wait(), if status.is_none() => { status = Some(result?); group.terminate(); }
+            result = child.wait(), if status.is_none() => { status = Some(result?); group.kill(); }
             line = rx.recv(), if !closed => {
                 if let Some(line) = line {
                     let (line, stderr) = match line {

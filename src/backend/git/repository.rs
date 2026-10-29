@@ -440,7 +440,7 @@ pub(crate) async fn read_blob_range(
         .current_dir(repo_path);
     process::limit_memory(&mut command);
     let mut child = command.spawn().context("start git cat-file")?;
-    let mut group = process::ProcessGroup(child.id());
+    let mut group = process::ProcessGroup::new(child.id(), Duration::ZERO);
     let mut stdout = child.stdout.take().context("git cat-file stdout")?;
     let stderr = child.stderr.take().context("git cat-file stderr")?;
     drop(child.stdin.take());
@@ -488,7 +488,7 @@ pub(crate) async fn read_blob_range(
         .await
         .context("git blob read timed out")?;
     if result.is_ok() {
-        group.0 = None;
+        group.disarm();
     }
     result
 }
@@ -842,7 +842,7 @@ pub(crate) async fn list_file_paths(
         .stderr(Stdio::null());
     let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
     let mut child = command.spawn().context("start git")?;
-    let mut group = process::ProcessGroup(child.id());
+    let mut group = process::ProcessGroup::new(child.id(), Duration::ZERO);
     let mut reader = BufReader::new(child.stdout.take().context("git stdout")?);
     let work = async {
         let mut paths = BinaryHeap::<String>::new();
@@ -899,7 +899,7 @@ pub(crate) async fn list_file_paths(
             }
         }
         ensure!(child.wait().await?.success(), "Git file listing failed");
-        group.0 = None;
+        group.disarm();
         Ok::<_, anyhow::Error>(FileList {
             paths: paths.into_sorted_vec(),
             truncated,
@@ -1037,7 +1037,7 @@ pub(crate) async fn list_tree_with_history(
         let _permit = process::operation_slot(COMMIT_WALK_TIMEOUT).await?;
         command.stdin(Stdio::null()).stderr(Stdio::null());
         let mut child = command.spawn()?;
-        let mut group = process::ProcessGroup(child.id());
+        let mut group = process::ProcessGroup::new(child.id(), Duration::ZERO);
         let mut reader = BufReader::new(child.stdout.take().context("git log stdout")?);
         let read = async {
             let mut bytes = 0usize;
@@ -1083,7 +1083,7 @@ pub(crate) async fn list_tree_with_history(
             }
             if field.is_none() {
                 ensure!(child.wait().await?.success(), "Git tree history failed");
-                group.0 = None;
+                group.disarm();
             }
             Ok::<_, anyhow::Error>(())
         };
@@ -1726,7 +1726,7 @@ pub(crate) async fn search_code(
     let _permit = process::operation_slot(process::RPC_TIMEOUT).await?;
     let mut child = command.spawn().context("start git")?;
     // Kills git's process group if the search returns before git has finished.
-    let mut group = process::ProcessGroup(child.id());
+    let mut group = process::ProcessGroup::new(child.id(), Duration::ZERO);
     let stdout = child.stdout.take().context("git stdout")?;
     let prefix = format!("{tip}:");
     let needle = text.to_lowercase();
@@ -1756,7 +1756,7 @@ pub(crate) async fn search_code(
         // Git printed every record, so its status tells whether the search ran. Status 1 means no
         // line matched.
         let status = child.wait().await?;
-        group.0 = None;
+        group.disarm();
         ensure!(
             status.success() || status.code() == Some(1),
             "Git could not search the code"

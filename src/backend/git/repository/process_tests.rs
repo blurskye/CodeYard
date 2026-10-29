@@ -127,7 +127,7 @@ async fn buffered_failure_timeout_and_abort_stop_parent_and_descendant() {
         .await
         .unwrap();
         // Also own cleanup if an assertion below fails.
-        let _cleanup = ProcessGroup(Some(numbers[0] as u32));
+        let _cleanup = ProcessGroup::new(Some(numbers[0] as u32), Duration::ZERO);
         if reason == "abort" {
             for &pid in &numbers {
                 assert_eq!(

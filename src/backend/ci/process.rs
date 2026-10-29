@@ -1,21 +1,21 @@
 //! Running CI commands: own process group, deadline, cancellation and
 //! line-by-line output streaming.
-use anyhow::{bail, Result};
+use anyhow::Result;
+use codeyard_actions::process::ProcessGroup;
 use futures_util::FutureExt;
 use std::future::Future;
-use std::io;
 use std::process::{ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(test)]
+use std::time::Instant;
 use tokio::io::{AsyncRead, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::watch;
 
 const MAX_LINE: usize = 16 * 1024;
 #[cfg(test)]
-use codeyard_actions::process::OMITTED_LINE;
+use codeyard_actions::process::{OMITTED_LINE, KILL_GRACE};
 const TERM_GRACE: Duration = Duration::from_secs(3);
-const KILL_GRACE: Duration = Duration::from_secs(2);
-const GROUP_POLL: Duration = Duration::from_millis(20);
 
 /// A command with a minimal environment in its own process group.
 pub(super) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -122,8 +122,7 @@ where
         let (_, status) = tokio::try_join!(&mut forwarding, async {
             let status = child.wait().await?;
             // Descendants can inherit the output pipes after the runner exits.
-            stop_process_group(&mut child, group.pid(), grace).await?;
-            group.disarm();
+            group.stop(&mut child).await?;
             Ok::<_, anyhow::Error>(status)
         })?;
         Ok::<_, anyhow::Error>(status)
@@ -136,7 +135,7 @@ where
         _ = cancelled(cancel) => Err(Stopped::Cancelled.into()),
         Some(error) = error_rx.recv() => Err(error),
     };
-    let stopping = stop_process_group(&mut child, group.pid(), grace);
+    let stopping = group.stop(&mut child);
     tokio::pin!(stopping);
     loop {
         tokio::select! {
@@ -147,7 +146,6 @@ where
             _ = &mut forwarding => {}
         }
     }
-    group.disarm();
     if result.is_ok() {
         if let Ok(error) = error_rx.try_recv() { return Err(error); }
     }
@@ -161,115 +159,6 @@ pub(super) async fn cancelled(mut cancel: watch::Receiver<bool>) {
         if cancel.changed().await.is_err() {
             std::future::pending::<()>().await;
         }
-    }
-}
-
-struct ProcessGroup(Option<u32>, Duration);
-
-impl ProcessGroup {
-    fn new(pid: Option<u32>, grace: Duration) -> Self {
-        Self(pid, grace)
-    }
-
-    fn pid(&self) -> Option<u32> {
-        self.0
-    }
-
-    fn disarm(&mut self) {
-        self.0 = None;
-    }
-}
-
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        let Some(pid) = self.0.take() else {
-            return;
-        };
-        let _ = signal_group(pid, libc::SIGTERM);
-        let grace = self.1;
-        if std::thread::Builder::new()
-            .name("ci-process-cleanup".into())
-            .spawn(move || stop_process_group_blocking(pid, grace))
-            .is_err()
-        {
-            let _ = signal_group(pid, libc::SIGKILL);
-        }
-    }
-}
-
-async fn stop_process_group(child: &mut Child, pid: Option<u32>, grace: Duration) -> Result<()> {
-    let Some(pid) = pid else {
-        return Ok(());
-    };
-    if !group_alive(pid)? {
-        let _ = child.try_wait();
-        return Ok(());
-    }
-    signal_group(pid, libc::SIGTERM)
-        .map_err(|_| anyhow::anyhow!("could not stop CI process group"))?;
-    if wait_for_group(child, pid, grace).await? {
-        return Ok(());
-    }
-    signal_group(pid, libc::SIGKILL)
-        .map_err(|_| anyhow::anyhow!("could not kill CI process group"))?;
-    if wait_for_group(child, pid, KILL_GRACE).await? {
-        return Ok(());
-    }
-    bail!("CI process group did not stop in time")
-}
-
-async fn wait_for_group(child: &mut Child, pid: u32, duration: Duration) -> Result<bool> {
-    let deadline = Instant::now() + duration;
-    loop {
-        child
-            .try_wait()
-            .map_err(|_| anyhow::anyhow!("could not reap CI process"))?;
-        if !group_alive(pid)? {
-            return Ok(true);
-        }
-        if Instant::now() >= deadline {
-            return Ok(false);
-        }
-        tokio::time::sleep(GROUP_POLL).await;
-    }
-}
-
-fn stop_process_group_blocking(pid: u32, grace: Duration) {
-    let deadline = Instant::now() + grace;
-    while Instant::now() < deadline {
-        if matches!(group_alive(pid), Ok(false)) {
-            return;
-        }
-        std::thread::sleep(GROUP_POLL);
-    }
-    let _ = signal_group(pid, libc::SIGKILL);
-}
-
-fn group_alive(pid: u32) -> Result<bool> {
-    let pid = i32::try_from(pid).map_err(|_| anyhow::anyhow!("invalid CI process group"))?;
-    // SAFETY: signal zero only checks whether the process group still exists.
-    if unsafe { libc::kill(-pid, 0) } == 0 {
-        return Ok(true);
-    }
-    match io::Error::last_os_error().raw_os_error() {
-        Some(libc::ESRCH) => Ok(false),
-        Some(libc::EPERM) => Ok(true),
-        _ => bail!("could not inspect CI process group"),
-    }
-}
-
-fn signal_group(pid: u32, signal: i32) -> io::Result<()> {
-    let pid = i32::try_from(pid)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid process group"))?;
-    // SAFETY: a negative pid addresses the process group created for this command.
-    if unsafe { libc::kill(-pid, signal) } == 0 {
-        return Ok(());
-    }
-    let error = io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(())
-    } else {
-        Err(error)
     }
 }
 
@@ -411,7 +300,7 @@ mod tests {
             .await
             .unwrap();
             let _cleanup =
-                crate::backend::git::repository::process::ProcessGroup(Some(numbers[0] as u32));
+                crate::backend::git::repository::process::ProcessGroup::new(Some(numbers[0] as u32), Duration::ZERO);
             if matches!(reason, "cancel" | "abort") {
                 for &pid in &numbers {
                     assert_eq!(
