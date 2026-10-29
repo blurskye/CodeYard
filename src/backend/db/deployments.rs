@@ -154,7 +154,7 @@ native_operation!(crate::backend::db::postgres::deployments::delete,
     fn delete(pool: &DbPool, actor: i64, repo: i64, id: i64) -> Result<()>);
 native_operation!(crate::backend::db::postgres::deployments::create_status,
     crate::backend::db::sqlite::deployments::create_status,
-    fn create_status(pool: &DbPool, actor: i64, repo: i64, deployment: i64, input: &NewStatus) -> Result<(Deployment, Vec<Status>)>);
+    fn create_status(pool: &DbPool, actor: impl Into<super::users::tokens::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>>);
 native_operation!(crate::backend::db::postgres::deployments::get_status,
     crate::backend::db::sqlite::deployments::get_status,
     fn get_status(pool: &DbPool, deployment: i64, id: i64) -> Result<Option<Status>>);

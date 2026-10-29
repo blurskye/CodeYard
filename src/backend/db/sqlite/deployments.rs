@@ -96,17 +96,23 @@ pub async fn delete(pool: &SqlitePool, actor: i64, repo: i64, id: i64) -> Result
 
 pub async fn create_status(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::users::tokens::Actor>,
     repo: i64,
     deployment: i64,
     input: &NewStatus,
-) -> Result<(Deployment, Vec<Status>)> {
+) -> Result<Vec<(Deployment, Status)>> {
     input.validate()?;
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
+    if let Some(token) = credential.token_id {
+        let org = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=?1").bind(repo).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor, token, Some(repo), org, "deployments").await?, Refusal::Denied);
+    }
     let current: Deployment =
         sqlx::query_as("SELECT * FROM repository_deployments WHERE repo_id=?1 AND id=?2")
             .bind(repo)
@@ -121,8 +127,8 @@ pub async fn create_status(
             .bind(repo).bind(deployment).bind(environment).fetch_all(&mut *tx).await?;
         for status in older {
             let row = sqlx::query_as("INSERT INTO deployment_statuses(deployment_id,creator_id,state,description,environment,log_url,environment_url) VALUES(?1,?2,'inactive','',?3,?4,?5) RETURNING *").bind(status.deployment_id).bind(actor).bind(&status.environment).bind(&status.log_url).bind(&status.environment_url).fetch_one(&mut *tx).await?;
-            sqlx::query("UPDATE repository_deployments SET updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1").bind(status.deployment_id).execute(&mut *tx).await?;
-            saved.push(row);
+            let updated = sqlx::query_as("UPDATE repository_deployments SET updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *").bind(status.deployment_id).fetch_one(&mut *tx).await?;
+            saved.push((updated, row));
         }
     }
     let log_url = input
@@ -132,11 +138,11 @@ pub async fn create_status(
         .unwrap_or("");
     let row = sqlx::query_as("INSERT INTO deployment_statuses(deployment_id,creator_id,state,description,environment,log_url,environment_url) VALUES(?1,?2,?3,?4,?5,?6,?7) RETURNING *")
         .bind(deployment).bind(actor).bind(&input.state).bind(&input.description).bind(environment).bind(log_url).bind(&input.environment_url).fetch_one(&mut *tx).await?;
-    saved.push(row);
     sqlx::query("INSERT INTO deployment_environments(repo_id,name,name_key) VALUES(?1,?2,?3) ON CONFLICT(repo_id,name_key) DO NOTHING").bind(repo).bind(environment).bind(environment.to_lowercase()).execute(&mut *tx).await?;
     let updated = sqlx::query_as("UPDATE repository_deployments SET environment=?3,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE repo_id=?1 AND id=?2 RETURNING *").bind(repo).bind(deployment).bind(environment).fetch_one(&mut *tx).await?;
+    saved.push((updated, row));
     tx.commit().await?;
-    Ok((updated, saved))
+    Ok(saved)
 }
 
 pub async fn get_status(pool: &SqlitePool, deployment: i64, id: i64) -> Result<Option<Status>> {
