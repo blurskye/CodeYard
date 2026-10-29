@@ -7,7 +7,7 @@ use anyhow::Result;
 /// A live browser session or write token, checked with the repository mutation.
 pub enum Credential {
     Session(String),
-    Token(i64),
+    Token { id: i64, hash: String },
 }
 
 impl From<&str> for Credential {

@@ -186,8 +186,19 @@ pub async fn reset_token(
     hash: &str,
     new_hash: &str,
 ) -> Result<Option<crate::backend::db::models::PersonalAccessToken>> {
-    Ok(sqlx::query_as("UPDATE personal_access_tokens SET token_hash=$3 WHERE token_hash=$2 AND id IN (SELECT token_id FROM oauth_app_tokens WHERE client_id=$1) AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND EXISTS(SELECT 1 FROM users WHERE id=personal_access_tokens.user_id AND NOT is_banned AND NOT must_change_password) RETURNING id,user_id,name,scope,expires_at,created_at")
-        .bind(client).bind(hash).bind(new_hash).fetch_optional(pool).await?)
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let old: Option<crate::backend::db::models::PersonalAccessToken> = sqlx::query_as("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(client).bind(hash).fetch_optional(&mut *tx).await?;
+    let Some(old) = old else { return Ok(None); };
+    let replacement: crate::backend::db::models::PersonalAccessToken = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,scope,expires_at,token_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")
+        .bind(old.user_id).bind(&old.name).bind(&old.scope).bind(old.expires_at).bind(new_hash).fetch_one(&mut *tx).await?;
+    sqlx::query("INSERT INTO oauth_app_tokens(token_id,client_id,scopes) SELECT $2,client_id,scopes FROM oauth_app_tokens WHERE token_id=$1")
+        .bind(old.id).bind(replacement.id).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO github_app_tokens(token_id,installation_id,permissions,repositories,user_token) SELECT $2,installation_id,permissions,repositories,user_token FROM github_app_tokens WHERE token_id=$1")
+        .bind(old.id).bind(replacement.id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM personal_access_tokens WHERE id=$1").bind(old.id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(replacement))
 }
 
 pub async fn revoke(

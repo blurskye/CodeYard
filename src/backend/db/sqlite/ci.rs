@@ -249,7 +249,7 @@ async fn enqueue_ci_run_inner(
         if let Some(token) = request.credential {
             let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR julianday(expires_at)>julianday('now')))").bind(token).bind(input.triggered_by_id).fetch_one(&mut *tx).await?;
             ensure!(
-                owns,
+                owns && super::fine_grained_tokens::repository_permission(&mut tx, token, input.triggered_by_id, input.repo_id, "actions").await?,
                 CiAdmissionRefusal::Denied("CI credential is no longer authorized")
             );
         }

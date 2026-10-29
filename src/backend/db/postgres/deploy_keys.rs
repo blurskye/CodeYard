@@ -60,7 +60,16 @@ async fn require_admin(
         });
     let live = match credential {
         crate::backend::db::deploy_keys::Credential::Session(session) => super::users::transitions::live_session(tx, actor, &session).await?,
-        crate::backend::db::deploy_keys::Credential::Token(id) => sqlx::query_scalar::<_, i64>("SELECT id FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>NOW()) FOR SHARE").bind(id).bind(actor).fetch_optional(&mut **tx).await?.is_some(),
+        crate::backend::db::deploy_keys::Credential::Token { id, hash } => {
+            let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar("SELECT expires_at FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND token_hash=$3 AND scope='write' FOR SHARE")
+                .bind(id).bind(actor).bind(hash).fetch_optional(&mut **tx).await?;
+            let live = match expiry {
+                Some(None) => true,
+                Some(Some(expiry)) => sqlx::query_scalar("SELECT $1>clock_timestamp()").bind(expiry).fetch_one(&mut **tx).await?,
+                None => false,
+            };
+            live && super::fine_grained_tokens::repository_permission(tx, id, actor, repo, "administration").await?
+        },
     };
     anyhow::ensure!(
         allowed && live,

@@ -29,7 +29,7 @@ async fn authority(
     if let Credential::Token(id) = credential {
         let live: Option<i64> = sqlx::query_scalar("SELECT id FROM personal_access_tokens WHERE id=?1 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
             .bind(id).fetch_optional(&mut **tx).await?;
-        ensure!(live.is_some(), Refusal::Denied);
+        ensure!(live.is_some() && super::fine_grained_tokens::repository_permission(tx, id, actor, repo, "checks").await?, Refusal::Denied);
         let oauth: Option<(String, String, Option<i64>)> = sqlx::query_as("SELECT o.client_id,o.scopes,a.id FROM oauth_app_tokens o LEFT JOIN oauth_applications a ON a.client_id=o.client_id WHERE o.token_id=?1")
             .bind(id).fetch_optional(&mut **tx).await?;
         if let Some((client, scopes, app_id)) = oauth {
