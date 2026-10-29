@@ -1,7 +1,8 @@
 //! Git database objects are written without publishing a reference.
 use super::repository::{MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES};
 use crate::backend::repositories::store::{ErrorKind, RepoError};
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
+use super::repository::process;
 use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
@@ -159,6 +160,40 @@ fn checked_tree(repo: &Repository, id: Oid) -> Result<git2::Tree<'_>> {
         return Err(invalid("Invalid or oversized tree").into());
     }
     Ok(repo.find_tree(id)?)
+}
+
+/// Only blobs introduced against the first parent; root commits introduce their whole tree.
+/// No patches or unchanged tree snapshots are materialized.
+pub(crate) async fn introduced_blobs(path: &Path, commit: &str) -> Result<Vec<TreeObjectEntry>> {
+    oid(commit)?;
+    let mut command = process::git_command()?;
+    command.arg("--git-dir").arg(path).args([
+        "diff-tree", "--root", "--no-commit-id", "--diff-merges=first-parent", "-r", "-z",
+        "--raw", "--no-renames", "--no-abbrev", commit, "--",
+    ]);
+    let (status, output) = process::buffered(command, b"", 32 * 1024 * 1024, process::RPC_TIMEOUT).await?;
+    ensure!(status.success(), "Git could not list introduced blobs");
+    let mut fields = output.split(|byte| *byte == 0);
+    let mut blobs = Vec::new();
+    while let Some(header) = fields.next().filter(|field| !field.is_empty()) {
+        let raw = fields.next().context("Git change has no path")?;
+        let parts = std::str::from_utf8(header)?.split_whitespace().collect::<Vec<_>>();
+        ensure!(parts.len() == 5 && parts[0].starts_with(':'), "Malformed Git change");
+        if parts[1] == "000000" || parts[1] == "160000" || parts[2] == parts[3] { continue; }
+        oid(parts[3])?;
+        blobs.push(TreeObjectEntry { path: String::from_utf8_lossy(raw).into_owned(), path_raw: raw.to_vec(), mode: parts[1].into(), kind: "blob".into(), sha: parts[3].into(), size: None });
+    }
+    let path = path.to_owned();
+    process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
+        let repo = Repository::open_bare(path)?;
+        let odb = repo.odb()?;
+        for blob in &mut blobs {
+            let (size, kind) = odb.read_header(oid(&blob.sha)?)?;
+            ensure!(kind == ObjectType::Blob, "Invalid introduced blob");
+            blob.size = Some(size);
+        }
+        Ok(blobs)
+    }).await
 }
 
 pub(crate) async fn read_tree(path: &Path, revision: &str, recursive: bool) -> Result<TreeObject> {

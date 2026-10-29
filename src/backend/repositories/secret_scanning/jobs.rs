@@ -148,21 +148,9 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
             continue;
         }
         let commit = store.commit(&sha).await?;
-        // Each directory is listed on its own, so only a single directory over the tree limit
-        // stops the scan.
-        let mut directories = vec![(sha.clone(), String::new())];
-        while let Some((directory, prefix)) = directories.pop() {
-            if renew(&mut beat) {
-                ensure!(records::heartbeat(&state.pool, repo.id, job.id, job.attempt, None).await?, "Another worker took over this secret scan");
-            }
-            let tree = store.git_tree(&directory, false).await?;
-            ensure!(!tree.truncated, "Secret scan tree exceeds the tree limit");
-            for mut entry in tree.tree {
-                entry.path = format!("{prefix}{}", entry.path);
-                if entry.kind == "tree" {
-                    directories.push((entry.sha, format!("{}/", entry.path)));
-                    continue;
-                }
+        // First-parent changes introduce a blob once; root commits introduce the whole tree.
+        // The ancestry walk still visits every parent, including side branches of merges.
+        for entry in store.introduced_blobs(&sha).await? {
                 if entry.kind != "blob" || entry.size.is_some_and(|size| size > MAX_BLOB_BYTES) {
                     continue;
                 }
@@ -232,7 +220,6 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
                         }
                     }
                 }
-            }
         }
         // A persistent marker means this commit AND its ancestors completed, so pruning a
         // later incremental walk cannot strand work after cancellation or a storage failure.

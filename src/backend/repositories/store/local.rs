@@ -578,6 +578,10 @@ impl LocalStore {
         git::objects::read_tree(self.path(), revision, recursive).await.map_err(RepoError::from)
     }
 
+    pub(super) async fn introduced_blobs(&self, sha: &str) -> Result<Vec<git::objects::TreeObjectEntry>, RepoError> {
+        git::objects::introduced_blobs(self.path(), sha).await.map_err(RepoError::from)
+    }
+
     pub(super) async fn git_object_kind(&self, sha: &str) -> Result<String, RepoError> {
         let sha = sha.to_owned();
         self.blocking(move |path| git::objects::object_kind(path, &sha))
