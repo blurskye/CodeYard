@@ -241,7 +241,7 @@ pub fn draft_from_form(pairs: &[(String, String)]) -> HookDraft {
         pairs
             .iter()
             .find(|(key, _)| key == name)
-            .map(|(_, value)| value.trim().to_owned())
+            .map(|(_, value)| if name == "username" { value.clone() } else { value.trim().to_owned() })
             .unwrap_or_default()
     };
     let checked = |name: &str| {
@@ -345,7 +345,7 @@ pub fn refusal(error: &HookError) -> (axum::http::StatusCode, &'static str) {
 /// The save a posted form asks for. The draft's secret text is the form's `secret` field.
 pub fn form_of(draft: &HookDraft, pairs: &[(String, String)]) -> HookForm {
     HookForm {
-        username: (!draft.username.is_empty()).then(|| draft.username.clone()),
+        username: (!draft.username.is_empty() || pairs.iter().any(|(key, value)| key == "password" && !value.is_empty())).then(|| draft.username.clone()),
         password: pairs
             .iter()
             .find(|(key, _)| key == "password")

@@ -65,6 +65,13 @@ async fn fill(
     }
     if let Some(id) = payload["pull_request"]["id"].as_i64() {
         pull_request(pool, repo, owner, id, &mut payload["pull_request"]).await?;
+        let repository = payload["repository"].clone();
+        if repository.is_object() {
+            payload["pull_request"]["base"]["repo"] = repository.clone();
+            if payload["pull_request"]["head"]["repo"]["id"].as_i64() == Some(repo.id) {
+                payload["pull_request"]["head"]["repo"] = repository;
+            }
+        }
     }
     // A review comment comes with its pull request and no issue, so the issue branch skipped it.
     if payload["issue"].is_null() && payload["pull_request"].is_object() {
@@ -150,7 +157,9 @@ async fn pull_request(
     document["author_association"] =
         json!(access::author_association(pool, repo, pull.author_id).await?);
     let base_user = document["base"]["repo"]["owner"].clone();
-    document["base"]["label"] = json!(format!("{owner}:{}", pull.base_branch));
+    let base_branch = document["base"]["ref"].as_str().unwrap_or(&pull.base_branch).to_owned();
+    let head_branch = document["head"]["ref"].as_str().unwrap_or(&pull.head_branch).to_owned();
+    document["base"]["label"] = json!(format!("{owner}:{base_branch}"));
     document["base"]["user"] = base_user;
     document["base"]["repo"]["topics"] = json!(topics(pool, repo.id).await?);
     let head = match pull.head_repo_id {
@@ -168,7 +177,7 @@ async fn pull_request(
     match head {
         Some((head, head_owner)) => {
             let mut value = payloads::repository(&head, &head_owner);
-            document["head"]["label"] = json!(format!("{head_owner}:{}", pull.head_branch));
+            document["head"]["label"] = json!(format!("{head_owner}:{head_branch}"));
             document["head"]["user"] = value["owner"].clone();
             // A private fork is described only to its own readers. The base repository's
             // readers and hooks get the branch, not the fork's metadata.
@@ -183,6 +192,11 @@ async fn pull_request(
                         .await?
                         .is_some_and(|now| !now.is_private);
                 if public {
+                    if fork {
+                        let mut payload = json!({"repository":value});
+                        super::set_open_issues(pool, head.id, &mut payload).await;
+                        value = payload["repository"].take();
+                    }
                     value
                 } else {
                     Value::Null
@@ -191,9 +205,14 @@ async fn pull_request(
         }
         // The fork was deleted.
         None => {
-            document["head"]["label"] = Value::Null;
+            document["head"]["repo"] = Value::Null;
+            document["head"]["label"] = json!(head_branch);
             document["head"]["user"] = Value::Null;
         }
+    }
+    if document["head"]["repo"].is_null() {
+        document["head"]["user"] = Value::Null;
+        document["head"]["label"] = json!(head_branch);
     }
     let labels = db::labels::get_pull_request_labels(pool, pull.id).await?;
     document["labels"] = json!(labels
@@ -222,6 +241,8 @@ async fn pull_request(
     let reviewers = db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await?;
     document["requested_reviewers"] =
         json!(reviewers.iter().map(payloads::user).collect::<Vec<_>>());
+    let teams = db::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None).await?;
+    document["requested_teams"] = json!(teams.iter().map(|row| payloads::team_document(&row.team, &row.org_slug, row.permission)).collect::<Vec<_>>());
     let (comments, review_comments) =
         db::pull_requests::reviews::pull_request_comment_counts(pool, pull.id).await?;
     document["comments"] = json!(comments);

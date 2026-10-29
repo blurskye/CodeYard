@@ -256,7 +256,7 @@ pub fn community_profile(profile: &crate::backend::repositories::community::Prof
     let conduct = community_file(profile.conduct.as_ref());
     let license = match (profile.license_info, profile.license.as_ref()) {
         (Some(info), Some(file)) => {
-            json!({"key":info.key,"name":info.name,"spdx_id":info.spdx,"node_id":node_id::encode("L",info.id),"url":if info.key=="other" {Value::Null}else {json!(api_url(&format!("/licenses/{}",info.key)))},"html_url":community_file(Some(file))["html_url"]})
+            json!({"key":info.key,"name":info.name,"spdx_id":info.spdx,"node_id":node_id::git("LIC",info.key),"url":if info.key=="other" {Value::Null}else {json!(api_url(&format!("/licenses/{}",info.key)))},"html_url":community_file(Some(file))["html_url"]})
         }
         _ => Value::Null,
     };
@@ -441,7 +441,7 @@ pub fn environment(
         value["wait_timer"] = json!(environment.wait_timer);
         rules.push(value);
     }
-    if !reviewers.is_empty() {
+    if serde_json::from_str::<Vec<crate::backend::db::environments::Reviewer>>(&environment.reviewers).is_ok_and(|stored| !stored.is_empty()) {
         let mut value = rule("required_reviewers");
         value["prevent_self_review"] = json!(environment.prevent_self_review);
         value["reviewers"] = json!(reviewers);
@@ -542,15 +542,11 @@ pub fn package(
     repository: Option<Value>,
 ) -> Value {
     let path = package_url(owner, package);
-    let mut account = simple_person(&Person {
-        id: owner.id,
-        login: owner.name.clone(),
-        site_admin: false,
-    });
-    if owner.kind == "org" {
-        account["type"] = json!("Organization");
-        account["node_id"] = json!(node_id::encode("O", owner.id));
-    }
+    let account = if owner.kind == "org" {
+        organization_person(owner.id, &owner.name)
+    } else {
+        simple_person(&Person { id: owner.id, login: owner.name.clone(), site_admin: false })
+    };
     json!({"id":package.id,"name":package.name,"package_type":package.package_type,
         "visibility":package.visibility,"owner":account,"repository":repository,
         "url":crate::backend::api::github::api_url(&path),"html_url":format!("{}{path}",link_origin()),
@@ -635,7 +631,7 @@ pub fn project(
         "closed_at": optional_time(project.closed_at), "deleted_at": optional_time(project.deleted_at),
         "deleted_by": null, "created_at": time(project.created_at), "updated_at": time(project.updated_at),
         "state": if project.closed_at.is_some() { "closed" } else { "open" },
-        "is_template": false, "latest_status_update": null,
+        "is_template": project.template, "latest_status_update": null,
     })
 }
 
@@ -669,7 +665,7 @@ pub fn project_field(
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Invalid iteration configuration"))?;
         value["configuration"] = json!({"start_day": date.weekday().number_from_monday(), "duration": config["duration"],
-            "iterations": iterations.iter().map(|iteration| json!({"id": iteration["id"], "title": rich_text(iteration["title"].as_str().unwrap_or("")), "start_date": iteration["start_date"], "duration": iteration["duration"], "completed": iteration["start_date"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()).zip(iteration["duration"].as_i64()).is_some_and(|(start, days)| start.checked_add_signed(chrono::Duration::days(days)).is_some_and(|end| end < chrono::Utc::now().date_naive()))})).collect::<Vec<_>>()});
+            "iterations": iterations.iter().map(|iteration| json!({"id": iteration["id"], "title": rich_text(iteration["title"].as_str().unwrap_or("")), "start_date": iteration["start_date"], "duration": iteration["duration"], "completed": iteration["start_date"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()).zip(iteration["duration"].as_i64()).is_some_and(|(start, days)| start.checked_add_signed(chrono::Duration::days(days)).is_some_and(|end| end <= chrono::Utc::now().date_naive()))})).collect::<Vec<_>>()});
     }
     Ok(value)
 }
@@ -719,6 +715,7 @@ pub fn organization_person(id: i64, name: &str) -> Value {
     });
     value["type"] = json!("Organization");
     value["node_id"] = json!(node_id::encode("O", id));
+    value["repos_url"] = json!(crate::backend::api::github::api_url(&format!("/orgs/{}/repos", crate::webui::encode_component(name))));
     value
 }
 pub fn topic(topic: &crate::backend::db::catalog_search::Topic) -> Value {
@@ -1612,7 +1609,7 @@ pub struct PushedCommit {
     pub committer_time: i64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PushedCommits {
     pub commits: Vec<PushedCommit>,
     pub head: Option<PushedCommit>,
@@ -1636,7 +1633,7 @@ fn pushed_commit(repository: &git2::Repository, revision: &str) -> Option<Pushed
         id: commit.id().to_string(),
         tree_id: commit.tree_id().to_string(),
         message: bounded_text(commit.message().unwrap_or(""), 4096),
-        time: commit.time().seconds(),
+        time: author.when().seconds(),
         author_name: bounded_text(author.name().unwrap_or(""), 256),
         author_email: bounded_text(author.email().unwrap_or(""), 256),
         committer_name: bounded_text(committer.name().unwrap_or(""), 256),
@@ -1645,25 +1642,24 @@ fn pushed_commit(repository: &git2::Repository, revision: &str) -> Option<Pushed
     })
 }
 
-/// At most 20 introduced commits, with a separate new head even for a rewind. Git's bounded
+/// At most 2048 introduced commits, with a separate new head even for a rewind. Git's bounded
 /// subprocess avoids libgit2's eager hidden-range walk. Called only on a blocking thread.
-pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> PushedCommits {
+pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> anyhow::Result<PushedCommits> {
     use crate::backend::git::repository::process;
-    let Ok(repository) = git2::Repository::open_bare(path) else {
-        return PushedCommits::default();
-    };
+    let repository = git2::Repository::open_bare(path)?;
     let head = pushed_commit(&repository, after);
     let collect = async {
         let mut command = process::git_command()?;
         command
             .current_dir(path)
-            .args(["rev-list", "--max-count=20", after]);
+            .args(["rev-list", "--reverse", "--max-count=2048", after]);
         if let Some(before) = before {
             command.args(["--not", before]);
         }
         command.arg("--");
+        process::limit_memory(&mut command);
         let (status, output) =
-            process::buffered(command, b"", 20 * 41, std::time::Duration::from_secs(2)).await?;
+            process::buffered(command, b"", 2048 * 65, std::time::Duration::from_secs(2)).await?;
         anyhow::ensure!(status.success(), "Webhook commit listing failed");
         Ok::<_, anyhow::Error>(output)
     };
@@ -1676,26 +1672,28 @@ pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> PushedC
         command
             .current_dir(path)
             .args(["merge-base", "--is-ancestor", before, after]);
+        process::limit_memory(&mut command);
         let (status, _) =
             process::buffered(command, b"", 64, std::time::Duration::from_secs(2)).await?;
-        Ok::<_, anyhow::Error>(status.code() == Some(1))
+        match status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => anyhow::bail!("Webhook ancestry lookup failed"),
+        }
     };
     let (output, forced) = tokio::runtime::Handle::current().block_on(async {
-        (
-            collect.await.unwrap_or_default(),
-            forced.await.unwrap_or(false),
-        )
-    });
+        Ok::<_, anyhow::Error>((collect.await?, forced.await?))
+    })?;
     let commits = String::from_utf8_lossy(&output)
         .lines()
-        .take(20)
-        .filter_map(|oid| pushed_commit(&repository, oid))
-        .collect();
-    PushedCommits {
+        .take(2048)
+        .map(|oid| pushed_commit(&repository, oid).ok_or_else(|| anyhow::anyhow!("Webhook commit lookup failed")))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(PushedCommits {
         commits,
         head,
         forced,
-    }
+    })
 }
 
 /// `distinct` is false for a commit the ref already reached before this push.
@@ -1952,14 +1950,14 @@ mod tests {
                 .commit(None, &signature, &signature, "second", &tree, &[&parent])
                 .unwrap();
             let rewound =
-                pushed_commits(root.path(), Some(&second.to_string()), &first.to_string());
+                pushed_commits(root.path(), Some(&second.to_string()), &first.to_string()).unwrap();
             assert!(rewound.commits.is_empty());
             let head = rewound.head.unwrap();
             assert_eq!(head.id, first.to_string());
             assert_eq!(head.message.len(), 4096);
             assert!(head.message.is_char_boundary(head.message.len()));
             let forward =
-                pushed_commits(root.path(), Some(&first.to_string()), &second.to_string());
+                pushed_commits(root.path(), Some(&first.to_string()), &second.to_string()).unwrap();
             assert_eq!(forward.commits.len(), 1);
             assert_eq!(forward.head.unwrap().id, second.to_string());
             assert_eq!(bounded_text("aé", 2), "a");

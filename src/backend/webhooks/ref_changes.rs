@@ -31,6 +31,7 @@ pub async fn emit_ref_moves(
     path: &Path,
     moves: &[RefMove],
 ) {
+    let history = std::sync::Arc::new(std::sync::Mutex::new((0usize, std::collections::HashMap::<(String, String), payloads::PushedCommits>::new())));
     for (reference, old, new) in moves {
         let Some((ref_type, name)) = ref_kind(reference) else {
             continue;
@@ -44,6 +45,7 @@ pub async fn emit_ref_moves(
             emit_ref_change(pool, repo, events::DELETE, ref_type, name, pusher_id).await;
         }
         let repo_for_hook = repo.clone();
+        let history = history.clone();
         emit(
             pool,
             repo,
@@ -52,10 +54,30 @@ pub async fn emit_ref_moves(
             move |owner, people| {
                 let sender = people.get(pusher_id);
                 let before = (!is_zero(&old)).then_some(old.as_str());
+                let key = (old.clone(), new.clone());
+                let mut history = history.lock().unwrap_or_else(|error| error.into_inner());
                 let commits = if is_zero(&new) {
                     payloads::PushedCommits::default()
+                } else if let Some(commits) = history.1.get(&key) {
+                    commits.clone()
                 } else {
-                    payloads::pushed_commits(&path, before, &new)
+                    let commits = match payloads::pushed_commits(&path, before, &new) {
+                        Ok(commits) => commits,
+                        Err(error) => {
+                            tracing::warn!(%error, "could not read push webhook history");
+                            return serde_json::Value::Null;
+                        }
+                    };
+                    let bytes: usize = commits.commits.iter().chain(commits.head.iter()).map(|commit| {
+                        std::mem::size_of::<payloads::PushedCommit>() + commit.id.len() + commit.tree_id.len()
+                            + commit.message.len() + commit.author_name.len() + commit.author_email.len()
+                            + commit.committer_name.len() + commit.committer_email.len()
+                    }).sum();
+                    if history.0.saturating_add(bytes) <= 16 * 1024 * 1024 {
+                        history.0 += bytes;
+                        history.1.insert(key, commits.clone());
+                    }
+                    commits
                 };
                 payloads::push(
                     &reference,

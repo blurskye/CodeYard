@@ -293,6 +293,9 @@ where
                 return Value::Null;
             }
         };
+    if !payload.is_object() {
+        return Value::Null;
+    }
     if let Some(org) = current.owner_org_id {
         match db::organizations::profiles::get_public_organization_by_id(pool, org).await {
             Ok(Some(org)) => payload["organization"] = payloads::organization(&org),
