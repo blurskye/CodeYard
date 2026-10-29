@@ -380,6 +380,8 @@ pub struct CommentEdit {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SuggestionDraft {
+    pub repository_id: Option<i64>,
+    pub issue_id: Option<i64>,
     pub change: String,
     pub target: String,
     pub value: String,

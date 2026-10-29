@@ -284,6 +284,24 @@ pub(crate) async fn native_change(
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?;
     let shown = discussion::item(&ctx, &repo, Kind::Issue, number).await?;
+    let draft = DetailDraft {
+        suggestion: Some(Box::new(SuggestionDraft {
+            repository_id: field(&form, "repository_id").parse().ok(),
+            issue_id: field(&form, "issue_id").parse().ok(),
+            change: field(&form, "change"),
+            target: field(&form, "target"),
+            value: field(&form, "value"),
+            rationale: field(&form, "rationale"),
+            confidence: field(&form, "confidence"),
+        })),
+        ..Default::default()
+    };
+    if field(&form, "repository_id").parse::<i64>().ok() != Some(repo.record.id)
+        || field(&form, "issue_id").parse::<i64>().ok() != Some(shown.id)
+    {
+        return discussion::render_detail(&ctx, &repo, Kind::Issue, &shown, &draft,
+            Some("The suggestion target changed. Your draft is preserved; return to the original issue before submitting."), StatusCode::CONFLICT).await;
+    }
     match field(&form, "action").as_str() {
         "set_enabled" => db::suggestions::set_enabled(
             &ctx.state.pool,
@@ -300,16 +318,6 @@ pub(crate) async fn native_change(
             if let Err(error) =
                 native_propose(&ctx, &repo.record, (&owner, &name), shown.id, &form).await
             {
-                let draft = DetailDraft {
-                    suggestion: Some(Box::new(SuggestionDraft {
-                        change: field(&form, "change"),
-                        target: field(&form, "target"),
-                        value: field(&form, "value"),
-                        rationale: field(&form, "rationale"),
-                        confidence: field(&form, "confidence"),
-                    })),
-                    ..Default::default()
-                };
                 return discussion::render_detail(&ctx,&repo,Kind::Issue,&shown,&draft,Some("Suggestion not saved. Review your preserved draft and check the target and value."),error.status()).await;
             }
         }
