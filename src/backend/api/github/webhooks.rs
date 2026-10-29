@@ -473,7 +473,7 @@ async fn trigger(
         return Ok((StatusCode::ACCEPTED, Json(json!({}))).into_response());
     }
     if uri.path().ends_with("/tests") {
-        settings::test_push(&state.pool, state.cluster.as_ref(), owner, &actor, hook)
+        settings::test_push(&state.pool, owner, &actor, hook)
             .await
             .map_err(hook_error)?;
     } else {

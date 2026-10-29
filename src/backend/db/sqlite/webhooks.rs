@@ -144,6 +144,23 @@ async fn may_manage_hooks(
     }
 }
 
+pub async fn managed_webhook(pool: &SqlitePool, owner: HookOwner, actor: i64, id: i64) -> Result<Option<Webhook>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !may_manage_hooks(&mut tx, owner, actor).await? { return Ok(None); }
+    let hook = get_webhook(&mut *tx, owner, id).await?;
+    tx.commit().await?;
+    Ok(hook)
+}
+
+pub async fn latest_push_for_hook(pool: &SqlitePool, actor: i64, repo: i64, hook: i64, max_bytes: i64) -> Result<Option<String>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(may_manage_hooks(&mut tx, HookOwner::Repository(repo), actor).await?, crate::backend::db::webhooks::HookAuthorityDenied);
+    let payload: Option<String> = sqlx::query_scalar::<_, Option<String>>("SELECT CASE WHEN length(CAST(payload AS BLOB))<=?3 THEN payload END FROM events WHERE repo_id=?1 AND kind='PushEvent' AND EXISTS(SELECT 1 FROM webhooks WHERE id=?2 AND repo_id=?1) ORDER BY id DESC LIMIT 1")
+        .bind(repo).bind(hook).bind(max_bytes).fetch_optional(&mut *tx).await?.flatten();
+    tx.commit().await?;
+    Ok(payload)
+}
+
 /// Inserts a hook. `None` means the actor may not manage the owner's hooks.
 pub async fn insert_webhook(
     pool: &SqlitePool,

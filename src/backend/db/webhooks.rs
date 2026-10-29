@@ -11,6 +11,10 @@ pub const MAX_HOOKS_PER_OWNER: usize = 16;
 #[error("The owner's webhook limit has been reached")]
 pub struct HookLimit;
 
+#[derive(Debug, thiserror::Error)]
+#[error("Webhook administration is required")]
+pub struct HookAuthorityDenied;
+
 /// The repository or organization a webhook belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HookOwner {
@@ -129,6 +133,11 @@ native_operation!(crate::backend::db::postgres::webhooks::list_webhooks, crate::
 
 native_operation!(crate::backend::db::postgres::webhooks::webhook_secret_sample, crate::backend::db::sqlite::webhooks::webhook_secret_sample,
     fn webhook_secret_sample(pool: &DbPool) -> Result<Option<(Vec<u8>, Vec<u8>)>>);
+
+native_operation!(crate::backend::db::postgres::webhooks::managed_webhook, crate::backend::db::sqlite::webhooks::managed_webhook,
+    fn managed_webhook(pool: &DbPool, owner: HookOwner, actor: i64, id: i64) -> Result<Option<Webhook>>);
+native_operation!(crate::backend::db::postgres::webhooks::latest_push_for_hook, crate::backend::db::sqlite::webhooks::latest_push_for_hook,
+    fn latest_push_for_hook(pool: &DbPool, actor: i64, repo: i64, hook: i64, max_bytes: i64) -> Result<Option<String>>);
 
 native_operation!(crate::backend::db::postgres::webhooks::get_webhook, crate::backend::db::sqlite::webhooks::get_webhook,
     fn get_webhook(pool: &DbPool, owner: HookOwner, id: i64) -> Result<Option<Webhook>>);
