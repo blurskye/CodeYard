@@ -500,6 +500,7 @@ async fn discussions(pg: bool) {
         f.pool(),
         pull.id,
         bob,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await),
         "approved",
         Some("Needle review"),
         Some(&pull.head_sha),
@@ -565,6 +566,7 @@ async fn discussions(pg: bool) {
     let project = db::projects::create(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
         db::projects::Owner::User(alice),
         "Search board",
         None,
@@ -575,6 +577,7 @@ async fn discussions(pg: bool) {
     db::projects::add_item(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
         project.id,
         &db::projects::Content::Issue(issue.id),
     )
@@ -583,6 +586,7 @@ async fn discussions(pg: bool) {
     db::projects::add_item(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
         project.id,
         &db::projects::Content::PullRequest(pull.id),
     )

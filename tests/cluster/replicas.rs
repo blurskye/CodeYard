@@ -1657,7 +1657,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     .await
     .unwrap();
     let claim = queue
-        .claim(&worker, CiExecutionMode::Local)
+        .claim(&worker, CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -3642,6 +3642,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     let error = codeyard::backend::repositories::pull_requests::reviews::create_pull_request_review(
         &database.pool, Some(&web.context),
         &codeyard::backend::notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, repo.actor).await),
         (actor.username, repo.repository.name.clone(), pull.number),
         codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
             state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None,

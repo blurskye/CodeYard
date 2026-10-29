@@ -696,7 +696,7 @@ async fn workflow_tokens(
     )
     .await
     .unwrap();
-    let mut run = db::ci::claim_ci_run(pool, "scanner-worker", "local", &[actor])
+    let mut run = db::ci::claim_ci_run(pool, "scanner-worker", "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .filter(|r| r.id == run.id)

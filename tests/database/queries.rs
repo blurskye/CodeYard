@@ -631,7 +631,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         .await
         .unwrap();
     assert_eq!(run.status, "queued");
-    let claimed = db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[])
+    let claimed = db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -639,7 +639,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     assert_eq!(claimed.status, "running");
     assert_eq!(claimed.worker.as_deref(), Some("node-a/1"));
     assert!(
-        db::ci::claim_ci_run(&pool, "node-b/1", "local", &[])
+        db::ci::claim_ci_run(&pool, "node-b/1", "local", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .is_none(),
@@ -747,7 +747,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     let running = db::ci::enqueue_ci_run(&pool, new_run("ci", None), &[])
         .await
         .unwrap();
-    db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[])
+    db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();

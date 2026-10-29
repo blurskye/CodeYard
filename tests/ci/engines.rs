@@ -184,6 +184,7 @@ async fn contract(pg: bool) {
             "DEPLOY_TOKEN",
             "repository-secret-value",
             Some(actor),
+            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
         )
         .await
         .unwrap();

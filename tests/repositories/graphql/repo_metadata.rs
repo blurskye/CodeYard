@@ -105,6 +105,7 @@ async fn contract(pg: bool) {
     let project = db::projects::create(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Session(&session.session),
         db::projects::Owner::User(alice),
         "Roadmap",
         None,
@@ -112,7 +113,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::projects::link_repository(f.pool(), alice, project.id, repo.id, true)
+    db::projects::link_repository(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), project.id, repo.id, true)
         .await
         .unwrap();
     db::repositories::engagement::star_repo(f.pool(), alice, repo.id)

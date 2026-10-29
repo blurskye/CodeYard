@@ -360,6 +360,7 @@ async fn contract(pg: bool) {
     let project = db::projects::create(
         f.pool(),
         owner,
+        &db::users::accounts::AccountCredential::Session(&browser.session),
         db::projects::Owner::Organization(orgs[0].id),
         "Roadmap",
         None,
@@ -380,11 +381,13 @@ async fn contract(pg: bool) {
     assert!(db::projects::list(
         f.pool(),
         None,
-        db::projects::Owner::Organization(orgs[0].id)
+        &db::projects::ListFilter { owner: Some(db::projects::Owner::Organization(orgs[0].id)), ..Default::default() },
+        0,
+        50,
     )
     .await
     .unwrap()
-    .is_empty());
+    .1.is_empty());
     assert!(db::projects::get(
         f.pool(),
         Some(owner),
@@ -396,6 +399,7 @@ async fn contract(pg: bool) {
     assert!(db::projects::create(
         f.pool(),
         owner,
+        &db::users::accounts::AccountCredential::Session(&browser.session),
         db::projects::Owner::Organization(orgs[0].id),
         "Refused",
         None,

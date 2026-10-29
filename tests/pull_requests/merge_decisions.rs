@@ -429,6 +429,7 @@ async fn contract(pg: bool) {
                     &format!("worker-{}", expected.id),
                     "local",
                     &[owner],
+                    &codeyard::backend::ci::CiConfig::default().platform_labels(),
                 )
                 .await
                 .unwrap()
@@ -483,7 +484,7 @@ async fn contract(pg: bool) {
                 enqueue(f.pool(), repository.id, owner, &head, pipeline_a, path_a).await;
             blocked(&alice, number, "pending").await;
             assert_eq!(
-                db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner])
+                db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
                     .await
                     .unwrap()
                     .unwrap()
@@ -494,7 +495,7 @@ async fn contract(pg: bool) {
             blocked(&alice, number, "pending").await;
             // Another slot takes the retry, since the first one still holds its run.
             assert_eq!(
-                db::ci::claim_ci_run(f.pool(), "worker-2", "local", &[owner])
+                db::ci::claim_ci_run(f.pool(), "worker-2", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
                     .await
                     .unwrap()
                     .unwrap()
@@ -1203,7 +1204,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner])
+    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -1224,7 +1225,7 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner])
+    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
@@ -1294,7 +1295,7 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner])
+    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();

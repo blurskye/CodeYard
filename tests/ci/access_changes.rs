@@ -91,7 +91,7 @@ async fn grant_changes(pool: &db::DbPool) {
         let other = format!("{SECOND_WORKER}-{name}");
         let running = enqueue(pool, repo, writer, &trusted).await.unwrap();
         assert_eq!(
-            db::ci::claim_ci_run(pool, &slot, "podman", &trusted)
+            db::ci::claim_ci_run(pool, &slot, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
                 .await
                 .unwrap()
                 .unwrap()
@@ -123,7 +123,7 @@ async fn grant_changes(pool: &db::DbPool) {
 
         let queued_now = run(pool, queued.run_id).await;
         // Another slot asks, since the first one still holds its running run.
-        let claimed = db::ci::claim_ci_run(pool, &other, "podman", &trusted)
+        let claimed = db::ci::claim_ci_run(pool, &other, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap();
         if reduced {
@@ -179,7 +179,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
         .await
         .unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(&fixture.pool, WORKER, "podman", &trusted)
+        db::ci::claim_ci_run(&fixture.pool, WORKER, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap()
@@ -188,7 +188,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     );
     let admin_run = enqueue(&fixture.pool, repo, admin, &trusted).await.unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(&fixture.pool, SECOND_WORKER, "podman", &trusted)
+        db::ci::claim_ci_run(&fixture.pool, SECOND_WORKER, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap()
@@ -277,7 +277,7 @@ async fn claimed_run_behind_repository_lock(
     let trusted = [owner, writer];
     let run = enqueue(pool, repo, writer, &trusted).await.unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(pool, WORKER, "podman", &trusted)
+        db::ci::claim_ci_run(pool, WORKER, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap()
@@ -531,7 +531,7 @@ async fn cancellation_after_access_loss(pool: &db::DbPool) {
     let (owner, writer, repo) = repository_with_writer(pool, "starter_cancel").await;
     let running = enqueue(pool, repo, writer, &[writer]).await.unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(pool, WORKER, "local", &[writer])
+        db::ci::claim_ci_run(pool, WORKER, "local", &[writer], &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap()
@@ -734,7 +734,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
     wait_until_blocked(raw, holder, 1).await;
     let pool = fixture.pool.clone();
     let claiming =
-        tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted).await });
+        tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels()).await });
     wait_until_blocked(raw, holder, 2).await;
     gate.commit().await.unwrap();
 

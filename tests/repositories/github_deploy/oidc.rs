@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor])
+    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .filter(|r| r.id == run.id)
@@ -541,7 +541,7 @@ async fn organization_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
+    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .filter(|r| r.id == run.id)

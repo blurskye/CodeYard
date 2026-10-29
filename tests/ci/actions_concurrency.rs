@@ -89,18 +89,18 @@ async fn contract(pg: bool) {
             .status,
         "cancelled"
     );
-    let claimed = db::ci::claim_ci_run(f.pool(), "first", "local", &[alice])
+    let claimed = db::ci::claim_ci_run(f.pool(), "first", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .unwrap();
     assert_eq!(claimed.id, first);
-    assert!(db::ci::claim_ci_run(f.pool(), "blocked", "local", &[alice])
+    assert!(db::ci::claim_ci_run(f.pool(), "blocked", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .is_none());
     let independent = dispatch(&api, &writer, "other.yml").await;
     assert_eq!(
-        db::ci::claim_ci_run(f.pool(), "other", "local", &[alice])
+        db::ci::claim_ci_run(f.pool(), "other", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap()
@@ -186,7 +186,7 @@ async fn contract(pg: bool) {
             .status,
         "cancelled"
     );
-    assert!(db::ci::claim_ci_run(f.pool(), "blocked", "local", &[alice])
+    assert!(db::ci::claim_ci_run(f.pool(), "blocked", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
         .await
         .unwrap()
         .is_none());
@@ -195,7 +195,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(f.pool(), "replacement", "local", &[alice])
+        db::ci::claim_ci_run(f.pool(), "replacement", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
             .await
             .unwrap()
             .unwrap()
