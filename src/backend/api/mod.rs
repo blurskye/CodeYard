@@ -35,7 +35,7 @@ use axum::{
 };
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::{
-    compression::CompressionLayer,
+    compression::{CompressionLayer, predicate::{DefaultPredicate, NotForContentType, Predicate}},
     cors::{AllowOrigin, CorsLayer},
 };
 use tracing::info;
@@ -62,6 +62,7 @@ pub fn create_router(state: AppState) -> Router {
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             header::COOKIE,
+            header::IF_NONE_MATCH,
             header::HeaderName::from_static("x-csrf-token"),
             header::HeaderName::from_static("x-github-api-version"),
         ])
@@ -100,6 +101,7 @@ pub fn create_router(state: AppState) -> Router {
         .merge(notifications::router())
         .merge(dashboard::router())
         .merge(attestations::router())
+        .merge(packages::browser_router())
         .layer(axum::middleware::from_fn(middleware::bounded_form_body))
         // Git owns token-only auth, outside browser/session/CSRF and request-body layers.
         .merge(git_http::router())
@@ -120,7 +122,6 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state.clone())
         // Sees every response, including errors. It reads the state, so it sits inside the Extension layer.
         .layer(axum::middleware::from_fn(render::render_page))
-        .layer(axum::middleware::from_fn(http::interaction_proofs::prepare))
         .layer(axum::middleware::from_fn(middleware::no_ai_html))
         .layer(axum::middleware::from_fn(http::traffic::record_views))
         // Outside every handler, so no request keeps a client address that it sent itself.
@@ -130,7 +131,9 @@ pub fn create_router(state: AppState) -> Router {
         .layer(Extension(config))
         .layer(cors)
         // tower-http skips upgrades, encoded responses and HEAD bodies.
-        .layer(CompressionLayer::new())
+        .layer(CompressionLayer::new().compress_when(DefaultPredicate::new()
+            .and(NotForContentType::const_new("application/x-git-upload-pack-result"))
+            .and(NotForContentType::const_new("application/x-git-receive-pack-result"))))
 }
 
 /// Serves until `stop` is set, then waits for in-flight requests and the Git tasks they started.

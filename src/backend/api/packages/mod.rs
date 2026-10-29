@@ -7,6 +7,7 @@ mod oci;
 mod rubygems;
 pub(crate) use maven::route as maven_requests;
 mod pages;
+pub(super) use pages::router as browser_router;
 mod tokens;
 
 use super::github::auth::{self, Authentication};
@@ -343,5 +344,4 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(npm::router())
         .merge(nuget::router())
         .merge(rubygems::router())
-        .merge(pages::router())
 }

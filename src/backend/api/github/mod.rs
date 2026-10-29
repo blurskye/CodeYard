@@ -489,6 +489,7 @@ pub fn router() -> Router<Arc<AppState>> {
             axum::routing::post(code_scanning::databases::upload)
                 .layer(axum::extract::DefaultBodyLimit::disable()),
         )
+        .layer(axum::middleware::from_fn(super::http::interaction_proofs::prepare))
         .layer(axum::middleware::from_fn(auth::authorize_request))
         .layer(axum::middleware::from_fn(rate_limits::enforce))
         .layer(axum::middleware::from_fn(

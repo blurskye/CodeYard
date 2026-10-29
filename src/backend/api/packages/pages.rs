@@ -19,7 +19,7 @@ use axum::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-pub(super) fn router() -> Router<Arc<AppState>> {
+pub(in crate::backend::api) fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/users/:username/packages", get(show))
         .route("/orgs/:org/packages", get(show))

@@ -159,12 +159,18 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
     let permit = if declared.is_some_and(|size| size <= SMALL_BODY) {
         None
     } else {
-        let authenticated = match session::get_optional_user(&state.pool, request.headers()).await {
+        let mut authenticated = match session::get_optional_user(&state.pool, request.headers()).await {
             Ok(user) => user.is_some(),
             // Password-change forms still need to reach their own session check.
             Err((StatusCode::PRECONDITION_REQUIRED, _)) => true,
             Err(error) => return error.into_response(),
         };
+        if !authenticated && (request.uri().path().starts_with("/api/v3/") || request.uri().path() == "/api/graphql") {
+            authenticated = match crate::backend::api::github::auth::authenticate(&state, request.headers(), false).await {
+                Ok(auth) => auth.is_some(),
+                Err(error) => return error.into_response(),
+            };
+        }
         let reads = if authenticated {
             &state.form_reads
         } else {
@@ -400,13 +406,7 @@ pub(crate) async fn no_ai_html(
 }
 
 pub(crate) async fn private_api_response(request: Request, next: Next) -> Response {
-    if session::has_session_cookie(request.headers())
-        || request.headers().contains_key(header::AUTHORIZATION)
-    {
-        private_sensitive_response(request, next).await
-    } else {
-        next.run(request).await
-    }
+    private_sensitive_response(request, next).await
 }
 
 #[cfg(test)]

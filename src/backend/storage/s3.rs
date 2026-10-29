@@ -82,17 +82,7 @@ fn optional_env(name: &str) -> Result<Option<String>> {
 }
 
 fn public_url_host(value: &str) -> Result<ConfiguredHost> {
-    let url = url::Url::parse(value).map_err(|_| anyhow!("Invalid PUBLIC_URL"))?;
-    ensure!(
-        matches!(url.scheme(), "http" | "https")
-            && url.host().is_some()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.path() == "/"
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "Invalid PUBLIC_URL"
-    );
+    let url = crate::backend::api::http::config::parse_public_url(value)?;
     ConfiguredHost::from_url(&url).ok_or_else(|| anyhow!("Invalid PUBLIC_URL"))
 }
 

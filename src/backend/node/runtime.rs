@@ -73,6 +73,7 @@ async fn prepare_application(
     serves_web: bool,
     cluster: Option<crate::backend::cluster::NodeContext>,
 ) -> Result<AppState> {
+    crate::backend::api::http::config::public_url()?;
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
     let sample = if cluster.is_some() {
         crate::backend::db::webhooks::webhook_secret_sample(&pool).await?
