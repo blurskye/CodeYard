@@ -17,7 +17,7 @@ pub(super) async fn milestone(
         "creator":match row.creator_id {Some(id)=>user::actor_by_id(id,request).await?,None=>Value::Null},
         "number":row.number,"title":row.title,"description":row.description,"state":row.state.to_uppercase(),
         "createdAt":row.created_at,"updatedAt":row.updated_at,"closedAt":row.closed_at,"dueOn":row.due_on,
-        "url":url(&format!("/{}/{}/milestone/{}",repository::owner(&repo,request).await?,repo.name,row.number))}),
+        "url":url(&format!("/{}/{}/milestones/{}",repository::owner(&repo,request).await?,repo.name,row.number))}),
     )
 }
 
@@ -164,13 +164,13 @@ pub(super) async fn resolve_comment(
                 } else {
                     db::reactions::Subject::IssueComment
                 },
-                parent["databaseId"].as_i64().ok_or_else(missing)?,
+                parent["_comment"].as_i64().ok_or_else(missing)?,
                 request,
             )
             .await
         }
         "url" => Ok(json!(url(&format!(
-            "/{}/{}/{}/{}#issuecomment-{}",
+            "/{}/{}/{}/{}?comment={}#comment-{}",
             repository::owner(&repo, request).await?,
             repo.name,
             if parent["_pull"] == true {
@@ -179,7 +179,8 @@ pub(super) async fn resolve_comment(
                 "issues"
             },
             parent["_number"],
-            parent["databaseId"]
+            parent["_comment"],
+            parent["_comment"]
         )))),
         _ => Err(async_graphql::Error::new(format!(
             "Codeyard does not support IssueComment.{field} yet"

@@ -333,7 +333,7 @@ abstract_types!(Assignable: Issue, PullRequest);
 abstract_types!(Lockable: Issue, PullRequest);
 abstract_types!(RepositoryOwner: User, Organization);
 abstract_types!(GitObject: Commit,Blob,Tree,Tag);
-abstract_types!(Reactable: Issue,PullRequest,IssueComment,PullRequestReview,PullRequestReviewComment);
+abstract_types!(Reactable: Issue,PullRequest,IssueComment,PullRequestReview,PullRequestReviewComment,Release,CommitComment);
 abstract_types!(RequestedReviewer: User,Bot,Team);
 abstract_types!(StatusCheckRollupContext: StatusContext);
 abstract_types!(Starrable: Repository);
@@ -436,6 +436,7 @@ impl Object {
             return Err(super::token_denied());
         }
         match (ty, field) {
+            ("UpdateProjectV2ItemPositionPayload", "items") => boxed(|| projects::resolve("ProjectV2", field, arguments, request, &self.0)).await,
             (_, "repository")
                 if matches!(
                     ty,

@@ -83,6 +83,8 @@ pub(super) async fn field(
     let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
     request.authorize(repo.id, "contents", false).await?;
     match field {
+        "reactionGroups" => super::collaboration::reactions(db::reactions::Subject::Release,
+            parent["databaseId"].as_i64().ok_or_else(missing)?, request).await,
         "releaseAssets" => {
             connection::validate(args)?;
             let mut rows = db::releases::list_release_assets(

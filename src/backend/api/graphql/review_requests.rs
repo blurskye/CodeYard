@@ -69,14 +69,14 @@ pub(super) async fn nodes(id: i64, request: &RequestContext) -> Result<Vec<Value
         {
             nodes.push(json!({"__typename":"ReviewRequest","id":node_id::review_request(id,false,reviewer.id),
                 "databaseId":null,"asCodeOwner":origin.as_code_owner,"pullRequest":issue::pull_object(&pull),
-                "requestedReviewer":user::by_id(reviewer.id,request).await?}));
+                "requestedReviewer":if reviewer.is_banned { Value::Null } else { user::actor_object(&reviewer,request.auth.user.id) }}));
         }
     }
     for row in db::pull_requests::team_reviewers::list(
         pool,
         pull.repo_id,
         Some(id),
-        Some(request.auth.user.id),
+        request.private_viewer(pull.repo_id, "pull-requests").await?,
     )
     .await
     .map_err(unavailable)?
@@ -125,9 +125,9 @@ pub(super) async fn mutation(
         .require_write()
         .map_err(|_| Error::new("Resource not accessible by token"))?;
     let input: Value = ctx.args.try_get("input")?.deserialize()?;
-    if input["botIds"]
+    if !input["botIds"].is_null() && input["botIds"]
         .as_array()
-        .is_some_and(|bots| !bots.is_empty())
+        .is_none_or(|bots| !bots.is_empty())
     {
         return Err(Error::new("Bot review requests are not supported"));
     }

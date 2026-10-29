@@ -24,6 +24,13 @@ fn operation(error: anyhow::Error) -> Error {
         None => unavailable(error),
     }
 }
+fn date(value: &Value) -> Result<chrono::NaiveDate> {
+    let raw = value.as_str().ok_or_else(missing)?;
+    chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(raw).map(|date| date.date_naive()))
+        .map_err(|_| Error::new("Invalid date"))
+}
+
 fn id(value: &Value, kinds: &[&str]) -> Result<i64> {
     let (kind, id) = value
         .as_str()
@@ -94,36 +101,52 @@ fn field_object(f: &store::Field) -> Result<Value> {
 /// GitHub's built-in fields whose values come from an item's issue or pull request: the
 /// name, the data type and the content field that holds the value. They follow the stored
 /// fields and cannot be edited or deleted.
-const BUILT_IN_FIELDS: [(&str, &str, &str); 6] = [
-    ("Assignees", "ASSIGNEES", "assignees"),
-    ("Labels", "LABELS", "labels"),
+const BUILT_IN_FIELDS: [(store::BuiltInField, &str, &str); 6] = [
+    (store::BuiltInField::Assignees, "ASSIGNEES", "assignees"),
+    (store::BuiltInField::Labels, "LABELS", "labels"),
     (
-        "Linked pull requests",
+        store::BuiltInField::LinkedPullRequests,
         "LINKED_PULL_REQUESTS",
         "closedByPullRequestsReferences",
     ),
-    ("Milestone", "MILESTONE", "milestone"),
-    ("Repository", "REPOSITORY", "repository"),
-    ("Reviewers", "REVIEWERS", "reviewRequests"),
+    (store::BuiltInField::Milestone, "MILESTONE", "milestone"),
+    (store::BuiltInField::Repository, "REPOSITORY", "repository"),
+    (store::BuiltInField::Reviewers, "REVIEWERS", "reviewRequests"),
 ];
 fn built_in_field(project: &Value, name: &str, data_type: &str) -> Value {
     let id = project["_project"].as_i64().unwrap_or_default();
     json!({"__typename":"ProjectV2Field","id":node_id::git("PVTBF",&format!("{id}/{data_type}")),"databaseId":null,"name":name,"dataType":data_type,"isIssueField":false,
         "createdAt":project["createdAt"],"updatedAt":project["updatedAt"],"_project":id})
 }
+fn order_fields(ctx: &Arguments, values: &mut [Value]) -> Result<()> {
+    if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
+        let order = order.object()?;
+        let field = order.try_get("field")?.enum_name()?;
+        if field != "POSITION" {
+            let key = if field == "NAME" { "name" } else { "createdAt" };
+            values.sort_by(|a, b| a[key].as_str().cmp(&b[key].as_str()).then(a["id"].as_str().cmp(&b["id"].as_str())));
+        }
+        if order.try_get("direction")?.enum_name()? == "DESC" { values.reverse(); }
+    }
+    Ok(())
+}
+
 /// A project's stored fields followed by the built-in ones.
 fn project_fields(project: &Value, fields: &[store::Field]) -> Result<Vec<Value>> {
     let mut values: Vec<_> = fields.iter().map(field_object).collect::<Result<_>>()?;
     values.extend(
         BUILT_IN_FIELDS
             .iter()
-            .map(|(name, data_type, _)| built_in_field(project, name, data_type)),
+            .map(|(field, data_type, _)| built_in_field(project, field.name(), data_type)),
     );
     Ok(values)
 }
 /// The built-in field values of an issue or pull request item. Empty values are left out,
 /// as GitHub leaves them out.
-async fn built_in_values(item: &store::Item, request: &RequestContext) -> Result<Vec<Value>> {
+async fn built_in_values(item: &store::Item, request: &RequestContext, selected: Option<&str>) -> Result<Vec<Value>> {
+    if selected.is_some_and(|name| !BUILT_IN_FIELDS.iter().any(|(field, _, _)| field.name() == name)) {
+        return Ok(Vec::new());
+    }
     let ty = item.content_type();
     if ty == "DraftIssue" {
         return Ok(Vec::new());
@@ -152,7 +175,9 @@ async fn built_in_values(item: &store::Item, request: &RequestContext) -> Result
         ("orderByState".to_owned(), async_graphql::Value::from(false)),
     ]);
     let mut values = Vec::new();
-    for (name, data_type, source) in BUILT_IN_FIELDS {
+    for (field, data_type, source) in BUILT_IN_FIELDS {
+        let name = field.name();
+        if selected.is_some_and(|selected| selected != name) { continue; }
         let applies = match data_type {
             "REVIEWERS" => ty == "PullRequest",
             "LINKED_PULL_REQUESTS" => ty == "Issue",
@@ -161,7 +186,11 @@ async fn built_in_values(item: &store::Item, request: &RequestContext) -> Result
         if !applies {
             continue;
         }
-        let resolved = boxed(|| issue::resolve(ty, source, &all, request, &content)).await?;
+        let resolved = if data_type == "REVIEWERS" {
+            json!({"nodes":super::review_requests::nodes(content["databaseId"].as_i64().ok_or_else(missing)?, request).await?})
+        } else {
+            boxed(|| issue::resolve(ty, source, &all, request, &content)).await?
+        };
         let (suffix, mut entry) = match data_type {
             "MILESTONE" if resolved.is_null() => continue,
             "MILESTONE" => ("Milestone", json!({ "milestone": resolved })),
@@ -406,7 +435,7 @@ pub(super) async fn resolve(
     parent: &Value,
 ) -> Result<Value> {
     authorize_account(request)?;
-    if let Some(id) = parent["_project"].as_i64() {
+    if let Some(id) = parent["_project"].as_i64().filter(|_| parent.get("_deletedFields").is_none()) {
         let project = store::by_id(&request.state.pool, Some(request.auth.user.id), id)
             .await.map_err(operation)?;
         if project.owner_kind == "org" {
@@ -552,13 +581,13 @@ pub(super) async fn resolve(
             .map_err(operation)?))
         }
         ("ProjectV2", "fields" | "field") if parent.get("_deletedFields").is_some() => {
-            connection::slice(
-                ctx,
-                parent["_deletedFields"]
-                    .as_array()
-                    .cloned()
-                    .unwrap_or_default(),
-            )
+            let mut values = parent["_deletedFields"].as_array().cloned().unwrap_or_default();
+            if field == "field" {
+                let name = arg(ctx, "name")?;
+                return Ok(values.into_iter().find(|value| value["name"] == name).unwrap_or(Value::Null));
+            }
+            order_fields(ctx, &mut values)?;
+            connection::slice(ctx, values)
         }
         ("ProjectV2", "items") if parent.get("_deletedItems").is_some() => connection::slice(
             ctx,
@@ -575,7 +604,7 @@ pub(super) async fn resolve(
             )
             .await
             .map_err(operation)?;
-            let values = project_fields(parent, &fields)?;
+            let mut values = project_fields(parent, &fields)?;
             if field == "field" {
                 let name = arg(ctx, "name")?;
                 return Ok(values
@@ -583,6 +612,7 @@ pub(super) async fn resolve(
                     .find(|f| f["name"] == name)
                     .unwrap_or(Value::Null));
             }
+            order_fields(ctx, &mut values)?;
             connection::slice(ctx, values)
         }
         ("ProjectV2", "items") => {
@@ -647,8 +677,10 @@ pub(super) async fn resolve(
             let fields = store::fields(pool, viewer, item.project_id)
                 .await
                 .map_err(operation)?;
+            let selected = if field == "fieldValueByName" { Some(arg(ctx, "name")?) } else { None };
             let mut values = Vec::new();
             for f in fields {
+                if selected.as_ref().is_some_and(|name| name != &f.name) { continue; }
                 let value = item.value(&f).map_err(operation)?;
                 if value.is_null() {
                     continue;
@@ -690,13 +722,13 @@ pub(super) async fn resolve(
                 entry["__typename"] = json!(format!("ProjectV2ItemField{suffix}Value"));
                 values.push(entry);
             }
-            values.extend(built_in_values(&item, request).await?);
-            if field == "fieldValueByName" {
-                let name = arg(ctx, "name")?;
-                return Ok(values
-                    .into_iter()
-                    .find(|v| v["field"]["name"] == name)
-                    .unwrap_or(Value::Null));
+            if selected.is_some() && !values.is_empty() { return Ok(values.remove(0)); }
+            values.extend(built_in_values(&item, request, selected.as_deref()).await?);
+            if let Some(name) = selected {
+                return Ok(values.into_iter().find(|value| value["field"]["name"] == name).unwrap_or(Value::Null));
+            }
+            if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
+                if order.object()?.try_get("direction")?.enum_name()? == "DESC" { values.reverse(); }
             }
             connection::slice(ctx, values)
         }
@@ -806,8 +838,8 @@ pub(super) async fn mutation(
         .map_err(operation)?;
     match field {
         "updateProjectV2" => {
-            if input["readme"].as_str().is_some_and(|s| s.len() > 65536) {
-                return Err(Error::new("Readme is too long"));
+            if let Some(readme) = input["readme"].as_str() {
+                crate::backend::issues::validate_body(readme, false).map_err(Error::new)?;
             }
             let settings = store::Settings {
                 title: input["title"].as_str().map(str::to_owned),
@@ -873,8 +905,8 @@ pub(super) async fn mutation(
             );
         }
         "createProjectV2Field" => {
-            let options = input["singleSelectOptions"].as_array().map(|xs| {
-                xs.iter()
+            let options = input.get("singleSelectOptions").filter(|value| !value.is_null()).map(|value| {
+                super::metadata_mutations::list(value).iter()
                     .map(|o| store::SelectOption {
                         name: o["name"].as_str().unwrap_or("").into(),
                         color: o["color"].as_str().map(str::to_owned),
@@ -887,22 +919,18 @@ pub(super) async fn mutation(
                 None
             } else {
                 Some(store::IterationConfiguration {
-                    start_date: serde_json::from_value(config["startDate"].clone())
-                        .map_err(|_| Error::new("Invalid iteration start date"))?,
+                    start_date: date(&config["startDate"])?,
                     duration: config["duration"]
                         .as_i64()
                         .ok_or_else(missing)?
                         .try_into()
                         .map_err(unavailable)?,
-                    iterations: config["iterations"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
+                    iterations: super::metadata_mutations::list(&config["iterations"])
+                        .iter()
                         .map(|item| {
                             Ok(store::Iteration {
                                 title: item["title"].as_str().ok_or_else(missing)?.to_owned(),
-                                start_date: serde_json::from_value(item["startDate"].clone())
-                                    .map_err(|_| Error::new("Invalid iteration start date"))?,
+                                start_date: date(&item["startDate"])?,
                                 duration: item["duration"]
                                     .as_i64()
                                     .ok_or_else(missing)?
@@ -973,13 +1001,7 @@ pub(super) async fn mutation(
                     return Err(Error::new("Exactly one field value must be supplied"));
                 }
                 if values[0].0 == "date" {
-                    let raw = values[0].1.as_str().ok_or_else(missing)?;
-                    let date = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d")
-                        .or_else(|_| {
-                            chrono::DateTime::parse_from_rfc3339(raw).map(|date| date.date_naive())
-                        })
-                        .map_err(|_| Error::new("Invalid date"))?;
-                    json!(date)
+                    json!(date(values[0].1)?)
                 } else {
                     values[0].1.clone()
                 }
@@ -1022,7 +1044,7 @@ pub(super) async fn mutation(
             } else {
                 Some(id(&input["afterId"], &["PVTI"])?)
             };
-            let item = store::reorder_item(
+            store::reorder_item(
                 pool,
                 actor,
                 project.id,
@@ -1031,7 +1053,7 @@ pub(super) async fn mutation(
             )
             .await
             .map_err(operation)?;
-            payload["items"] = json!({"nodes":[item_object(&item,request).await?],"edges":[],"totalCount":1,"pageInfo":{"hasNextPage":false,"hasPreviousPage":false,"startCursor":null,"endCursor":null}});
+            payload["_project"] = json!(project.id);
         }
         "linkProjectV2ToTeam" | "unlinkProjectV2FromTeam" => {
             store::link_team(

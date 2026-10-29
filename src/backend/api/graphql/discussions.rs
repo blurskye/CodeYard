@@ -195,9 +195,9 @@ pub(super) async fn resolve(
     let pool = &request.state.pool;
     match field {
         "repository" => Ok(repository::object(&repo)),
-        "author" => user::by_id(parent["_author"].as_i64().ok_or_else(missing)?, request).await,
+        "author" => user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await,
         "answerChosenBy" => match parent["_answerBy"].as_i64() {
-            Some(id) => user::by_id(id, request).await,
+            Some(id) => user::retained_author(id, request).await,
             None => Ok(Value::Null),
         },
         "answer" => match parent["_answer"].as_i64() {
@@ -222,15 +222,9 @@ pub(super) async fn resolve(
         "discussion" => Ok(object(
             &load(parent["_discussion"].as_i64().ok_or_else(missing)?, request).await?,
         )),
-        "labels" => connection::slice(
-            ctx,
+        "labels" => repository::label_connection(ctx,
             store::labels(pool, parent["databaseId"].as_i64().ok_or_else(missing)?)
-                .await
-                .map_err(unavailable)?
-                .iter()
-                .map(repository::label)
-                .collect(),
-        ),
+                .await.map_err(unavailable)?, "discussions"),
         "comments" | "replies" => {
             connection::validate(ctx)?;
             let (discussion, reply) = if ty == "Discussion" {
@@ -367,12 +361,7 @@ pub(super) async fn mutation(
     let d = load(discussion, request).await?;
     request.authorize(d.repo_id, "discussions", true).await?;
     let comment_id = old["databaseId"].as_i64().ok_or_else(missing)?;
-    let labels: Vec<i64> = input["labelIds"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|v| id(v.as_str().ok_or_else(missing)?, "L"))
-        .collect::<Result<_>>()?;
+    let labels = super::metadata_mutations::ids(&input["labelIds"], "L")?;
     let category = input["categoryId"]
         .as_str()
         .map(|v| id(v, "DIC"))

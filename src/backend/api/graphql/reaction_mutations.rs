@@ -15,6 +15,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     let (subject_kind, subject_id, item) = match kind {
         "I" => (Subject::Issue, id, id),
         "PR" => (Subject::PullRequest, id, id),
+        "RE" => (Subject::Release, id, id),
+        "CC" => (Subject::CommitComment, id, id),
         "IC" if id % 2 == 0 => {
             let id = id / 2;
             let row = db::issues::get_issue_comment(pool, id)
@@ -43,10 +45,10 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     request
         .authorize(
             repo.id,
-            if matches!(subject_kind, Subject::Issue | Subject::IssueComment) {
-                "issues"
-            } else {
-                "pull-requests"
+            match subject_kind {
+                Subject::Issue | Subject::IssueComment => "issues",
+                Subject::Release | Subject::CommitComment => "contents",
+                _ => "pull-requests",
             },
             true,
         )

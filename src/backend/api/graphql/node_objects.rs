@@ -29,7 +29,7 @@ pub(super) async fn review(
         "createdAt":row.created_at,"submittedAt":if row.state=="pending" {None} else {Some(row.created_at)},
         "author":user::retained_author(row.author_id,request).await?,"authorAssociation":access::author_association(&request.state.pool,&repo,row.author_id).await.map_err(unavailable)?,
         "commit":row.commit_sha.as_ref().map(|oid|json!({"__typename":"Commit","oid":oid,"_repo":repo.id,"_scope":"pull-requests"})),
-        "pullRequest":issue::pull_object(&pull),"url":url(&format!("/{}/{}/pull/{}#pullrequestreview-{}",repository::owner(&repo,request).await?,repo.name,pull.number,row.id))}),
+        "pullRequest":issue::pull_object(&pull),"url":url(&format!("/{}/{}/pulls/{}?review={}#review-{}",repository::owner(&repo,request).await?,repo.name,pull.number,row.id,row.id))}),
     )
 }
 
@@ -63,7 +63,7 @@ pub(super) async fn review_comment(
         "createdAt":row.created_at,"updatedAt":row.updated_at,"author":user::retained_author(row.author_id,request).await?,
         "pullRequest":issue::pull_object(&pull),"outdated":row.commit_sha.as_ref().is_some_and(|s|s!=&pull.head_sha),
         "isMinimized":false,"minimizedReason":null,"viewerDidAuthor":row.author_id==request.auth.user.id,
-        "url":url(&format!("/{}/{}/pull/{}#discussion_r{}",repository::owner(&repo,request).await?,repo.name,pull.number,row.id))}),
+        "url":url(&crate::backend::repositories::pull_requests::comments::pull_request_comment_link(&repository::owner(&repo,request).await?,&repo.name,&pull,row))}),
     )
 }
 
@@ -237,12 +237,14 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
                     }
                 }
                 "pr_review" => ("PRR", row.subject_id),
+                "release" => ("RE", row.subject_id),
+                "commit_comment" => ("CC", row.subject_id),
                 _ => return Err(missing()),
             };
             let subject =
                 Box::pin(super::node(&node_id::encode(kind, subject_id), request)).await?;
             Ok(
-                json!({"__typename":"Reaction","_repo":repo.id,"_scope":if matches!(kind,"PR"|"PRR"|"PRRC") || subject["_pull"] == true {"pull-requests"} else {"issues"},"id":node_id::encode("REA",row.id),"databaseId":row.id,
+                json!({"__typename":"Reaction","_repo":repo.id,"_scope":if matches!(kind,"PR"|"PRR"|"PRRC") || subject["_pull"] == true {"pull-requests"} else if matches!(kind,"RE"|"CC") {"contents"} else {"issues"},"id":node_id::encode("REA",row.id),"databaseId":row.id,
                 "content":match row.content.as_str(){"+1"=>"THUMBS_UP","-1"=>"THUMBS_DOWN","laugh"=>"LAUGH","hooray"=>"HOORAY","confused"=>"CONFUSED","heart"=>"HEART","rocket"=>"ROCKET","eyes"=>"EYES",_=>return Err(unavailable(()))},"createdAt":row.created_at,"user":user::by_id(row.user_id,request).await?,"reactable":subject}),
             )
         }

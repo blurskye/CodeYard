@@ -81,7 +81,7 @@ pub(super) async fn resolve(
             boxed(|| metadata::resolve(ty, field, ctx, request, parent, &repo, id)).await
         }
         "author" => {
-            user::actor_by_id(parent["_author"].as_i64().ok_or_else(missing)?, request).await
+            user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await
         }
         "url" => Ok(json!(url(&format!(
             "/{}/{}/{}/{}",
@@ -101,21 +101,7 @@ pub(super) async fn resolve(
                 db::labels::get_pull_request_labels(pool, id).await
             }
             .map_err(unavailable)?;
-            connection::slice(
-                ctx,
-                labels
-                    .iter()
-                    .map(|row| {
-                        let mut value = repository::label(row);
-                        value["_scope"] = json!(if ty == "PullRequest" {
-                            "pull-requests"
-                        } else {
-                            "issues"
-                        });
-                        value
-                    })
-                    .collect(),
-            )
+            repository::label_connection(ctx, labels, if ty == "PullRequest" { "pull-requests" } else { "issues" })
         }
         "comments" => {
             connection::validate(ctx)?;
@@ -173,10 +159,10 @@ pub(super) async fn comment(
     repository::by_id(issue.repo_id, request).await?;
     request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false)),"databaseId":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false)),"databaseId":crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false),"_comment":comment.id,
         "_repo":issue.repo_id,"_number":issue.number,"_pull":false,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
-        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::actor_by_id(comment.author_id,request).await?}),
+        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
     )
 }
 
@@ -194,10 +180,10 @@ pub(super) async fn pull_comment(
     repository::by_id(pull.repo_id, request).await?;
     request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true)),"databaseId":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true)),"databaseId":crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true),"_comment":comment.id,
         "_repo":pull.repo_id,"_number":pull.number,"_pull":true,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
-        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::actor_by_id(comment.author_id,request).await?}),
+        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
     )
 }
 

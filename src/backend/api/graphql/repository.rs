@@ -78,6 +78,23 @@ pub(super) fn label(label: &db::models::Label) -> Value {
     json!({"__typename":"Label","_repo":label.repo_id,"id":node_id::encode("L",label.id),"name":label.name,"color":label.color.trim_start_matches('#'),"description":label.description,"createdAt":label.created_at,"updatedAt":label.updated_at.unwrap_or(label.created_at),"isDefault":false})
 }
 
+pub(super) fn label_connection(ctx: &Arguments, mut labels: Vec<db::models::Label>, scope: &str) -> Result<Value> {
+    let order = ctx.args.get("orderBy").filter(|value| !value.is_null()).map(|value| value.object()).transpose()?;
+    let name = order.as_ref().map(|order| order.try_get("field")?.enum_name()).transpose()? == Some("NAME");
+    labels.sort_by(|a, b| {
+        if name { a.name.cmp(&b.name).then(a.id.cmp(&b.id)) }
+        else { a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)) }
+    });
+    if order.as_ref().map(|order| order.try_get("direction")?.enum_name()).transpose()? == Some("DESC") {
+        labels.reverse();
+    }
+    connection::slice(ctx, labels.iter().map(|row| {
+        let mut value = label(row);
+        value["_scope"] = json!(scope);
+        value
+    }).collect())
+}
+
 pub(super) async fn label_url(parent: &Value, request: &RequestContext) -> Result<Value> {
     let repo = by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
     let name = parent["name"].as_str().ok_or_else(missing)?;
