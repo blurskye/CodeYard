@@ -343,6 +343,9 @@ pub struct PreparedFile {
     /// Trusted server-side origin, not a field accepted by either file API.
     #[serde(default)]
     pub web_commit: bool,
+    /// Original API credential, revalidated by the storage owner under publication admission.
+    #[serde(default)]
+    pub token_id: Option<i64>,
     /// Publish this commit on an unborn destination, retaining its prepared source parent.
     #[serde(default)]
     pub new_branch: bool,
@@ -440,6 +443,7 @@ async fn prepare_commit(
         expected,
         commit: metadata,
         web_commit: false,
+        token_id: None,
         new_branch: false,
     })
 }

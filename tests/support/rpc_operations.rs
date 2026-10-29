@@ -15,6 +15,7 @@ fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
         reference: "refs/heads/main".into(),
         expected: Some(sha.into()),
         web_commit: false,
+        token_id: None,
         new_branch: false,
         commit: CommitInfo {
             sha: sha.into(),
@@ -406,6 +407,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     reference: "refs/heads/main".into(),
                     expected: Some(sha.into()),
                     web_commit: false,
+                    token_id: None,
                     new_branch: false,
                     commit: codeyard::backend::repositories::store::CommitInfo {
                         sha: sha.into(),

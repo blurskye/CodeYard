@@ -1885,6 +1885,15 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
+        self.check_workflow_grant(pool, prepared.token_id, vec![(prepared.expected.clone().unwrap_or_else(|| editor::ZERO.to_owned()), prepared.commit.sha.clone())], None).await?;
+        if let Some(token) = prepared.token_id {
+            if !db::users::tokens::can_write_repository(pool, actor, token, repo_id, "contents")
+                .await
+                .map_err(|_| RepoError::authority_unavailable())?
+            {
+                return Err(RepoError::write_denied());
+            }
+        }
         let commit = publication
             .scope(editor::publish(self.path(), prepared))
             .await?;

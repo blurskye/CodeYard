@@ -303,7 +303,7 @@ pub async fn write_file_bytes(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::tokens::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -335,7 +335,7 @@ pub async fn delete_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::tokens::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -471,7 +471,7 @@ async fn save_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: i64,
+    actor_id: impl Into<db::users::tokens::Actor>,
     owner: &str,
     repository_id: i64,
     mut input: FileWrite,
@@ -479,6 +479,8 @@ async fn save_file(
     new_branch: Option<&str>,
     origin: CommitOrigin,
 ) -> Result<FileSave, WriteError> {
+    let actor = actor_id.into();
+    let actor_id = actor.user_id;
     if input.message.trim().is_empty() {
         input.message = default_commit_message(&input);
     }
@@ -563,6 +565,7 @@ async fn save_file(
             }
         })?;
     prepared.web_commit = matches!(origin, CommitOrigin::Web);
+    prepared.token_id = actor.token_id;
     publish_commit(
         pool,
         &store,
