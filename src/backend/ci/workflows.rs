@@ -268,7 +268,7 @@ pub fn should_skip_run_from_message(message: &str) -> bool {
 /// quoted `skip-checks: true` in prose does not count.
 fn has_skip_checks_trailer(message: &str) -> bool {
     let message = message.trim_end().replace("\r\n", "\n");
-    let Some((_, trailers)) = message.rsplit_once("\n\n") else {
+    let Some((_, trailers)) = message.rsplit_once("\n\n\n") else {
         return false;
     };
     let mut skip = false;
@@ -280,18 +280,13 @@ fn has_skip_checks_trailer(message: &str) -> bool {
         if key.is_empty() || key.contains(char::is_whitespace) {
             return false;
         }
-        skip |=
-            key.eq_ignore_ascii_case("skip-checks") && value.trim().eq_ignore_ascii_case("true");
+        skip = key.eq_ignore_ascii_case("skip-checks") && value.trim().eq_ignore_ascii_case("true");
     }
     skip
 }
 
-pub async fn commit_message_for_ref(store: &RepoStore, commitish: &str) -> Option<String> {
-    store
-        .commit(commitish)
-        .await
-        .ok()
-        .map(|commit| commit.message)
+pub async fn commit_message_for_ref(store: &RepoStore, commitish: &str) -> Result<String> {
+    Ok(store.commit(commitish).await?.message)
 }
 
 /// Reads the kind from whole words in the file name: `deploy-image.yml` is a deploy
@@ -1323,14 +1318,14 @@ on: [push, pull_request]
             "pull_request",
             "main",
             &["src/lib.rs".to_string()],
-            Some("feat: add endpoint\n\nskip-checks: true")
+            Some("feat: add endpoint\n\n\nskip-checks: true")
         ));
     }
 
     #[test]
     fn skip_checks_must_be_in_the_final_trailer_block() {
         assert!(should_skip_run_from_message(
-            "feat: add\n\nBody.\n\nskip-checks: true"
+            "feat: add\n\nBody.\n\n\nskip-checks: true"
         ));
         assert!(!should_skip_run_from_message(
             "feat: add\n\nskip-checks: true\n\nThis prose follows the quote."

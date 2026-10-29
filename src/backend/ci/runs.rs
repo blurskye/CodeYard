@@ -377,6 +377,7 @@ impl CiRuns {
         repo_id: i64,
         actor_id: i64,
     ) -> Result<bool> {
+        if !db::action_settings::actions_enabled(&self.pool, repo_id).await? { return Ok(false); }
         let Some(actor) = db::users::accounts::get_user_by_id(&self.pool, actor_id).await? else {
             return Ok(false);
         };

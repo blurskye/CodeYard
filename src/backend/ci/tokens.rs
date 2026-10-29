@@ -175,19 +175,12 @@ pub(crate) async fn issue_selected(
         let mut jobs = Permissions::jobs_from_yaml(yaml, permissive, fork)?;
         if let Some(ceiling) = ceiling {
             let default = Permissions::parse(yaml.get("permissions"), ceiling, fork)?;
+            ensure!(default.0.iter().all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)), "Called workflow permissions exceed caller permissions");
             for (id, permissions) in &mut jobs {
                 let job = yaml.get("jobs").and_then(|jobs| jobs.get(id));
-                *permissions = Permissions::intersection(
-                    [
-                        Permissions::parse(
-                            job.and_then(|job| job.get("permissions")),
-                            &default,
-                            fork,
-                        )?,
-                        ceiling.clone(),
-                    ]
-                    .into_iter(),
-                );
+                let requested = Permissions::parse(job.and_then(|job| job.get("permissions")), &default, fork)?;
+                ensure!(requested.0.iter().all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)), "Called job permissions exceed caller permissions");
+                *permissions = requested;
             }
         }
         for (id, permissions) in jobs {

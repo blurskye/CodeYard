@@ -667,22 +667,21 @@ impl Gateway {
                     continue;
                 }
             };
-            let message = ci::commit_message_for_ref(
-                &repo_store(&repo, self.ci.cluster.as_ref()),
-                &commit_sha,
-            )
-            .await;
+            let message = match ci::commit_message_for_ref(&repo_store(&repo, self.ci.cluster.as_ref()), &commit_sha).await {
+                Ok(message) => message,
+                Err(_) => { failed = true; continue; }
+            };
             let ref_update = ci::RefUpdate {
                 reference: update.reference.clone(),
                 old: (update.old != ZERO_SHA).then(|| update.old.clone()),
-                new: commit_sha.clone(),
+                new: update.new.clone(),
                 changed_paths: None,
             };
             let matched = ci::push::matching_push_workflows(
                 &repo_store(&repo, self.ci.cluster.as_ref()),
                 &ref_update,
                 workflows,
-                message.as_deref(),
+                Some(&message),
                 &mut match_budget,
             )
             .await;
