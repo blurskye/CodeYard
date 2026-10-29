@@ -143,7 +143,7 @@ fn project_fields(project: &Value, fields: &[store::Field]) -> Result<Vec<Value>
 }
 /// The built-in field values of an issue or pull request item. Empty values are left out,
 /// as GitHub leaves them out.
-async fn built_in_values(item: &store::Item, request: &RequestContext, selected: Option<&str>) -> Result<Vec<Value>> {
+async fn built_in_values(item: &store::Item, request: &RequestContext, selected: Option<&str>, include_deleted: bool) -> Result<Vec<Value>> {
     if selected.is_some_and(|name| !BUILT_IN_FIELDS.iter().any(|(field, _, _)| field.name() == name)) {
         return Ok(Vec::new());
     }
@@ -152,10 +152,11 @@ async fn built_in_values(item: &store::Item, request: &RequestContext, selected:
         return Ok(Vec::new());
     }
     let project = project_object(
-        &store::by_id(
+        &store::by_id_at(
             &request.state.pool,
             Some(request.auth.user.id),
             item.project_id,
+            include_deleted,
         )
         .await
         .map_err(operation)?,
@@ -223,13 +224,23 @@ async fn built_in_values(item: &store::Item, request: &RequestContext, selected:
 fn draft_object(item: &store::Item) -> Value {
     json!({"__typename":"DraftIssue","id":node_id::encode("DI",item.id),"title":item.draft_title,"body":item.draft_body.as_deref().unwrap_or(""),"createdAt":item.created_at,"updatedAt":item.updated_at,"_creator":item.creator_id,"_project":item.project_id})
 }
+fn charge_item(item: &store::Item, request: &RequestContext) -> Result<()> {
+    request.charge(item.field_values.len() + item.title.len() + item.draft_title.as_ref().map_or(0, |s| s.len()) + item.draft_body.as_ref().map_or(0, |s| s.len()) + 256)
+}
+fn charge_fields(fields: &[store::Field], request: &RequestContext) -> Result<()> {
+    request.charge(fields.iter().map(|field| field.configuration.len() + field.name.len() + 128).sum())
+}
+
 async fn item_object(item: &store::Item, request: &RequestContext) -> Result<Value> {
+    charge_item(item, request)?;
     let content = if let Some(id) = item.issue_id {
         let issue = db::issues::get_issue_by_id(&request.state.pool, id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;
         repository::by_id(issue.repo_id, request).await?;
+        request.authorize(issue.repo_id, "issues", false).await?;
+        request.charge(issue.body.len() + issue.title.len())?;
         issue::object(&issue)
     } else if let Some(id) = item.pull_request_id {
         let pull = db::pull_requests::records::get_pull_request_by_id(&request.state.pool, id)
@@ -237,6 +248,8 @@ async fn item_object(item: &store::Item, request: &RequestContext) -> Result<Val
             .map_err(unavailable)?
             .ok_or_else(missing)?;
         repository::by_id(pull.repo_id, request).await?;
+        request.authorize(pull.repo_id, "pull-requests", false).await?;
+        request.charge(pull.body.len() + pull.title.len())?;
         issue::pull_object(&pull)
     } else {
         draft_object(item)
@@ -311,27 +324,55 @@ pub(super) async fn content_items(
         .map(|v| v.deserialize::<bool>())
         .transpose()?
         .unwrap_or(true);
+    connection::validate(ctx)?;
+    let total = store::content_items_page(pool, viewer, &content, include_archived, 0, 0, true).await.map_err(operation)?.0;
+    let page = connection::Page::new(ctx, total)?;
+    let rows = if page.limit == 0 { Vec::new() } else {
+        store::content_items_page(pool, viewer, &content, include_archived, page.offset, page.limit, false).await.map_err(operation)?.1
+    };
     let mut nodes = Vec::new();
-    for project in store::item_projects(pool, viewer, &content)
-        .await
-        .map_err(operation)?
-    {
-        for item in store::items(pool, viewer, project.id)
-            .await
-            .map_err(operation)?
-        {
-            if (if ty == "Issue" {
-                item.issue_id == Some(id)
-            } else {
-                item.pull_request_id == Some(id)
-            }) && (include_archived || !item.archived)
-            {
-                nodes.push(item_object(&item, request).await?);
-            }
-        }
-    }
-    nodes.sort_by_key(|item| item["_item"].as_i64());
-    connection::slice(ctx, nodes)
+    for item in rows { nodes.push(item_object(&item, request).await?); }
+    Ok(page.finish(nodes))
+}
+
+async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value) -> Result<Value> {
+    connection::validate(ctx)?;
+    let pool = &request.state.pool;
+    let viewer = Some(request.auth.user.id);
+    let project = parent["_project"].as_i64().ok_or_else(missing)?;
+    let include_deleted = parent["_deleted"] == true;
+    let states: Option<Vec<String>> = ctx.args.get("archivedStates").filter(|value| !value.is_null()).map(|value| value.deserialize()).transpose()?;
+    let archived = match states {
+        None => Some(false),
+        Some(states) => match (states.iter().any(|value| value == "ARCHIVED"), states.iter().any(|value| value == "NOT_ARCHIVED")) {
+            (true, true) => None, (true, false) => Some(true), (false, true) => Some(false),
+            (false, false) => return Ok(connection::Page::new(ctx, 0)?.finish(Vec::new())),
+        },
+    };
+    let query = ctx.args.get("query").filter(|value| !value.is_null()).map(|value| value.string()).transpose()?.unwrap_or("");
+    let descending = if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) { order.object()?.try_get("direction")?.enum_name()? == "DESC" } else { false };
+    let (page, rows) = if query.trim().is_empty() {
+        let mut window = store::ItemWindow { project, include_deleted, archived, descending, offset: 0, limit: 0, count: true };
+        let total = store::items_window(pool, viewer, &window).await.map_err(operation)?.0;
+        let page = connection::Page::new(ctx, total)?;
+        window.offset = page.offset; window.limit = page.limit; window.count = false;
+        let rows = if page.limit == 0 { Vec::new() } else { store::items_window(pool, viewer, &window).await.map_err(operation)?.1 };
+        (page, rows)
+    } else {
+        let fields = store::fields_at(pool, viewer, project, include_deleted).await.map_err(operation)?;
+        charge_fields(&fields, request)?;
+        let rows = store::items_at(pool, viewer, project, include_deleted).await.map_err(operation)?;
+        for item in &rows { charge_item(item, request)?; }
+        let rows = rows.into_iter().filter(|item| archived.is_none_or(|value| value == item.archived)).collect();
+        let mut rows = domain::filter_items(rows, &fields, query, None).map_err(operation)?;
+        if descending { rows.reverse(); }
+        let page = connection::Page::new(ctx, rows.len() as i64)?;
+        let rows = rows.into_iter().skip(page.offset as usize).take(page.limit as usize).collect();
+        (page, rows)
+    };
+    let mut nodes = Vec::new();
+    for item in rows { nodes.push(item_object(&item, request).await?); }
+    Ok(page.finish(nodes))
 }
 
 async fn project_connection(
@@ -427,7 +468,24 @@ pub(super) async fn resource(ctx: &Arguments, request: &RequestContext) -> Resul
     }
 }
 
-pub(super) async fn resolve(
+fn mark_deleted(value: &mut Value, project: i64) {
+    match value {
+        Value::Array(values) => for value in values { mark_deleted(value, project); },
+        Value::Object(values) => {
+            if values.get("_project").and_then(Value::as_i64) == Some(project) { values.insert("_deleted".into(), json!(true)); }
+            for value in values.values_mut() { mark_deleted(value, project); }
+        }
+        _ => {}
+    }
+}
+
+pub(super) async fn resolve(ty: &str, field: &str, ctx: &Arguments, request: &RequestContext, parent: &Value) -> Result<Value> {
+    let mut value = resolve_at(ty, field, ctx, request, parent).await?;
+    if parent["_deleted"] == true { mark_deleted(&mut value, parent["_project"].as_i64().ok_or_else(missing)?); }
+    Ok(value)
+}
+
+async fn resolve_at(
     ty: &str,
     field: &str,
     ctx: &Arguments,
@@ -435,9 +493,10 @@ pub(super) async fn resolve(
     parent: &Value,
 ) -> Result<Value> {
     authorize_account(request)?;
-    if let Some(id) = parent["_project"].as_i64().filter(|_| parent.get("_deletedFields").is_none()) {
-        let project = store::by_id(&request.state.pool, Some(request.auth.user.id), id)
+    if let Some(id) = parent["_project"].as_i64() {
+        let project = store::by_id_at(&request.state.pool, Some(request.auth.user.id), id, parent["_deleted"] == true)
             .await.map_err(operation)?;
+        request.charge(project.readme.len() + project.title.len() + project.description.as_ref().map_or(0, |text| text.len()) + 128)?;
         if project.owner_kind == "org" {
             request.authorize_organization(project.owner_id).await?;
         }
@@ -513,6 +572,7 @@ pub(super) async fn resolve(
         };
     }
     match (ty, field) {
+        (_, "project") if parent["_deleted"] == true => Ok(project_object(&store::by_id_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, true).await.map_err(operation)?)),
         (_, "project") => {
             node(
                 "PVT",
@@ -551,6 +611,7 @@ pub(super) async fn resolve(
             );
             Ok(json!(if field == "url" { url(&path) } else { path }))
         }
+        ("ProjectV2", "viewerCanUpdate" | "viewerCanClose" | "viewerCanReopen") if parent["_deleted"] == true => Ok(json!(false)),
         ("ProjectV2", "viewerCanUpdate" | "viewerCanClose" | "viewerCanReopen") => {
             let project = store::by_id(
                 pool,
@@ -567,30 +628,9 @@ pub(super) async fn resolve(
             .await
             .map_err(operation)?))
         }
-        ("ProjectV2", "fields" | "field") if parent.get("_deletedFields").is_some() => {
-            let mut values = parent["_deletedFields"].as_array().cloned().unwrap_or_default();
-            if field == "field" {
-                let name = arg(ctx, "name")?;
-                return Ok(values.into_iter().find(|value| value["name"] == name).unwrap_or(Value::Null));
-            }
-            order_fields(ctx, &mut values)?;
-            connection::slice(ctx, values)
-        }
-        ("ProjectV2", "items") if parent.get("_deletedItems").is_some() => connection::slice(
-            ctx,
-            parent["_deletedItems"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default(),
-        ),
         ("ProjectV2", "fields" | "field") => {
-            let fields = store::fields(
-                pool,
-                viewer,
-                parent["_project"].as_i64().ok_or_else(missing)?,
-            )
-            .await
-            .map_err(operation)?;
+            let fields = store::fields_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
+            charge_fields(&fields, request)?;
             let mut values = project_fields(parent, &fields)?;
             if field == "field" {
                 let name = arg(ctx, "name")?;
@@ -602,68 +642,12 @@ pub(super) async fn resolve(
             order_fields(ctx, &mut values)?;
             connection::slice(ctx, values)
         }
-        ("ProjectV2", "items") => {
-            let project = parent["_project"].as_i64().ok_or_else(missing)?;
-            let fields = store::fields(pool, viewer, project)
-                .await
-                .map_err(operation)?;
-            let items = store::items(pool, viewer, project)
-                .await
-                .map_err(operation)?;
-            let states: Option<Vec<String>> = ctx
-                .args
-                .get("archivedStates")
-                .filter(|s| !s.is_null())
-                .map(|s| s.deserialize())
-                .transpose()?;
-            let items = items
-                .into_iter()
-                .filter(|item| {
-                    states.as_ref().map_or(!item.archived, |states| {
-                        states.iter().any(|s| {
-                            s == if item.archived {
-                                "ARCHIVED"
-                            } else {
-                                "NOT_ARCHIVED"
-                            }
-                        })
-                    })
-                })
-                .collect();
-            let query = ctx
-                .args
-                .get("query")
-                .filter(|q| !q.is_null())
-                .map(|q| q.string())
-                .transpose()?
-                .unwrap_or("");
-            let mut items = domain::filter_items(items, &fields, query, None).map_err(operation)?;
-            // Items are ordered by position only; descending reverses the stored order.
-            if let Some(order) = ctx.args.get("orderBy").filter(|v| !v.is_null()) {
-                if order.object()?.try_get("direction")?.enum_name()? == "DESC" {
-                    items.reverse();
-                }
-            }
-            let page = connection::Page::new(ctx, items.len() as i64)?;
-            // Only the requested page is hydrated, so a count-only request hydrates no items.
-            let mut nodes = Vec::new();
-            for item in items
-                .iter()
-                .skip(page.offset as usize)
-                .take(page.limit as usize)
-            {
-                nodes.push(item_object(item, request).await?);
-            }
-            Ok(page.finish(nodes))
-        }
+        ("ProjectV2", "items") => project_items(ctx, request, parent).await,
         ("ProjectV2Item", "fieldValues" | "fieldValueByName") => {
-            let item =
-                store::item_by_id(pool, viewer, parent["_item"].as_i64().ok_or_else(missing)?)
-                    .await
-                    .map_err(operation)?;
-            let fields = store::fields(pool, viewer, item.project_id)
-                .await
-                .map_err(operation)?;
+            let item = store::item_by_id_at(pool, viewer, parent["_item"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
+            charge_item(&item, request)?;
+            let fields = store::fields_at(pool, viewer, item.project_id, parent["_deleted"] == true).await.map_err(operation)?;
+            charge_fields(&fields, request)?;
             let selected = if field == "fieldValueByName" { Some(arg(ctx, "name")?) } else { None };
             let mut values = Vec::new();
             for f in fields {
@@ -710,7 +694,7 @@ pub(super) async fn resolve(
                 values.push(entry);
             }
             if selected.is_some() && !values.is_empty() { return Ok(values.remove(0)); }
-            values.extend(built_in_values(&item, request, selected.as_deref()).await?);
+            values.extend(built_in_values(&item, request, selected.as_deref(), parent["_deleted"] == true).await?);
             if let Some(name) = selected {
                 return Ok(values.into_iter().find(|value| value["field"]["name"] == name).unwrap_or(Value::Null));
             }
@@ -858,23 +842,9 @@ pub(super) async fn mutation(
             );
         }
         "deleteProjectV2" => {
-            // gh selects the deleted project's counts and owner in the payload.
+            store::delete(pool, actor, project.id).await.map_err(operation)?;
             let mut object = project_object(&project);
-            let fields = store::fields(pool, viewer, project.id)
-                .await
-                .map_err(operation)?;
-            object["_deletedFields"] = json!(project_fields(&object, &fields)?);
-            let mut items = Vec::new();
-            for item in store::items(pool, viewer, project.id)
-                .await
-                .map_err(operation)?
-            {
-                items.push(item_object(&item, request).await?);
-            }
-            object["_deletedItems"] = json!(items);
-            store::delete(pool, actor, project.id)
-                .await
-                .map_err(operation)?;
+            object["_deleted"] = json!(true);
             payload["projectV2"] = object;
         }
         "copyProjectV2" => {
