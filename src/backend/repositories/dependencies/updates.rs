@@ -1,7 +1,7 @@
 //! Verified proposals only. No package manager, repository script, force push or auto-merge.
 use super::{npm, registry::Client, worker::Pinned};
 use crate::backend::{
-    ci::{CiRuns, RefUpdate},
+    ci::CiRuns,
     db::{
         self,
         repositories::dependencies::{
@@ -68,7 +68,7 @@ async fn open(
         .chars()
         .take(240)
         .collect();
-        let body=format!("Proposes a verified registry patch for `{}`: `{}` → `{}`.\n\nAdvisory: [`{}`]({}).\n\nPrepared from commit `{}`. Registry SHA-512 identity, package metadata and the unchanged dependency/platform/license graph were checked; The local synchronized advisory catalogue reported no known vulnerabilities for the proposed package version when prepared.\n\nNo package manager or repository scripts were run by the updater. This is not an independent code audit. Normal branch rules and CI apply. Review before merging; this service never auto-merges.",alert.finding.package.name,update.old_version,update.fixed_version,alert.finding.advisory_id,alert.finding.url,update.base_sha);
+        let body=format!("Proposes a verified registry patch for `{}`: `{}` → `{}`.\n\nAdvisory: [`{}`]({}).\n\nPrepared from commit `{}`. Registry SHA-512 identity, package metadata and the unchanged dependency/platform/license graph were checked; The local synchronized advisory catalogue reported no known vulnerabilities for the proposed package version when prepared.\n\nNo package manager or repository scripts were run by the updater. This is not an independent code audit. Normal branch rules apply. Automatic proposals do not run workflows; a trusted user must explicitly run them. Review before merging; this service never auto-merges.",alert.finding.package.name,update.old_version,update.fixed_version,alert.finding.advisory_id,alert.finding.url,update.base_sha);
         match create_pull_request(
             pool,
             ci,
@@ -77,6 +77,7 @@ async fn open(
             owner,
             pinned.repository.name.clone(),
             CreatePullRequestRequest {
+                suppress_ci: true,
                 head_repo_id: Some(pinned.repository.id),
                 source: pull_requests::mutations::PullRequestSource::New {
                     title,
@@ -110,6 +111,12 @@ async fn open(
         .await?;
         return Ok(());
     }
+    if pull.state == "open" {
+        pull_requests::mutations::repair_open_pull(
+            pool, ci, &pinned.repository, &pinned.repository, actor, &pull, true,
+        )
+        .await?;
+    }
     records::attach_pull(
         pool,
         actor,
@@ -142,10 +149,7 @@ pub(crate) async fn propose(
         if proposed >= 3 || attempted >= 5 {
             break;
         }
-        if alert.state != AlertState::Open
-            || alert.seen_sha != pinned.sha
-            || alert.manual_reason.is_some()
-        {
+        if alert.state != AlertState::Open || alert.seen_sha != pinned.sha {
             continue;
         }
         if let Some(update) = &alert.update {
@@ -160,34 +164,8 @@ pub(crate) async fn propose(
                     .await?
                     .is_some();
             if opened || refs.get(&reference) == Some(&update.commit_sha) {
-                // A run that stopped after publishing never queued the push workflows, and the
-                // pull request's required checks wait for them. The update commit is new, so any
-                // run outside a pull request at it means an earlier attempt queued them.
-                if !opened
-                    && db::ci::latest_ci_runs_for_commit(
-                        pool,
-                        pinned.repository.id,
-                        &update.commit_sha,
-                        0,
-                        "",
-                    )
-                    .await?
-                    .is_empty()
-                {
-                    let owner = owner_name(pool, pinned.repository.id).await?;
-                    ci.queue_push_runs(
-                        &pinned.repository,
-                        &owner,
-                        actor,
-                        RefUpdate {
-                            reference,
-                            old: None,
-                            new: update.commit_sha.clone(),
-                            changed_paths: None,
-                        },
-                    )
-                    .await;
-                }
+                // Automated proposals never execute repository-controlled workflows using
+                // the administrator's delegation. A trusted user must explicitly run them.
                 open(pool, ci, broadcaster, job, pinned, &key, update).await?;
                 proposed += 1;
                 continue;
@@ -226,6 +204,7 @@ pub(crate) async fn propose(
             break;
         }
         attempted += 1;
+        records::check_job(pool, job, Feature::Updates).await?;
         let old = match client
             .archive(&package.name, &package.version, Some(&package.integrity))
             .await
@@ -289,6 +268,7 @@ pub(crate) async fn propose(
             }) {
                 continue;
             }
+            records::check_job(pool, job, Feature::Updates).await?;
             let new = match client.archive(&package.name, &version, None).await {
                 Ok(new) => new,
                 // As with the locked archive, a network failure is retried, not made manual.
@@ -372,7 +352,6 @@ pub(crate) async fn propose(
             requested_by: actor,
             pull_request_id: None,
         };
-        let old = refs.get(&reference).cloned();
         let publication = Publication {
             job: job.clone(),
             key: key.clone(),
@@ -397,21 +376,6 @@ pub(crate) async fn propose(
                 return Err(error.into());
             }
         }
-        // The published commit runs its push workflows, as a file write does. A publication
-        // that failed after Git took it takes this path too.
-        let owner = owner_name(pool, pinned.repository.id).await?;
-        ci.queue_push_runs(
-            &pinned.repository,
-            &owner,
-            actor,
-            RefUpdate {
-                reference,
-                old,
-                new: update.commit_sha.clone(),
-                changed_paths: None,
-            },
-        )
-        .await;
         open(pool, ci, broadcaster, job, pinned, &key, &update).await?;
         proposed += 1;
     }
