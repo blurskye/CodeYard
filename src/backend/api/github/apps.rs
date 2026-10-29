@@ -178,12 +178,16 @@ async fn owned_token(state: &AppState, client: &str, hash: &str) -> Result<Perso
     Ok(token)
 }
 
-async fn document(
-    state: &AppState,
-    app: &Application,
-    token: &PersonalAccessToken,
-    value: &str,
-) -> Result<Value> {
+/// What an authorization response shows besides the token itself. It is read before a reset
+/// rotates the token, so the response after the rotation needs no further reads.
+struct Authorization {
+    scopes: String,
+    user: db::models::User,
+    /// A scoped user token's installation, with the token's own permissions and selection.
+    installation: Option<Value>,
+}
+
+async fn authorization(state: &AppState, token: &PersonalAccessToken) -> Result<Authorization> {
     let metadata = db::oauth_apps::token(&state.pool, token.id)
         .await
         .map_err(Error::unavailable)?
@@ -192,14 +196,51 @@ async fn document(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    Ok(json!({
+    let bounds = db::github_apps::token(&state.pool, token.id)
+        .await
+        .map_err(Error::unavailable)?
+        .filter(|bounds| bounds.user_token);
+    let mut installation = None;
+    if let Some(bounds) = bounds {
+        if let Some(row) = db::github_apps::installation(&state.pool, bounds.installation_id)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            let selected: Vec<i64> =
+                serde_json::from_str(&bounds.repositories).map_err(Error::unavailable)?;
+            let mut value = installations::document(state, &row).await?;
+            value["permissions"] =
+                serde_json::from_str(&bounds.permissions).map_err(Error::unavailable)?;
+            value["repository_selection"] = json!(if row.all_repos && selected.is_empty() {
+                "all"
+            } else {
+                "selected"
+            });
+            installation = Some(value);
+        }
+    }
+    Ok(Authorization {
+        scopes: metadata.scopes,
+        user,
+        installation,
+    })
+}
+
+fn document(
+    app: &Application,
+    token: &PersonalAccessToken,
+    value: &str,
+    details: &Authorization,
+) -> Value {
+    json!({
         "id":token.id,"url":api_url(&format!("/applications/{}/token",app.client_id)),
-        "scopes":metadata.scopes.split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+        "scopes":details.scopes.split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
         "token":value,"token_last_eight":value.get(value.len().saturating_sub(8)..),
         "hashed_token":token_hash(value),"app":{"client_id":app.client_id,"name":app.name,"url":app.homepage},
         "note":null,"note_url":null,"updated_at":token.created_at,"created_at":token.created_at,
-        "fingerprint":null,"user":payloads::user(&user),"expires_at":token.expires_at,
-    }))
+        "fingerprint":null,"user":payloads::user(&details.user),"expires_at":token.expires_at,
+        "installation":details.installation,
+    })
 }
 
 async fn check_token(
@@ -214,7 +255,8 @@ async fn check_token(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    Ok(Json(document(&state, &app, &token, value).await?))
+    let details = authorization(&state, &token).await?;
+    Ok(Json(document(&app, &token, value, &details)))
 }
 
 async fn reset_token(
@@ -225,7 +267,10 @@ async fn reset_token(
 ) -> Result<Json<Value>> {
     let app = application(&state, &headers, &id).await?;
     let old = access_token(&body)?;
-    owned_token(&state, &id, &token_hash(old)).await?;
+    let current = owned_token(&state, &id, &token_hash(old)).await?;
+    // Everything the response shows is read first: once the hash rotates, the old token is
+    // gone and the new one exists only in this response.
+    let details = authorization(&state, &current).await?;
     let value = if db::github_apps::app(&state.pool, &id)
         .await
         .map_err(Error::unavailable)?
@@ -240,7 +285,7 @@ async fn reset_token(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-    Ok(Json(document(&state, &app, &token, &value).await?))
+    Ok(Json(document(&app, &token, &value, &details)))
 }
 
 async fn delete_token(

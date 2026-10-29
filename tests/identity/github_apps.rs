@@ -261,6 +261,20 @@ async fn contract(pg: bool) {
     )
     .await;
     let access = format!("Bearer {}", token["token"].as_str().unwrap());
+    // A malformed body is refused, never read as a request for the whole installation.
+    let response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/v3/app/installations/{id}/access_tokens"))
+                .header("authorization", &auth)
+                .body(axum::body::Body::from(r#"{"repository_ids":[1"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
     request(
         &router,
         "apps/list-repos-accessible-to-installation",
@@ -555,6 +569,13 @@ async fn contract(pg: bool) {
     }
     let(_,scoped)=request(&router,"apps/scope-token","POST",&format!("/api/v3/applications/{}/token/scoped",app.client_id),Some(&basic),json!({"access_token":"user-app-token","target":"alice","repository_ids":[excluded],"permissions":{"contents":"read"}}),200).await;
     assert!(scoped["token"].as_str().unwrap().starts_with("ghu_"));
+    // The response names the installation with the scoped token's own bounds.
+    assert_eq!(
+        scoped["installation"]["permissions"],
+        json!({"contents":"read"})
+    );
+    assert_eq!(scoped["installation"]["repository_selection"], "selected");
+    assert_eq!(scoped["installation"]["account"]["login"], "alice");
     let expiry =
         chrono::DateTime::parse_from_rfc3339(scoped["expires_at"].as_str().unwrap()).unwrap();
     assert!(expiry.with_timezone(&chrono::Utc) <= parent_expiry);
@@ -701,6 +722,20 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_none());
+    // Expired App tokens are swept, and their bounds go with them.
+    assert!(f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[]).await > 0);
+    f.execute(
+        "UPDATE personal_access_tokens SET expires_at='2000-01-01T00:00:00.000000Z' WHERE id IN (SELECT token_id FROM github_app_tokens)",
+        &[],
+    )
+    .await;
+    db::users::sessions::remove_expired_identity_rows(f.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[]).await,
+        0
+    );
 }
 #[tokio::test]
 async fn github_apps_sqlite() {

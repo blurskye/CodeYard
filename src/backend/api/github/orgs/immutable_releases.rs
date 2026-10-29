@@ -146,7 +146,7 @@ async fn repositories(
     let count = settings.repositories.len();
     let mut repositories = Vec::new();
     for repo in settings.repositories.into_iter().skip(offset).take(limit) {
-        repositories.push(repos::document(&state, &repo, Some(&actor.user)).await?);
+        repositories.push(repos::document(&state, &repo, Some(&actor)).await?);
     }
     Ok((
         page.headers(&uri, count > offset + limit)?,

@@ -71,6 +71,7 @@ mod meta;
 mod migrations;
 mod milestones;
 pub(crate) mod node_id;
+mod optional_json;
 mod orgs;
 mod packages;
 mod pagination;
@@ -284,7 +285,7 @@ async fn get_repository(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     Ok(Json(
-        repos::document(&state, &repo, auth.as_ref().map(|auth| &auth.user)).await?,
+        repos::document(&state, &repo, auth.as_ref()).await?,
     ))
 }
 

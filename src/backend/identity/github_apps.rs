@@ -350,23 +350,14 @@ impl Authority {
         if !repositories.is_empty() && !repositories.contains(&repo) {
             return Ok(None);
         }
-        let installations = if let Some(id) = installation {
-            db::github_apps::installation(pool, id)
-                .await?
-                .into_iter()
-                .collect()
-        } else {
-            db::github_apps::installations(pool, Some(app_id), Some(user)).await?
-        };
-        for installation in installations {
-            if installation.app_id == app_id
-                && installation.suspended_at.is_none()
-                && db::github_apps::has_repository(pool, installation.id, repo, true).await?
-            {
-                return Ok(Some(self.permissions.clone()));
-            }
-        }
-        Ok(None)
+        // An installation token names its installation; a user token reaches any installation
+        // of its app that the user reaches.
+        let actor = installation.is_none().then_some(user);
+        let covering =
+            db::github_apps::repository_installation(pool, app_id, repo, true, actor).await?;
+        Ok(covering
+            .is_some_and(|found| installation.is_none_or(|id| id == found.id))
+            .then(|| self.permissions.clone()))
     }
     /// Whether this credential reaches `repo` with permission `key`.
     pub async fn allows(

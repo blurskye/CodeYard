@@ -120,20 +120,11 @@ async fn app_ids(state: &AppState, repo: i64, names: &[String]) -> Result<Vec<i6
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(|| Error::invalid("Unknown app"))?;
-        let installations = db::github_apps::installations(&state.pool, Some(app.id), None)
+        if db::github_apps::repository_installation(&state.pool, app.id, repo, true, None)
             .await
-            .map_err(Error::unavailable)?;
-        let mut allowed = false;
-        for installation in installations {
-            if db::github_apps::has_repository(&state.pool, installation.id, repo, true)
-                .await
-                .map_err(Error::unavailable)?
-            {
-                allowed = true;
-                break;
-            }
-        }
-        if !allowed {
+            .map_err(Error::unavailable)?
+            .is_none()
+        {
             return Err(Error::invalid("App is not installed on this repository"));
         }
         ids.push(app.id);

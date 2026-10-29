@@ -1,5 +1,5 @@
 //! Invitations and effective collaborator permissions, including organization and team grants.
-use super::{auth, pagination::Pagination, repository, Error, Result};
+use super::{auth, optional_json::OptionalJson, pagination::Pagination, repository, Error, Result};
 use crate::backend::{
     app::AppState,
     db::{self, models::AccessLevel},
@@ -169,11 +169,11 @@ async fn add(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name, username)): Path<(String, String, String)>,
-    input: Option<Json<Add>>,
+    OptionalJson(input): OptionalJson<Add>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth.ok_or_else(auth::required)?.user;
-    let input = input.map(|Json(input)| input).unwrap_or_default();
+    let input = input.unwrap_or_default();
     let level = members::permission(input.permission.as_deref().unwrap_or("push"))
         .ok_or_else(|| Error::invalid("Invalid permission"))?;
     match members::add(&state.pool, actor.id, repo.id, &username, level)

@@ -248,10 +248,19 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, 303, "{}", reply.text());
-    let installation = db::github_apps::installations(f.pool(), Some(id), None)
-        .await
-        .unwrap()[0]
-        .id;
+    let installation = db::github_apps::installations(
+        f.pool(),
+        &db::github_apps::InstallationFilter {
+            app: Some(id),
+            ..Default::default()
+        },
+        0,
+        1,
+    )
+    .await
+    .unwrap()
+    .1[0]
+    .id;
     request(
         &router,
         "issues/create",
@@ -458,10 +467,19 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, 303);
     let private_id = private["id"].as_i64().unwrap();
-    let private_installation = db::github_apps::installations(f.pool(), Some(private_id), None)
-        .await
-        .unwrap()[0]
-        .id;
+    let private_installation = db::github_apps::installations(
+        f.pool(),
+        &db::github_apps::InstallationFilter {
+            app: Some(private_id),
+            ..Default::default()
+        },
+        0,
+        1,
+    )
+    .await
+    .unwrap()
+    .1[0]
+    .id;
     user.page_ok("/apps/private-bot").await;
     let page = user.page_ok("/settings/apps/installations").await;
     assert!(page.contains("Private Bot"));

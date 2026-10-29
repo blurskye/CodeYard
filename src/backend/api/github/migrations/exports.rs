@@ -119,7 +119,7 @@ async fn selected(
         {
             continue;
         }
-        values.push(super::super::repos::document(state, &repo, Some(&actor.user)).await?);
+        values.push(super::super::repos::document(state, &repo, Some(&actor)).await?);
     }
     Ok(values)
 }

@@ -136,7 +136,7 @@ async fn catalog(
                     super::repos::search_document(
                         &state,
                         &repo,
-                        authentication.as_ref().map(|a| &a.user),
+                        authentication.as_ref(),
                     )
                     .await?
                 } else {

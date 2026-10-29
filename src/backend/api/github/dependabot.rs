@@ -264,7 +264,7 @@ async fn selected(
     let (offset, limit) = page.window()?;
     let mut documents = Vec::new();
     for repo in repositories.into_iter().skip(offset).take(limit) {
-        documents.push(repos::document(&state, &repo, Some(&actor.user)).await?);
+        documents.push(repos::document(&state, &repo, Some(&actor)).await?);
     }
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
@@ -318,7 +318,7 @@ async fn repository_access(
     let has_more = offset.saturating_add(limit) < repositories.len();
     let mut documents = Vec::new();
     for repository in repositories.into_iter().skip(offset).take(limit) {
-        documents.push(repos::document(&state, &repository, Some(&actor.user)).await?);
+        documents.push(repos::document(&state, &repository, Some(&actor)).await?);
     }
     Ok((
         page.headers(&uri, has_more)?,

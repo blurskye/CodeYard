@@ -5,7 +5,6 @@ use crate::backend::{
     db::{
         self,
         advisories::{self, Advisory, Data, Listing, Scope, Sort},
-        models::User,
         repositories::security,
     },
     repositories::{
@@ -89,7 +88,11 @@ async fn person(state: &AppState, id: Option<i64>) -> Result<Value> {
         Ok(Value::Null)
     }
 }
-async fn document(state: &AppState, row: &Advisory, viewer: Option<&User>) -> Result<Value> {
+async fn document(
+    state: &AppState,
+    row: &Advisory,
+    viewer: Option<&auth::Authentication>,
+) -> Result<Value> {
     let data = Data::from_row(row).map_err(Error::unavailable)?;
     let repo = db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
         .await
@@ -114,12 +117,10 @@ async fn document(state: &AppState, row: &Advisory, viewer: Option<&User>) -> Re
             .await
             .map_err(Error::unavailable)?
         {
-            let allowed = viewer.id == fork.owner_user_id.unwrap_or(0)
-                || (viewer.is_admin && fork.owner_kind == "user")
-                || db::repositories::access::get_user_repo_access(&state.pool, viewer.id, id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .can_read();
+            // The private fork shows only to a credential that may read it.
+            let allowed = auth::readable_repositories(state, Some(viewer), &[id], "metadata")
+                .await?
+                .contains(&id);
             if allowed {
                 repos::document(state, &fork, Some(viewer)).await?
             } else {
@@ -273,7 +274,7 @@ async fn list(
     }
     let mut documents = Vec::new();
     for row in rows {
-        documents.push(document(&state, &row, actor.as_ref().map(|a| &a.user)).await?);
+        documents.push(document(&state, &row, actor.as_ref()).await?);
     }
     let mut headers = HeaderMap::new();
     if !links.is_empty() {
@@ -301,7 +302,7 @@ async fn get_advisory(
     .map_err(failure)?
     .ok_or_else(Error::missing)?;
     Ok(Json(
-        document(&state, &row, actor.as_ref().map(|a| &a.user)).await?,
+        document(&state, &row, actor.as_ref()).await?,
     ))
 }
 async fn create(
@@ -329,7 +330,7 @@ async fn create(
     }
     Ok((
         StatusCode::CREATED,
-        Json(document(&state, &row, Some(&actor.user)).await?),
+        Json(document(&state, &row, Some(&actor)).await?),
     )
         .into_response())
 }
@@ -351,7 +352,7 @@ async fn update(
     )
     .await
     .map_err(failure)?;
-    Ok(Json(document(&state, &row, Some(&actor.user)).await?))
+    Ok(Json(document(&state, &row, Some(&actor)).await?))
 }
 async fn cve(
     State(state): State<Arc<AppState>>,
@@ -383,7 +384,7 @@ async fn fork(
         .map_err(failure)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(repos::document(&state, &fork, Some(&actor.user)).await?),
+        Json(repos::document(&state, &fork, Some(&actor)).await?),
     )
         .into_response())
 }

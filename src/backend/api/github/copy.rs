@@ -1,6 +1,7 @@
 //! Forks and template generation use the same authoritative creation and storage pipeline as forms.
 use super::{
     auth,
+    optional_json::OptionalJson,
     repos::{document, lifecycle_error},
     repository, Error, Result,
 };
@@ -59,12 +60,13 @@ async fn fork(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-    body: Option<Json<Value>>,
+    OptionalJson(body): OptionalJson<Value>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
+    let auth = actor.ok_or_else(auth::required)?;
+    let actor = &auth.user;
     let input = body
-        .map(|Json(value)| serde_json::from_value::<Option<Fork>>(value))
+        .map(serde_json::from_value::<Option<Fork>>)
         .transpose()
         .map_err(|_| Error::invalid("Invalid fork fields"))?
         .flatten()
@@ -91,7 +93,7 @@ async fn fork(
     .map_err(lifecycle_error)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(document(&state, &repo, Some(&actor)).await?),
+        Json(document(&state, &repo, Some(&auth)).await?),
     ))
 }
 
@@ -113,8 +115,8 @@ async fn generate(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) =
         repository(&state, &headers, &template_owner, &template_name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
-    let target = owner(&state, &actor, input.owner.as_deref()).await?;
+    let auth = actor.ok_or_else(auth::required)?;
+    let target = owner(&state, &auth.user, input.owner.as_deref()).await?;
     let repo = lifecycle::generate(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,
@@ -132,7 +134,7 @@ async fn generate(
     .map_err(lifecycle_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(document(&state, &repo, Some(&actor)).await?),
+        Json(document(&state, &repo, Some(&auth)).await?),
     ))
 }
 

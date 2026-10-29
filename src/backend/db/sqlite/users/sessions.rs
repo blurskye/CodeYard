@@ -395,8 +395,8 @@ pub async fn get_or_create_csrf_token(
 /// can run above this until the next sweep.
 const MAX_ANONYMOUS_SESSIONS: i64 = 100_000;
 
-/// Deletes expired sessions, anonymous sessions and OAuth states, and clears the
-/// password verifier of each processed signup request. An approved request's
+/// Deletes expired sessions, anonymous sessions, OAuth states and GitHub App tokens, and
+/// clears the password verifier of each processed signup request. An approved request's
 /// account already holds the hash it needs, and a rejected one never needs it.
 /// Expiry selects only rows with `expires_at <= now`, the exact complement of the
 /// validity checks above. Then anonymous sessions are capped at
@@ -405,10 +405,12 @@ const MAX_ANONYMOUS_SESSIONS: i64 = 100_000;
 /// rows and commits on its own, so no transaction spans the sweep.
 pub async fn remove_expired_identity_rows(pool: &SqlitePool) -> Result<u64> {
     const BATCH: i64 = 500;
-    const STATEMENTS: [&str; 4] = [
+    const STATEMENTS: [&str; 5] = [
         "DELETE FROM anonymous_sessions WHERE id IN (SELECT id FROM anonymous_sessions WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
         "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
         "DELETE FROM oauth_states WHERE state IN (SELECT state FROM oauth_states WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
+        // An App token lives an hour; its App and OAuth rows go with it by cascade.
+        "DELETE FROM personal_access_tokens WHERE id IN (SELECT t.id FROM personal_access_tokens t JOIN github_app_tokens g ON g.token_id=t.id WHERE t.expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
         "UPDATE signup_requests SET password_hash = '' WHERE id IN (SELECT id FROM signup_requests WHERE status <> 'pending' AND password_hash <> '' LIMIT ?1)",
     ];
     let mut changed = 0;

@@ -50,7 +50,7 @@ pub(in crate::backend::api) fn settings_error(error: anyhow::Error) -> Error {
 pub(super) async fn search_document(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&db::models::User>,
+    viewer: Option<&auth::Authentication>,
 ) -> Result<Value> {
     let mut value = document(state, repo, viewer).await?;
     let git = crate::backend::repositories::catalog_search::git_facts(
@@ -68,10 +68,12 @@ pub(super) async fn search_document(
     Ok(value)
 }
 
+/// A repository's REST document for `viewer`. Its fork parent and source appear only when the
+/// viewer's credential may read them too.
 pub(super) async fn document(
     state: &AppState,
     repo: &Repository,
-    viewer: Option<&db::models::User>,
+    viewer: Option<&auth::Authentication>,
 ) -> Result<Value> {
     let owner = records::repository_owner_name(&state.pool, repo.id)
         .await
@@ -111,9 +113,9 @@ pub(super) async fn document(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            if !crate::backend::repositories::access::can_read(&state.pool, viewer, &ancestor)
-                .await
-                .map_err(Error::unavailable)?
+            if !auth::readable_repositories(state, viewer, &[id], "metadata")
+                .await?
+                .contains(&id)
             {
                 break;
             }
@@ -131,7 +133,7 @@ pub(super) async fn document(
             }
         }
     }
-    if let Some(viewer) = viewer {
+    if let Some(viewer) = viewer.map(|auth| &auth.user) {
         let level = crate::backend::repositories::access::user_access(&state.pool, viewer, repo)
             .await
             .map_err(Error::unavailable)?;
@@ -287,7 +289,7 @@ async fn create(
     } else {
         repo
     };
-    let value = document(&state, &repo, Some(&actor.user)).await?;
+    let value = document(&state, &repo, Some(&actor)).await?;
     Ok((
         StatusCode::CREATED,
         [(
@@ -358,7 +360,8 @@ async fn update(
     Json(value): Json<Value>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let auth = auth.ok_or_else(auth::required)?;
+    let actor = &auth.user;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid repository fields"))?;
     for (field, enabled) in [
@@ -456,7 +459,7 @@ async fn update(
         input.has_discussions,
     )
     .await?;
-    Ok(Json(document(&state, &repo, Some(&actor)).await?))
+    Ok(Json(document(&state, &repo, Some(&auth)).await?))
 }
 
 async fn remove(
@@ -488,7 +491,8 @@ async fn transfer(
     Json(input): Json<Transfer>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
+    let auth = actor.ok_or_else(auth::required)?;
+    let actor = &auth.user;
     let repo = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
@@ -505,7 +509,7 @@ async fn transfer(
     })?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(document(&state, &repo, Some(&actor)).await?),
+        Json(document(&state, &repo, Some(&auth)).await?),
     )
         .into_response())
 }
@@ -745,7 +749,7 @@ async fn list(
         if !readable.contains(&repo.id) {
             continue;
         }
-        values.push(document(&state, repo, auth.as_ref().map(|auth| &auth.user)).await?);
+        values.push(document(&state, repo, auth.as_ref()).await?);
     }
     if public {
         let mut headers = HeaderMap::new();

@@ -716,6 +716,34 @@ async fn contract(pg: bool) {
         .await["error"],
         "access_denied"
     );
+    let owned_id = oauth::random();
+    db::oauth_apps::register(
+        f.pool(),
+        actor,
+        &user.session,
+        &owned_id,
+        &token_hash("owned-secret"),
+        "Owned application",
+        "https://owned.test",
+        "https://owned.test/callback",
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let owned_basic = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("{owned_id}:owned-secret"))
+    );
+    super::github::request(
+        &router,
+        "apps/check-token",
+        "POST",
+        &format!("/api/v3/applications/{owned_id}/token"),
+        Some(&owned_basic),
+        json!({"access_token":"unknown-token"}),
+        404,
+    )
+    .await;
     // Suspending an account invalidates OAuth tokens just like personal tokens.
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[actor])
         .await;
@@ -726,6 +754,17 @@ async fn contract(pg: bool) {
         "/api/v3/user",
         Some(&format!("Bearer {value}")),
         json!(null),
+        401,
+    )
+    .await;
+    // A banned owner's application no longer authenticates with its client secret.
+    super::github::request(
+        &router,
+        "apps/check-token",
+        "POST",
+        &format!("/api/v3/applications/{owned_id}/token"),
+        Some(&owned_basic),
+        json!({"access_token":"unknown-token"}),
         401,
     )
     .await;

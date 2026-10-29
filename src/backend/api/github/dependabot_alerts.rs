@@ -464,7 +464,7 @@ async fn list(
                 continue;
             }
             if org.is_some() {
-                doc["repository"] = repos::document(&state, &repo, Some(&actor.user)).await?;
+                doc["repository"] = repos::document(&state, &repo, Some(&actor)).await?;
             }
             documents.push(doc);
         }

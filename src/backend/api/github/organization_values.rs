@@ -387,7 +387,7 @@ async fn repositories(
     let (offset, limit) = pagination.window()?;
     let mut items = Vec::new();
     for row in rows.into_iter().skip(offset).take(limit) {
-        items.push(super::repos::document(&state, &row, Some(&auth.user)).await?);
+        items.push(super::repos::document(&state, &row, Some(&auth)).await?);
     }
     Ok((
         pagination.headers(&uri, offset.saturating_add(limit) < total)?,

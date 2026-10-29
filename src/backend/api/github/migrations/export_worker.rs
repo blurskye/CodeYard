@@ -88,7 +88,7 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
                 .await
                 .map_err(Error::unavailable)?;
         }
-        let value = repos::document(state, &repo, Some(&actor.user)).await?;
+        let value = repos::document(state, &repo, Some(&actor)).await?;
         archive
             .records("repository", vec![value])
             .map_err(Error::unavailable)?;

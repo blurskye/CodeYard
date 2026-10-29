@@ -140,14 +140,25 @@ pub fn organization_role_user(
     value
 }
 
+/// An organization's picture: its uploaded file, or the generated one.
+pub fn organization_avatar(org: &crate::backend::db::models::Organization) -> String {
+    org.avatar_file_id.map_or_else(
+        || {
+            format!(
+                "{}/avatars/{}",
+                link_origin(),
+                crate::webui::encode_component(&org.name)
+            )
+        },
+        |id| format!("{}/api/files/{id}/download", link_origin()),
+    )
+}
+
 /// Organization links are shared by membership responses and organization events.
 pub fn organization(org: &crate::backend::db::models::Organization) -> Value {
     let name = crate::webui::encode_component(&org.name);
     let url = crate::backend::api::github::api_url(&format!("/orgs/{name}"));
-    let avatar = org.avatar_file_id.map_or_else(
-        || format!("{}/avatars/{name}", link_origin()),
-        |id| format!("{}/api/files/{id}/download", link_origin()),
-    );
+    let avatar = organization_avatar(org);
     json!({"login": org.name, "id": org.id, "node_id": node_id::encode("O", org.id),
         "url": url, "repos_url": format!("{url}/repos"), "events_url": format!("{url}/events"),
         "hooks_url": format!("{url}/hooks"), "issues_url": format!("{url}/issues"),
@@ -407,7 +418,7 @@ pub fn team_organization(
     let url = crate::backend::api::github::api_url(&format!("/orgs/{slug}"));
     json!({"id":org.id,"node_id":node_id::encode("O",org.id),"login":org.name,
         "name":org.display_name.as_deref().unwrap_or(&org.name),"description":org.description,"url":url,
-        "html_url":format!("{}{}",link_origin(),crate::webui::profile_path(&org.name)),"avatar_url":format!("{}/avatars/{slug}",link_origin()),
+        "html_url":format!("{}{}",link_origin(),crate::webui::profile_path(&org.name)),"avatar_url":organization_avatar(org),
         "repos_url":format!("{url}/repos"),"events_url":format!("{url}/events"),
         "hooks_url":format!("{url}/hooks"),"issues_url":format!("{url}/issues"),
         "members_url":format!("{url}/members{{/member}}"),"public_members_url":format!("{url}/public_members{{/member}}"),

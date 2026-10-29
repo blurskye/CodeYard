@@ -40,7 +40,7 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(Scope, i64)> {
+) -> Result<(Scope, auth::Authentication)> {
     if let Some(org) = params.get("org") {
         let auth = auth::authenticate(state, headers, write)
             .await?
@@ -48,14 +48,11 @@ async fn scope(
         if write {
             auth.require_write()?;
         }
-        Ok((Scope::Organization(org.clone()), auth.user.id))
+        Ok((Scope::Organization(org.clone()), auth))
     } else {
         let (repo, auth) =
             repository(state, headers, &params["owner"], &params["repo"], write).await?;
-        Ok((
-            Scope::Repository(repo.id),
-            auth.ok_or_else(auth::required)?.user.id,
-        ))
+        Ok((Scope::Repository(repo.id), auth.ok_or_else(auth::required)?))
     }
 }
 
@@ -78,7 +75,8 @@ async fn settings(
     request: Request,
 ) -> Result<Response> {
     let write = !auth::read_method(request.method());
-    let (scope, actor) = scope(&state, &headers, &params, write).await?;
+    let (scope, auth) = scope(&state, &headers, &params, write).await?;
+    let actor = auth.user.id;
     let setting = match uri.path().rsplit('/').next() {
         Some("selected-actions") => Setting::Allowed,
         Some("artifact-and-log-retention") => Setting::Retention,
@@ -149,7 +147,8 @@ async fn organization_switch(
     request: Request,
 ) -> Result<Response> {
     let write = !auth::read_method(request.method());
-    let (scope, actor) = scope(&state, &headers, &params, write).await?;
+    let (scope, auth) = scope(&state, &headers, &params, write).await?;
+    let actor = auth.user.id;
     let setting = switch(&uri);
     if write {
         let body = input(request).await?;
@@ -200,7 +199,8 @@ async fn organization_repositories(
 ) -> Result<Response> {
     let method = request.method().clone();
     let write = !auth::read_method(&method);
-    let (scope, actor) = scope(&state, &headers, &params, write).await?;
+    let (scope, auth) = scope(&state, &headers, &params, write).await?;
+    let actor = auth.user.id;
     let setting = switch(&uri);
     let stored = db::action_settings::settings(&state.pool, actor, &scope, None)
         .await
@@ -210,10 +210,6 @@ async fn organization_repositories(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     if !write {
-        let user = db::users::accounts::get_user_by_id(&state.pool, actor)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(auth::required)?;
         let mut repositories = Vec::new();
         for id in selected(&stored, setting) {
             if let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, id)
@@ -228,7 +224,7 @@ async fn organization_repositories(
         let total = repositories.len();
         let mut values = Vec::new();
         for repo in repositories.iter().skip(offset).take(limit) {
-            values.push(super::super::repos::document(&state, repo, Some(&user)).await?);
+            values.push(super::super::repos::document(&state, repo, Some(&auth)).await?);
         }
         return Ok((
             page.headers(&uri, offset.saturating_add(limit) < total)?,
@@ -331,7 +327,8 @@ async fn policies(
 ) -> Result<Response> {
     let method = request.method().clone();
     let write = !auth::read_method(&method);
-    let (scope, actor) = scope(&state, &headers, &params, write).await?;
+    let (scope, auth) = scope(&state, &headers, &params, write).await?;
+    let actor = auth.user.id;
     let id = params
         .get("policy_id")
         .map(|_| super::id(&params, "policy_id"))

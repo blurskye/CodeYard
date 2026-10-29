@@ -343,10 +343,11 @@ async fn app_allows_actor(pool: &db::DbPool, repo: i64, actor: i64, ids: &[i64])
         if app.bot_id != actor {
             continue;
         }
-        for installation in db::github_apps::installations(pool, Some(app.id), None).await? {
-            if db::github_apps::has_repository(pool, installation.id, repo, true).await? {
-                return Ok(true);
-            }
+        if db::github_apps::repository_installation(pool, app.id, repo, true, None)
+            .await?
+            .is_some()
+        {
+            return Ok(true);
         }
     }
     Ok(false)
