@@ -174,7 +174,9 @@ pub async fn save(
         None => {
             let id = hooks::insert_webhook(pool, owner, actor.id, &fields, secret.as_ref())
                 .await
-                .map_err(unavailable)?
+                .map_err(|error| if error.is::<hooks::HookLimit>() {
+                    HookError::Invalid("This owner's webhook limit has been reached. Remove an existing hook first.")
+                } else { unavailable(error) })?
                 .ok_or(HookError::Denied)?;
             // A hook that was saved stays saved when its ping cannot be queued.
             if ping(pool, owner, actor, id).await.is_err() {

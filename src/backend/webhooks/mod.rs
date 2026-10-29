@@ -45,7 +45,7 @@ pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
 
 static QUEUED: LazyLock<Mutex<Queue>> = LazyLock::new(|| Mutex::new(Queue::default()));
 static SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(SENDS_AT_ONCE));
-const OWNER_QUEUE_LIMIT: usize = 16;
+const OWNER_QUEUE_LIMIT: usize = crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER;
 const HOOK_QUEUE_LIMIT: usize = 16;
 const MANUAL_PER_MINUTE: usize = 10;
 
