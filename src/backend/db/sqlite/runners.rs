@@ -393,6 +393,9 @@ pub async fn registration(
 ) -> Result<Option<Runner>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, scope).await?;
+    if let Some(session) = input.session {
+        anyhow::ensure!(super::users::transitions::live_session(&mut tx, actor, session).await?, Refusal::Denied);
+    }
     let labels = normalize_labels(input.labels)?;
     let (org, repo) = scope.ids();
     let group_id = if let Some(org) = org {

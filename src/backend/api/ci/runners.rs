@@ -431,11 +431,14 @@ async fn mutate(
             } else {
                 None
             };
+            let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .ok_or(Refusal::Denied)?;
             let row = native::registration(
                 pool,
                 actor,
                 scope,
                 Registration {
+                    session: Some(&session),
                     hash: &ticket.secret_hash(),
                     expires,
                     name: jit.then_some(field(form, "name")),

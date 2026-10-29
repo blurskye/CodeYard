@@ -711,6 +711,7 @@ async fn registration_token(
         actor,
         scope,
         Registration {
+            session: None,
             hash: &ticket.secret_hash(),
             expires,
             name: None,
@@ -785,6 +786,7 @@ async fn jit(
         actor,
         scope,
         Registration {
+            session: None,
             hash: &ticket.secret_hash(),
             expires: chrono::Utc::now() + chrono::Duration::hours(1),
             name: Some(&input.name),

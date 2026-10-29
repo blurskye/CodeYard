@@ -218,6 +218,7 @@ pub struct Scheduling {
 
 #[derive(Clone, Debug)]
 pub struct Registration<'a> {
+    pub session: Option<&'a str>,
     pub hash: &'a str,
     pub expires: chrono::DateTime<chrono::Utc>,
     pub name: Option<&'a str>,
