@@ -128,6 +128,17 @@ pub async fn rotate_authenticated_session<'a>(
 }
 
 // The account's sessions that have not expired.
+#[derive(sqlx::FromRow)]
+pub struct SessionPageRow {
+    #[sqlx(flatten)]
+    pub session: Session,
+    pub ordinal: i64,
+}
+
+native_operation!(crate::backend::db::postgres::users::sessions::session_page,
+    crate::backend::db::sqlite::users::sessions::session_page,
+    fn session_page(pool: &DbPool, user: i64, current: &str, before: i64) -> Result<Vec<SessionPageRow>>);
+
 native_operation!(crate::backend::db::postgres::users::sessions::list_user_sessions,
     crate::backend::db::sqlite::users::sessions::list_user_sessions,
     fn list_user_sessions(pool: &DbPool, user_id: i64) -> Result<Vec<Session>>);

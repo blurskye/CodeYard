@@ -374,6 +374,7 @@ fn oauth_only_accounts_have_no_password_mutation_form() {
                 emails: vec![],
                 tokens: vec![],
                 sessions: vec![],
+                session_pagination: Default::default(),
                 new_token: None,
                 password_supported: false,
                 email_notifications: true,

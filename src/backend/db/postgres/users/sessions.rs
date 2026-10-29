@@ -497,6 +497,15 @@ pub async fn keep_newest_anonymous_sessions(pool: &PgPool, cap: i64) -> Result<u
     Ok(removed as u64)
 }
 
+pub async fn session_page(pool: &PgPool, user: i64, current: &str, before: i64) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
+    let mut tx = pool.begin().await?;
+    super::transitions::require_account(&mut tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(current)).await?;
+    let rows = sqlx::query_as("SELECT id,user_id,user_agent,ip_address::text AS ip_address,expires_at,created_at,ordinal FROM sessions WHERE user_id=$1 AND expires_at>clock_timestamp() AND ($2<=0 OR ordinal<=$2) ORDER BY ordinal DESC LIMIT 101")
+        .bind(user).bind(before).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
 pub async fn list_user_sessions(pool: &PgPool, user_id: i64) -> Result<Vec<Session>> {
     Ok(sqlx::query_as(
         "SELECT id,user_id,user_agent,ip_address::text,expires_at,created_at FROM sessions WHERE user_id=$1 AND expires_at>NOW() ORDER BY created_at DESC, id",

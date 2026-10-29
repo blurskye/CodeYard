@@ -39,6 +39,8 @@ pub struct Settings {
     pub gpg_keys: Vec<Key>,
     pub tokens: Vec<Token>,
     pub sessions: Vec<AccountSession>,
+    #[serde(default)]
+    pub session_pagination: SessionPagination,
     pub new_token: Option<String>,
     pub password_supported: bool,
     pub must_change_password: bool,
@@ -92,6 +94,12 @@ pub struct TwoFactorSetup {
 }
 
 /// One signed-in session of the account. `key` is a digest of the session id, which stays secret.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionPagination {
+    pub before: i64,
+    pub next_before: Option<i64>,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AccountSession {
     pub key: String,
@@ -705,11 +713,18 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                             {confirm_dialog(None, "Revoke this session", "/settings?tab=sessions", "/settings/sessions/revoke", rsx! {
                                                 {csrf(token)}
                                                 input { r#type: "hidden", name: "session", value: session.key.clone() }
+                                                input { r#type: "hidden", name: "sessions_before", value: model.session_pagination.before.to_string() }
                                                 strong { if session.current { "Revoke this session? You will be signed out here." } else { "Revoke this session?" } }
                                                 p { class: "text-sm", "The browser or device using it is signed out immediately." }
                                             }, "Revoke session")}
                                         }
                                     }
+                                }
+                            }
+                            nav { aria_label: "Session pages",
+                                NavLink { href: "/settings?tab=sessions", "Newest sessions" }
+                                if let Some(before) = model.session_pagination.next_before {
+                                    NavLink { href: format!("/settings?tab=sessions&sessions_before={before}"), "Older sessions" }
                                 }
                             }
                             if model.sessions.iter().any(|session| !session.current) {

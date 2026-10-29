@@ -471,6 +471,15 @@ pub async fn keep_newest_anonymous_sessions(pool: &SqlitePool, cap: i64) -> Resu
     Ok(removed as u64)
 }
 
+pub async fn session_page(pool: &SqlitePool, user: i64, current: &str, before: i64) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::transitions::require_account(&mut tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(current)).await?;
+    let rows = sqlx::query_as("SELECT id,user_id,user_agent,ip_address,expires_at,created_at,ordinal FROM sessions WHERE user_id=?1 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND (?2<=0 OR ordinal<=?2) ORDER BY ordinal DESC LIMIT 101")
+        .bind(user).bind(before).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
 pub async fn list_user_sessions(pool: &SqlitePool, user_id: i64) -> Result<Vec<Session>> {
     Ok(sqlx::query_as(
         "SELECT id,user_id,user_agent,ip_address,expires_at,created_at FROM sessions WHERE user_id=?1 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') ORDER BY created_at DESC, id",

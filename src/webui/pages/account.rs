@@ -419,6 +419,7 @@ mod tests {
                         }],
                         tokens: vec![],
                         sessions: vec![],
+                        session_pagination: Default::default(),
                         new_token: None,
                         password_supported: true,
                         email_notifications: true,

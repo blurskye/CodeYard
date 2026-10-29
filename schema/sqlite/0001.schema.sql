@@ -110,7 +110,8 @@ CREATE TABLE oauth_accounts (
 );
 
 CREATE TABLE sessions (
-    id TEXT NOT NULL PRIMARY KEY CHECK (length(id)<=64),
+    ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE CHECK (length(id)<=64),
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
     user_agent TEXT,
     ip_address TEXT,
@@ -921,6 +922,7 @@ ON signup_requests (status, created_at DESC, id DESC);
 CREATE INDEX idx_oauth_accounts_user_id ON oauth_accounts(user_id);
 
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX idx_sessions_user_ordinal ON sessions(user_id,ordinal DESC);
 
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
 
