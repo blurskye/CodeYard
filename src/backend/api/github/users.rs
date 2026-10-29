@@ -473,19 +473,14 @@ async fn hovercard(
         .await?
         .ok_or_else(auth::required)?;
     let user = target(&state, &username).await?;
-    if query.subject_type.as_deref().is_some_and(|kind| {
-        !matches!(
-            kind,
-            "organization" | "repository" | "issue" | "pull_request"
-        )
-    }) || query
-        .subject_id
-        .as_ref()
-        .is_some_and(|id| id.parse::<i64>().is_err())
-    {
-        return Err(Error::validation("Hovercard", "subject_type", "invalid"));
-    }
-    let contexts = if db::following::is_user_following(&state.pool, user.id, actor.user.id)
+    let subject = match (query.subject_type.as_deref(), query.subject_id.as_deref()) {
+        (None, None) => None,
+        (Some(kind @ ("organization" | "repository" | "issue" | "pull_request")), Some(id)) => {
+            Some((kind, id.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(|| Error::validation("Hovercard", "subject_id", "invalid"))?))
+        }
+        _ => return Err(Error::validation("Hovercard", "subject_type", "invalid")),
+    };
+    let mut contexts = if db::following::is_user_following(&state.pool, user.id, actor.user.id)
         .await
         .map_err(Error::unavailable)?
     {
@@ -493,7 +488,46 @@ async fn hovercard(
     } else {
         Vec::new()
     };
+    if let Some((kind, id)) = subject {
+        if let Some(context) = hovercard_subject(&state, &actor, user.id, kind, id).await? { contexts.push(context); }
+    }
+    if db::users::tokens::token_user(&state.pool, actor.token.id, false).await.map_err(Error::unavailable)?.is_none_or(|user| user.id != actor.user.id) { return Err(auth::required()); }
     Ok(Json(json!({"contexts":contexts})))
+}
+
+async fn hovercard_subject(state: &AppState, auth: &auth::Authentication, user: i64, kind: &str, id: i64) -> Result<Option<Value>> {
+    let pool = &state.pool;
+    let (related, message, icon) = match kind {
+        "repository" => {
+            let repo = db::repositories::records::get_repository_by_id(pool, id).await.map_err(Error::unavailable)?.filter(|repo| !repo.is_gist).ok_or_else(Error::missing)?;
+            if !auth::readable_repositories(state, Some(auth), &[id], "metadata").await?.contains(&id) { return Err(Error::missing()); }
+            (repo.owner_user_id == Some(user), "Owns this repository", "repo")
+        }
+        "organization" => {
+            db::organizations::profiles::get_public_organization_by_id(pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            auth::refuse_classic(state, auth.token.id, id).await?;
+            // Hovercards may reveal public membership, not a profile token's owner's private roster.
+            let rows = db::organizations::discovery::list_organizations(pool, Some(user), false, id - 1, 0, 1).await.map_err(Error::unavailable)?;
+            (rows.iter().any(|org| org.id == id), "Member of this organization", "organization")
+        }
+        "issue" | "pull_request" => {
+            let scope = if kind == "issue" { "issues" } else { "pull-requests" };
+            let code = if kind == "issue" { "I" } else { "PR" };
+            let repo = db::graphql::node_repository(pool, code, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            if !auth::readable_repositories(state, Some(auth), &[repo], scope).await?.contains(&repo) { return Err(Error::missing()); }
+            let (repo, author) = if kind == "issue" {
+                let row = db::issues::get_issue_by_id(pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+                (row.repo_id, row.author_id)
+            } else {
+                let row = db::pull_requests::records::get_pull_request_by_id(pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+                (row.repo_id, row.author_id)
+            };
+            if !auth::readable_repositories(state, Some(auth), &[repo], scope).await?.contains(&repo) { return Err(Error::missing()); }
+            (author == user, if kind == "issue" { "Author of this issue" } else { "Author of this pull request" }, if kind == "issue" { "issue-opened" } else { "git-pull-request" })
+        }
+        _ => return Err(Error::validation("Hovercard", "subject_type", "invalid")),
+    };
+    Ok(related.then(|| json!({"message":message,"octicon":icon})))
 }
 
 // gh compares the key without its optional OpenSSH comment when avoiding duplicate uploads.
