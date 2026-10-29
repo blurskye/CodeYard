@@ -115,7 +115,8 @@ async fn read(
     let page_rows = protection::commit_status_page(&state.pool, auth.as_ref().map(|auth| auth.user.id), repo.id, &sha, offset as i64, limit as i64, history)
         .await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
     if let Some(auth) = auth.as_ref() {
-        auth.require_live(&state.pool).await?;
+        if db::users::tokens::token_user(&state.pool, auth.token.id, false).await.map_err(Error::unavailable)?
+            .is_none_or(|user| user.id != auth.user.id) { return Err(super::auth::required()); }
         auth.repository_scope(&state.pool, repo.id, "statuses", false).await.map_err(super::auth::scope_error)?;
     }
     let protection::CommitStatusPage { total, counts, statuses } = page_rows;

@@ -574,6 +574,8 @@ pub(super) async fn resolve(
                     request.require_oauth_scope("workflow")?;
                     request.authorize(repo.id, "contents", true).await?;
                     let options = pull_requests::auto_merge::EnableRequest {
+                        expected_head: optional_text(&input, "expectedHeadOid"),
+                        token: Some(request.auth.token.id),
                         merge_method: merge_method(&input, &current)?,
                         commit_title: optional_text(&input, "commitHeadline"),
                         commit_message: optional_text(&input, "commitBody"),
