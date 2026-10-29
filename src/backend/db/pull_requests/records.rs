@@ -252,6 +252,23 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::count_vi
 pub struct NewBase<'a> {
     pub branch: &'a str,
     pub sha: &'a str,
+    pub automatic_reopen: bool,
+}
+
+/// Follow only merged layers of this stack; a cycle never authorizes a retarget.
+pub fn reopened_stack_base(pull: &PullRequest, members: &[PullRequest]) -> Option<String> {
+    let stack = pull.stack_id?;
+    let mut branch = pull.base_branch.clone();
+    let mut seen = std::collections::HashSet::new();
+    while seen.insert(branch.clone()) {
+        let Some(parent) = members.iter().find(|member| member.repo_id == pull.repo_id
+            && member.stack_id == Some(stack) && member.state == "merged"
+            && member.head_repo_id == Some(pull.repo_id) && member.head_branch == branch) else {
+            return (branch != pull.base_branch).then_some(branch);
+        };
+        branch = parent.base_branch.clone();
+    }
+    None
 }
 
 #[derive(Default)]

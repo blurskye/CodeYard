@@ -682,7 +682,16 @@ pub async fn update_pull_request(
     let head_owner = head
         .as_ref()
         .is_some_and(|head| head.is_personal_owner(edit.actor_id));
-    let author_edit = author == edit.actor_id && base.is_none() && maintainer_can_modify.is_none();
+    let automatic_reopen = if let Some(base) = base.as_ref().filter(|base| base.automatic_reopen) {
+        if !reopening { return Ok(None); }
+        let current: PullRequest = sqlx::query_as("SELECT * FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+            .bind(pr_id).bind(repo).fetch_one(&mut *tx).await?;
+        let members: Vec<PullRequest> = sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=$1 AND stack_id=$2 ORDER BY id")
+            .bind(repo).bind(current.stack_id).fetch_all(&mut *tx).await?;
+        if crate::backend::db::pull_requests::records::reopened_stack_base(&current, &members).as_deref() != Some(base.branch) { return Ok(None); }
+        true
+    } else { false };
+    let author_edit = author == edit.actor_id && (base.is_none() || automatic_reopen) && maintainer_can_modify.is_none();
     if !authority
         && (!((policy_only && (author == edit.actor_id || head_owner)) || author_edit)
             || !crate::backend::db::postgres::discussions::lock_contribution_authority(

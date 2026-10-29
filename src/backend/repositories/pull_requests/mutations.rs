@@ -662,17 +662,7 @@ pub async fn update_pull_request(
                 db::pull_requests::records::list_stack_members(pool, repository.id, stack)
                     .await
                     .map_err(super::write_error)?;
-            let mut branch = existing.base_branch.clone();
-            for _ in 0..members.len() {
-                let Some(parent) = members
-                    .iter()
-                    .find(|member| member.state == "merged" && member.head_branch == branch)
-                else {
-                    break;
-                };
-                branch = parent.base_branch.clone();
-            }
-            (branch != existing.base_branch).then_some(branch)
+            db::pull_requests::records::reopened_stack_base(&existing, &members)
         } else {
             None
         }
@@ -695,6 +685,7 @@ pub async fn update_pull_request(
         .map(|(branch, sha)| db::pull_requests::records::NewBase {
             branch: branch.as_str(),
             sha: sha.as_str(),
+            automatic_reopen: req.base.is_none() && reopened_base.is_some(),
         });
     let pull_request = db::pull_requests::records::update_pull_request(
         pool,
