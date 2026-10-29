@@ -1412,9 +1412,8 @@ impl PushFixture {
         tokio::sync::watch::Sender<bool>,
         tokio::task::JoinHandle<Result<()>>,
     ) {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        drop(listener);
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let state = self.state.clone();
         let mut server = if ssh {
@@ -1432,9 +1431,9 @@ impl PushFixture {
         };
         let running = tokio::spawn(async move {
             if let Some(server) = server.as_mut() {
-                server.run(address, stopped).await
+                server.run_listener(listener, stopped).await
             } else {
-                crate::backend::api::run_web_server(address, state, stopped).await
+                crate::backend::api::run_web_listener(listener, state, stopped).await
             }
         });
         timeout(Duration::from_secs(5), async {
