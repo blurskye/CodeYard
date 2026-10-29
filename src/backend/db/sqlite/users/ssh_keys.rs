@@ -7,6 +7,11 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tracing::debug;
 
+pub async fn touch_ssh_key(pool: &SqlitePool, key_id: i64) -> Result<()> {
+    sqlx::query("UPDATE ssh_keys SET last_used_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1").bind(key_id).execute(pool).await?;
+    Ok(())
+}
+
 /// Operator enrollment does not depend on a browser session.
 pub async fn add_ssh_key(
     pool: &SqlitePool,
