@@ -97,7 +97,8 @@ async fn create_blob(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user.id;
     crate::backend::repositories::access::check_write(&state.pool, repo.id, actor)
         .await
         .map_err(|error| match error {
@@ -130,7 +131,7 @@ async fn create_blob(
     }
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
-        .write_git_object_as(&state.pool, repo.id, actor, ObjectWrite::Blob, &bytes)
+        .write_git_object_as(&state.pool, repo.id, actor, Some(auth.token.id), ObjectWrite::Blob, &bytes)
         .await
         .map_err(write_error)?;
     Ok((
@@ -166,13 +167,15 @@ async fn create_tree(
     Json(input): Json<Tree>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user.id;
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
         .write_git_object_as(
             &state.pool,
             repo.id,
             actor,
+            Some(auth.token.id),
             ObjectWrite::Tree {
                 base_tree: input.base_tree,
                 tree: input.tree,
@@ -196,8 +199,15 @@ struct Commit {
     #[serde(default)]
     parents: Vec<String>,
     author: Option<Signature>,
-    committer: Option<Signature>,
+    committer: Option<Committer>,
     signature: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Committer {
+    name: Option<String>,
+    email: Option<String>,
+    date: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
 async fn create_commit(
@@ -207,21 +217,27 @@ async fn create_commit(
     Json(input): Json<Commit>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user;
     let author = input.author.unwrap_or(Signature {
-        name: actor.display_name.unwrap_or_else(|| actor.username.clone()),
+        name: actor.display_name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| actor.username.clone()),
         email: actor
             .email
             .unwrap_or_else(|| format!("{}@users.noreply", actor.username)),
         date: None,
     });
-    let committer = input.committer.unwrap_or_else(|| author.clone());
+    let committer = input.committer.map(|committer| Signature {
+        name: committer.name.unwrap_or_else(|| author.name.clone()),
+        email: committer.email.unwrap_or_else(|| author.email.clone()),
+        date: committer.date.or(author.date),
+    }).unwrap_or_else(|| author.clone());
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
         .write_git_object_as(
             &state.pool,
             repo.id,
             actor.id,
+            Some(auth.token.id),
             ObjectWrite::Commit {
                 message: input.message,
                 tree: input.tree,
@@ -259,9 +275,10 @@ async fn create_tag(
     Json(input): Json<Tag>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user;
     let tagger = input.tagger.unwrap_or(Signature {
-        name: actor.display_name.unwrap_or_else(|| actor.username.clone()),
+        name: actor.display_name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| actor.username.clone()),
         email: actor
             .email
             .unwrap_or_else(|| format!("{}@users.noreply", actor.username)),
@@ -273,6 +290,7 @@ async fn create_tag(
             &state.pool,
             repo.id,
             actor.id,
+            Some(auth.token.id),
             ObjectWrite::Tag {
                 tag: input.tag,
                 message: input.message,
