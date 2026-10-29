@@ -1746,6 +1746,7 @@ CREATE TABLE graphql_rate_limits (
     reset_at TEXT NOT NULL
 );
 CREATE INDEX ci_runs_workflow_run ON ci_runs(workflow_run_id,workflow_run_attempt);
+CREATE INDEX ci_runs_logical_latest ON ci_runs(repo_id,(COALESCE(workflow_run_id,id)) DESC,id DESC);
 
 CREATE TABLE actions_run_metadata (
     run_id INTEGER PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE,
