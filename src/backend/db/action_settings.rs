@@ -238,7 +238,7 @@ native_operation!(crate::backend::db::postgres::action_settings::effective,
     fn effective(pool: &DbPool, repo: i64) -> Result<(Value, Value)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies_page,
     crate::backend::db::sqlite::action_settings::policies_page,
-    fn policies_page(pool: &DbPool, actor: i64, token: i64, scope: &Scope, offset: i64, limit: i64) -> Result<(i64, Vec<Policy>)>);
+    fn policies_page(pool: &DbPool, actor: i64, token: i64, scope: &Scope, has_parents: bool, offset: i64, limit: i64) -> Result<(i64, Vec<ListedPolicy>)>);
 native_operation!(crate::backend::db::postgres::action_settings::policies,
     crate::backend::db::sqlite::action_settings::policies,
     fn policies(pool: &DbPool, actor: i64, token: i64, scope: &Scope, id: Option<i64>, change: Option<Option<&Value>>) -> Result<Vec<Policy>>);
@@ -276,6 +276,41 @@ pub struct Policy {
     pub data: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct ListedPolicy {
+    #[sqlx(flatten)]
+    pub policy: Policy,
+    pub organization: Option<String>,
+}
+#[derive(sqlx::FromRow)]
+pub(crate) struct PolicySelector {
+    pub id: i64,
+    pub own: bool,
+    pub conditions: Option<String>,
+}
+
+impl PolicySelector {
+    pub(crate) fn applies(&self, repository: &super::rulesets::RepositoryContext<'_>, budget: &mut crate::backend::ci::workflows::WorkflowMatchBudget) -> Result<bool> {
+        if self.own { return Ok(true); }
+        match policy_conditions(self.conditions.as_deref())? {
+            Some(conditions) => Ok(conditions.matches_repository(repository, budget)?),
+            None => Ok(true),
+        }
+    }
+}
+
+pub(crate) fn policy_conditions(stored: Option<&str>) -> Result<Option<super::rulesets::Conditions>> {
+    let Some(stored) = stored else { return Ok(None); };
+    let mut value: Value = serde_json::from_str(stored)?;
+    if value.is_null() { return Ok(None); }
+    let fields = value.as_object_mut().ok_or(Refusal::Invalid)?;
+    fields.remove("workflow_path");
+    if fields.is_empty() { return Ok(None); }
+    let conditions: super::rulesets::Conditions = serde_json::from_value(value).map_err(|_| Refusal::Invalid)?;
+    ensure!(conditions.ref_name.is_none() && usize::from(conditions.repository_name.is_some()) + usize::from(conditions.repository_id.is_some()) + usize::from(conditions.repository_property.is_some()) == 1, Refusal::Invalid);
+    Ok(Some(conditions))
 }
 
 pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Value> {
@@ -338,6 +373,7 @@ pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Val
         result.get("name").is_some() && result.get("enforcement").is_some(),
         Refusal::Invalid
     );
+    policy_conditions(result.get("conditions").map(Value::to_string).as_deref())?;
     // Restrictive rules are stored but no CI admission or claiming path evaluates
     // them yet, so an active policy with rules would claim enforcement that does not run.
     ensure!(
