@@ -57,7 +57,7 @@ pub async fn list_keys(
     repo: &Repository,
 ) -> Result<Vec<DeployKey>, DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    db::deploy_keys::list_deploy_keys(pool, repo.id)
+    db::deploy_keys::list_deploy_keys(pool, actor.id, repo.id)
         .await
         .map_err(DeployKeyError::Unavailable)
 }

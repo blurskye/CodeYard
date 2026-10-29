@@ -6,10 +6,10 @@ use sqlx::PgPool;
 
 const COLUMNS: &str = "id, repo_id, name AS title, fingerprint, public_key, NOT read_only AS can_write, created_by_id, last_used_at, created_at";
 
-pub async fn list_deploy_keys(pool: &PgPool, repo_id: i64) -> Result<Vec<DeployKey>> {
-    let sql =
-        format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id = $1 ORDER BY created_at, id");
-    Ok(sqlx::query_as(&sql).bind(repo_id).fetch_all(pool).await?)
+pub async fn list_deploy_keys(pool: &PgPool, actor: i64, repo_id: i64) -> Result<Vec<DeployKey>> {
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id=$1 AND EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=deploy_keys.repo_id AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)) ORDER BY created_at,id");
+    Ok(sqlx::query_as(&sql).bind(repo_id).bind(actor).fetch_all(pool).await?)
 }
 
 pub async fn get_deploy_key(pool: &PgPool, key_id: i64) -> Result<Option<DeployKey>> {
