@@ -35,6 +35,7 @@ pub mod pulls;
 pub mod refs;
 pub mod releases;
 pub mod repository;
+mod repository_discussions;
 pub mod responses;
 pub mod secret_scanning;
 pub mod security;
@@ -147,6 +148,7 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(insights::page_router())
         .merge(security::page_router())
         .merge(dependabot::page_router())
+        .merge(repository_discussions::page_router())
         .merge(secret_scanning::page_router())
         .merge(dependency_graph::page_router())
         .merge(dependencies::page_router())
