@@ -458,7 +458,7 @@ pub(super) async fn resolve(
                     ),
                 ]),
             };
-            scheduling.concurrency = Some(super::concurrency::resolve(&concurrency, &contexts)?);
+            scheduling.concurrency = Some(super::concurrency::resolve(concurrency, contexts).await?);
         }
         // Pull request filters name the base branch itself, even when it looks like a ref.
         let event_ref = if pr_revision || pr_target {

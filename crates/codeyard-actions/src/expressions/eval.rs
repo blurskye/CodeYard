@@ -7,9 +7,9 @@ use super::{fold, json_text, lookup, parse_number, Contexts, Error, Status, Valu
 type Item = Rc<Data>;
 
 /// Largest text an expression may build. Join and format stop before exceeding it.
-const MAX_TEXT_BYTES: usize = 1_048_576;
+pub(super) const MAX_TEXT_BYTES: usize = 1_048_576;
 
-fn memory_limit() -> Error {
+pub(super) fn memory_limit() -> Error {
     Error::Evaluation(
         "The maximum allowed memory size was exceeded while evaluating the expression".into(),
     )
@@ -101,7 +101,7 @@ fn equal(a: &Item, b: &Item) -> bool {
 
 fn compare(a: &Item, b: &Item) -> Option<Ordering> {
     match (a.as_ref(), b.as_ref()) {
-        (Data::Scalar(Value::Null), Data::Scalar(Value::Null)) => None,
+        (Data::Scalar(Value::Null), Data::Scalar(Value::Null)) => Some(Ordering::Equal),
         (Data::Scalar(Value::String(a)), Data::Scalar(Value::String(b))) => {
             Some(fold(a).encode_utf16().cmp(fold(b).encode_utf16()))
         }
@@ -142,8 +142,8 @@ impl Evaluator {
                     Op::Ne => !equal(&a, &b),
                     Op::Lt => compare(&a, &b) == Some(Ordering::Less),
                     Op::Gt => compare(&a, &b) == Some(Ordering::Greater),
-                    Op::Le => equal(&a, &b) || compare(&a, &b) == Some(Ordering::Less),
-                    Op::Ge => equal(&a, &b) || compare(&a, &b) == Some(Ordering::Greater),
+                    Op::Le => matches!(compare(&a, &b), Some(Ordering::Less | Ordering::Equal)),
+                    Op::Ge => matches!(compare(&a, &b), Some(Ordering::Greater | Ordering::Equal)),
                     _ => unreachable!("logical operators have their own nodes"),
                 }))
             }
@@ -236,7 +236,7 @@ impl Evaluator {
                     }))
                 }
             }
-            "tojson" => Ok(text(json_text(&self.eval(&args[0])?.value(), true, 0))),
+            "tojson" => Ok(text(json_text(&self.eval(&args[0])?.value())?)),
             "fromjson" => {
                 let input = self.eval(&args[0])?.text();
                 let value = serde_json::from_str(&input).map_err(|error| {
