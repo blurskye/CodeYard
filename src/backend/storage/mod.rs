@@ -236,6 +236,26 @@ impl ObjectStore {
         }
     }
 
+    /// Opens one object range; callers retain the reader and bound each read and send.
+    pub async fn open_range(
+        &self, key: &str, offset: u64, length: u64,
+    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        if !valid_key(key) || length == 0 || offset.checked_add(length).is_none() {
+            return Err(StorageError::Invalid);
+        }
+        match &self.backend {
+            Backend::Local(store) => {
+                let (mut file, size) = store.open_file(key).await?;
+                if offset + length > size { return Err(StorageError::Rejected); }
+                file.seek(std::io::SeekFrom::Start(offset)).await?;
+                Ok(Box::new(file.take(length)))
+            }
+            Backend::S3(store) => store.open_range(key, offset, length).await
+                .map_err(|_| StorageError::Unavailable),
+        }
+    }
+
     /// Reads a bounded range for the Actions block-blob adapter without buffering an archive.
     pub async fn read_range(
         &self,
