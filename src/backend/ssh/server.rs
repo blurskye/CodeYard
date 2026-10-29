@@ -510,10 +510,12 @@ impl SshServer {
 
     /// Accepts connections until `stop` is set. Then it closes the listener and returns
     /// once connections and Git tasks have ended, so the caller bounds that wait.
-    pub async fn run(&mut self, addr: SocketAddr, mut stop: watch::Receiver<bool>) -> Result<()> {
-        info!("Starting SSH server on {}", addr);
+    pub async fn run(&mut self, addr: SocketAddr, stop: watch::Receiver<bool>) -> Result<()> {
+        self.run_listener(TcpListener::bind(addr).await?, stop).await
+    }
 
-        let socket = TcpListener::bind(addr).await?;
+    pub(crate) async fn run_listener(&mut self, socket: TcpListener, mut stop: watch::Receiver<bool>) -> Result<()> {
+        info!("Starting SSH server on {}", socket.local_addr()?);
         let mut connections = JoinSet::new();
         loop {
             tokio::select! {
@@ -719,11 +721,10 @@ mod tests {
         let mut server = test_server().await;
         server.trusted_proxy_ips = Arc::new(HashSet::from(["127.0.0.1".parse().unwrap()]));
         let admission = server.admission.clone();
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = probe.local_addr().unwrap();
-        drop(probe);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
         let (stop, stopped) = watch::channel(false);
-        let running = tokio::spawn(async move { server.run(address, stopped).await });
+        let running = tokio::spawn(async move { server.run_listener(listener, stopped).await });
         let slots: Vec<_> = (0..MAX_PREAUTH_CONNECTIONS - 1)
             .map(|_| admission.reserve().unwrap())
             .collect();
@@ -836,11 +837,10 @@ mod tests {
     #[tokio::test]
     async fn per_address_limit_refuses_extra_connections_and_stop_waits_for_open_ones() {
         let mut server = test_server().await;
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = probe.local_addr().unwrap();
-        drop(probe);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
         let (stop, stopped) = watch::channel(false);
-        let mut running = tokio::spawn(async move { server.run(address, stopped).await });
+        let mut running = tokio::spawn(async move { server.run_listener(listener, stopped).await });
 
         let mut admitted = Vec::new();
         for _ in 0..MAX_PREAUTH_CONNECTIONS_PER_IP {
