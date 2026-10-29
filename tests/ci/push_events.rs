@@ -185,6 +185,7 @@ async fn contract(pg: bool) {
             deleting: false,
         },
         b"base".to_vec(),
+        Default::default(),
     )
     .await
     .unwrap();

@@ -9,7 +9,7 @@ use crate::backend::{
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
         pull_requests,
         store::{
-            repo_store, CommitInfo, ErrorKind, FileWrite, PreparedFile, RepoError, RepoStore,
+            repo_store, CommitIdentities, CommitInfo, ErrorKind, FileWrite, PreparedFile, RepoError, RepoStore,
             UploadWrite, MAX_EDITOR_BYTES,
         },
     },
@@ -145,10 +145,10 @@ enum FileContent {
     Text(String),
     Bytes(Vec<u8>),
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum CommitOrigin {
     Web,
-    Api,
+    Api(CommitIdentities),
 }
 
 async fn check_web_signoff(
@@ -329,6 +329,7 @@ pub async fn write_file_bytes(
     repository_id: i64,
     input: FileWrite,
     content: Vec<u8>,
+    identities: CommitIdentities,
 ) -> Result<FileSave, WriteError> {
     // The caller passes the repository it authorized, so a rename cannot retarget the write.
     save_file(
@@ -341,7 +342,7 @@ pub async fn write_file_bytes(
         input,
         FileContent::Bytes(content),
         None,
-        CommitOrigin::Api,
+        CommitOrigin::Api(identities),
     )
     .await
 }
@@ -361,6 +362,7 @@ pub async fn delete_file(
     repository_id: i64,
     input: FileWrite,
     new_branch: Option<&str>,
+    identities: CommitIdentities,
 ) -> Result<FileSave, WriteError> {
     save_file(
         pool,
@@ -372,7 +374,7 @@ pub async fn delete_file(
         input,
         FileContent::Bytes(Vec::new()),
         new_branch,
-        CommitOrigin::Api,
+        CommitOrigin::Api(identities),
     )
     .await
 }
@@ -520,6 +522,7 @@ async fn save_file(
         guard_revision,
         || {
             input.validate().map_err(write_error)?;
+            if let CommitOrigin::Api(identities) = &origin { identities.validate().map_err(write_error)?; }
             if let Some(name) = new_branch {
                 check_new_branch_name(name)?;
             }
@@ -575,8 +578,10 @@ async fn save_file(
         });
     }
     let email = user.commit_email();
+    let defaults = CommitIdentities::default();
+    let identities = match &origin { CommitOrigin::Web => &defaults, CommitOrigin::Api(identities) => identities };
     let mut prepared = store
-        .prepare_file(&input, &content, &user.username, &email)
+        .prepare_file_with_identities(&input, &content, &user.username, &email, identities)
         .await
         .map_err(|error| {
             if error.is_branch_missing() {

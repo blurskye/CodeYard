@@ -39,7 +39,7 @@ pub use crate::backend::git::{
     MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
 pub use editor::{
-    FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
+    CommitIdentities, FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
     MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use error::invalid_ref;
@@ -1789,9 +1789,14 @@ impl RepoStore {
         author: &str,
         email: &str,
     ) -> Result<PreparedFile, RepoError> {
+        self.prepare_file_with_identities(write, content, author, email, &CommitIdentities::default()).await
+    }
+
+    pub async fn prepare_file_with_identities(&self, write: &FileWrite, content: &[u8], author: &str, email: &str, identities: &CommitIdentities) -> Result<PreparedFile, RepoError> {
         write.validate()?;
-        match &self.0 {
-            Backend::Local(local) => local.prepare_file(write, content, author, email).await,
+        identities.validate()?;
+        let prepared = match &self.0 {
+            Backend::Local(local) => local.prepare_file_with_identities(write, content, author, email, identities).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -1799,12 +1804,15 @@ impl RepoStore {
                             write: write.clone(),
                             author: author.into(),
                             email: email.into(),
+                            identities: identities.clone(),
                         },
                         content,
                     )
                     .await
             }
-        }
+        }?;
+        identities.check_prepared(&prepared.commit)?;
+        Ok(prepared)
     }
 
     #[expect(

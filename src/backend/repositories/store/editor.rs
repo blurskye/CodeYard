@@ -2,9 +2,7 @@
 //! trees, create the commit, then move the branch only if it still points where the
 //! editor started.
 use super::{ErrorKind, RepoError};
-use crate::backend::git::repository::{
-    process, CommitInfo, MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES,
-};
+use crate::backend::git::{objects::Signature, repository::{process, CommitInfo}};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -24,6 +22,33 @@ pub const MAX_UPLOAD_TOTAL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_OUTPUT: usize = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(60);
 pub(super) const ZERO: &str = "0000000000000000000000000000000000000000";
+
+/// Optional API attribution. Each omitted identity defaults independently to the actor.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CommitIdentities {
+    pub author: Option<Signature>,
+    pub committer: Option<Signature>,
+}
+impl CommitIdentities {
+    pub(crate) fn validate(&self) -> Result<(), RepoError> {
+        for identity in self.author.iter().chain(self.committer.iter()) { identity.validate()?; }
+        Ok(())
+    }
+
+    fn resolved(&self, name: &str, email: &str) -> (Signature, Signature) {
+        let fallback = || Signature { name: name.into(), email: email.into(), date: None };
+        (self.author.clone().unwrap_or_else(fallback), self.committer.clone().unwrap_or_else(fallback))
+    }
+
+    pub(super) fn check_prepared(&self, commit: &CommitInfo) -> Result<(), RepoError> {
+        for (identity, name, email, timestamp) in [(&self.author, &commit.author_name, &commit.author_email, commit.timestamp), (&self.committer, &commit.committer_name, &commit.committer_email, commit.committer_timestamp)] {
+            if identity.as_ref().is_some_and(|identity| identity.name.trim() != name.as_str() || identity.email.trim() != email.as_str() || identity.date.is_some_and(|date| date.timestamp() != timestamp)) {
+                return Err(RepoError::new(ErrorKind::Unavailable, "Storage did not preserve the requested commit identities."));
+            }
+        }
+        Ok(())
+    }
+}
 
 /// One file change to commit. The file's bytes are passed separately.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,16 +202,15 @@ impl Repo<'_> {
         &self,
         args: &[&str],
         input: &[u8],
-        identity: Option<(&str, &str)>,
+        identity: Option<(&Signature, &Signature)>,
     ) -> Result<(ExitStatus, Vec<u8>), RepoError> {
         let mut command = process::git_command().map_err(|_| unavailable())?;
         command.arg("--git-dir").arg(self.0).args(args);
-        if let Some((name, email)) = identity {
-            command
-                .env("GIT_AUTHOR_NAME", name)
-                .env("GIT_COMMITTER_NAME", name)
-                .env("GIT_AUTHOR_EMAIL", email)
-                .env("GIT_COMMITTER_EMAIL", email);
+        if let Some((author, committer)) = identity {
+            for (role, identity) in [("AUTHOR", author), ("COMMITTER", committer)] {
+                command.env(format!("GIT_{role}_NAME"), &identity.name).env(format!("GIT_{role}_EMAIL"), &identity.email).env_remove(format!("GIT_{role}_DATE"));
+                if let Some(date) = identity.date { command.env(format!("GIT_{role}_DATE"), date.format("%s %z").to_string()); }
+            }
         }
         process::buffered(command, input, MAX_OUTPUT, TIMEOUT)
             .await
@@ -196,7 +220,7 @@ impl Repo<'_> {
         &self,
         args: &[&str],
         input: &[u8],
-        identity: Option<(&str, &str)>,
+        identity: Option<(&Signature, &Signature)>,
     ) -> Result<Vec<u8>, RepoError> {
         let (status, bytes) = self.command(args, input, identity).await?;
         if !status.success() {
@@ -375,22 +399,14 @@ async fn prepare_commit(
     message: &str,
     expected_revision: &str,
     changes: &[Change<'_>],
-    author: &str,
-    email: &str,
+    identity: (&Signature, &Signature),
 ) -> Result<PreparedFile, RepoError> {
     let storage = Repo(path);
     if changes.is_empty() {
         return Err(invalid("A commit needs at least one file."));
     }
-    if author.is_empty()
-        || author.len() > MAX_COMMIT_NAME_BYTES
-        || email.is_empty()
-        || email.len() > MAX_COMMIT_EMAIL_BYTES
-        || author.contains(['\0', '\r', '\n', '<', '>'])
-        || email.contains(['\0', '\r', '\n', '<', '>'])
-    {
-        return Err(invalid("Invalid commit identity."));
-    }
+    identity.0.validate()?;
+    identity.1.validate()?;
     let reference =
         crate::backend::git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
     let current = storage.direct_ref(&reference).await?;
@@ -428,7 +444,7 @@ async fn prepare_commit(
         args.extend(["-p", parent.as_str()]);
     }
     let sha = oid(&storage
-        .checked(&args, message.as_bytes(), Some((author, email)))
+        .checked(&args, message.as_bytes(), Some(identity))
         .await?)?;
     let bytes = storage
         .checked(&["cat-file", "commit", &sha], b"", None)
@@ -456,7 +472,13 @@ pub(super) async fn prepare(
     author: &str,
     email: &str,
 ) -> Result<PreparedFile, RepoError> {
+    prepare_with_identities(path, input, content, author, email, &CommitIdentities::default()).await
+}
+
+pub(super) async fn prepare_with_identities(path: &Path, input: &FileWrite, content: &[u8], author: &str, email: &str, identities: &CommitIdentities) -> Result<PreparedFile, RepoError> {
     input.validate()?;
+    identities.validate()?;
+    let (author, committer) = identities.resolved(author, email);
     if content.len() > MAX_EDITOR_BYTES {
         return Err(invalid("File content exceeds 1 MiB."));
     }
@@ -475,8 +497,7 @@ pub(super) async fn prepare(
         &input.message,
         &input.expected_revision,
         std::slice::from_ref(&change),
-        author,
-        email,
+        (&author, &committer),
     )
     .await
 }
@@ -506,14 +527,14 @@ pub(super) async fn prepare_upload(
         });
         offset = end;
     }
+    let identity = Signature { name: author.into(), email: email.into(), date: None };
     prepare_commit(
         path,
         &write.branch,
         &write.message,
         &write.expected_revision,
         &changes,
-        author,
-        email,
+        (&identity, &identity),
     )
     .await
 }

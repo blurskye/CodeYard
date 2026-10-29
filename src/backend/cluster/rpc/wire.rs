@@ -323,6 +323,8 @@ pub enum Operation {
         write: FileWrite,
         author: String,
         email: String,
+        #[serde(default)]
+        identities: crate::backend::repositories::store::CommitIdentities,
     },
     PublishFile {
         prepared: PreparedFile,
@@ -733,6 +735,7 @@ mod tests {
                 write: write.clone(),
                 author: "Author".into(),
                 email: "author@example.invalid".into(),
+                identities: Default::default(),
             }),
             MAX_EDITOR_BYTES
         );

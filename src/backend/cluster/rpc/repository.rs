@@ -998,7 +998,8 @@ impl RpcHandler {
                 write,
                 author,
                 email,
-            } => json!(store.prepare_file(&write, &body, &author, &email)),
+                identities,
+            } => json!(store.prepare_file_with_identities(&write, &body, &author, &email, &identities)),
             Operation::PrepareUpload {
                 write,
                 author,

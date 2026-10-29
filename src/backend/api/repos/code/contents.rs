@@ -103,6 +103,7 @@ async fn write_file(
             deleting: false,
         },
         content,
+        Default::default(),
     )
     .await
     .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))
@@ -145,6 +146,7 @@ pub async fn delete_file_content(
             deleting: true,
         },
         None,
+        Default::default(),
     )
     .await
     .map_err(|error| failure(write_status(&error), "file_write_rejected", &error.message))?;

@@ -399,6 +399,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 },
                 author: "Tester".into(),
                 email: "tester@example.invalid".into(),
+                identities: Default::default(),
             },
             false,
         ),

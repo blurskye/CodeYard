@@ -33,24 +33,29 @@ pub struct Signature {
 }
 
 impl Signature {
-    fn git(&self) -> Result<git2::Signature<'static>> {
-        if self.name.is_empty()
+    pub(crate) fn validate(&self) -> std::result::Result<(), RepoError> {
+        if self.name.trim().is_empty()
             || self.name.len() > MAX_COMMIT_NAME_BYTES
-            || self.email.is_empty()
+            || self.email.trim().is_empty()
             || self.email.len() > MAX_COMMIT_EMAIL_BYTES
             || [&self.name, &self.email]
                 .iter()
-                .any(|value| value.contains(['\0', '\n', '\r']))
+                .any(|value| value.contains(['\0', '\n', '\r', '<', '>']))
         {
-            return Err(invalid("Invalid Git identity").into());
+            return Err(invalid("Invalid Git identity"));
         }
         // libgit2 writes object dates as unsigned 32-bit seconds, so other dates would wrap.
         if self
             .date
             .is_some_and(|date| u32::try_from(date.timestamp()).is_err())
         {
-            return Err(invalid("Git dates must fall between 1970 and 2106").into());
+            return Err(invalid("Git dates must fall between 1970 and 2106"));
         }
+        Ok(())
+    }
+
+    fn git(&self) -> Result<git2::Signature<'static>> {
+        self.validate()?;
         Ok(match self.date {
             Some(date) => git2::Signature::new(
                 &self.name,

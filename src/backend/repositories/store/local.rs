@@ -1796,6 +1796,10 @@ impl LocalStore {
         editor::prepare(self.path(), write, content, author, email).await
     }
 
+    pub(super) async fn prepare_file_with_identities(&self, write: &FileWrite, content: &[u8], author: &str, email: &str, identities: &editor::CommitIdentities) -> Result<editor::PreparedFile, RepoError> {
+        editor::prepare_with_identities(self.path(), write, content, author, email, identities).await
+    }
+
     pub(super) async fn prepare_upload(
         &self,
         write: &editor::UploadWrite,
