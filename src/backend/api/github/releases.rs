@@ -93,24 +93,23 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (_, auth) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let (offset, limit) = page.window()?;
     let listing = releases::list(
         &state.pool,
         viewer,
-        &owner,
-        &name,
+        repo.id,
         (offset / limit + 1) as i64,
         limit as i64,
     )
     .await
     .map_err(release_error)?;
     let mut values = Vec::new();
+    let mut grouped = HashMap::<i64, Vec<_>>::new();
+    for asset in listing.assets { grouped.entry(asset.release_id).or_default().push(asset); }
     for row in listing.releases {
-        let assets = db::releases::list_release_assets(&state.pool, row.release.id)
-            .await
-            .map_err(Error::unavailable)?;
+        let assets = grouped.remove(&row.release.id).unwrap_or_default();
         let detail = releases::ReleaseDetail {
             repository: listing.repository.clone(),
             can_write: listing.can_write,
@@ -131,7 +130,7 @@ async fn get_one(
     let (repo, auth) = repository(&state, &headers, owner, name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
     let detail = if let Some(tag) = params.get("tag") {
-        releases::detail_by_tag(&state.pool, viewer, owner, name, tag).await
+        releases::detail_by_tag(&state.pool, viewer, repo.id, tag).await
     } else {
         let id = match params.get("release_id") {
             Some(id) => id.parse().map_err(|_| Error::missing())?,
@@ -143,7 +142,7 @@ async fn get_one(
                     .id
             }
         };
-        releases::detail_by_id(&state.pool, viewer, owner, name, id).await
+        releases::detail_by_id(&state.pool, viewer, repo.id, id).await
     }
     .map_err(release_error)?;
     Ok(Json(document(&state, owner, name, &detail).await?))
@@ -268,7 +267,7 @@ async fn create(
     )
     .await
     .map_err(release_error)?;
-    let detail = releases::detail_by_id(&state.pool, Some(actor.id), &owner, &name, release.id)
+    let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, release.id)
         .await
         .map_err(release_error)?;
     Ok((
@@ -294,11 +293,11 @@ async fn update(
     Path((owner, name, id)): Path<(String, String, i64)>,
     Json(value): Json<Value>,
 ) -> Result<Json<Value>> {
-    let (_, auth) = repository(&state, &headers, &owner, &name, true).await?;
+    let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid release fields"))?;
-    let current = releases::detail_by_id(&state.pool, Some(auth.user.id), &owner, &name, id)
+    let current = releases::detail_by_id(&state.pool, Some(auth.user.id), repo.id, id)
         .await
         .map_err(release_error)?;
     // Publishing a draft creates its tag when the tag is missing.
@@ -338,7 +337,7 @@ async fn update(
     )
     .await
     .map_err(release_error)?;
-    let detail = releases::detail_by_id(&state.pool, Some(actor.id), &owner, &name, id)
+    let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, id)
         .await
         .map_err(release_error)?;
     Ok(Json(document(&state, &owner, &name, &detail).await?))
@@ -397,7 +396,7 @@ async fn upload(
     )
     .await
     .map_err(release_error)?;
-    let detail = releases::detail_by_id(&state.pool, Some(actor.id), &owner, &name, id)
+    let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, id)
         .await
         .map_err(release_error)?;
     Ok((
@@ -470,12 +469,11 @@ async fn list_assets(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (_, auth) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let detail = releases::detail_by_id(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
-        &owner,
-        &name,
+        repo.id,
         id,
     )
     .await
@@ -501,7 +499,7 @@ async fn asset(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let detail = releases::detail_by_id(&state.pool, viewer, &owner, &name, asset.release_id)
+    let detail = releases::detail_by_id(&state.pool, viewer, repo.id, asset.release_id)
         .await
         .map_err(release_error)?;
     if headers
@@ -513,8 +511,7 @@ async fn asset(
             &state.pool,
             &state.storage,
             viewer,
-            &owner,
-            &name,
+            repo.id,
             asset.id,
             // A HEAD request delivers no asset, so only GET counts as a download.
             method == axum::http::Method::GET,

@@ -29,8 +29,7 @@ async fn target(
         let detail = crate::backend::repositories::releases::detail_by_id(
             pool,
             viewer,
-            &p["owner"],
-            &p["repo"],
+            repo_id,
             id.parse().map_err(|_| Error::missing())?,
         )
         .await
