@@ -150,7 +150,7 @@ mod tests {
             .await
             .unwrap();
         let allocations = db::cluster::pending_replica_bytes(&pool).await.unwrap();
-        assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 20 * GIB);
+        assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 22 * GIB);
         assert!(allocations
             .iter()
             .any(|row| row.0 == nodes[1] && row.1 <= 12 * GIB));
@@ -323,7 +323,7 @@ fn group_primaries(rows: Vec<db::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
                 repository_id,
                 disk_path,
                 copies: copy.into_iter().collect(),
-                size: size.max(1),
+                size: size.max(1).saturating_mul(db::cluster::REPLICA_STAGING_FACTOR),
             }),
         }
     }

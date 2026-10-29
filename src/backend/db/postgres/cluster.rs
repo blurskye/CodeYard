@@ -518,8 +518,8 @@ pub async fn list_primary_repositories(
 }
 
 pub async fn pending_replica_bytes(pool: &PgPool) -> Result<Vec<(i64, i64)>> {
-    Ok(sqlx::query_as("SELECT rr.node_id, SUM(GREATEST(r.size_bytes,1))::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
-        .fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT rr.node_id, (SUM(GREATEST(r.size_bytes,1))*$1)::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
+        .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(pool).await?)
 }
 
 pub async fn list_held_replicas(pool: &PgPool, node_id: i64) -> Result<Vec<HeldReplica>> {

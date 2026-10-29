@@ -1911,7 +1911,7 @@ async fn keyed_storage_node(pool: &DbPool, name: &str) -> (i64, String) {
 
 async fn report_in(pool: &DbPool, key: &str) {
     assert!(
-        db::cluster::record_node_heartbeat(pool, key, "test", "{}", None)
+        db::cluster::record_node_heartbeat(pool, key, "test", "{}", Some(1024 * 1024 * 1024 * 1024))
             .await
             .unwrap()
     );

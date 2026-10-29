@@ -46,6 +46,9 @@ pub struct DeclaredMember {
     pub roles: Vec<String>,
 }
 
+/// A fresh copy holds its downloaded staging pack and installed pack simultaneously.
+pub const REPLICA_STAGING_FACTOR: i64 = 2;
+
 /// A primary and optional copy: id, path, holder, applied version, size, ever completed.
 pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64, bool);
 
