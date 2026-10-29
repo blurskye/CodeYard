@@ -501,7 +501,7 @@ CREATE TABLE timeline_events (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 CREATE INDEX idx_timeline_events_subject ON timeline_events(subject_kind, subject_id, created_at);
-CREATE INDEX idx_timeline_events_repo_id ON timeline_events(repo_id);
+CREATE INDEX idx_timeline_events_repo_id ON timeline_events(repo_id, created_at, id);
 
 CREATE TABLE reactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
@@ -846,6 +846,7 @@ CREATE TABLE ci_accepted_pushes (
     accepted_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     PRIMARY KEY(repo_id, actor_id, reference, sha)
 );
+CREATE INDEX ci_accepted_pushes_time ON ci_accepted_pushes(repo_id, accepted_at);
 
 CREATE TABLE repository_discussion_counters (
     repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),
@@ -1069,6 +1070,7 @@ CREATE INDEX idx_ci_runs_queue ON ci_runs(status, id)
     WHERE status IN ('queued', 'running');
 CREATE INDEX idx_files_pending ON files(upload_expires_at) WHERE NOT is_active;
 CREATE INDEX idx_notifications_scope ON notifications(user_id, scope_repository_id);
+CREATE INDEX notifications_user_id ON notifications(user_id, id DESC);
 CREATE INDEX idx_repository_pushes_actor ON repository_pushes(actor_id, created_at);
 
 INSERT INTO file_reason_limits (reason, max_file_size_bytes, max_uploads_per_hour, max_bytes_per_hour, max_uploads_per_day, max_bytes_per_day, allowed_content_types, description) VALUES
@@ -1179,6 +1181,7 @@ CREATE TABLE webhook_deliveries (
 );
 
 CREATE INDEX idx_webhook_deliveries_webhook_id ON webhook_deliveries(webhook_id, id);
+CREATE INDEX webhook_deliveries_expiry ON webhook_deliveries(delivered_at, id);
 
 -- Sign-in and recovery look accounts up by address, ignoring case.
 CREATE INDEX idx_users_email_lower ON users(lower(email));
@@ -2165,6 +2168,7 @@ CREATE TABLE github_app_deliveries (
     delivered_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 CREATE INDEX github_app_deliveries_hook ON github_app_deliveries(webhook_id,id);
+CREATE INDEX github_app_deliveries_expiry ON github_app_deliveries(delivered_at, id);
 
 CREATE TABLE github_app_callbacks (
     app_id INTEGER NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
@@ -2865,6 +2869,7 @@ CREATE TABLE repository_migration_locks (
     migration_id INTEGER NOT NULL REFERENCES repository_exports(id) ON DELETE CASCADE
 );
 CREATE INDEX repository_exports_user ON repository_exports(owner_user_id,id);
+CREATE INDEX repository_exports_active_actor ON repository_exports(actor_id, updated_at) WHERE state IN ('pending','exporting');
 CREATE INDEX repository_exports_org ON repository_exports(owner_org_id,id);
 CREATE TRIGGER repository_exports_cleanup BEFORE DELETE ON repository_exports
 BEGIN
@@ -2985,6 +2990,7 @@ CREATE TABLE secret_scanning_jobs (
     completed_at TEXT
 );
 CREATE INDEX secret_scanning_jobs_pending ON secret_scanning_jobs(status, id);
+CREATE INDEX secret_scanning_jobs_history ON secret_scanning_jobs(repo_id, id DESC);
 
 CREATE TABLE secret_scanning_commits (
     repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
@@ -3112,6 +3118,7 @@ CREATE TABLE vulnerability_jobs (
     next_scan TEXT NOT NULL,
     lease_until TEXT
 );
+CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan, repo_id);
 
 -- Actions job annotations
 CREATE TABLE actions_job_annotations (
@@ -3548,6 +3555,8 @@ CREATE TABLE repository_rule_suites (
     evaluations TEXT NOT NULL CHECK(typeof(evaluations)='text' AND length(CAST(evaluations AS BLOB))<=16777216),
     created_at TEXT NOT NULL DEFAULT(strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
+CREATE INDEX repository_rule_suites_org_time ON repository_rule_suites(org_id, created_at, id);
+CREATE INDEX repository_rule_suites_repo_time ON repository_rule_suites(repo_id, created_at, id);
 CREATE INDEX repository_rule_suites_org ON repository_rule_suites(org_id,id DESC);
 CREATE INDEX repository_rule_suites_repo ON repository_rule_suites(repo_id,id DESC);
 

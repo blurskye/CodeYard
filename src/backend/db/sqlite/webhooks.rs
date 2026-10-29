@@ -268,11 +268,11 @@ pub async fn delete_webhook(
 
 // Deliveries expire by age even when their hook is idle; inserts only trim the newest 100.
 pub async fn prune_expired_deliveries(pool: &SqlitePool) -> Result<u64> {
-    let hooks = sqlx::query("DELETE FROM webhook_deliveries WHERE delivered_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-30 days')")
+    let hooks = sqlx::query("DELETE FROM webhook_deliveries WHERE id IN (SELECT id FROM webhook_deliveries WHERE delivered_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-30 days') ORDER BY delivered_at,id LIMIT 1000)")
         .execute(pool)
         .await?
         .rows_affected();
-    let apps = sqlx::query("DELETE FROM github_app_deliveries WHERE delivered_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-30 days')")
+    let apps = sqlx::query("DELETE FROM github_app_deliveries WHERE id IN (SELECT id FROM github_app_deliveries WHERE delivered_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-30 days') ORDER BY delivered_at,id LIMIT 1000)")
         .execute(pool)
         .await?
         .rows_affected();
