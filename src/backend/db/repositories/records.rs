@@ -348,6 +348,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::delete_re
     crate::backend::db::sqlite::repositories::records::delete_repository,
     fn delete_repository(pool: &DbPool, actor_id: i64, repo_id: i64) -> Result<Repository>);
 
+native_operation!(crate::backend::db::postgres::repositories::records::delete_unattached_advisory_fork,
+    crate::backend::db::sqlite::repositories::records::delete_unattached_advisory_fork,
+    fn delete_unattached_advisory_fork(pool: &DbPool, repo_id: i64) -> Result<Option<Repository>>);
+
 native_operation!(crate::backend::db::postgres::repositories::records::delete_unwritten_repository,
     crate::backend::db::sqlite::repositories::records::delete_unwritten_repository,
     fn delete_unwritten_repository(pool: &DbPool, repo_id: i64) -> Result<Option<Repository>>);

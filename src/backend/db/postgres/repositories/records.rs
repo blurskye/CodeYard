@@ -539,6 +539,12 @@ pub async fn update_repo_size(pool: &PgPool, repo_id: i64, size: i64) -> Result<
 /// deleted, so the caller removes the files where that row says they are.
 /// Deletes a repository only while it has accepted no writes. A failed creation uses this, so
 /// a push that landed while creation was failing keeps its repository.
+pub async fn delete_unattached_advisory_fork(pool: &PgPool, repo_id: i64) -> Result<Option<Repository>> {
+    Ok(sqlx::query_as::<_, Repository>(
+        "DELETE FROM repositories WHERE id=$1 AND is_private AND contribution_version=1 AND NOT EXISTS(SELECT 1 FROM repository_advisories WHERE private_fork_id=$1) RETURNING *",
+    ).bind(repo_id).fetch_optional(pool).await?)
+}
+
 pub async fn delete_unwritten_repository(
     pool: &PgPool,
     repo_id: i64,

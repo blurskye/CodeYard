@@ -671,7 +671,7 @@ pub async fn save_pull_request_review(
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
-    expected_pending: Option<i64>,
+    expected_pending: Option<Option<i64>>,
 ) -> Result<PullRequestReview> {
     let commit_sha = commit_sha.map(str::to_ascii_lowercase);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -730,7 +730,7 @@ pub async fn save_pull_request_review(
         let actual: Option<i64> = sqlx::query_scalar("SELECT id FROM pr_reviews WHERE pull_request_id=?1 AND author_id=?2 AND state='pending'")
             .bind(pr_id).bind(author_id).fetch_optional(&mut *tx).await?;
         anyhow::ensure!(
-            actual == Some(expected),
+            actual == expected,
             crate::backend::db::discussions::DiscussionWriteRefusal::InvalidReview
         );
     }
