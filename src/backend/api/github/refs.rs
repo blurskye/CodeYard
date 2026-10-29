@@ -72,7 +72,7 @@ async fn list(
     );
     let store = repo_store(&repo, state.cluster.as_ref());
     let mut refs: Vec<_> = store
-        .refs()
+        .matching_refs(&prefix)
         .await
         .map_err(store_error)?
         .into_iter()
