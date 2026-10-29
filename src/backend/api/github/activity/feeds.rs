@@ -241,7 +241,7 @@ async fn feed(
                 )
             }
         };
-    let (values, _) = events::documents(&state, viewer, scope, public, 0, 100).await?;
+    let (values, _) = events::documents(&state, viewer, None, scope, public, 0, 100).await?;
     let body = atom(&title, &id, &config.updated_at.to_rfc3339(), &values);
     let mut response = body.into_response();
     response.headers_mut().insert(

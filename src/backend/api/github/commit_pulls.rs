@@ -96,7 +96,7 @@ async fn document(
     repo: &Repository,
     owner: &str,
     pull: &PullRequest,
-    actor: Option<&User>,
+    auth: Option<&super::auth::Authentication>,
     documents: &mut HashMap<i64, Value>,
     associations: &HashMap<i64, String>,
 ) -> Result<Value> {
@@ -110,25 +110,16 @@ async fn document(
     let base = repository_document(state, repo, owner, documents).await?;
     value["base"] = json!({"label":format!("{owner}:{}",pull.base_branch),"ref":pull.base_branch,"sha":pull.base_sha,"user":base["owner"],"repo":base});
     // A pull's retained commits do not authorize disclosing its private source repository.
-    let head = db::repositories::records::get_repository_by_id(
-        &state.pool,
-        pull.head_repo_id.ok_or_else(Error::missing)?,
-    )
-    .await
-    .map_err(Error::unavailable)?
-    .ok_or_else(Error::missing)?;
-    if !access::can_read(&state.pool, actor, &head)
-        .await
-        .map_err(Error::unavailable)?
-    {
-        return Err(Error::missing());
-    }
-    let head_owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    let head = repository_document(state, &head, &head_owner, documents).await?;
-    value["head"] = json!({"label":format!("{head_owner}:{}",pull.head_branch),"ref":pull.head_branch,"sha":pull.head_sha,"user":head["owner"],"repo":head});
+    value["head"] = if let Some(head) = super::pulls::readable_head(state, auth, pull).await? {
+        let head_owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        let head = repository_document(state, &head, &head_owner, documents).await?;
+        json!({"label":format!("{head_owner}:{}",pull.head_branch),"ref":pull.head_branch,"sha":pull.head_sha,"user":head["owner"],"repo":head})
+    } else {
+        json!({"label":pull.head_branch,"ref":pull.head_branch,"sha":pull.head_sha,"user":null,"repo":null})
+    };
     let labels = db::labels::get_pull_request_labels(&state.pool, pull.id)
         .await
         .map_err(Error::unavailable)?;
@@ -208,7 +199,7 @@ async fn list(
                 &result.repository,
                 &owner,
                 pull,
-                auth.as_ref().map(|auth| &auth.user),
+                auth.as_ref(),
                 &mut documents,
                 &associations,
             )

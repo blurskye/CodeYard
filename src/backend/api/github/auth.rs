@@ -171,6 +171,32 @@ pub(super) async fn readable_repositories(
     Ok(readable)
 }
 
+/// A linked repository is optional: base-side history does not grant access to a fork.
+/// Never revive deleted repositories from an old event's visibility snapshot.
+pub(super) async fn referenced_repository(
+    state: &AppState,
+    auth: Option<&Authentication>,
+    id: i64,
+) -> Result<Option<db::models::Repository>> {
+    let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, id)
+        .await.map_err(Error::unavailable)? else { return Ok(None) };
+    if repo.is_private {
+        if let Some(auth) = auth {
+            match auth.repository_scope(&state.pool, id, "metadata", false).await {
+                Ok(()) => {}
+                Err(ScopeError::Missing | ScopeError::Denied) => return Ok(None),
+                Err(error) => return Err(scope_error(error)),
+            }
+        }
+    }
+    if crate::backend::repositories::access::can_read(&state.pool, auth.map(|auth| &auth.user), &repo)
+        .await.map_err(Error::unavailable)? {
+        Ok(Some(repo))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Recheck the immutable resource identity after a storage or admission wait.
 pub(super) async fn revalidate_repository(state: &AppState, auth: Option<&Authentication>, id: i64, permission: &str) -> Result<()> {
     let repo = db::repositories::records::get_repository_by_id(&state.pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;

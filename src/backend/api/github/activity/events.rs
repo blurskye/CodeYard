@@ -28,6 +28,7 @@ enum Listing {
 pub(super) async fn documents(
     state: &AppState,
     viewer: Option<i64>,
+    authentication: Option<&auth::Authentication>,
     scope: EventScope,
     public: bool,
     offset: usize,
@@ -66,12 +67,28 @@ pub(super) async fn documents(
         if !actor.is_object() {
             return Err(Error::unavailable(()));
         }
-        values.push(payloads::event_json(
+        let mut value = payloads::event_json(
             &entry.event,
             &entry.repository,
             &entry.owner,
             actor,
-        ));
+        );
+        if let Some(id) = value["payload"]["forkee"]["id"].as_i64() {
+            if auth::referenced_repository(state, authentication, id).await?.is_none() {
+                continue;
+            }
+        }
+        for side in ["head", "base"] {
+            if let Some(id) = value["payload"]["pull_request"][side]["repo"]["id"].as_i64() {
+                if auth::referenced_repository(state, authentication, id).await?.is_none() {
+                    let document = &mut value["payload"]["pull_request"][side];
+                    document["repo"] = Value::Null;
+                    document["user"] = Value::Null;
+                    document["label"] = document["ref"].clone();
+                }
+            }
+        }
+        values.push(value);
     }
     Ok((values, more))
 }
@@ -168,7 +185,7 @@ async fn list(
             }
         };
         let (offset, limit) = page.window()?;
-        let (values, more) = documents(&state, viewer, scope, public, offset, limit).await?;
+        let (values, more) = documents(&state, viewer, identity.as_ref(), scope, public, offset, limit).await?;
         let etag = format!(
             "\"{:x}\"",
             Sha256::digest(serde_json::to_vec(&values).map_err(Error::unavailable)?)

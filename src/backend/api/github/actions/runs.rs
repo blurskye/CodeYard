@@ -109,6 +109,13 @@ impl Documents {
     }
 }
 
+async fn referenced_document(state: &AppState, auth: Option<&auth::Authentication>, id: i64) -> Result<Value> {
+    let Some(head) = auth::referenced_repository(state, auth, id).await? else { return Ok(Value::Null) };
+    let owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
+        .await.map_err(Error::unavailable)?;
+    Ok(owner.map(|owner| payloads::repository(&head, &owner)).unwrap_or(Value::Null))
+}
+
 async fn document(
     state: &Arc<AppState>,
     auth: Option<&auth::Authentication>,
@@ -142,67 +149,9 @@ async fn document(
         let head_id = snapshot
             .map(|head| head.id)
             .or_else(|| pr.as_ref().and_then(|pr| pr.head_repo_id));
-        // An App or fine-grained token reads only the repositories its grant covers, so other
-        // private forks are redacted even when its user could read them.
-        let bounds = match auth {
-            Some(auth) => {
-                crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .map(|bounds| (bounds, auth.user.id))
-            }
-            None => None,
-        };
-        let head = match head_id {
-            Some(head_id) => db::repositories::records::get_repository_by_id(&state.pool, head_id).await.map_err(Error::unavailable)?,
-            None => None,
-        };
-        if let Some(head) = head {
-            // A bot's grants in other runs must not become cross-repository credentials here,
-            // so a job token sees a private fork redacted.
-            let bot_private = head.is_private
-                && auth.is_some_and(|auth| auth.user.username == db::ci_tokens::BOT);
-            let outside_app = match &bounds {
-                Some((bounds, user)) if head.is_private => bounds
-                    .repository(&state.pool, *user, head.id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .is_none(),
-                _ => false,
-            };
-            if bot_private
-                || outside_app
-                || !crate::backend::repositories::access::can_read(
-                    &state.pool,
-                    auth.map(|auth| &auth.user),
-                    &head,
-                )
-                .await
-                .map_err(Error::unavailable)?
-            {
-                // The run is listed through its base repository, so only the fork is redacted.
-                Value::Null
-            } else {
-                let head_owner = db::ci::ci_repository_owner(&state.pool, head.id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .ok_or_else(Error::missing)?;
-                payloads::repository(&head, &head_owner)
-            }
-        } else if let Some(head) = snapshot {
-            if head.is_private
-                && (bounds.is_some()
-                    || !auth.is_some_and(|auth| {
-                        auth.user.username != db::ci_tokens::BOT
-                            && head.owner_user_id == Some(auth.user.id)
-                    }))
-            {
-                Value::Null
-            } else {
-                metadata.head_owner.as_deref().map(|login| payloads::repository(head, login)).unwrap_or(Value::Null)
-            }
-        } else {
-            Value::Null
+        match head_id {
+            Some(id) => referenced_document(state, auth, id).await?,
+            None => Value::Null,
         }
     };
     let mut head_commit = Value::Null;
@@ -249,13 +198,7 @@ async fn document(
         if run.event == "pull_request_target" {
             pr_head_repository = Value::Null;
             if let Some(id) = snapshot.and_then(|event| event["head_repo_id"].as_i64()).or(pr.head_repo_id) {
-                if auth::readable_repositories(state, auth, &[id], "metadata").await?.contains(&id) {
-                    if let Some(head) = db::repositories::records::get_repository_by_id(&state.pool, id).await.map_err(Error::unavailable)? {
-                        if let Some(owner) = db::repositories::records::repository_owner_name(&state.pool, id).await.map_err(Error::unavailable)? {
-                            pr_head_repository = payloads::repository(&head, &owner);
-                        }
-                    }
-                }
+                pr_head_repository = referenced_document(state, auth, id).await?;
             }
         }
         let side = |reference: &str, sha: &str, repository: &Value| json!({"ref":reference,"sha":sha,"repo":{"id":repository["id"],"url":repository["url"],"name":repository["name"]}});

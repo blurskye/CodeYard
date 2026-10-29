@@ -60,27 +60,14 @@ pub(super) async fn association(
         .map_err(Error::unavailable)
 }
 
-async fn readable_head(
+pub(super) async fn readable_head(
     state: &AppState,
-    headers: &HeaderMap,
+    auth: Option<&super::auth::Authentication>,
     pull: &db::models::PullRequest,
 ) -> Result<Option<db::models::Repository>> {
-    let head = match pull.head_repo_id {
-        Some(id) => db::repositories::records::get_repository_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?,
-        None => None,
-    };
-    let auth = super::auth::authenticate(state, headers, false).await?;
-    match head {
-        Some(head)
-            if access::can_read(&state.pool, auth.as_ref().map(|auth| &auth.user), &head)
-                .await
-                .map_err(Error::unavailable)? =>
-        {
-            Ok(Some(head))
-        }
-        _ => Ok(None),
+    match pull.head_repo_id {
+        Some(id) => super::auth::referenced_repository(state, auth, id).await,
+        None => Ok(None),
     }
 }
 
@@ -92,6 +79,7 @@ pub(super) async fn document(
     pull: &db::models::PullRequest,
     detail: bool,
 ) -> Result<Value> {
+    let viewer = super::auth::authenticate(state, headers, false).await?;
     let author = db::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?
@@ -103,12 +91,8 @@ pub(super) async fn document(
     if repo.owner_kind == "org" {
         value["base"]["user"] = value["base"]["repo"]["owner"].clone();
     }
-    // A hidden fork is still refused. A deleted fork keeps its pull request with a null head
-    // repository, as GitHub reports it.
-    let (head_label, head_user, head_repo) = if pull.head_repo_id.is_some() {
-        let head = readable_head(state, headers, pull)
-            .await?
-            .ok_or_else(Error::missing)?;
+    // The base shares the retained revision, not authority over the source repository.
+    let (head_label, head_user, head_repo) = if let Some(head) = readable_head(state, viewer.as_ref(), pull).await? {
         let head_owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
             .await
             .map_err(Error::unavailable)?
@@ -166,7 +150,6 @@ pub(super) async fn document(
         requested.push(person(state, user.id).await?);
     }
     value["requested_reviewers"] = json!(requested);
-    let viewer = super::auth::authenticate(state, headers, false).await?;
     value["requested_teams"] = json!(
         team_reviewers::documents(
             state,
