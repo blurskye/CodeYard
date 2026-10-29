@@ -253,6 +253,7 @@ async fn actions(
             return ctx.error(StatusCode::BAD_REQUEST, "Invalid workflow ref.");
         }
         let store = repo_store(repository, ctx.state.cluster.as_ref());
+        let discovery_ref = if query.contains_key("ref") { dispatch_branch.clone() } else { format!("refs/heads/{}", repository.default_branch) };
         let definitions = match tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let refs = store.refs().await?;
             // A genuinely empty repository has no workflow tree yet. Do not
@@ -260,8 +261,8 @@ async fn actions(
             if refs.is_empty() {
                 return Ok(Vec::new());
             }
-            store.commit(&dispatch_branch).await?;
-            crate::backend::ci::list_workflows_for_ref(&store, &dispatch_branch).await
+            store.commit(&discovery_ref).await?;
+            crate::backend::ci::list_workflows_for_ref(&store, &discovery_ref).await
         })
         .await
         {

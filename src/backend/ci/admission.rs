@@ -481,9 +481,10 @@ pub(super) async fn resolve(
                 "CI workflow does not support requested event/ref",
             ));
         }
+        let registration = [(path.to_owned(), definition.name.clone())];
         tokio::time::timeout(
             lookup_timeout,
-            db::action_workflows::register_workflow(pool, repo.id, path, &definition.name, false),
+            db::action_workflows::register_workflows(pool, repo.id, &registration, false),
         )
         .await??;
         let yaml = super::workflows::parse_yaml(file.content.as_bytes())
