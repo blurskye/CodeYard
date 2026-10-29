@@ -175,9 +175,7 @@ pub fn profile_from_user_info(provider: &str, data: &Value) -> Option<OAuthProfi
 pub(crate) fn supports_pkce(provider: &str) -> bool {
     matches!(provider, "github" | "google" | "gitlab")
 }
-pub(crate) fn browser_binding(nonce: &str) -> String {
-    hex::encode(Sha256::digest(nonce.as_bytes()))
-}
+pub(crate) use crate::backend::identity::tokens::token_hash as browser_binding;
 fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }

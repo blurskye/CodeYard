@@ -4,7 +4,7 @@ use anyhow::Result;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+pub use crate::backend::identity::tokens::token_hash;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeCredentials {
@@ -23,10 +23,6 @@ pub fn oidc_url() -> String {
         "{}/api/ci/oidc/token?",
         crate::backend::api::http::config::link_origin().trim_end_matches('/')
     )
-}
-
-pub fn token_hash(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 pub fn results_url(settings: &db::actions::ActionsSettings) -> String {

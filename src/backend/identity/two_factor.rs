@@ -20,7 +20,7 @@ use data_encoding::BASE32_NOPAD;
 use hmac::{Hmac, Mac};
 use rand::{seq::SliceRandom, RngCore};
 use sha1::Sha1;
-use sha2::{Digest, Sha256};
+use super::tokens::token_hash;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const STEP_SECONDS: u64 = 30;
@@ -107,7 +107,7 @@ fn is_totp_code(code: &str) -> bool {
 }
 
 pub fn recovery_code_hash(code: &str) -> String {
-    hex::encode(Sha256::digest(normalize_code(code).as_bytes()))
+    token_hash(&normalize_code(code))
 }
 
 fn new_secret() -> Vec<u8> {
@@ -135,13 +135,13 @@ fn new_recovery_codes() -> Vec<String> {
 
 /// The client a sign-in started from. A pending sign-in only completes from the same browser.
 pub fn client_digest(user_agent: Option<&str>) -> String {
-    hex::encode(Sha256::digest(user_agent.unwrap_or("").as_bytes()))
+    token_hash(user_agent.unwrap_or(""))
 }
 
 /// The digest of a stored password hash. A pending sign-in records it and only completes while
 /// the account still has that password.
 pub fn password_digest(password_hash: Option<&str>) -> String {
-    hex::encode(Sha256::digest(password_hash.unwrap_or("").as_bytes()))
+    token_hash(password_hash.unwrap_or(""))
 }
 
 fn seal(encryptor: &SecretEncryptor, payload: &str) -> Result<String, TwoFactorError> {
