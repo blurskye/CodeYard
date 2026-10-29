@@ -1133,7 +1133,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
     };
     // Unverified uploads cannot be attached, and a refused attachment leaves expiry intact.
     assert!(
-        db::releases::add_release_asset(pool, actor, repo.id, release_id, &input)
+        db::releases::add_release_asset(pool, actor, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await), repo.id, release_id, &input)
             .await
             .is_err()
     );
@@ -1145,7 +1145,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
     db::files::verify_pending_upload(pool, file.id, actor)
         .await
         .unwrap();
-    let asset = db::releases::add_release_asset(pool, actor, repo.id, release_id, &input)
+    let asset = db::releases::add_release_asset(pool, actor, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await), repo.id, release_id, &input)
         .await
         .unwrap();
     let active = db::files::get_file_by_id(pool, file.id)
@@ -1201,6 +1201,7 @@ async fn release_validation_and_atomic_files(pg: bool) {
     db::releases::add_release_asset(
         pool,
         actor,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await),
         repo.id,
         release_id,
         &db::releases::NewReleaseAsset {

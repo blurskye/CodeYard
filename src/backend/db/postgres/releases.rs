@@ -240,11 +240,13 @@ pub async fn delete_release(
 pub async fn add_release_asset(
     pool: &PgPool,
     actor_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo_id: i64,
     release_id: i64,
     asset: &NewReleaseAsset<'_>,
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    super::users::transitions::require_account(&mut tx, actor_id, credential).await?;
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     anyhow::ensure!(!release.is_immutable, ReleaseRefusal::Immutable);
     let taken: Option<i64> =

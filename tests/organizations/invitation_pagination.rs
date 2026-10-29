@@ -215,6 +215,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
     db::releases::add_release_asset(
         f.pool(),
         owner,
+        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), owner).await),
         repository.id,
         release.id,
         &db::releases::NewReleaseAsset {

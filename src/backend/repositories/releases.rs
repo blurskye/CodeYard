@@ -173,6 +173,7 @@ fn unavailable<E>(_: E) -> ReleaseError {
 
 /// Maps a refusal the database raised inside a write to the error the caller shows.
 fn write_error(error: Error) -> ReleaseError {
+    if error.is::<db::users::accounts::AccountRestricted>() { return ReleaseError::Access(AccessError::WriteDenied); }
     match error.downcast_ref::<ReleaseRefusal>() {
         Some(ReleaseRefusal::Denied) => ReleaseError::Access(AccessError::WriteDenied),
         Some(ReleaseRefusal::NotFound) => ReleaseError::NotFound,
@@ -690,6 +691,7 @@ pub async fn add_asset(
     pool: &db::DbPool,
     store: &ObjectStore,
     actor: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -701,6 +703,7 @@ pub async fn add_asset(
         pool,
         store,
         actor,
+        credential,
         owner,
         name,
         release_id,
@@ -725,6 +728,7 @@ pub async fn upload_asset(
     pool: &db::DbPool,
     store: &ObjectStore,
     actor: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -786,6 +790,7 @@ pub async fn upload_asset(
     let linked = db::releases::add_release_asset(
         pool,
         actor,
+        credential,
         repository.id,
         release_id,
         &db::releases::NewReleaseAsset {
