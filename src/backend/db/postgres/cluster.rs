@@ -253,6 +253,16 @@ pub async fn get_node_by_name(pool: &PgPool, name: &str) -> Result<Option<Cluste
     .await?)
 }
 
+pub async fn admin_node_page(pool: &PgPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, after: &str) -> Result<Vec<ClusterNode>> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    anyhow::ensure!(super::users::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
+    let rows = sqlx::query_as("SELECT *,clock_timestamp() AS observed_at FROM nodes WHERE name>$1 ORDER BY name LIMIT 101")
+        .bind(after).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
 pub async fn list_nodes(pool: &PgPool) -> Result<Vec<ClusterNode>> {
     Ok(
         sqlx::query_as::<_, ClusterNode>("SELECT *, NOW() AS observed_at FROM nodes ORDER BY name")

@@ -106,6 +106,10 @@ native_operation!(crate::backend::db::postgres::cluster::get_node_by_name,
     crate::backend::db::sqlite::cluster::get_node_by_name,
     fn get_node_by_name(pool: &DbPool, name: &str) -> Result<Option<ClusterNode>>);
 
+native_operation!(crate::backend::db::postgres::cluster::admin_node_page,
+    crate::backend::db::sqlite::cluster::admin_node_page,
+    fn admin_node_page(pool: &DbPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, after: &str) -> Result<Vec<ClusterNode>>);
+
 native_operation!(crate::backend::db::postgres::cluster::list_nodes,
     crate::backend::db::sqlite::cluster::list_nodes,
     fn list_nodes(pool: &DbPool) -> Result<Vec<ClusterNode>>);
