@@ -409,7 +409,7 @@ pub(crate) async fn run(
     let started = Instant::now();
     let _permit = operation_slot(timeout).await?;
     let remaining = timeout.saturating_sub(started.elapsed());
-    if command.as_std().get_args().any(|arg| arg == "update-ref") {
+    if command.as_std().get_args().any(|arg| arg == "update-ref" || arg == "--move") {
         // A started publication owns its permit and inherited lease until Git finishes,
         // even if the request disappears while Git holds ref lockfiles.
         let input = input.to_vec();

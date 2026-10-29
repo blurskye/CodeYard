@@ -505,11 +505,27 @@ pub(crate) async fn commit_tree(
     author: &Person<'_>,
     committer: &Person<'_>,
 ) -> Result<String> {
-    let mut args = vec!["commit-tree", tree];
-    for parent in parents {
-        args.extend(["-p", *parent]);
-    }
-    let (status, output) = command(path, &args, message, Some((author, committer))).await?;
+    commit_tree_bytes(path, tree, parents, message, std::ffi::OsStr::new(author.name), std::ffi::OsStr::new(author.email), author.date, committer).await
+}
+
+/// Legacy authors need not be UTF-8; the environment carries their original bytes.
+pub(super) async fn commit_tree_bytes(
+    path: &Path,
+    tree: &str,
+    parents: &[&str],
+    message: &[u8],
+    author_name: &std::ffi::OsStr,
+    author_email: &std::ffi::OsStr,
+    author_date: Option<&str>,
+    committer: &Person<'_>,
+) -> Result<String> {
+    let mut command = process::git_command()?;
+    command.arg("--git-dir").arg(path).args(["commit-tree", tree]);
+    for parent in parents { command.args(["-p", *parent]); }
+    command.env("GIT_AUTHOR_NAME", author_name).env("GIT_AUTHOR_EMAIL", author_email)
+        .env("GIT_COMMITTER_NAME", committer.name).env("GIT_COMMITTER_EMAIL", committer.email);
+    if let Some(date) = author_date { command.env("GIT_AUTHOR_DATE", date); }
+    let (status, output) = process::buffered(command, message, MAX_OUTPUT, COMMAND_TIMEOUT).await?;
     ensure!(status.success(), "Git failed to construct the commit");
     oid_output(&output)
 }
@@ -1069,20 +1085,18 @@ pub(crate) async fn publish_branch_rename(
     new: &str,
     target: &str,
 ) -> Result<()> {
-    let old = crate::backend::git::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
-    let new = crate::backend::git::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let old_ref = crate::backend::git::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let new_ref = crate::backend::git::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
     validate_merge_revision("main", target)?;
-    let input = format!(
-        "start\noption no-deref\ncreate {new} {target}\ndelete {old} {target}\nprepare\ncommit\n"
-    );
-    let (status, _) = command(
-        path,
-        &["update-ref", "--stdin", "-m", "rename branch"],
-        input.as_bytes(),
-        None,
-    )
-    .await?;
-    ensure!(status.success(), "Reference changed while renaming");
+    // The caller holds the publication lease. Native rename handles file/directory ref
+    // transitions (feature <-> feature/topic), which update-ref cannot lock together.
+    if current_reference(path, &old_ref).await?.as_deref() != Some(target)
+        || current_reference(path, &new_ref).await?.is_some()
+    {
+        return Err(RefConflict("Reference changed while renaming".into()).into());
+    }
+    let (status, _) = command(path, &["branch", "--move", "--", old, new], b"", None).await?;
+    ensure!(status.success(), "Git branch rename failed");
     Ok(())
 }
 
