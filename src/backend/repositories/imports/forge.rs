@@ -55,11 +55,10 @@ impl Project {
                 api.set_path(&format!("/api/v4/projects/{}", path.replace('/', "%2F")))
             }
             Forge::Gitea | Forge::Forgejo => {
-                ensure!(
-                    parts.len() == 2,
-                    "Forge source needs an owner and repository"
-                );
-                api.set_path(&format!("/api/v1/repos/{path}"));
+                let prefix = parts[..parts.len() - 2].join("/");
+                let prefix = if prefix.is_empty() { prefix } else { format!("/{prefix}") };
+                let repository = parts[parts.len() - 2..].join("/");
+                api.set_path(&format!("{prefix}/api/v1/repos/{repository}"));
             }
         }
         Ok(Self { forge, api })
