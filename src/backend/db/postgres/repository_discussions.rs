@@ -237,7 +237,7 @@ pub async fn write(
                     clear_answer(&mut tx, id).await?;
                 }
             }
-            sqlx::query("UPDATE discussions SET title=COALESCE($2,title),body=COALESCE($3,body),category_id=COALESCE($4,category_id),updated_at=CURRENT_TIMESTAMP WHERE id=$1").bind(id).bind(title).bind(body).bind(category).execute(&mut *tx).await?;
+            sqlx::query("UPDATE discussions SET title=COALESCE($2,title),body=COALESCE($3,body),category_id=COALESCE($4,category_id),updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1").bind(id).bind(title).bind(body).bind(category).execute(&mut *tx).await?;
             id
         }
         Write::Delete => {
@@ -316,16 +316,20 @@ pub async fn write(
                     anyhow::ensure!(!current.locked, Refusal::Denied);
                     valid_body(body)?;
                     anyhow::ensure!(!body.trim().is_empty(), Refusal::Invalid);
-                    sqlx::query("UPDATE discussion_comments SET body=$2,updated_at=CURRENT_TIMESTAMP WHERE id=$1").bind(comment).bind(body).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE discussion_comments SET body=$2,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1").bind(comment).bind(body).execute(&mut *tx).await?;
                 } else {
-                    let removes_answer:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE discussion_id=$1 AND is_answer AND (id=$2 OR reply_to_id=$2))").bind(id).bind(comment).fetch_one(&mut *tx).await?;
+                    let removes_answer:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE discussion_id=$1 AND is_answer AND id=$2)").bind(id).bind(comment).fetch_one(&mut *tx).await?;
                     if removes_answer {
                         clear_answer(&mut tx, id).await?;
                     }
-                    sqlx::query("DELETE FROM discussion_comments WHERE id=$1")
-                        .bind(comment)
-                        .execute(&mut *tx)
-                        .await?;
+                    let replies: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE reply_to_id=$1)")
+                        .bind(comment).fetch_one(&mut *tx).await?;
+                    if replies {
+                        sqlx::query("UPDATE discussion_comments SET body='',updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
+                            .bind(comment).execute(&mut *tx).await?;
+                    } else {
+                        sqlx::query("DELETE FROM discussion_comments WHERE id=$1").bind(comment).execute(&mut *tx).await?;
+                    }
                 }
             }
             *comment
@@ -363,7 +367,7 @@ pub async fn write(
         Write::Enabled(_) => unreachable!(),
     };
     if id != 0 && !matches!(change, Write::Delete) {
-        sqlx::query("UPDATE discussions SET updated_at=CURRENT_TIMESTAMP WHERE id=$1")
+        sqlx::query("UPDATE discussions SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
             .bind(id)
             .execute(&mut *tx)
             .await?;

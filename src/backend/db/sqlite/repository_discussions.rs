@@ -315,14 +315,18 @@ pub async fn write(
                     anyhow::ensure!(!body.trim().is_empty(), Refusal::Invalid);
                     sqlx::query("UPDATE discussion_comments SET body=?2,updated_at=CURRENT_TIMESTAMP WHERE id=?1").bind(comment).bind(body).execute(&mut *tx).await?;
                 } else {
-                    let removes_answer:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE discussion_id=?1 AND is_answer AND (id=?2 OR reply_to_id=?2))").bind(id).bind(comment).fetch_one(&mut *tx).await?;
+                    let removes_answer:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE discussion_id=?1 AND is_answer AND id=?2)").bind(id).bind(comment).fetch_one(&mut *tx).await?;
                     if removes_answer {
                         clear_answer(&mut tx, id).await?;
                     }
-                    sqlx::query("DELETE FROM discussion_comments WHERE id=?1")
-                        .bind(comment)
-                        .execute(&mut *tx)
-                        .await?;
+                    let replies: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE reply_to_id=?1)")
+                        .bind(comment).fetch_one(&mut *tx).await?;
+                    if replies {
+                        sqlx::query("UPDATE discussion_comments SET body='',updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1")
+                            .bind(comment).execute(&mut *tx).await?;
+                    } else {
+                        sqlx::query("DELETE FROM discussion_comments WHERE id=?1").bind(comment).execute(&mut *tx).await?;
+                    }
                 }
             }
             *comment
