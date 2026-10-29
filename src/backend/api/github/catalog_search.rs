@@ -25,6 +25,7 @@ async fn catalog(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let authentication = auth::authenticate(&state, &headers, false).await?;
+    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     let kind = match uri.path().rsplit('/').next() {
         Some("repositories") => Kind::Repositories,
@@ -137,6 +138,7 @@ async fn catalog(
                         &state,
                         &repo,
                         authentication.as_ref(),
+                        deadline,
                     )
                     .await?
                 } else {

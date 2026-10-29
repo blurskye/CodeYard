@@ -29,6 +29,7 @@ async fn content(
         KindOfSearch::Commits
     };
     let authentication = auth::authenticate(&state, &headers, false).await?;
+    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     if kind == KindOfSearch::Code && viewer.is_none() {
         return Err(auth::required());
@@ -99,6 +100,7 @@ async fn content(
                     &state,
                     repo,
                     authentication.as_ref(),
+                    deadline,
                 )
                 .await?,
             );

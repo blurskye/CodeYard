@@ -93,6 +93,28 @@ async fn upstream(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let base_branch = format!("{parent_owner}:{}", input.branch);
+    let tasks = state.git_tasks.clone();
+    let (send, receive) = tokio::sync::oneshot::channel();
+    if !tasks.spawn(async move {
+        let result = complete_upstream(state, repo, parent, input, owner, base_branch, auth).await;
+        if result.is_err() { tracing::warn!("upstream synchronization or its follow-up failed"); }
+        let _ = send.send(result);
+    }) {
+        return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, "Repository writes are busy"));
+    }
+    receive.await.map_err(Error::unavailable)?
+}
+
+async fn complete_upstream(
+    state: Arc<AppState>,
+    repo: db::models::Repository,
+    parent: db::models::Repository,
+    input: Upstream,
+    owner: String,
+    base_branch: String,
+    auth: super::auth::Authentication,
+) -> Result<Json<Value>> {
+    let actor = &auth.user;
     let source = repo_store(&parent, state.cluster.as_ref());
     let merged = repo_store(&repo, state.cluster.as_ref())
         .merge_upstream_as(

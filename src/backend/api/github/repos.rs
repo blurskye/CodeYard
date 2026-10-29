@@ -51,17 +51,17 @@ pub(super) async fn search_document(
     state: &AppState,
     repo: &Repository,
     viewer: Option<&auth::Authentication>,
+    deadline: tokio::time::Instant,
 ) -> Result<Value> {
     let mut value = document(state, repo, viewer).await?;
-    let git = crate::backend::repositories::catalog_search::git_facts(
-        repo,
-        state.cluster.as_ref(),
-        false,
-    )
-    .await
-    .map_err(Error::unavailable)?;
-    value["license"] = git
-        .license
+    let license = match tokio::time::timeout_at(deadline, crate::backend::repositories::catalog_search::git_facts(
+        repo, state.cluster.as_ref(), false,
+    )).await {
+        Ok(Ok(git)) => git.license,
+        // Optional Git decoration must not hide database search results.
+        Ok(Err(_)) | Err(_) => None,
+    };
+    value["license"] = license
         .and_then(crate::backend::repositories::templates::license)
         .map(|template| super::meta::license_document(template, false))
         .unwrap_or(Value::Null);
