@@ -42,9 +42,13 @@ pub async fn link_team(
 }
 
 pub async fn by_id(pool: &SqlitePool, viewer: Option<i64>, id: i64) -> Result<Project> {
+    by_id_at(pool, viewer, id, false).await
+}
+
+pub async fn by_id_at(pool: &SqlitePool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Project> {
     let mut tx = pool.begin().await?;
-    readable(&mut tx, viewer, id).await?;
-    let project = sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
+    readable_at(&mut tx, viewer, id, include_deleted).await?;
+    let project = sqlx::query_as("SELECT * FROM projects WHERE id=$1")
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
@@ -63,13 +67,17 @@ pub async fn field_by_id(pool: &SqlitePool, viewer: Option<i64>, id: i64) -> Res
     Ok(field)
 }
 pub async fn item_by_id(pool: &SqlitePool, viewer: Option<i64>, id: i64) -> Result<Item> {
+    item_by_id_at(pool, viewer, id, false).await
+}
+
+pub async fn item_by_id_at(pool: &SqlitePool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item> {
     let mut tx = pool.begin().await?;
     let item: Item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(Refusal::Missing)?;
-    readable(&mut tx, viewer, item.project_id).await?;
+    readable_at(&mut tx, viewer, item.project_id, include_deleted).await?;
     if let Some(repo) = item.repo_id {
         super::items::repository_read(&mut tx, viewer.unwrap_or(0), repo).await?;
     }

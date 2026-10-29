@@ -26,7 +26,7 @@ pub async fn item_projects(
     Ok(result)
 }
 
-pub(super) const ITEM: &str = "SELECT i.*, COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
+pub(super) const ITEM: &str = "SELECT i.id,i.project_id,i.creator_id,COALESCE(issues.repo_id,pr.repo_id,i.repo_id) AS repo_id,i.issue_id,i.pull_request_id,i.draft_title,i.draft_body,i.field_values,i.archived,i.position,i.created_at,i.updated_at,COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
 
 pub(super) async fn repository_read(
     tx: &mut Transaction<'_, Sqlite>,
@@ -183,10 +183,37 @@ pub async fn add_item(
     Ok(item)
 }
 
-pub async fn items(pool: &SqlitePool, viewer: Option<i64>, project: i64) -> Result<Vec<Item>> {
+pub async fn content_items_page(pool: &SqlitePool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)> {
+    anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
+    let (issue, pull) = match content { Content::Issue(id) => (Some(*id), None), Content::PullRequest(id) => (None, Some(*id)), _ => return Ok((0, Vec::new())) };
+    let joins = format!(" JOIN projects p ON p.id=i.project_id LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=?3 WHERE (i.issue_id=?1 OR i.pull_request_id=?2) AND (?4 OR NOT i.archived) AND {} AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", crate::backend::db::projects::readable_condition("?3"), super::super::repositories::access::readable_condition());
     let mut tx = pool.begin().await?;
-    readable(&mut tx, viewer, project).await?;
-    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.repo_id IS NULL OR {}) ORDER BY i.position,i.id", super::super::repositories::access::readable_condition()))
+    let total = if count { sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible")).bind(issue).bind(pull).bind(viewer).bind(include_archived).fetch_one(&mut *tx).await? } else { 0 };
+    let rows = if limit == 0 { Vec::new() } else { sqlx::query_as(&format!("{ITEM}{joins} ORDER BY i.id LIMIT ?5 OFFSET ?6")).bind(issue).bind(pull).bind(viewer).bind(include_archived).bind(limit).bind(offset).fetch_all(&mut *tx).await? };
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
+pub async fn items_window(pool: &SqlitePool, viewer: Option<i64>, window: &crate::backend::db::projects::ItemWindow) -> Result<(i64, Vec<Item>)> {
+    anyhow::ensure!(window.offset >= 0 && (0..=100).contains(&window.limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable_at(&mut tx, viewer, window.project, window.include_deleted).await?;
+    let joins = format!(" LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=?2 WHERE i.project_id=?1 AND (?3 IS NULL OR i.archived=?3) AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", super::super::repositories::access::readable_condition());
+    let total = if window.count { sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible")).bind(window.project).bind(viewer).bind(window.archived).fetch_one(&mut *tx).await? } else { 0 };
+    let direction = if window.descending { "DESC" } else { "ASC" };
+    let rows = if window.limit == 0 { Vec::new() } else { sqlx::query_as(&format!("{ITEM}{joins} ORDER BY i.position {direction},i.id {direction} LIMIT ?4 OFFSET ?5")).bind(window.project).bind(viewer).bind(window.archived).bind(window.limit).bind(window.offset).fetch_all(&mut *tx).await? };
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
+pub async fn items(pool: &SqlitePool, viewer: Option<i64>, project: i64) -> Result<Vec<Item>> {
+    items_at(pool, viewer, project, false).await
+}
+
+pub async fn items_at(pool: &SqlitePool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Item>> {
+    let mut tx = pool.begin().await?;
+    readable_at(&mut tx, viewer, project, include_deleted).await?;
+    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=?2 WHERE i.project_id=?1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", super::super::repositories::access::readable_condition()))
         .bind(project).bind(viewer).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(items)
