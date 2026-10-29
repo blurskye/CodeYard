@@ -47,6 +47,9 @@ pub struct Usage {
 native_operation!(crate::backend::db::postgres::action_jobs::usage,crate::backend::db::sqlite::action_jobs::usage,
     fn usage(pool:&DbPool,repo:i64,run:Option<i64>,workflow:Option<&str>,since:DateTime<Utc>)->Result<Vec<Usage>>);
 
+native_operation!(crate::backend::db::postgres::action_jobs::elapsed,crate::backend::db::sqlite::action_jobs::elapsed,
+    fn elapsed(pool:&DbPool,repo:i64,run:i64)->Result<i64>);
+
 pub struct Page {
     pub total: i64,
     pub jobs: Vec<Job>,

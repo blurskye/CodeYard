@@ -290,6 +290,11 @@ pub async fn usage(
         .bind(repo).bind(run).bind(workflow).bind(since).fetch_all(pool).await?)
 }
 
+pub async fn elapsed(pool: &PgPool, repo: i64, run: i64) -> Result<i64> {
+    Ok(sqlx::query_scalar("SELECT COALESCE(SUM(GREATEST(0,FLOOR(EXTRACT(EPOCH FROM (completed_at-started_at))*1000))),0)::BIGINT FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 AND started_at IS NOT NULL AND completed_at IS NOT NULL")
+        .bind(repo).bind(run).fetch_one(pool).await?)
+}
+
 pub async fn observed(pool: &PgPool, repo: i64, run: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_job_states s JOIN ci_runs c ON c.id=s.run_id WHERE c.repo_id=$1 AND c.id=$2)").bind(repo).bind(run).fetch_one(pool).await?)
 }
