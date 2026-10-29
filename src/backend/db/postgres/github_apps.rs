@@ -125,9 +125,10 @@ pub async fn installations(
     offset: i64,
     limit: i64,
 ) -> Result<(i64, Vec<Installation>)> {
-    let filters = format!("($1 IS NULL OR i.app_id=$1) AND ($2 IS NULL OR ({reaches} AND EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE a.id=i.app_id AND NOT u.is_banned AND NOT u.must_change_password))) AND ($3 IS NULL OR i.org_id=$3) AND ($4 IS NULL OR i.id=$4) AND {ACCOUNT_AVAILABLE}", reaches = actor_reaches("$2"));
-    // One snapshot for the count and the page.
+    let filters = format!("($1 IS NULL OR i.app_id=$1) AND ($2 IS NULL OR ({reaches} AND EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=i.app_id AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password))) AND ($3 IS NULL OR i.org_id=$3) AND ($4 IS NULL OR i.id=$4) AND ($2 IS NULL OR $3 IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users actor ON actor.id=m.user_id WHERE m.org_id=$3 AND m.user_id=$2 AND m.role='owner' AND NOT actor.is_banned AND NOT actor.must_change_password)) AND {ACCOUNT_AVAILABLE}", reaches = actor_reaches("$2"));
+    // One authorized snapshot for the count and the page.
     let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
     let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM github_app_installations i WHERE {filters}"))
         .bind(filter.app).bind(filter.actor).bind(filter.org).bind(filter.id)
         .fetch_one(&mut *tx).await?;
