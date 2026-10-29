@@ -270,6 +270,12 @@ async fn policies(
         .get("policy_id")
         .map(|_| super::id(&params, "policy_id"))
         .transpose()?;
+    if !write && id.is_none() {
+        let (offset, limit) = page.window()?;
+        let (total, rows) = db::action_settings::policies_page(&state.pool, actor, auth.token.id, &scope, offset as i64, limit as i64).await.map_err(failure)?;
+        let values = rows.iter().map(|row| document(row, &params)).collect::<Result<Vec<_>>>()?;
+        return Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"policies":values}))).into_response());
+    }
     let body = if write && method != axum::http::Method::DELETE {
         Some(input(request).await?)
     } else {
@@ -282,31 +288,8 @@ async fn policies(
     if method == axum::http::Method::DELETE {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    if id.is_some() || write {
-        let value = document(rows.first().ok_or_else(Error::missing)?, &params)?;
-        return Ok((
-            if id.is_none() {
-                StatusCode::CREATED
-            } else {
-                StatusCode::OK
-            },
-            Json(value),
-        )
-            .into_response());
-    }
-    let (offset, limit) = page.window()?;
-    let total = rows.len();
-    let values: Vec<_> = rows
-        .iter()
-        .skip(offset)
-        .take(limit)
-        .map(|row| document(row, &params))
-        .collect::<Result<_>>()?;
-    Ok((
-        page.headers(&uri, offset.saturating_add(limit) < total)?,
-        Json(json!({"total_count":total,"policies":values})),
-    )
-        .into_response())
+    let value = document(rows.first().ok_or_else(Error::missing)?, &params)?;
+    Ok((if id.is_none() { StatusCode::CREATED } else { StatusCode::OK }, Json(value)).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
